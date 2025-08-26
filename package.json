@@ -21,5 +21,8 @@
   },
   "linux": {
     "icon": "assets/icon.png"
+  },
+  "dependencies": {
+    "minecraft-launcher-core": "^3.18.2"
   }
 }

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Redstone Launcher</title>
+</head>
+<body>
+  <h1>Redstone Launcher</h1>
+
+  <!-- Create Profile -->
+  <h2>Create Profile</h2>
+  <input id="pname" placeholder="Profile Name"><br>
+  <input id="username" placeholder="Username"><br>
+  <input id="version" placeholder="Version (e.g. 1.20.1)" value="1.20.1"><br>
+  <label><input type="checkbox" id="cracked"> Cracked?</label><br>
+  <button id="createBtn">Create Profile</button>
+
+  <hr>
+
+  <!-- Profiles List -->
+  <h2>Profiles</h2>
+  <ul id="profileList"></ul>
+
+  <hr>
+
+  <!-- Logs -->
+  <h2>Logs</h2>
+  <pre id="logs"></pre>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    // Request profiles on load
+    window.onload = () => {
+      ipcRenderer.send('get-profiles');
+    };
+
+    // Create profile
+    document.getElementById('createBtn').addEventListener('click', () => {
+      const profile = {
+        name: document.getElementById('pname').value,
+        username: document.getElementById('username').value,
+        version: document.getElementById('version').value,
+        cracked: document.getElementById('cracked').checked
+      };
+      ipcRenderer.send('create-profile', profile);
+    });
+
+    // Update profile list
+    ipcRenderer.on('profiles-list', (event, profiles) => {
+      const list = document.getElementById('profileList');
+      list.innerHTML = "";
+
+      profiles.forEach(p => {
+        const li = document.createElement('li');
+        li.textContent = `${p.name} [${p.version}] - ${p.cracked ? "Cracked" : "Premium"}`;
+
+        const launchBtn = document.createElement('button');
+        launchBtn.textContent = "Launch";
+        launchBtn.onclick = () => ipcRenderer.send('launch-profile', p.id);
+
+        li.appendChild(launchBtn);
+        list.appendChild(li);
+      });
+    });
+
+    // After create, refresh list
+    ipcRenderer.on('profiles-updated', (event, profiles) => {
+      ipcRenderer.send('get-profiles');
+    });
+
+    // Logs from backend
+    ipcRenderer.on('launcher-log', (event, msg) => {
+      const logs = document.getElementById('logs');
+      logs.textContent += msg + "\n";
+    });
+
+    ipcRenderer.on('launch-error', (event, msg) => {
+      const logs = document.getElementById('logs');
+      logs.textContent += "ERROR: " + msg + "\n";
+    });
+  </script>
+</body>
+</html>
