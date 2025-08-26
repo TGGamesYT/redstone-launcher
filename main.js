@@ -1,4 +1,6 @@
 const path = require('path');
+const { exec } = require("child_process");
+const https = require("https");
 const fs = require('fs');
 const { app, BrowserWindow, ipcMain, shell, session } = require('electron');
 const { Client, Authenticator } = require('minecraft-launcher-core');
@@ -151,9 +153,105 @@ ipcMain.on('launch-profile', async (event, profileId) => {
   launcher.on('error', (err) => event.reply('launcher-log', "ERROR: " + err.message));
 });
 
+/* ─────────────── modloaders ─────────────── */
+
+ipcMain.on("install-modloader", async (event, { type, version, instanceId }) => {
+  try {
+    const instanceDir = path.join(__dirname, "minecraft", String(instanceId));
+    fs.mkdirSync(instanceDir, { recursive: true });
+
+    let installerUrl;
+    let installerName;
+
+    switch(type.toLowerCase()) {
+      case "fabric":
+        installerUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/0.14.23/fabric-installer-0.14.23.jar";
+        installerName = "fabric-installer.jar";
+        break;
+      case "quilt":
+        installerUrl = "https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-installer/0.16.0/quilt-installer-0.16.0.jar";
+        installerName = "quilt-installer.jar";
+        break;
+      case "forge":
+        installerUrl = "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.0.82/forge-1.20.1-47.0.82-installer.jar";
+        installerName = "forge-installer.jar";
+        break;
+      case "neoforge":
+        installerUrl = "https://neoforge.net/downloads/installer/1.20.1-neoforge-installer.jar";
+        installerName = "neoforge-installer.jar";
+        break;
+      default:
+        return event.reply("modloader-error", "Unknown modloader type");
+    }
+
+    const installerPath = path.join(instanceDir, installerName);
+
+    // Helper to download file with redirect support
+    function downloadFile(url, dest) {
+      return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(dest);
+        https.get(url, (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            // follow redirect
+            downloadFile(res.headers.location, dest).then(resolve).catch(reject);
+            return;
+          }
+          res.pipe(file);
+          file.on("finish", () => file.close(resolve));
+        }).on("error", (err) => {
+          fs.unlink(dest, ()=>{}); // delete partial file
+          reject(err);
+        });
+      });
+    }
+
+    // Download the installer
+    await downloadFile(installerUrl, installerPath);
+
+    // Build the command
+    let cmd;
+    if(type.toLowerCase() === "fabric" || type.toLowerCase() === "quilt") {
+      cmd = `java -jar "${installerPath}" client -dir "${instanceDir}" -mcversion ${version}`;
+    } else { // forge/neoforge
+      cmd = `java -jar "${installerPath}" --installClient -mcdir "${instanceDir}"`;
+    }
+
+    const child = exec(cmd);
+    child.stdout.on("data", (data) => event.reply("modloader-log", data.toString()));
+    child.stderr.on("data", (data) => event.reply("modloader-log", data.toString()));
+    child.on("exit", () => event.reply("modloader-done", type));
+
+  } catch (err) {
+    event.reply("modloader-error", err.message);
+  }
+});
+
+
+
 /* ─────────────── Helpers ─────────────── */
 function versionToType(version) {
   return version.includes('.') ? "release" : "snapshot";
 }
+
+function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https.get(url, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        // redirect
+        downloadFile(res.headers.location, dest).then(resolve).catch(reject);
+        return;
+      }
+      res.pipe(file);
+      file.on("finish", () => {
+        file.close(resolve); // close ensures file is fully written
+      });
+    }).on("error", (err) => {
+      fs.unlink(dest, ()=>{}); // delete partial file
+      reject(err);
+    });
+  });
+}
+
 
 app.whenReady().then(createWindow);

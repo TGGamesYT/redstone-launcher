@@ -9,7 +9,6 @@
 
   <!-- ─────────────── Players Section ─────────────── -->
   <h2>Players</h2>
-
   <div>
     <label>
       Cracked username:
@@ -18,12 +17,10 @@
     <button id="createCrackedBtn">Add Cracked Player</button>
     <button id="loginMicrosoftBtn">Login Microsoft</button>
   </div>
-
   <ul id="players-list"></ul>
 
   <!-- ─────────────── Profiles Section ─────────────── -->
   <h2>Game Profiles</h2>
-
   <div>
     <label>
       Profile name:
@@ -41,7 +38,6 @@
     </label>
     <button id="createProfileBtn">Create Game Profile</button>
   </div>
-
   <ul id="profiles-list"></ul>
 
   <h2>Logs</h2>
@@ -56,12 +52,10 @@
       const loginMicrosoftBtn = document.getElementById("loginMicrosoftBtn");
       const playersList = document.getElementById("players-list");
       const playerSelect = document.getElementById("playerSelect");
-
       const profileName = document.getElementById("profileName");
       const profileVersion = document.getElementById("profileVersion");
       const createProfileBtn = document.getElementById("createProfileBtn");
       const profilesList = document.getElementById("profiles-list");
-
       const logs = document.getElementById("logs");
 
       // Buttons
@@ -107,7 +101,6 @@
       });
 
       ipcRenderer.on("players-updated", (event, players) => {
-        // refresh UI
         ipcRenderer.emit("players-list", null, players);
       });
 
@@ -117,10 +110,49 @@
         profiles.forEach(p => {
           const li = document.createElement("li");
           li.textContent = `${p.name} (v${p.version}, playerId=${p.playerId}) `;
-          const btn = document.createElement("button");
-          btn.textContent = "Launch";
-          btn.onclick = () => ipcRenderer.send("launch-profile", p.id);
-          li.appendChild(btn);
+
+          // Launch button
+          const launchBtn = document.createElement("button");
+          launchBtn.textContent = "Launch";
+          launchBtn.onclick = () => ipcRenderer.send("launch-profile", p.id);
+          li.appendChild(launchBtn);
+
+          // Modloader install button
+          const modBtn = document.createElement("button");
+          modBtn.textContent = "Install Modloader";
+          li.appendChild(modBtn);
+
+          // Dropdown for modloader selection (hidden by default)
+          const select = document.createElement("select");
+          select.style.display = "none";
+          ["Fabric","Quilt","Forge","NeoForge"].forEach(mod => {
+            const opt = document.createElement("option");
+            opt.value = mod.toLowerCase();
+            opt.textContent = mod;
+            select.appendChild(opt);
+          });
+          li.appendChild(select);
+
+          // Confirm install button
+          const confirmBtn = document.createElement("button");
+          confirmBtn.textContent = "Install";
+          confirmBtn.style.display = "none";
+          li.appendChild(confirmBtn);
+
+          // Button logic
+          modBtn.onclick = () => {
+            select.style.display = "inline";
+            confirmBtn.style.display = "inline";
+          };
+          confirmBtn.onclick = () => {
+            const mod = select.value;
+            ipcRenderer.send("install-modloader", {
+              type: mod,
+              version: p.version,
+              instanceId: p.id
+            });
+          };
+
           profilesList.appendChild(li);
         });
       });
@@ -134,6 +166,19 @@
         logs.textContent += msg + "\n";
         logs.scrollTop = logs.scrollHeight;
       });
+      ipcRenderer.on("modloader-log", (event, msg) => {
+        logs.textContent += "[MODLOADER] " + msg + "\n";
+        logs.scrollTop = logs.scrollHeight;
+      });
+      ipcRenderer.on("modloader-done", (event, type) => {
+        logs.textContent += `[MODLOADER] ${type} installed!\n`;
+        logs.scrollTop = logs.scrollHeight;
+      });
+      ipcRenderer.on("modloader-error", (event, err) => {
+        logs.textContent += "[MODLOADER ERROR] " + err + "\n";
+        logs.scrollTop = logs.scrollHeight;
+      });
+
       ipcRenderer.on("launch-error", (event, msg) => {
         logs.textContent += "[ERROR] " + msg + "\n";
         logs.scrollTop = logs.scrollHeight;
