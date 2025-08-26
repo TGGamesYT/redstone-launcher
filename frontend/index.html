@@ -1,82 +1,151 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <title>Redstone Launcher</title>
 </head>
 <body>
   <h1>Redstone Launcher</h1>
 
-  <!-- Create Profile -->
-  <h2>Create Profile</h2>
-  <input id="pname" placeholder="Profile Name"><br>
-  <input id="username" placeholder="Username"><br>
-  <input id="version" placeholder="Version (e.g. 1.20.1)" value="1.20.1"><br>
-  <label><input type="checkbox" id="cracked"> Cracked?</label><br>
-  <button id="createBtn">Create Profile</button>
+  <!-- ─────────────── Players Section ─────────────── -->
+  <h2>Players</h2>
 
-  <hr>
+  <div>
+    <label>
+      Cracked username:
+      <input id="crackedName" placeholder="Steve" />
+    </label>
+    <button id="createCrackedBtn">Add Cracked Player</button>
+    <button id="loginMicrosoftBtn">Login Microsoft</button>
+  </div>
 
-  <!-- Profiles List -->
-  <h2>Profiles</h2>
-  <ul id="profileList"></ul>
+  <ul id="players-list"></ul>
 
-  <hr>
+  <!-- ─────────────── Profiles Section ─────────────── -->
+  <h2>Game Profiles</h2>
 
-  <!-- Logs -->
+  <div>
+    <label>
+      Profile name:
+      <input id="profileName" placeholder="Vanilla 1.20" />
+    </label>
+    <label>
+      Version:
+      <input id="profileVersion" value="1.20.1" />
+    </label>
+    <label>
+      Player:
+      <select id="playerSelect">
+        <option value="">-- select player --</option>
+      </select>
+    </label>
+    <button id="createProfileBtn">Create Game Profile</button>
+  </div>
+
+  <ul id="profiles-list"></ul>
+
   <h2>Logs</h2>
-  <pre id="logs"></pre>
+  <pre id="logs" style="height:200px; overflow:auto;"></pre>
 
   <script>
-    const { ipcRenderer } = require('electron');
+    const { ipcRenderer } = require("electron");
 
-    // Request profiles on load
-    window.onload = () => {
-      ipcRenderer.send('get-profiles');
-    };
+    document.addEventListener("DOMContentLoaded", () => {
+      const crackedName = document.getElementById("crackedName");
+      const createCrackedBtn = document.getElementById("createCrackedBtn");
+      const loginMicrosoftBtn = document.getElementById("loginMicrosoftBtn");
+      const playersList = document.getElementById("players-list");
+      const playerSelect = document.getElementById("playerSelect");
 
-    // Create profile
-    document.getElementById('createBtn').addEventListener('click', () => {
-      const profile = {
-        name: document.getElementById('pname').value,
-        username: document.getElementById('username').value,
-        version: document.getElementById('version').value,
-        cracked: document.getElementById('cracked').checked
-      };
-      ipcRenderer.send('create-profile', profile);
-    });
+      const profileName = document.getElementById("profileName");
+      const profileVersion = document.getElementById("profileVersion");
+      const createProfileBtn = document.getElementById("createProfileBtn");
+      const profilesList = document.getElementById("profiles-list");
 
-    // Update profile list
-    ipcRenderer.on('profiles-list', (event, profiles) => {
-      const list = document.getElementById('profileList');
-      list.innerHTML = "";
+      const logs = document.getElementById("logs");
 
-      profiles.forEach(p => {
-        const li = document.createElement('li');
-        li.textContent = `${p.name} [${p.version}] - ${p.cracked ? "Cracked" : "Premium"}`;
-
-        const launchBtn = document.createElement('button');
-        launchBtn.textContent = "Launch";
-        launchBtn.onclick = () => ipcRenderer.send('launch-profile', p.id);
-
-        li.appendChild(launchBtn);
-        list.appendChild(li);
+      // Buttons
+      createCrackedBtn.addEventListener("click", () => {
+        const name = crackedName.value.trim();
+        if (!name) { alert("Enter a cracked username"); return; }
+        ipcRenderer.send("create-cracked-player", name);
+        crackedName.value = "";
       });
-    });
 
-    // After create, refresh list
-    ipcRenderer.on('profiles-updated', (event, profiles) => {
-      ipcRenderer.send('get-profiles');
-    });
+      loginMicrosoftBtn.addEventListener("click", () => {
+        ipcRenderer.send("login-microsoft");
+      });
 
-    // Logs from backend
-    ipcRenderer.on('launcher-log', (event, msg) => {
-      const logs = document.getElementById('logs');
-      logs.textContent += msg + "\n";
-    });
+      createProfileBtn.addEventListener("click", () => {
+        const name = profileName.value.trim();
+        const version = profileVersion.value.trim();
+        const playerId = Number(playerSelect.value);
+        if (!name || !version || !playerId) {
+          alert("Fill profile name, version, and select a player");
+          return;
+        }
+        ipcRenderer.send("create-profile", { name, version, playerId });
+        profileName.value = "";
+        profileVersion.value = "1.20.1";
+      });
 
-    ipcRenderer.on('launch-error', (event, msg) => {
-      const logs = document.getElementById('logs');
-      logs.textContent += "ERROR: " + msg + "\n";
+      // IPC handlers - Players
+      ipcRenderer.on("players-list", (event, players) => {
+        playersList.innerHTML = "";
+        playerSelect.innerHTML = '<option value="">-- select player --</option>';
+        players.forEach(p => {
+          const li = document.createElement("li");
+          const display = p.username ?? (p.auth?.selectedProfile?.name ?? "MS Account");
+          li.textContent = `[${p.type}] ${display} (id: ${p.id})`;
+          playersList.appendChild(li);
+
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = `${p.id} — ${display} (${p.type})`;
+          playerSelect.appendChild(opt);
+        });
+      });
+
+      ipcRenderer.on("players-updated", (event, players) => {
+        // refresh UI
+        ipcRenderer.emit("players-list", null, players);
+      });
+
+      // IPC handlers - Profiles
+      ipcRenderer.on("profiles-list", (event, profiles) => {
+        profilesList.innerHTML = "";
+        profiles.forEach(p => {
+          const li = document.createElement("li");
+          li.textContent = `${p.name} (v${p.version}, playerId=${p.playerId}) `;
+          const btn = document.createElement("button");
+          btn.textContent = "Launch";
+          btn.onclick = () => ipcRenderer.send("launch-profile", p.id);
+          li.appendChild(btn);
+          profilesList.appendChild(li);
+        });
+      });
+
+      ipcRenderer.on("profiles-updated", (event, profiles) => {
+        ipcRenderer.emit("profiles-list", null, profiles);
+      });
+
+      // Logs
+      ipcRenderer.on("launcher-log", (event, msg) => {
+        logs.textContent += msg + "\n";
+        logs.scrollTop = logs.scrollHeight;
+      });
+      ipcRenderer.on("launch-error", (event, msg) => {
+        logs.textContent += "[ERROR] " + msg + "\n";
+        logs.scrollTop = logs.scrollHeight;
+      });
+      ipcRenderer.on("login-error", (event, msg) => {
+        logs.textContent += "[LOGIN ERROR] " + msg + "\n";
+        logs.scrollTop = logs.scrollHeight;
+      });
+
+      // initial load
+      ipcRenderer.send("get-players");
+      ipcRenderer.send("get-profiles");
     });
   </script>
 </body>
