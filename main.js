@@ -165,7 +165,7 @@ ipcMain.on("install-modloader", async (event, { type, version, instanceId }) => 
 
     switch(type.toLowerCase()) {
       case "fabric":
-        installerUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/0.14.23/fabric-installer-0.14.23.jar";
+        installerUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.1.0/fabric-installer-1.1.0.jar";
         installerName = "fabric-installer.jar";
         break;
       case "quilt":
@@ -211,7 +211,7 @@ ipcMain.on("install-modloader", async (event, { type, version, instanceId }) => 
     // Build the command
     let cmd;
     if(type.toLowerCase() === "fabric" || type.toLowerCase() === "quilt") {
-      cmd = `java -jar "${installerPath}" client -dir "${instanceDir}" -mcversion ${version}`;
+      cmd = `java -jar "${installerPath}" client -dir "${instanceDir}" -snapshot -mcversion ${version}`;
     } else { // forge/neoforge
       cmd = `java -jar "${installerPath}" --installClient -mcdir "${instanceDir}"`;
     }
