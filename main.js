@@ -5,6 +5,7 @@ const fs = require('fs');
 const { app, BrowserWindow, ipcMain, shell, session } = require('electron');
 const { Client, Authenticator } = require('minecraft-launcher-core');
 const { Auth } = require('msmc');
+const serverManager = require("./serverManager");
 
 
 const profilesPath = path.join(__dirname, 'profiles.json');
@@ -15,12 +16,22 @@ if (!fs.existsSync(profilesPath)) fs.writeFileSync(profilesPath, JSON.stringify(
 if (!fs.existsSync(playersPath)) fs.writeFileSync(playersPath, JSON.stringify([]));
 
 // Load & save helpers
-function loadProfiles() { return JSON.parse(fs.readFileSync(profilesPath)); }
+// Load & save helpers
+function ensureFile(path) {
+  if (!fs.existsSync(path)) fs.writeFileSync(path, JSON.stringify([]));
+}
+
+function loadProfiles() {
+  ensureFile(profilesPath);
+  return JSON.parse(fs.readFileSync(profilesPath));
+}
 function saveProfiles(p) { fs.writeFileSync(profilesPath, JSON.stringify(p, null, 2)); }
 
-function loadPlayers() { return JSON.parse(fs.readFileSync(playersPath)); }
+function loadPlayers() {
+  ensureFile(playersPath);
+  return JSON.parse(fs.readFileSync(playersPath));
+}
 function savePlayers(p) { fs.writeFileSync(playersPath, JSON.stringify(p, null, 2)); }
-
 function createWindow() {
   const win = new BrowserWindow({
     width: 1000,
@@ -92,60 +103,41 @@ ipcMain.on('create-profile', (event, profile) => {
   event.reply('profiles-updated', profiles);
 });
 
-// Create cracked player
-ipcMain.on("create-cracked-player", (event, username) => {
-  const players = loadPlayers();
-
-  const newPlayer = {
-    id: Date.now(),
-    type: "cracked",
-    username: username
-  };
-
-  players.push(newPlayer);
-  savePlayers(players);
-
-  event.reply("players-updated", players);
-});
-
 // Get game profiles
 ipcMain.on('get-profiles', (event) => {
   event.reply('profiles-list', loadProfiles());
 });
 
 // Launch profile
-ipcMain.on('launch-profile', async (event, profileId) => {
+ipcMain.on('launch-profile', async (event, { profileId, playerId }) => {
   const profiles = loadProfiles();
   const players = loadPlayers();
 
   const profile = profiles.find(p => p.id === profileId);
   if (!profile) return event.reply('launch-error', "Profile not found");
 
-  const player = players.find(p => p.id === profile.playerId);
+  const player = players.find(p => p.id === playerId);
   if (!player) return event.reply('launch-error', "Player not found");
 
-  const launcher = new Client();
   let auth;
-
   if (player.type === "cracked") {
-  auth = { name: player.username, uuid: "0", access_token: "0" };
-} else {
-  try {
-    // Just use the stored Microsoft token; msmc tokens don’t need Mojang refresh
+    auth = { name: player.username, uuid: "0", access_token: "0" };
+  } else {
     auth = player.auth;
-  } catch (err) {
-    return event.reply('launch-error', "Microsoft login invalid, please re-login");
-  }
   }
 
-  const rootDir = path.join(__dirname, 'minecraft', String(profile.id));
+  const rootDir = path.join(__dirname, 'client', String(profile.id));
   fs.mkdirSync(rootDir, { recursive: true });
 
+  const launcher = new Client();
   launcher.launch({
     authorization: auth,
     root: rootDir,
     version: { number: profile.version, type: versionToType(profile.version) },
-    memory: { max: "4G", min: "1G" }
+    memory: { max: "4G", min: "1G" },
+    overrides: {
+      detached: false
+    }
   });
 
   launcher.on('debug', (msg) => event.reply('launcher-log', msg));
@@ -157,7 +149,7 @@ ipcMain.on('launch-profile', async (event, profileId) => {
 
 ipcMain.on("install-modloader", async (event, { type, version, instanceId }) => {
   try {
-    const instanceDir = path.join(__dirname, "minecraft", String(instanceId));
+    const instanceDir = path.join(__dirname, "client", String(instanceId));
     fs.mkdirSync(instanceDir, { recursive: true });
 
     let installerUrl;
@@ -205,13 +197,30 @@ ipcMain.on("install-modloader", async (event, { type, version, instanceId }) => 
       });
     }
 
+    //create a dummy launcher profiles json
+
+    const launcherProfile = {
+      profiles: {
+        "redstone-temp": {
+          name: "Redstone Temp",
+          lastVersionId: version,
+          type: "custom"
+        }
+      }
+    };
+
+    fs.writeFileSync(
+      path.join(instanceDir, "launcher_profiles.json"),
+      JSON.stringify(launcherProfile, null, 2)
+    );
+
     // Download the installer
     await downloadFile(installerUrl, installerPath);
 
     // Build the command
     let cmd;
     if(type.toLowerCase() === "fabric" || type.toLowerCase() === "quilt") {
-      cmd = `java -jar "${installerPath}" client -dir "${instanceDir}" -snapshot -mcversion ${version}`;
+      cmd = `java -jar "${installerPath}" client -dir "${instanceDir}" -mcversion ${version}`;
     } else { // forge/neoforge
       cmd = `java -jar "${installerPath}" --installClient -mcdir "${instanceDir}"`;
     }
@@ -225,6 +234,37 @@ ipcMain.on("install-modloader", async (event, { type, version, instanceId }) => 
     event.reply("modloader-error", err.message);
   }
 });
+
+//shi
+
+ipcMain.handle("make-server", async (event, params) => {
+  return await serverManager.makeServer(params);
+});
+
+ipcMain.handle("start-server", (event, id) => {
+  return serverManager.startServer(id);
+});
+
+ipcMain.handle("stop-server", (event, id) => {
+  return serverManager.stopServer(id);
+});
+
+ipcMain.handle("restart-server", (event, id) => {
+  return serverManager.restartServer(id);
+});
+
+ipcMain.handle("list-servers", () => {
+  return serverManager.getServers();
+});
+
+ipcMain.handle("server-console", (event, id) => {
+  return serverManager.getConsole(id);
+});
+
+ipcMain.handle("send-server-command", (event, id, cmd) => {
+  return serverManager.sendServerCommand(id, cmd);
+});
+
 
 
 

@@ -6,7 +6,7 @@
 </head>
 <body>
   <h1>Redstone Launcher</h1>
-
+  <a href="server.html">server manager</a>
   <!-- ─────────────── Players Section ─────────────── -->
   <h2>Players</h2>
   <div>
@@ -30,12 +30,6 @@
       Version:
       <input id="profileVersion" value="1.20.1" />
     </label>
-    <label>
-      Player:
-      <select id="playerSelect">
-        <option value="">-- select player --</option>
-      </select>
-    </label>
     <button id="createProfileBtn">Create Game Profile</button>
   </div>
   <ul id="profiles-list"></ul>
@@ -51,12 +45,13 @@
       const createCrackedBtn = document.getElementById("createCrackedBtn");
       const loginMicrosoftBtn = document.getElementById("loginMicrosoftBtn");
       const playersList = document.getElementById("players-list");
-      const playerSelect = document.getElementById("playerSelect");
       const profileName = document.getElementById("profileName");
       const profileVersion = document.getElementById("profileVersion");
       const createProfileBtn = document.getElementById("createProfileBtn");
       const profilesList = document.getElementById("profiles-list");
       const logs = document.getElementById("logs");
+
+      let players = [];
 
       // Buttons
       createCrackedBtn.addEventListener("click", () => {
@@ -73,35 +68,29 @@
       createProfileBtn.addEventListener("click", () => {
         const name = profileName.value.trim();
         const version = profileVersion.value.trim();
-        const playerId = Number(playerSelect.value);
-        if (!name || !version || !playerId) {
-          alert("Fill profile name, version, and select a player");
+        if (!name || !version) {
+          alert("Fill profile name and version");
           return;
         }
-        ipcRenderer.send("create-profile", { name, version, playerId });
+        ipcRenderer.send("create-profile", { name, version });
         profileName.value = "";
         profileVersion.value = "1.20.1";
       });
 
       // IPC handlers - Players
-      ipcRenderer.on("players-list", (event, players) => {
+      ipcRenderer.on("players-list", (event, newPlayers) => {
+        players = newPlayers;
         playersList.innerHTML = "";
-        playerSelect.innerHTML = '<option value="">-- select player --</option>';
         players.forEach(p => {
           const li = document.createElement("li");
           const display = p.username ?? (p.auth?.selectedProfile?.name ?? "MS Account");
           li.textContent = `[${p.type}] ${display} (id: ${p.id})`;
           playersList.appendChild(li);
-
-          const opt = document.createElement("option");
-          opt.value = p.id;
-          opt.textContent = `${p.id} — ${display} (${p.type})`;
-          playerSelect.appendChild(opt);
         });
       });
 
-      ipcRenderer.on("players-updated", (event, players) => {
-        ipcRenderer.emit("players-list", null, players);
+      ipcRenderer.on("players-updated", (event, newPlayers) => {
+        ipcRenderer.emit("players-list", null, newPlayers);
       });
 
       // IPC handlers - Profiles
@@ -109,49 +98,31 @@
         profilesList.innerHTML = "";
         profiles.forEach(p => {
           const li = document.createElement("li");
-          li.textContent = `${p.name} (v${p.version}, playerId=${p.playerId}) `;
+          li.textContent = `${p.name} (v${p.version}) `;
 
-          // Launch button
-          const launchBtn = document.createElement("button");
-          launchBtn.textContent = "Launch";
-          launchBtn.onclick = () => ipcRenderer.send("launch-profile", p.id);
-          li.appendChild(launchBtn);
-
-          // Modloader install button
-          const modBtn = document.createElement("button");
-          modBtn.textContent = "Install Modloader";
-          li.appendChild(modBtn);
-
-          // Dropdown for modloader selection (hidden by default)
+          // Player selection dropdown
           const select = document.createElement("select");
-          select.style.display = "none";
-          ["Fabric","Quilt","Forge","NeoForge"].forEach(mod => {
+          const defaultOpt = document.createElement("option");
+          defaultOpt.value = "";
+          defaultOpt.textContent = "-- select player --";
+          select.appendChild(defaultOpt);
+          players.forEach(pl => {
             const opt = document.createElement("option");
-            opt.value = mod.toLowerCase();
-            opt.textContent = mod;
+            opt.value = pl.id;
+            opt.textContent = `${pl.username ?? (pl.auth?.selectedProfile?.name ?? "MS Account")} (${pl.type})`;
             select.appendChild(opt);
           });
           li.appendChild(select);
 
-          // Confirm install button
-          const confirmBtn = document.createElement("button");
-          confirmBtn.textContent = "Install";
-          confirmBtn.style.display = "none";
-          li.appendChild(confirmBtn);
-
-          // Button logic
-          modBtn.onclick = () => {
-            select.style.display = "inline";
-            confirmBtn.style.display = "inline";
+          // Launch button
+          const launchBtn = document.createElement("button");
+          launchBtn.textContent = "Launch";
+          launchBtn.onclick = () => {
+            const playerId = Number(select.value);
+            if (!playerId) { alert("Select a player to launch"); return; }
+            ipcRenderer.send("launch-profile", { profileId: p.id, playerId });
           };
-          confirmBtn.onclick = () => {
-            const mod = select.value;
-            ipcRenderer.send("install-modloader", {
-              type: mod,
-              version: p.version,
-              instanceId: p.id
-            });
-          };
+          li.appendChild(launchBtn);
 
           profilesList.appendChild(li);
         });
@@ -166,19 +137,6 @@
         logs.textContent += msg + "\n";
         logs.scrollTop = logs.scrollHeight;
       });
-      ipcRenderer.on("modloader-log", (event, msg) => {
-        logs.textContent += "[MODLOADER] " + msg + "\n";
-        logs.scrollTop = logs.scrollHeight;
-      });
-      ipcRenderer.on("modloader-done", (event, type) => {
-        logs.textContent += `[MODLOADER] ${type} installed!\n`;
-        logs.scrollTop = logs.scrollHeight;
-      });
-      ipcRenderer.on("modloader-error", (event, err) => {
-        logs.textContent += "[MODLOADER ERROR] " + err + "\n";
-        logs.scrollTop = logs.scrollHeight;
-      });
-
       ipcRenderer.on("launch-error", (event, msg) => {
         logs.textContent += "[ERROR] " + msg + "\n";
         logs.scrollTop = logs.scrollHeight;
