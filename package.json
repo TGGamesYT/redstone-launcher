@@ -1,29 +1,60 @@
 {
   "name": "redstone-launcher",
   "productName": "Redstone Launcher",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "description": "A custom Minecraft launcher",
+  "author": "TG & Faze_gbr",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "app": "electron .",
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "build:win": "electron-builder --win",
+    "build": "electron-builder -mwl"
   },
   "keywords": [],
-  "author": "",
   "license": "ISC",
-  "description": "",
   "devDependencies": {
-    "electron": "^37.3.1"
-  },
-  "win": {
-    "icon": "assets/icon.ico"
-  },
-  "mac": {
-    "icon": "assets/icon.icns"
-  },
-  "linux": {
-    "icon": "assets/icon.png"
+    "@electron-forge/cli": "^7.8.3",
+    "@electron-forge/maker-deb": "^7.8.3",
+    "@electron-forge/maker-rpm": "^7.8.3",
+    "@electron-forge/maker-squirrel": "^7.8.3",
+    "@electron-forge/maker-zip": "^7.8.3",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.8.3",
+    "@electron-forge/plugin-fuses": "^7.8.3",
+    "@electron/fuses": "^1.8.0",
+    "electron": "^37.3.1",
+    "electron-builder": "^26.0.12"
   },
   "dependencies": {
+    "electron-squirrel-startup": "^1.0.1",
+    "form-data": "^4.0.4",
     "minecraft-launcher-core": "^3.18.2",
-    "msmc": "^5.0.5"
+    "msmc": "^5.0.5",
+    "node-fetch": "^3.3.2",
+    "tomate-loaders": "^2.0.2"
+  },
+  "build": {
+    "appId": "com.redstone.launcher",
+    "productName": "Redstone Launcher",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    }
   }
 }

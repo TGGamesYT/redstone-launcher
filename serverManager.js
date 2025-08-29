@@ -2,9 +2,11 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const { spawn } = require("child_process");
+const { app } = require('electron');
 
 const servers = new Map(); // name → { proc, config, logs }
-const serversDir = path.join(__dirname, "servers");
+const dataDir = path.join(app.getPath('userData'));
+const serversDir = path.join(dataDir, "servers");
 fs.mkdirSync(serversDir, { recursive: true });
 
 // Helper: download file
@@ -35,6 +37,28 @@ function fetchJson(url) {
   });
 }
 
+function fetchLatestFabricLoader() {
+  return new Promise((resolve, reject) => {
+    https.get('https://maven.fabricmc.net/net/fabricmc/fabric-loader/maven-metadata.xml', (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          // Parse XML manually to find <release>
+          const match = data.match(/<release>(.*?)<\/release>/);
+          if (match && match[1]) {
+            resolve(match[1]);
+          } else {
+            reject(new Error("Could not find release in metadata XML"));
+          }
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }).on('error', reject);
+  });
+}
+
 // --- Create a server ---
 async function makeServer({ name, version, type }) {
   const serverDir = path.join(serversDir, name);
@@ -60,7 +84,8 @@ async function makeServer({ name, version, type }) {
       break;
     }
     case "fabric": {
-      jarUrl = `https://meta.fabricmc.net/v2/versions/loader/${version}/0.14.23/${version}/server/jar`;
+      const loaderVer = await fetchLatestFabricLoader()
+      jarUrl = `https://meta.fabricmc.net/v2/versions/loader/${version}/${loaderVer}/1.1.0/server/jar`;
       break;
     }
     default:

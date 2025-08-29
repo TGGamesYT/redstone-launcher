@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Profile Manager</title>
+</head>
+<body>
+  <h2>Profile Manager</h2>
+
+  <label for="playerSelect">Select Player:</label>
+  <select id="playerSelect"></select>
+
+  <h3>Upload Skins</h3>
+  <input type="file" id="skinUpload" accept=".png,.jpg" multiple />
+  <ul id="skinList"></ul>
+
+  <button id="setSkinBtn">Set Selected Skin</button>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const path = require('path');
+    const fs = require('fs');
+
+    const playerSelect = document.getElementById('playerSelect');
+    const skinUpload = document.getElementById('skinUpload');
+    const skinList = document.getElementById('skinList');
+    const setSkinBtn = document.getElementById('setSkinBtn');
+
+    let selectedSkin = null;
+
+    // Load players
+    ipcRenderer.send('get-players');
+    ipcRenderer.on('players-list', (event, players) => {
+      playerSelect.innerHTML = '';
+      players.forEach(p => {
+        if (p.type === 'microsoft') {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.auth.name || p.auth.selectedProfile?.name || 'Microsoft Account';
+          playerSelect.appendChild(opt);
+        }
+      });
+    });
+
+    // Handle skin uploads
+    skinUpload.addEventListener('change', () => {
+    const file = skinUpload.files[0];
+    if (!file) return;
+
+    const filePath = file.path; // This works only in Electron with nodeIntegration
+
+    const li = document.createElement('li');
+    li.textContent = file.name;
+    li.style.cursor = 'pointer';
+
+    li.addEventListener('click', () => {
+        selectedSkin = filePath; // assign the Node path, not the File object
+        console.log("Selected skin: " + selectedSkin);
+        Array.from(skinList.children).forEach(c => c.style.fontWeight = 'normal');
+        li.style.fontWeight = 'bold';
+    });
+
+    skinList.appendChild(li);
+});
+
+    // Set skin
+    setSkinBtn.addEventListener('click', async () => {
+    const playerId = Number(playerSelect.value);
+    if (!playerId) { alert('Select a player'); return; }
+    if (!selectedSkin) { alert('Select a skin from the list'); return; }
+
+    try {
+        // Send the file path to main process
+        await ipcRenderer.invoke('set-player-skin', {
+            playerId,
+            skinPath: selectedSkin,
+            model: 'classic'
+        });
+        alert('Skin uploaded successfully!');
+    } catch (err) {
+        alert('Failed to set skin: ' + err.message);
+    }
+});
+  </script>
+</body>
+</html>

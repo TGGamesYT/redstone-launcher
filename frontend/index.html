@@ -6,7 +6,9 @@
 </head>
 <body>
   <h1>Redstone Launcher</h1>
-  <a href="server.html">server manager</a>
+  <a href="server.html">server manager</a> <br>
+  <a href="profile-manager.html">profile manager</a> <br>
+  <button id="openModrinth">Browse Modrinth</button>
   <!-- ─────────────── Players Section ─────────────── -->
   <h2>Players</h2>
   <div>
@@ -30,6 +32,10 @@
       Version:
       <input id="profileVersion" value="1.20.1" />
     </label>
+    <label>
+      Loader:
+      <input id="profileLoader" value="vanilla" />
+    </label>
     <button id="createProfileBtn">Create Game Profile</button>
   </div>
   <ul id="profiles-list"></ul>
@@ -47,9 +53,12 @@
       const playersList = document.getElementById("players-list");
       const profileName = document.getElementById("profileName");
       const profileVersion = document.getElementById("profileVersion");
+      const profileLoader = document.getElementById("profileLoader");
       const createProfileBtn = document.getElementById("createProfileBtn");
       const profilesList = document.getElementById("profiles-list");
       const logs = document.getElementById("logs");
+        document.getElementById("openModrinth")
+    .addEventListener("click", () => ipcRenderer.send("open-modrinth-browser"));
 
       let players = [];
 
@@ -68,13 +77,15 @@
       createProfileBtn.addEventListener("click", () => {
         const name = profileName.value.trim();
         const version = profileVersion.value.trim();
+        const loader = profileLoader.value.trim();
         if (!name || !version) {
           alert("Fill profile name and version");
           return;
         }
-        ipcRenderer.send("create-profile", { name, version });
+        ipcRenderer.send("create-profile", { name, version, loader });
         profileName.value = "";
         profileVersion.value = "1.20.1";
+        profileLoader.value = "vanilla";
       });
 
       // IPC handlers - Players

@@ -2,20 +2,22 @@ const path = require('path');
 const { exec } = require("child_process");
 const https = require("https");
 const fs = require('fs');
+const fetch = require('node-fetch');
 const { app, BrowserWindow, ipcMain, shell, session } = require('electron');
+const { vanilla, fabric, quilt, forge, neoforge } = require('tomate-loaders');
 const { Client, Authenticator } = require('minecraft-launcher-core');
 const { Auth } = require('msmc');
 const serverManager = require("./serverManager");
+const FormData = require('form-data');
 
-
-const profilesPath = path.join(__dirname, 'profiles.json');
-const playersPath = path.join(__dirname, 'players.json');
+const dataDir = path.join(app.getPath('userData'));
+const profilesPath = path.join(dataDir, 'profiles.json');
+const playersPath = path.join(dataDir, 'players.json');
 
 // Ensure files exist
 if (!fs.existsSync(profilesPath)) fs.writeFileSync(profilesPath, JSON.stringify([]));
 if (!fs.existsSync(playersPath)) fs.writeFileSync(playersPath, JSON.stringify([]));
 
-// Load & save helpers
 // Load & save helpers
 function ensureFile(path) {
   if (!fs.existsSync(path)) fs.writeFileSync(path, JSON.stringify([]));
@@ -32,14 +34,16 @@ function loadPlayers() {
   return JSON.parse(fs.readFileSync(playersPath));
 }
 function savePlayers(p) { fs.writeFileSync(playersPath, JSON.stringify(p, null, 2)); }
+let mainWindow;
 function createWindow() {
   const win = new BrowserWindow({
     width: 1000,
     height: 700,
-    icon: path.join(__dirname, 'assets', 'icon.png'),
+    icon: path.join(dataDir, 'assets', 'icon.png'),
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   });
   win.loadFile('frontend/index.html');
+  mainWindow = win
 }
 
 /* ─────────────── Player Profiles ─────────────── */
@@ -94,7 +98,7 @@ ipcMain.on('create-profile', (event, profile) => {
     id: Date.now(),
     name: profile.name,
     version: profile.version || "1.20.1",
-    playerId: profile.playerId // link to a player
+    loader: profile.loader || "vanilla"
   };
 
   profiles.push(newProfile);
@@ -126,14 +130,29 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId }) => {
     auth = player.auth;
   }
 
-  const rootDir = path.join(__dirname, 'client', String(profile.id));
+  const rootDir = path.join(dataDir, 'client', String(profile.id));
   fs.mkdirSync(rootDir, { recursive: true });
 
   const launcher = new Client();
+  let loaderer;
+  if (profile.loader == "fabric") {
+    loaderer = fabric
+  } else if (profile.loader == "quilt") {
+    loaderer = quilt
+  } else if (profile.loader == "forge") {
+    loaderer = forge
+  } else if (profile.loader == "neoforge") {
+    loaderer = neoforge
+  } else {
+    loaderer = vanilla
+  } 
+  const launcherConfig = await loaderer.getMCLCLaunchConfig({
+    gameVersion: profile.version,
+    rootPath: rootDir
+  });
   launcher.launch({
+    ...launcherConfig,
     authorization: auth,
-    root: rootDir,
-    version: { number: profile.version, type: versionToType(profile.version) },
     memory: { max: "4G", min: "1G" },
     overrides: {
       detached: false
@@ -143,96 +162,6 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId }) => {
   launcher.on('debug', (msg) => event.reply('launcher-log', msg));
   launcher.on('data', (msg) => event.reply('launcher-log', msg));
   launcher.on('error', (err) => event.reply('launcher-log', "ERROR: " + err.message));
-});
-
-/* ─────────────── modloaders ─────────────── */
-
-ipcMain.on("install-modloader", async (event, { type, version, instanceId }) => {
-  try {
-    const instanceDir = path.join(__dirname, "client", String(instanceId));
-    fs.mkdirSync(instanceDir, { recursive: true });
-
-    let installerUrl;
-    let installerName;
-
-    switch(type.toLowerCase()) {
-      case "fabric":
-        installerUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.1.0/fabric-installer-1.1.0.jar";
-        installerName = "fabric-installer.jar";
-        break;
-      case "quilt":
-        installerUrl = "https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-installer/0.16.0/quilt-installer-0.16.0.jar";
-        installerName = "quilt-installer.jar";
-        break;
-      case "forge":
-        installerUrl = "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.0.82/forge-1.20.1-47.0.82-installer.jar";
-        installerName = "forge-installer.jar";
-        break;
-      case "neoforge":
-        installerUrl = "https://neoforge.net/downloads/installer/1.20.1-neoforge-installer.jar";
-        installerName = "neoforge-installer.jar";
-        break;
-      default:
-        return event.reply("modloader-error", "Unknown modloader type");
-    }
-
-    const installerPath = path.join(instanceDir, installerName);
-
-    // Helper to download file with redirect support
-    function downloadFile(url, dest) {
-      return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(dest);
-        https.get(url, (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            // follow redirect
-            downloadFile(res.headers.location, dest).then(resolve).catch(reject);
-            return;
-          }
-          res.pipe(file);
-          file.on("finish", () => file.close(resolve));
-        }).on("error", (err) => {
-          fs.unlink(dest, ()=>{}); // delete partial file
-          reject(err);
-        });
-      });
-    }
-
-    //create a dummy launcher profiles json
-
-    const launcherProfile = {
-      profiles: {
-        "redstone-temp": {
-          name: "Redstone Temp",
-          lastVersionId: version,
-          type: "custom"
-        }
-      }
-    };
-
-    fs.writeFileSync(
-      path.join(instanceDir, "launcher_profiles.json"),
-      JSON.stringify(launcherProfile, null, 2)
-    );
-
-    // Download the installer
-    await downloadFile(installerUrl, installerPath);
-
-    // Build the command
-    let cmd;
-    if(type.toLowerCase() === "fabric" || type.toLowerCase() === "quilt") {
-      cmd = `java -jar "${installerPath}" client -dir "${instanceDir}" -mcversion ${version}`;
-    } else { // forge/neoforge
-      cmd = `java -jar "${installerPath}" --installClient -mcdir "${instanceDir}"`;
-    }
-
-    const child = exec(cmd);
-    child.stdout.on("data", (data) => event.reply("modloader-log", data.toString()));
-    child.stderr.on("data", (data) => event.reply("modloader-log", data.toString()));
-    child.on("exit", () => event.reply("modloader-done", type));
-
-  } catch (err) {
-    event.reply("modloader-error", err.message);
-  }
 });
 
 //shi
@@ -265,14 +194,96 @@ ipcMain.handle("send-server-command", (event, id, cmd) => {
   return serverManager.sendServerCommand(id, cmd);
 });
 
+/* ─────────────── Modrinth ─────────────── */
+
+ipcMain.on("open-modrinth-browser", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  const wc = mainWindow.webContents;
+
+  // Remove previous listeners to avoid duplicates
+  wc.session.removeAllListeners("will-download");
+
+  // Intercept download requests
+  wc.session.on("will-download", (event, item) => {
+    const url = item.getURL();
+
+    if (url.includes("cdn.modrinth.com/data/") && url.endsWith(".jar")) {
+      event.preventDefault(); // stop default save dialog
+      const encoded = encodeURIComponent(url);
+
+      // Navigate main window to modrinth.html instead
+      mainWindow.loadFile("frontend/modrinth.html", {
+        query: { file: encoded }
+      });
+    }
+  });
+
+  // Load the actual Modrinth site inside the main window
+  mainWindow.loadURL("https://modrinth.com");
+});
+
+
+ipcMain.handle("mod-download", async (event, { instanceId, fileUrl }) => {
+  try {
+    const profiles = loadProfiles();
+    const profile = profiles.find(p => p.id === parseInt(instanceId));
+    if (!profile) throw new Error("Instance not found");
+
+    const modsDir = path.join(app.getPath("userData"), "client", String(profile.id), "mods");
+    fs.mkdirSync(modsDir, { recursive: true });
+
+    const fileName = path.basename(new URL(fileUrl).pathname);
+    const dest = path.join(modsDir, fileName);
+
+    await downloadFile(fileUrl, dest);
+
+    return { success: true, path: dest };
+  } catch (err) {
+    console.error("Failed to download mod:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+/* ─────────────── Access Token for skin changing ─────────────── */
+
+// Returns the full player object
+ipcMain.handle("get-player", async (event, playerId) => {
+  const players = loadPlayers();
+  const player = players.find(p => p.id === Number(playerId));
+  if (!player) throw new Error("Player not found");
+  return player; // return the whole object
+});
+
+ipcMain.handle('set-player-skin', async (event, { playerId, skinPath, model }) => {
+    const players = loadPlayers();
+    const player = players.find(p => p.id === Number(playerId));
+    if (!player || player.type !== 'microsoft') throw new Error('Invalid Microsoft player');
+
+    const token = player.auth.access_token;
+
+    const skinBuffer = fs.readFileSync(skinPath);
+    const fileName = require('path').basename(skinPath);
+
+    const form = new FormData();
+    form.append('model', model);
+    form.append('file', skinBuffer, { filename: fileName });
+
+    const res = await fetch('https://api.minecraftservices.com/minecraft/profile/skins', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            ...form.getHeaders()
+        },
+        body: form
+    });
+
+    if (!res.ok) throw new Error(`Failed to upload skin: ${res.statusText}`);
+});
 
 
 
 /* ─────────────── Helpers ─────────────── */
-function versionToType(version) {
-  return version.includes('.') ? "release" : "snapshot";
-}
-
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
@@ -292,6 +303,7 @@ function downloadFile(url, dest) {
     });
   });
 }
+
 
 
 app.whenReady().then(createWindow);

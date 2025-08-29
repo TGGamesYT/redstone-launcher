@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Select Instance</title>
+</head>
+<body>
+  <h2>Install Modrinth Mod</h2>
+  <p id="file"></p>
+
+  <ul id="instances"></ul>
+
+  <script>
+    const { ipcRenderer } = require("electron");
+    const urlParams = new URLSearchParams(window.location.search);
+    const fileUrl = decodeURIComponent(urlParams.get("file"));
+    document.getElementById("file").innerText = "Mod file: " + fileUrl;
+
+    // Request profile list
+    ipcRenderer.send("get-profiles");
+
+    // Render profile list
+    ipcRenderer.on("profiles-list", (event, profiles) => {
+      const list = document.getElementById("instances");
+      list.innerHTML = "";
+      profiles.forEach(p => {
+        const li = document.createElement("li");
+        li.textContent = `${p.name} (Loader: ${p.loader}, Version: ${p.version}) `;
+
+        const installBtn = document.createElement("button");
+        installBtn.textContent = "Install Mod";
+        installBtn.onclick = async () => {
+          await ipcRenderer.invoke("mod-download", {
+            instanceId: p.id,
+            fileUrl
+          });
+          window.location.href = "index.html";
+        };
+
+        li.appendChild(installBtn);
+        list.appendChild(li);
+      });
+    });
+  </script>
+</body>
+</html>
