@@ -1,166 +1,231 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>Redstone Launcher</title>
+<meta charset="UTF-8">
+<title>Redstone Launcher</title>
+<style>
+  .profile-item, .player-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .profile-item img, .player-item img {
+    width: 32px;
+    height: 32px;
+    margin-right: 8px;
+    border-radius: 4px;
+  }
+  .selected-player {
+    border: 2px solid #4CAF50;
+    padding: 2px;
+  }
+</style>
 </head>
 <body>
-  <h1>Redstone Launcher</h1>
-  <a href="server.html">server manager</a> <br>
-  <a href="profile-manager.html">profile manager</a> <br>
-  <button id="openModrinth">Browse Modrinth</button>
-  <!-- ─────────────── Players Section ─────────────── -->
-  <h2>Players</h2>
-  <div>
-    <label>
-      Cracked username:
-      <input id="crackedName" placeholder="Steve" />
-    </label>
-    <button id="createCrackedBtn">Add Cracked Player</button>
-    <button id="loginMicrosoftBtn">Login Microsoft</button>
-  </div>
-  <ul id="players-list"></ul>
+<h1>Redstone Launcher</h1>
+<a href="server.html">server manager</a> <br>
+<a href="profile-manager.html">profile manager</a> <br>
+<a href="events.html">events</a> <br>
+<button id="openModrinth">Browse Modrinth</button>
 
-  <!-- ─────────────── Profiles Section ─────────────── -->
-  <h2>Game Profiles</h2>
-  <div>
-    <label>
-      Profile name:
-      <input id="profileName" placeholder="Vanilla 1.20" />
-    </label>
-    <label>
-      Version:
-      <input id="profileVersion" value="1.20.1" />
-    </label>
-    <label>
-      Loader:
-      <input id="profileLoader" value="vanilla" />
-    </label>
-    <button id="createProfileBtn">Create Game Profile</button>
-  </div>
-  <ul id="profiles-list"></ul>
+<h2>Players</h2>
+<div>
+  <label>Cracked username:
+    <input id="crackedName" placeholder="Steve" />
+  </label>
+  <button id="createCrackedBtn">Add Cracked Player</button>
+  <button id="loginMicrosoftBtn">Login Microsoft</button>
+</div>
+<ul id="players-list"></ul>
 
-  <h2>Logs</h2>
-  <pre id="logs" style="height:200px; overflow:auto;"></pre>
+<h2>Game Profiles</h2>
+<div>
+  <label>Profile name:
+    <input id="profileName" placeholder="Vanilla 1.20" />
+  </label>
+  <label>Version:
+    <input id="profileVersion" value="1.20.1" />
+  </label>
+  <label>Loader:
+    <input id="profileLoader" value="vanilla" />
+  </label>
+  <label>Icon:
+    <input type="file" id="profileIcon" accept="image/*" />
+  </label>
+  <button id="createProfileBtn">Create Game Profile</button>
+  <button id="importMrpackBtn">Import from .mrpack</button>
+</div>
+<ul id="profiles-list"></ul>
 
-  <script>
-    const { ipcRenderer } = require("electron");
+<h2>Logs</h2>
+<pre id="logs" style="height:200px; overflow:auto;"></pre>
 
-    document.addEventListener("DOMContentLoaded", () => {
-      const crackedName = document.getElementById("crackedName");
-      const createCrackedBtn = document.getElementById("createCrackedBtn");
-      const loginMicrosoftBtn = document.getElementById("loginMicrosoftBtn");
-      const playersList = document.getElementById("players-list");
-      const profileName = document.getElementById("profileName");
-      const profileVersion = document.getElementById("profileVersion");
-      const profileLoader = document.getElementById("profileLoader");
-      const createProfileBtn = document.getElementById("createProfileBtn");
-      const profilesList = document.getElementById("profiles-list");
-      const logs = document.getElementById("logs");
-        document.getElementById("openModrinth")
-    .addEventListener("click", () => ipcRenderer.send("open-modrinth-browser"));
+<script>
+const { ipcRenderer } = require("electron");
 
-      let players = [];
+document.addEventListener("DOMContentLoaded", () => {
+  const crackedName = document.getElementById("crackedName");
+  const createCrackedBtn = document.getElementById("createCrackedBtn");
+  const loginMicrosoftBtn = document.getElementById("loginMicrosoftBtn");
+  const playersList = document.getElementById("players-list");
+  const profileName = document.getElementById("profileName");
+  const profileVersion = document.getElementById("profileVersion");
+  const profileLoader = document.getElementById("profileLoader");
+  const profileIcon = document.getElementById("profileIcon");
+  const createProfileBtn = document.getElementById("createProfileBtn");
+  const profilesList = document.getElementById("profiles-list");
+  const logs = document.getElementById("logs");
+  const importMrpackBtn = document.getElementById("importMrpackBtn");
 
-      // Buttons
-      createCrackedBtn.addEventListener("click", () => {
-        const name = crackedName.value.trim();
-        if (!name) { alert("Enter a cracked username"); return; }
-        ipcRenderer.send("create-cracked-player", name);
-        crackedName.value = "";
-      });
+  document.getElementById("openModrinth").addEventListener("click", () => ipcRenderer.send("open-modrinth-browser"));
 
-      loginMicrosoftBtn.addEventListener("click", () => {
-        ipcRenderer.send("login-microsoft");
-      });
+  let players = [];
+  let profiles = [];
+  let selectedPlayerId = null;
 
-      createProfileBtn.addEventListener("click", () => {
-        const name = profileName.value.trim();
-        const version = profileVersion.value.trim();
-        const loader = profileLoader.value.trim();
-        if (!name || !version) {
-          alert("Fill profile name and version");
-          return;
-        }
-        ipcRenderer.send("create-profile", { name, version, loader });
-        profileName.value = "";
-        profileVersion.value = "1.20.1";
-        profileLoader.value = "vanilla";
-      });
-
-      // IPC handlers - Players
-      ipcRenderer.on("players-list", (event, newPlayers) => {
-        players = newPlayers;
-        playersList.innerHTML = "";
-        players.forEach(p => {
-          const li = document.createElement("li");
-          const display = p.username ?? (p.auth?.selectedProfile?.name ?? "MS Account");
-          li.textContent = `[${p.type}] ${display} (id: ${p.id})`;
-          playersList.appendChild(li);
-        });
-      });
-
-      ipcRenderer.on("players-updated", (event, newPlayers) => {
-        ipcRenderer.emit("players-list", null, newPlayers);
-      });
-
-      // IPC handlers - Profiles
-      ipcRenderer.on("profiles-list", (event, profiles) => {
-        profilesList.innerHTML = "";
-        profiles.forEach(p => {
-          const li = document.createElement("li");
-          li.textContent = `${p.name} (v${p.version}) `;
-
-          // Player selection dropdown
-          const select = document.createElement("select");
-          const defaultOpt = document.createElement("option");
-          defaultOpt.value = "";
-          defaultOpt.textContent = "-- select player --";
-          select.appendChild(defaultOpt);
-          players.forEach(pl => {
-            const opt = document.createElement("option");
-            opt.value = pl.id;
-            opt.textContent = `${pl.username ?? (pl.auth?.selectedProfile?.name ?? "MS Account")} (${pl.type})`;
-            select.appendChild(opt);
-          });
-          li.appendChild(select);
-
-          // Launch button
-          const launchBtn = document.createElement("button");
-          launchBtn.textContent = "Launch";
-          launchBtn.onclick = () => {
-            const playerId = Number(select.value);
-            if (!playerId) { alert("Select a player to launch"); return; }
-            ipcRenderer.send("launch-profile", { profileId: p.id, playerId });
-          };
-          li.appendChild(launchBtn);
-
-          profilesList.appendChild(li);
-        });
-      });
-
-      ipcRenderer.on("profiles-updated", (event, profiles) => {
-        ipcRenderer.emit("profiles-list", null, profiles);
-      });
-
-      // Logs
-      ipcRenderer.on("launcher-log", (event, msg) => {
-        logs.textContent += msg + "\n";
-        logs.scrollTop = logs.scrollHeight;
-      });
-      ipcRenderer.on("launch-error", (event, msg) => {
-        logs.textContent += "[ERROR] " + msg + "\n";
-        logs.scrollTop = logs.scrollHeight;
-      });
-      ipcRenderer.on("login-error", (event, msg) => {
-        logs.textContent += "[LOGIN ERROR] " + msg + "\n";
-        logs.scrollTop = logs.scrollHeight;
-      });
-
-      // initial load
-      ipcRenderer.send("get-players");
-      ipcRenderer.send("get-profiles");
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
     });
-  </script>
+  }
+
+  importMrpackBtn.addEventListener("click", async () => {
+    try {
+      const result = await ipcRenderer.invoke("import-mrpack");
+      if (!result || !result.success) {
+        return alert("Failed to import .mrpack: " + (result?.error || "Unknown error"));
+      }
+      // Optionally show a success message
+      alert(`Imported profile: ${result.profile.name} (${result.profile.loader} ${result.profile.version})`);
+      // Refresh profile list
+      ipcRenderer.send("get-profiles");
+    } catch (err) {
+      alert("Error importing .mrpack: " + err.message);
+    }
+  });
+
+
+  // Player creation buttons
+  createCrackedBtn.addEventListener("click", () => {
+    const name = crackedName.value.trim();
+    if (!name) return alert("Enter a cracked username");
+    ipcRenderer.send("create-cracked-player", name);
+    crackedName.value = "";
+  });
+  loginMicrosoftBtn.addEventListener("click", () => ipcRenderer.send("login-microsoft"));
+
+  // Profile creation
+  createProfileBtn.addEventListener("click", async () => {
+    const name = profileName.value.trim();
+    const version = profileVersion.value.trim();
+    const loader = profileLoader.value.trim();
+    let icon = null;
+    if (profileIcon.files.length > 0) icon = await fileToBase64(profileIcon.files[0]);
+    if (!name || !version) return alert("Fill profile name and version");
+    ipcRenderer.send("create-profile", { name, version, loader, icon });
+    profileName.value = "";
+    profileVersion.value = "1.20.1";
+    profileLoader.value = "vanilla";
+    profileIcon.value = "";
+  });
+
+  // Render players
+  function renderPlayers() {
+  playersList.innerHTML = "";
+  players.forEach(p => {
+    console.log("p", p);
+
+    const li = document.createElement("li");
+    li.classList.add("player-item");
+
+    const img = document.createElement("img");
+    img.src = `https://mineskin.eu/helm/${encodeURIComponent(p.username || p.auth?.name || "Steve")}`;
+    img.onerror = () => { img.src = "https://tggamesyt.dev/assets/stevehead.png"; }; // fallback
+    li.appendChild(img);
+
+    const span = document.createElement("span");
+    // Display name for premium = auth.name, for cracked = username, fallback "MS Account"
+    const displayName = p.type === "microsoft" ? (p.auth?.name ?? "MS Account") : (p.username ?? "Cracked");
+    span.textContent = `[${p.type}] ${displayName}`;
+    li.appendChild(span);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.textContent = "Select";
+    selectBtn.onclick = () => {
+      selectedPlayerId = p.id;
+      // Highlight selected
+      Array.from(playersList.children).forEach(c => c.classList.remove("selected-player"));
+      li.classList.add("selected-player");
+    };
+    li.appendChild(selectBtn);
+
+    playersList.appendChild(li);
+  });
+}
+
+
+  // Render profiles
+  function renderProfiles() {
+    profilesList.innerHTML = "";
+    profiles.forEach(p => {
+      const li = document.createElement("li");
+      li.classList.add("profile-item");
+
+      const img = document.createElement("img");
+      img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      li.appendChild(img);
+
+      const text = document.createElement("span");
+      text.textContent = `${p.name} (v${p.version}, ${p.loader}) `;
+      li.appendChild(text);
+
+      const launchBtn = document.createElement("button");
+      launchBtn.textContent = "Launch";
+      launchBtn.onclick = () => {
+        if (!selectedPlayerId) return alert("Select a player first!");
+        ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
+      };
+      li.appendChild(launchBtn);
+
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "Edit";
+      editBtn.onclick = async () => {
+        const newName = prompt("Enter new profile name:", p.name) || p.name;
+        const newVersion = prompt("Enter new version:", p.version) || p.version;
+        const newLoader = prompt("Enter new loader:", p.loader) || p.loader;
+
+        const fileInput = document.createElement("input");
+        fileInput.type = "file";
+        fileInput.accept = "image/*";
+        fileInput.onchange = async () => {
+          let newIcon = p.icon;
+          if (fileInput.files.length > 0) newIcon = await fileToBase64(fileInput.files[0]);
+          ipcRenderer.send("edit-profile", { id: p.id, name: newName, version: newVersion, loader: newLoader, icon: newIcon });
+        };
+        fileInput.click();
+      };
+      li.appendChild(editBtn);
+
+      profilesList.appendChild(li);
+    });
+  }
+
+  ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; renderPlayers(); });
+  ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; renderPlayers(); });
+  ipcRenderer.on("profiles-list", (event, newProfiles) => { profiles = newProfiles; renderProfiles(); });
+  ipcRenderer.on("profiles-updated", (event, newProfiles) => { profiles = newProfiles; renderProfiles(); });
+
+  // Logs
+  ipcRenderer.on("launcher-log", (event, msg) => { logs.textContent += msg + "\n"; logs.scrollTop = logs.scrollHeight; });
+  ipcRenderer.on("launch-error", (event, msg) => { logs.textContent += "[ERROR] " + msg + "\n"; logs.scrollTop = logs.scrollHeight; });
+  ipcRenderer.on("login-error", (event, msg) => { logs.textContent += "[LOGIN ERROR] " + msg + "\n"; logs.scrollTop = logs.scrollHeight; });
+
+  ipcRenderer.send("get-players");
+  ipcRenderer.send("get-profiles");
+});
+</script>
 </body>
 </html>

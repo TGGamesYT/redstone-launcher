@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Redstone Launcher - Events</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; }
+  h1 { margin-bottom: 20px; }
+  .event-list { margin-bottom: 40px; }
+  .event-item { margin-bottom: 10px; }
+  .event-item button { padding: 5px 10px; }
+  .disabled { opacity: 0.5; cursor: not-allowed; }
+  .event-date { margin-left: 10px; font-size: 0.9em; color: #555; }
+</style>
+</head>
+<body>
+<h1>Events</h1>
+
+<a href="index.html">Back</a>
+
+<div id="players-section">
+  <label>Select Player:</label>
+  <select id="playerSelect"></select>
+</div>
+
+<h2>Ongoing Events</h2>
+<div id="ongoing" class="event-list"></div>
+
+<h2>Upcoming Events</h2>
+<div id="upcoming" class="event-list"></div>
+
+<h2>Previous Events</h2>
+<div id="previous" class="event-list"></div>
+
+<script>
+const { ipcRenderer } = require('electron');
+const https = require('https');
+
+let selectedPlayerId = null;
+let events = [];
+
+// Load players
+ipcRenderer.send('get-players');
+ipcRenderer.on('players-list', (event, players) => {
+  const select = document.getElementById('playerSelect');
+  select.innerHTML = '<option value="">-- Select Player --</option>';
+  players.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    const displayName = p.type === "microsoft" ? (p.auth?.name ?? "MS Account") : (p.username ?? "Cracked");
+    opt.textContent = `[${p.type}] ${displayName}`;
+    select.appendChild(opt);
+  });
+
+  select.addEventListener('change', () => {
+    selectedPlayerId = Number(select.value);
+  });
+});
+
+// Fetch events JSON directly
+function fetchEventsJson(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, res => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch(err) { reject(err); }
+      });
+    }).on('error', err => reject(err));
+  });
+}
+
+// Helper to parse date
+function parseDate(str) { return new Date(str + "T00:00:00"); }
+
+// Render events
+function renderEvents() {
+  const ongoingDiv = document.getElementById('ongoing');
+  const upcomingDiv = document.getElementById('upcoming');
+  const previousDiv = document.getElementById('previous');
+
+  ongoingDiv.innerHTML = '';
+  upcomingDiv.innerHTML = '';
+  previousDiv.innerHTML = '';
+
+  const now = new Date();
+
+  events.forEach(ev => {
+    const start = parseDate(ev.start);
+    const end = parseDate(ev.end);
+
+    let container;
+    if (now >= start && now <= end) container = ongoingDiv;
+    else if (now < start) container = upcomingDiv;
+    else container = previousDiv;
+
+    const div = document.createElement('div');
+    div.className = 'event-item';
+
+    const btn = document.createElement('button');
+    btn.textContent = ev.name;
+
+    // Only disable if not in ongoing
+    if (container !== ongoingDiv) btn.classList.add('disabled');
+
+    btn.onclick = async () => {
+        if (container !== ongoingDiv) return;
+        if (!selectedPlayerId) { alert("Select a player first!"); return; }
+
+        try {
+        const result = await ipcRenderer.invoke("handle-mrpack-quickplay", {
+            accountId: selectedPlayerId,
+            serverIp: ev.serverIp,
+            mrpackUrl: ev.mrpackUrl
+        });
+        if (!result.success) alert("Failed: " + result.error);
+        } catch (err) {
+        alert("Error: " + err.message);
+        }
+    };
+
+    div.appendChild(btn);
+
+    const dateSpan = document.createElement('span');
+    dateSpan.className = 'event-date';
+    dateSpan.textContent = `(${ev.start} → ${ev.end})`;
+    div.appendChild(dateSpan);
+
+    container.appendChild(div);
+  });
+
+}
+
+// Fetch and render events
+(async () => {
+  try {
+    events = await fetchEventsJson('https://tggamesyt.dev/redstone-launcher/events.json');
+    renderEvents();
+  } catch (err) {
+    alert("Failed to fetch events: " + err.message);
+  }
+})();
+</script>
+</body>
+</html>

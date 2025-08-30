@@ -3,12 +3,13 @@ const { exec } = require("child_process");
 const https = require("https");
 const fs = require('fs');
 const fetch = require('node-fetch');
-const { app, BrowserWindow, ipcMain, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog  } = require('electron');
 const { vanilla, fabric, quilt, forge, neoforge } = require('tomate-loaders');
 const { Client, Authenticator } = require('minecraft-launcher-core');
 const { Auth } = require('msmc');
 const serverManager = require("./serverManager");
 const FormData = require('form-data');
+const AdmZip = require("adm-zip");
 
 const dataDir = path.join(app.getPath('userData'));
 const profilesPath = path.join(dataDir, 'profiles.json');
@@ -39,9 +40,10 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1000,
     height: 700,
-    icon: path.join(dataDir, 'assets', 'icon.png'),
+    icon: path.join(__dirname, 'assets', 'icon.png'),
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   });
+  win.setAccentColor('#FF0000');
   win.loadFile('frontend/index.html');
   mainWindow = win
 }
@@ -98,7 +100,8 @@ ipcMain.on('create-profile', (event, profile) => {
     id: Date.now(),
     name: profile.name,
     version: profile.version || "1.20.1",
-    loader: profile.loader || "vanilla"
+    loader: profile.loader || "vanilla",
+    icon: profile.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png"
   };
 
   profiles.push(newProfile);
@@ -107,14 +110,68 @@ ipcMain.on('create-profile', (event, profile) => {
   event.reply('profiles-updated', profiles);
 });
 
+ipcMain.on('edit-profile', (event, updatedProfile) => {
+  const profiles = loadProfiles();
+  const index = profiles.findIndex(p => p.id === updatedProfile.id);
+
+  if (index === -1) {
+    event.reply('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
+    return;
+  }
+
+  // Merge updated fields into the existing profile
+  profiles[index] = {
+    ...profiles[index],
+    ...updatedProfile
+  };
+
+  saveProfiles(profiles);
+  event.reply('profiles-updated', profiles);
+});
+
+
 // Get game profiles
 ipcMain.on('get-profiles', (event) => {
   event.reply('profiles-list', loadProfiles());
 });
 
-// Launch profile
-ipcMain.on('launch-profile', async (event, { profileId, playerId }) => {
-  const profiles = loadProfiles();
+// Import .mrpack
+ipcMain.handle("import-mrpack", async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: "Select .mrpack file",
+      filters: [{ name: "Modrinth Pack", extensions: ["mrpack"] }],
+      properties: ["openFile"]
+    });
+
+    if (canceled || !filePaths.length) return { success: false, error: "No file selected" };
+
+    const mrpackPath = filePaths[0];
+    return mrpack(mrpackPath);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, mrpackUrl }) => {
+  try {
+    if (!accountId) throw new Error("No account selected");
+
+    if (!mrpackUrl) throw new Error("Invalid or missing mrpack Path");
+
+    // import the mrpack
+    const result = await mrpackFromUrl(mrpackUrl);
+    if (!result.success) return result;
+
+    const profile_main = result.profile;
+
+    // trigger launch with quickplay
+    let profileId = profile.id
+    let playerId = accountId
+    let quickplaybool = true
+    let quickplayip = serverIp
+
+      const profiles = loadProfiles();
   const players = loadPlayers();
 
   const profile = profiles.find(p => p.id === profileId);
@@ -128,6 +185,13 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId }) => {
     auth = { name: player.username, uuid: "0", access_token: "0" };
   } else {
     auth = player.auth;
+  }
+  let quickplay = null;
+  if (quickplaybool) {
+    quickplay = {
+      "type": 'legacy',
+      "identifier": quickplayip
+    }
   }
 
   const rootDir = path.join(dataDir, 'client', String(profile.id));
@@ -150,17 +214,166 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId }) => {
     gameVersion: profile.version,
     rootPath: rootDir
   });
-  launcher.launch({
+  let opts = {
     ...launcherConfig,
     authorization: auth,
     memory: { max: "4G", min: "1G" },
     overrides: {
       detached: false
-    }
-  });
+    },
+    quickplay
+  }
+  launcher.launch(opts);
 
   launcher.on('debug', (msg) => event.reply('launcher-log', msg));
-  launcher.on('data', (msg) => event.reply('launcher-log', msg));
+  launcher.on('error', (err) => event.reply('launcher-log', "ERROR: " + err.message));
+
+    return { success: true, profile_main };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+async function mrpackFromUrl(url) {
+  const tmpFile = join(os.tmpdir(), `tmp-${Date.now()}.mrpack`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to download mrpack: ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  fs.writeFileSync(tmpFile, buffer);
+  return mrpack(tmpFile); // call your existing mrpack() function
+}
+
+async function mrpack(mrpackPath) {
+  const zip = new AdmZip(mrpackPath);
+
+    const indexEntry = zip.getEntry("modrinth.index.json");
+    if (!indexEntry) return { success: false, error: "modrinth.index.json not found in .mrpack" };
+    const indexJson = JSON.parse(indexEntry.getData().toString("utf8"));
+
+    // Determine loader and Minecraft version
+    const deps = indexJson.dependencies || {};
+    let loader = "vanilla";
+    if (deps["fabric-loader"]) loader = "fabric";
+    else if (deps["quilt-loader"]) loader = "quilt";
+    else if (deps["forge"]) loader = "forge";
+    else if (deps["neoforge"]) loader = "neoforge";
+    const mcVersion = deps["minecraft"] || "1.20.1";
+
+    // Create instance folder
+    const profileId = Date.now();
+    const profilesDir = path.join(dataDir, "client");
+    if (!fs.existsSync(profilesDir)) fs.mkdirSync(profilesDir, { recursive: true });
+    const profileFolder = path.join(profilesDir, `${profileId}`);
+    fs.mkdirSync(profileFolder);
+
+    // Handle overrides inside the .mrpack (everything except modrinth.index.json)
+zip.getEntries().forEach(entry => {
+  if (!entry.isDirectory && entry.entryName !== "modrinth.index.json") {
+    // If the entry is inside "overrides/", strip that prefix
+    let relativePath = entry.entryName;
+    if (relativePath.startsWith("overrides/")) {
+      relativePath = relativePath.slice("overrides/".length);
+    }
+
+    // Only process files inside overrides or other root-level files
+    if (!relativePath) return;
+
+    const entryPath = path.join(profileFolder, relativePath);
+    const entryDir = path.dirname(entryPath);
+    if (!fs.existsSync(entryDir)) fs.mkdirSync(entryDir, { recursive: true });
+    fs.writeFileSync(entryPath, entry.getData());
+  }
+});
+
+    // Download files listed in indexJson.files
+    for (const fileObj of indexJson.files || []) {
+      const filePath = path.join(profileFolder, fileObj.path.replace(/\//g, path.sep));
+      const fileDir = path.dirname(filePath);
+      if (!fs.existsSync(fileDir)) fs.mkdirSync(fileDir, { recursive: true });
+
+      const url = fileObj.downloads[0]; // we take the first URL
+      await downloadFile(url, filePath)
+    }
+
+    // Optional: read icon from pack
+    let icon = null;
+    const iconEntry = zip.getEntry("icon.png");
+    if (iconEntry) icon = iconEntry.getData().toString("base64");
+
+    const newProfile = {
+      id: profileId,
+      name: indexJson.name || "Imported Profile",
+      version: mcVersion,
+      loader,
+      icon,
+      folder: profileFolder,
+      files: indexJson.files || []
+    };
+
+    const profiles = loadProfiles();
+    profiles.push(newProfile);
+    saveProfiles(profiles);
+
+    return { success: true, profile: newProfile };
+}
+
+// Launch profile
+ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
+  const profiles = loadProfiles();
+  const players = loadPlayers();
+
+  const profile = profiles.find(p => p.id === profileId);
+  if (!profile) return event.reply('launch-error', "Profile not found");
+
+  const player = players.find(p => p.id === playerId);
+  if (!player) return event.reply('launch-error', "Player not found");
+
+  let auth;
+  if (player.type === "cracked") {
+    auth = { name: player.username, uuid: "0", access_token: "0" };
+  } else {
+    auth = player.auth;
+  }
+  let quickplay = null;
+  if (quickplaybool) {
+    quickplay = {
+      "type": 'legacy',
+      "identifier": quickplayip
+    }
+  }
+
+  const rootDir = path.join(dataDir, 'client', String(profile.id));
+  fs.mkdirSync(rootDir, { recursive: true });
+
+  const launcher = new Client();
+  let loaderer;
+  if (profile.loader == "fabric") {
+    loaderer = fabric
+  } else if (profile.loader == "quilt") {
+    loaderer = quilt
+  } else if (profile.loader == "forge") {
+    loaderer = forge
+  } else if (profile.loader == "neoforge") {
+    loaderer = neoforge
+  } else {
+    loaderer = vanilla
+  } 
+  const launcherConfig = await loaderer.getMCLCLaunchConfig({
+    gameVersion: profile.version,
+    rootPath: rootDir
+  });
+  let opts = {
+    ...launcherConfig,
+    authorization: auth,
+    memory: { max: "4G", min: "1G" },
+    overrides: {
+      detached: false
+    },
+    quickplay: quickplay
+  }
+  launcher.launch(opts);
+
+  launcher.on('debug', (msg) => event.reply('launcher-log', msg));
   launcher.on('error', (err) => event.reply('launcher-log', "ERROR: " + err.message));
 });
 
