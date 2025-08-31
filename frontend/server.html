@@ -3,22 +3,86 @@
 <head>
   <meta charset="utf-8" />
   <title>Redstone Launcher — Server Manager</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 16px; }
-    h1 { margin-bottom: 8px; }
-    .grid { display: grid; grid-template-columns: 1fr 320px; gap: 16px; }
-    .panel { border: 1px solid #ddd; padding: 12px; border-radius: 6px; }
-    label { display:block; margin-bottom:6px; }
-    input, select, button { padding:6px; margin-right:6px; }
-    ul { list-style: none; padding: 0; margin:0; }
-    li.server { padding:8px; border-bottom:1px solid #eee; display:flex; align-items:center; justify-content:space-between; }
-    .server-meta { flex:1; }
-    .btn { padding:6px 8px; margin-left:6px; }
-    #console { background:#000; color:#0f0; height:360px; overflow:auto; padding:8px; font-family: monospace; white-space: pre-wrap; }
-    .small { font-size: 12px; color:#666; }
-  </style>
+ <link rel="stylesheet" href="server.css" />
+ <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
+
+  <div class="sidebar">
+    <ul class="menu">
+        <li>
+          <a href="index.html">
+            <i class="material-icons">home</i>
+          </a>
+            <span>Home</span>
+
+        </li>
+        <li>
+            <i class="material-icons">play_arrow</i>
+            <span>Play</span>
+        </li>
+        <li>
+            <i class="material-icons">settings</i>
+            <span>Settings</span>
+        </li>
+        <li>
+            <i class="material-icons">person</i>
+            <span>Profiles</span>
+        </li>
+        <li>
+          <i class="material-icons">face</i>
+          <span>Skin, cape changer</span>
+      </li>
+      
+    </ul>
+  </div>
+
+  <div class="sidebar" style="top: 50%;">
+    <ul class="menu">
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 1</span>
+        </li>
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 2</span>
+        </li>
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 3</span>
+        </li>
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 4</span>
+        </li>
+
+        <hr style="color: gray;">
+        <li>
+            <i class="material-icons">add</i>
+            <span>Add an instance</span>
+        </li>
+    </ul>
+  </div>
+
+  <div class="sidebar" style="top: 90%;">
+    <ul class="menu">
+       
+        
+        <li>
+            <i class="material-icons">download</i>
+            <span>Download the latest update</span>
+        </li>
+        <li>
+            <i class="material-icons">login</i>
+            <span>Login</span>
+        </li>
+        <li>
+            <i class="material-icons">exit_to_app</i>
+            <span>Exit the launcher</span>
+        </li>
+    </ul>
+  </div>
+
   <h1>Server Manager</h1>
   <div class="grid">
     <!-- Left: Create + list -->
@@ -38,7 +102,6 @@
       </div>
 
       <hr/>
-      <a href="index.html">back</a>
       <h2>Servers</h2>
       <div class="small">Select a server to view console | Use the buttons to control it</div>
       <ul id="serversList" style="margin-top:8px;"></ul>

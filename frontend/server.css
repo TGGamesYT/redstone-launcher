@@ -1,0 +1,217 @@
+body {
+  background-color: rgb(49, 10, 10); /* eredeti háttér */
+  font-family: 'Segoe UI', Tahoma, sans-serif;
+  padding: 16px;
+  color: white;
+  margin-left: 200px;
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 16px;
+  font-size: 1.8rem;
+  color: #ffffff;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 20px;
+}
+
+.panel {
+  background: #222;
+  border: 1px solid #333;
+  padding: 16px;
+  border-radius: 10px;
+}
+
+label {
+  display: block;
+  margin-bottom: 14px;
+  font-size: 0.95rem;
+}
+
+input,
+select {
+  width: 95%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #111;
+  color: #fff;
+  font-size: 0.95rem;
+  transition: border 0.2s, background 0.2s;
+}
+
+input:focus,
+select:focus {
+  border-color: #ff4d4d;
+  outline: none;
+  background: #1e1e1e;
+}
+
+/* === Modern gombok === */
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+
+/* Elsődleges */
+#startBtn,
+#createServerBtn {
+  background: #e63946;
+  color: #fff;
+}
+#startBtn:hover,
+#createServerBtn:hover {
+  background: #b71c1c;
+  transform: scale(1.03);
+}
+
+/* Másodlagos */
+#stopBtn,
+#restartBtn,
+#refreshListBtn,
+#refreshConsoleBtn,
+#sendCmdBtn {
+  background: #444;
+  color: #eee;
+}
+#stopBtn:hover,
+#restartBtn:hover,
+#refreshListBtn:hover,
+#refreshConsoleBtn:hover,
+#sendCmdBtn:hover {
+  background: #777;
+  transform: scale(1.03);
+}
+
+/* Lista gombok */
+li.server button {
+  margin-left: 6px;
+  background: #222;
+  color: #fff;
+  border: 1px solid #444;
+}
+li.server button:hover {
+  background: #e63946;
+  border-color: #e63946;
+  transform: scale(1.05);
+}
+
+/* Lista */
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+li.server {
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #181818;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.server-meta strong {
+  color: #ff4d4d;
+}
+
+/* Console */
+#console {
+  background: #000;
+  color: #0f0;
+  height: 360px;
+  overflow: auto;
+  padding: 10px;
+  font-family: monospace;
+  font-size: 0.9rem;
+  border-radius: 6px;
+  border: 1px solid #333;
+}
+
+/* Sidebar */
+.sidebar {
+  position: fixed;
+  top: 15%; /* Középre igazítja a képernyő magasságában */
+  left: 10px; /* Az oldal bal szélén helyezkedik el */
+  transform: translateY(-50%); /* Középre igazítja függőlegesen */
+  width: auto; /* Csak az ikonok szélessége */
+  display: flex;
+  flex-direction: column; /* Az ikonok egymás alatt helyezkednek el */
+  align-items: center;
+  gap: 15px; /* Távolság az ikonok között */
+  z-index: 1000;
+}
+
+.menu {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.menu li {
+  display: flex;
+  flex-direction: column; /* Az ikon és a szöveg egymás alatt helyezkedik el */
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  cursor: pointer;
+  transition: transform 0.3s; /* Simább animáció */
+  border-radius: 10px; /* Lekerekített sarkok */
+}
+
+.menu li:hover {
+  transform: scale(1.2); /* Hover állapotban nagyobb lesz */
+}
+
+.menu i {
+  font-size: 24px; /* Ikon mérete */
+  color: white; /* Ikon színe */
+  transition: transform 0.3s; /* Simább animáció az ikonra */
+}
+
+.menu span {
+  opacity: 0; /* Alapértelmezett állapotban nem látható */
+  transform: translateX(10px); /* Alapértelmezett állapotban eltolva jobbra */
+  transition: opacity 0.3s, transform 0.3s; /* Simább animáció */
+  font-size: 0.875rem;
+  color: white;
+  background: rgba(0, 0, 0, 0.7); /* Címkeszerű háttér */
+  padding: 5px 10px; /* Címke belső margója */
+  border-radius: 5px; /* Lekerekített sarkok a címkéhez */
+  position: absolute; /* Pozícionálás az ikonhoz képest */
+  left: 50px; /* Az ikon mellé kerül */
+  white-space: nowrap; /* A szöveg egy sorban marad */
+  pointer-events: none; /* Ne lehessen kattintani rá */
+}
+
+/* Hover állapotban megjelenik a szöveg */
+.menu li:hover span {
+  opacity: 1; /* Láthatóvá válik */
+  transform: translateX(0); /* Visszaáll az eredeti helyzetbe */
+}
+
+/* Tartalom */
+.content {
+  margin-left: 70px; /* Alapértelmezett állapotban a sidebar mellett */
+  padding: 20px;
+  transition: margin-left 0.3s; /* Simább animáció */
+}
+
+.sidebar:hover ~ .content {
+  margin-left: 220px; /* Kibővült sidebar mellett a tartalom eltolódik */
+}
+
+.side {
+  margin-right: 20px;
+}
