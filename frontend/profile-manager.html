@@ -3,15 +3,90 @@
 <head>
   <meta charset="UTF-8">
   <title>Profile Manager</title>
+  <link rel="stylesheet" href="profile-manager.css">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
+  <div class="sidebar">
+    <ul class="menu">
+        <li>
+          <a href="index.html">
+            <i class="material-icons">home</i>
+          </a>
+            <span>Home</span>
+        </li>
+        <li>
+            <i class="material-icons">play_arrow</i>
+            <span>Play</span>
+        </li>
+        <li>
+            <i class="material-icons">settings</i>
+            <span>Settings</span>
+        </li>
+        <li>
+            <i class="material-icons">person</i>
+            <span>Profiles</span>
+        </li>
+        <li>
+          <i class="material-icons">face</i>
+          <span>Skin, cape changer</span>
+      </li>
+      
+    </ul>
+  </div>
+
+  <div class="sidebar" style="top: 50%;">
+    <ul class="menu">
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 1</span>
+        </li>
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 2</span>
+        </li>
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 3</span>
+        </li>
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 4</span>
+        </li>
+
+        <hr style="color: gray;">
+        <li>
+            <i class="material-icons">add</i>
+            <span>Add an instance</span>
+        </li>
+    </ul>
+  </div>
+
+  <div class="sidebar" style="top: 90%;">
+    <ul class="menu">
+       
+        
+        <li>
+            <i class="material-icons">download</i>
+            <span>Download the latest update</span>
+        </li>
+        <li>
+            <i class="material-icons">login</i>
+            <span>Login</span>
+        </li>
+        <li>
+            <i class="material-icons">exit_to_app</i>
+            <span>Exit the launcher</span>
+        </li>
+    </ul>
+  </div>
   <h2>Profile Manager</h2>
 
   <label for="playerSelect">Select Player:</label>
-  <select id="playerSelect"></select>
+  <select id="playerSelect" style="cursor: pointer;"></select>
 
   <h3>Upload Skins</h3>
-  <input type="file" id="skinUpload" accept=".png,.jpg" multiple />
+  <input type="file" id="skinUpload" accept=".png,.jpg" multiple / style="cursor: pointer;">
   <ul id="skinList"></ul>
 
   <button id="setSkinBtn">Set Selected Skin</button>
