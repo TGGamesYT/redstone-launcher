@@ -9,13 +9,7 @@ h2 {
   margin-top: 80px; 
 }
 
-body {
-  background-color: rgb(49, 10, 10);
-  color: white;
-  font-family: 'Segoe UI', Tahoma, sans-serif;
-  margin-left: 200px;
-  padding: 20px;
-}
+
 
 h2 {
   text-align: center;
@@ -172,5 +166,14 @@ button {
 }
 
 .side {
+  margin-right: 20px;
+}
+
+
+.allbg {
+  background: #222;
+  border: 1px solid #333;
+  padding: 16px;
+  border-radius: 10px;
   margin-right: 20px;
 }
