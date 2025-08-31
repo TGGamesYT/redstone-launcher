@@ -1,0 +1,121 @@
+  body {
+    background-color: rgb(49, 10, 10);
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    padding: 16px;
+    color: white;
+    margin-left: 200px;
+  }
+
+  h1 {
+    margin-bottom: 20px;
+    text-align: center;
+  }
+
+  .event-list {
+    margin-bottom: 40px;
+  }
+
+  .event-item {
+    margin-bottom: 10px;
+  }
+
+  .event-item button {
+    padding: 5px 10px;
+  }
+
+  .disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .event-date {
+    margin-left: 10px;
+    font-size: 0.9em;
+    color: #555;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 15%; /* Középre igazítja a képernyő magasságában */
+    left: 10px; /* Az oldal bal szélén helyezkedik el */
+    transform: translateY(-50%); /* Középre igazítja függőlegesen */
+    width: auto; /* Csak az ikonok szélessége */
+    display: flex;
+    flex-direction: column; /* Az ikonok egymás alatt helyezkednek el */
+    align-items: center;
+    gap: 15px; /* Távolság az ikonok között */
+    z-index: 1000;
+  }
+  
+  .menu {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .menu li {
+    display: flex;
+    flex-direction: column; /* Az ikon és a szöveg egymás alatt helyezkedik el */
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    cursor: pointer;
+    transition: transform 0.3s; /* Simább animáció */
+    border-radius: 10px; /* Lekerekített sarkok */
+  }
+  
+  .menu li:hover {
+    transform: scale(1.2); /* Hover állapotban nagyobb lesz */
+  }
+  
+  .menu i {
+    font-size: 24px; /* Ikon mérete */
+    color: white; /* Ikon színe */
+    transition: transform 0.3s; /* Simább animáció az ikonra */
+  }
+  
+  .menu span {
+    opacity: 0; /* Alapértelmezett állapotban nem látható */
+    transform: translateX(10px); /* Alapértelmezett állapotban eltolva jobbra */
+    transition: opacity 0.3s, transform 0.3s; /* Simább animáció */
+    font-size: 0.875rem;
+    color: white;
+    background: rgba(0, 0, 0, 0.7); /* Címkeszerű háttér */
+    padding: 5px 10px; /* Címke belső margója */
+    border-radius: 5px; /* Lekerekített sarkok a címkéhez */
+    position: absolute; /* Pozícionálás az ikonhoz képest */
+    left: 50px; /* Az ikon mellé kerül */
+    white-space: nowrap; /* A szöveg egy sorban marad */
+    pointer-events: none; /* Ne lehessen kattintani rá */
+  }
+  
+  /* Hover állapotban megjelenik a szöveg */
+  .menu li:hover span {
+    opacity: 1; /* Láthatóvá válik */
+    transform: translateX(0); /* Visszaáll az eredeti helyzetbe */
+  }
+  
+  /* Tartalom */
+  .content {
+    margin-left: 70px; /* Alapértelmezett állapotban a sidebar mellett */
+    padding: 20px;
+    transition: margin-left 0.3s; /* Simább animáció */
+  }
+  
+  .sidebar:hover ~ .content {
+    margin-left: 220px; /* Kibővült sidebar mellett a tartalom eltolódik */
+  }
+  
+  .side {
+    margin-right: 20px;
+  }
+
+
+  .panel {
+    background-color: #2c2c2c;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+    margin-right: 20px;
+  }
