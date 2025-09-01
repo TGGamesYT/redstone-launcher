@@ -17,20 +17,28 @@
             <span>Home</span>
 
         </li>
-        <li>
-            <i class="material-icons">play_arrow</i>
+        <li>a
+            <a href="instances.html"><i class="material-icons">play_arrow</i></a>
             <span>Play</span>
         </li>
         <li>
-            <i class="material-icons">settings</i>
-            <span>Settings</span>
+            <a href="https://modrinth.com"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" alt=""></a>
+            <span>Modrinth</span>
         </li>
         <li>
-            <i class="material-icons">person</i>
+            <a href="server.html"><i class="material-icons">storage</i></a>
+            <span>Server Manager</span>
+        </li>
+        <li>
+            <i class="material-icons">settings</i>
+            <span>Settings (useless)</span>
+        </li>
+        <li>
+            <a href="players.html"><i class="material-icons">person</i></a>
             <span>Profiles</span>
         </li>
         <li>
-          <i class="material-icons">face</i>
+          <a href="profile-manager.html"><i class="material-icons">face</i></a>
           <span>Skin, cape changer</span>
       </li>
       
@@ -38,9 +46,9 @@
   </div>
 
   <div class="sidebar" style="top: 50%;">
-    <ul class="menu">
+    <ul class="menu" id="instances">
         <li>
-            <i class="material-icons">code</i>
+            <a href="instances.html?instance=1"><img src="icon.png" alt="Instance 1" style="width: 24px;"></a>
             <span>Instance 1</span>
         </li>
         <li>
@@ -66,18 +74,16 @@
 
   <div class="sidebar" style="top: 90%;">
     <ul class="menu">
-       
-        
         <li>
             <i class="material-icons">download</i>
             <span>Download the latest update</span>
         </li>
-        <li>
-            <i class="material-icons">login</i>
+        <li id="players-login">
+            <a href="players.html"><i class="material-icons">login</i></a>
             <span>Login</span>
         </li>
         <li>
-            <i class="material-icons">exit_to_app</i>
+            <i class="material-icons" onclick="closeApp()">exit_to_app</i>
             <span>Exit the launcher</span>
         </li>
     </ul>
@@ -311,11 +317,15 @@
       }
     });
 
-    // initial load
-    loadServers();
 
-    // Clean up on close
+    ipcRenderer.send("get-profiles");
+ipcRenderer.on("profiles-list", (event, profiles) => {
+  renderInstances(profiles);
+});
+
+    loadServers();
     window.addEventListener('beforeunload', () => stopConsolePolling());
   </script>
+  <script src="sidebar.js"></script>
 </body>
 </html>

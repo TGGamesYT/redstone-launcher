@@ -1,15 +1,18 @@
-const path = require('path');
-const { exec } = require("child_process");
-const https = require("https");
-const fs = require('fs');
-const fetch = require('node-fetch');
-const { app, BrowserWindow, ipcMain, dialog  } = require('electron');
-const { vanilla, fabric, quilt, forge, neoforge } = require('tomate-loaders');
-const { Client, Authenticator } = require('minecraft-launcher-core');
-const { Auth } = require('msmc');
-const serverManager = require("./serverManager");
-const FormData = require('form-data');
-const AdmZip = require("adm-zip");
+import path from 'path';
+import https from 'https';
+import fs from 'fs';
+import fetch from 'node-fetch';
+import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
+import { Client } from 'minecraft-launcher-core';
+import { Auth } from 'msmc';
+import serverManager from './serverManager.js';
+import FormData from 'form-data';
+import AdmZip from 'adm-zip';
+import Store from 'electron-store';
+
+const storage = new Store();
+
 
 const dataDir = path.join(app.getPath('userData'));
 const profilesPath = path.join(dataDir, 'profiles.json');
@@ -40,13 +43,21 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1000,
     height: 700,
-    icon: path.join(__dirname, 'assets', 'icon.png'),
+    icon: path.join(dataDir, 'frontend', 'icon.png'),
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   });
   win.setAccentColor('#FF0000');
   win.loadFile('frontend/index.html');
   mainWindow = win
 }
+
+/* ─────────────── Storing ─────────────── */
+
+ipcMain.handle("get-selected-player", () => storage.get("selectedPlayerId", null));
+ipcMain.on("set-selected-player", (event, id) => {
+  storage.set("selectedPlayerId", id);
+});
+
 
 /* ─────────────── Player Profiles ─────────────── */
 
@@ -127,6 +138,36 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
 
   saveProfiles(profiles);
   event.reply('profiles-updated', profiles);
+});
+
+
+ipcMain.on("delete-profile", (event, profileId) => {
+  const profiles = loadProfiles();
+  const id = parseInt(profileId, 10);
+
+  const newProfiles = profiles.filter(p => p.id !== id);
+
+  if (newProfiles.length === profiles.length) {
+    event.reply("delete-profile-error", `Profile with id ${id} not found`);
+    return;
+  }
+
+  // Delete folder: datadir/client/PROFILEID
+  const profilePath = path.join(dataDir, "client", String(id));
+  try {
+    if (fs.existsSync(profilePath)) {
+      fs.rmSync(profilePath, { recursive: true, force: true });
+    }
+  } catch (err) {
+    console.error("Failed to delete profile folder:", err);
+  }
+
+  saveProfiles(newProfiles);
+  event.reply("profiles-updated", newProfiles);
+});
+
+ipcMain.on("close-app", () => {
+  app.quit();
 });
 
 

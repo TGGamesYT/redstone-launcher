@@ -14,9 +14,10 @@
             <i class="material-icons">home</i>
           </a>
             <span>Home</span>
+
         </li>
         <li>
-            <i class="material-icons">play_arrow</i>
+            <a href="instances.html"><i class="material-icons">play_arrow</i></a>
             <span>Play</span>
         </li>
         <li>
@@ -24,11 +25,11 @@
             <span>Settings</span>
         </li>
         <li>
-            <i class="material-icons">person</i>
+            <a href="players.html"><i class="material-icons">person</i></a>
             <span>Profiles</span>
         </li>
         <li>
-          <i class="material-icons">face</i>
+          <a href="profile-manager.html"><i class="material-icons">face</i></a>
           <span>Skin, cape changer</span>
       </li>
       
@@ -36,9 +37,9 @@
   </div>
 
   <div class="sidebar" style="top: 50%;">
-    <ul class="menu">
+    <ul class="menu" id="instances">
         <li>
-            <i class="material-icons">code</i>
+            <a href="instances.html?instance=1"><img src="icon.png" alt="Instance 1" style="width: 24px;"></a>
             <span>Instance 1</span>
         </li>
         <li>
@@ -64,18 +65,16 @@
 
   <div class="sidebar" style="top: 90%;">
     <ul class="menu">
-       
-        
         <li>
             <i class="material-icons">download</i>
             <span>Download the latest update</span>
         </li>
-        <li>
-            <i class="material-icons">login</i>
+        <li id="players-login">
+            <a href="players.html"><i class="material-icons">login</i></a>
             <span>Login</span>
         </li>
         <li>
-            <i class="material-icons">exit_to_app</i>
+            <i class="material-icons" onclick="closeApp()">exit_to_app</i>
             <span>Exit the launcher</span>
         </li>
     </ul>
@@ -157,6 +156,7 @@
     }
 });
   </script>
+  <script src="sidebar.js"></script>
   </div>
 </body>
 </html>

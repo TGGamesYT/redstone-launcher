@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Redstone Launcher - Players</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; }
+  h1 { margin-bottom: 20px; }
+  ul { list-style: none; padding: 0; }
+  li.player-item { display: flex; align-items: center; margin-bottom: 10px; }
+  li.player-item img { width: 32px; height: 32px; border-radius: 4px; margin-right: 10px; }
+  li.player-item span { flex: 1; }
+  li.player-item button { margin-left: 10px; }
+  .selected-player { border: 2px solid #4CAF50; padding: 2px; border-radius: 4px; }
+  #addPlayerLine { cursor: pointer; color: #007bff; margin-top: 10px; display: inline-block; }
+  /* Modal */
+  #playerModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                 background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
+  #playerModal .modal-content { background: white; padding: 20px; border-radius: 8px; width: 300px; }
+  #playerModal label { display: block; margin-top: 10px; }
+  #playerModal button { margin-top: 15px; }
+</style>
+<link rel="stylesheet" href="server.css">
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</head>
+<body>
+
+     <div class="sidebar">
+    <ul class="menu">
+        <li>
+          <a href="index.html">
+            <i class="material-icons">home</i>
+          </a>
+            <span>Home</span>
+
+        </li>
+        <li>
+            <a href="instances.html"><i class="material-icons">play_arrow</i></a>
+            <span>Play</span>
+        </li>
+        <li>
+            <i class="material-icons">settings</i>
+            <span>Settings</span>
+        </li>
+        <li>
+            <a href="players.html"><i class="material-icons">person</i></a>
+            <span>Profiles</span>
+        </li>
+        <li>
+          <a href="profile-manager.html"><i class="material-icons">face</i></a>
+          <span>Skin, cape changer</span>
+      </li>
+      
+    </ul>
+  </div>
+
+  <div class="sidebar" style="top: 50%;">
+    <ul class="menu" id="instances">
+        <li>
+            <a href="instances.html?instance=1"><img src="icon.png" alt="Instance 1" style="width: 24px;"></a>
+            <span>Instance 1</span>
+        </li>
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 2</span>
+        </li>
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 3</span>
+        </li>
+        <li>
+            <i class="material-icons">code</i>
+            <span>Instance 4</span>
+        </li>
+
+        <hr style="color: gray;">
+        <li>
+            <i class="material-icons">add</i>
+            <span>Add an instance</span>
+        </li>
+    </ul>
+  </div>
+
+  <div class="sidebar" style="top: 90%;">
+    <ul class="menu">
+        <li>
+            <i class="material-icons">download</i>
+            <span>Download the latest update</span>
+        </li>
+        <li id="players-login">
+            <a href="players.html"><i class="material-icons">login</i></a>
+            <span>Login</span>
+        </li>
+        <li>
+            <i class="material-icons" onclick="closeApp()">exit_to_app</i>
+            <span>Exit the launcher</span>
+        </li>
+    </ul>
+  </div>
+
+<h1>Players</h1>
+<ul id="players-list"></ul>
+<span id="addPlayerLine">➕ Add New Player</span>
+
+<!-- Modal -->
+<div id="playerModal">
+  <div class="modal-content">
+    <h3>Add New Player</h3>
+    <label>
+      <input type="radio" name="playerType" value="cracked" checked> Cracked
+    </label>
+    <label>
+      <input type="radio" name="playerType" value="premium"> Premium
+    </label>
+    <div id="crackedNameContainer">
+      <label>Username:
+        <input type="text" id="crackedNameInput" placeholder="Steve">
+      </label>
+    </div>
+    <button id="submitPlayerBtn">Add Player</button>
+    <button id="cancelPlayerBtn">Cancel</button>
+  </div>
+</div>
+
+<script>
+const { ipcRenderer } = require('electron');
+
+let players = [];
+let selectedPlayerId = null;
+
+const playersList = document.getElementById("players-list");
+const addPlayerLine = document.getElementById("addPlayerLine");
+
+const playerModal = document.getElementById("playerModal");
+const crackedNameContainer = document.getElementById("crackedNameContainer");
+const crackedNameInput = document.getElementById("crackedNameInput");
+const submitPlayerBtn = document.getElementById("submitPlayerBtn");
+const cancelPlayerBtn = document.getElementById("cancelPlayerBtn");
+
+// Selected player
+function setSelectedPlayer(id) { ipcRenderer.send('set-selected-player', id); }
+async function getSelectedPlayer() { return await ipcRenderer.invoke('get-selected-player'); }
+
+// Load players from backend
+ipcRenderer.send("get-players");
+ipcRenderer.on("players-list", (event, newPlayers) => { 
+  players = newPlayers; 
+  renderPlayers(); 
+});
+ipcRenderer.on("players-updated", (event, newPlayers) => { 
+  players = newPlayers; 
+  renderPlayers(); 
+});
+
+// Render player list
+function renderPlayers() {
+  updateSideBar()
+  playersList.innerHTML = "";
+  players.forEach(p => {
+    const li = document.createElement("li");
+    li.classList.add("player-item");
+
+    const img = document.createElement("img");
+    img.src = `https://minotar.net/helm/${encodeURIComponent(p.username || p.auth?.name || "Steve")}/24`;
+    img.onerror = () => { img.src = "https://tggamesyt.dev/assets/stevehead.png"; };
+    li.appendChild(img);
+
+    const span = document.createElement("span");
+    const displayName = p.type === "microsoft" ? (p.auth?.name ?? "MS Account") : (p.username ?? "Cracked");
+    span.textContent = `[${p.type}] ${displayName}`;
+    li.appendChild(span);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.textContent = "Select";
+    selectBtn.onclick = () => {
+      selectedPlayerId = p.id;
+      setSelectedPlayer(p.id);
+      Array.from(playersList.children).forEach(c => c.classList.remove("selected-player"));
+      li.classList.add("selected-player");
+    };
+    li.appendChild(selectBtn);
+
+    playersList.appendChild(li);
+  });
+}
+
+// Open modal
+addPlayerLine.onclick = () => {
+  playerModal.style.display = "flex";
+  crackedNameContainer.style.display = "block";
+};
+
+// Update input visibility when player type changes
+document.querySelectorAll('input[name="playerType"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    crackedNameContainer.style.display = radio.value === 'cracked' ? 'block' : 'none';
+  });
+});
+
+// Cancel modal
+cancelPlayerBtn.onclick = () => playerModal.style.display = "none";
+
+// Submit modal
+submitPlayerBtn.onclick = () => {
+  const type = document.querySelector('input[name="playerType"]:checked').value;
+  if (type === "cracked") {
+    const name = crackedNameInput.value.trim();
+    if (!name) return alert("Enter a username");
+    ipcRenderer.send("create-cracked-player", name);
+  } else {
+    ipcRenderer.send("login-microsoft");
+  }
+  playerModal.style.display = "none";
+  crackedNameInput.value = "";
+};
+</script>
+<script src="sidebar.js"></script>
+</body>
+</html>
