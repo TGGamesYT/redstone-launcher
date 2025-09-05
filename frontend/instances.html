@@ -22,79 +22,38 @@
  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
+<div id="toolbar">
+<div class="drag-region">Redstone Launcher - Instances</div>
+<div class="toolbar-buttons">
+    <button id="min-btn">—</button>
+    <button id="max-btn">□</button>
+    <button id="close-btn">✕</button>
+</div>
+</div>
 <div class="sidebar">
-    <ul class="menu">
-        <li>
-          <a href="index.html">
-            <i class="material-icons">home</i>
-          </a>
-            <span>Home</span>
+  <!-- Top section -->
+  <ul class="menu top">
+    <li><a href="index.html"><i class="material-icons">home</i></a><span>Home</span></li>
+    <li><a href="instances.html"><i class="material-icons">play_arrow</i></a><span>Play</span></li>
+    <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" style="width: 24px;"></a><span>Modrinth</span></li>
+    <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
+    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+    <li><a href="players.html"><i class="material-icons">person</i></a><span>Profiles</span></li>
+    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
+  </ul>
 
-        </li>
-        <li>
-            <a href="instances.html"><i class="material-icons">play_arrow</i></a>
-            <span>Play</span>
-        </li>
-        <li>
-            <i class="material-icons">settings</i>
-            <span>Settings</span>
-        </li>
-        <li>
-            <a href="players.html"><i class="material-icons">person</i></a>
-            <span>Profiles</span>
-        </li>
-        <li>
-          <a href="profile-manager.html"><i class="material-icons">face</i></a>
-          <span>Skin, cape changer</span>
-      </li>
-      
-    </ul>
-  </div>
+  <!-- Middle section (instances) -->
+  <ul class="menu middle" id="instances">
+    <li><i class="material-icons">add</i><span>Add an instance</span></li>
+  </ul>
 
-  <div class="sidebar" style="top: 50%;">
-    <ul class="menu" id="instances">
-        <li>
-            <a href="instances.html?instance=1"><img src="icon.png" alt="Instance 1" style="width: 24px;"></a>
-            <span>Instance 1</span>
-        </li>
-        <li>
-            <i class="material-icons">code</i>
-            <span>Instance 2</span>
-        </li>
-        <li>
-            <i class="material-icons">code</i>
-            <span>Instance 3</span>
-        </li>
-        <li>
-            <i class="material-icons">code</i>
-            <span>Instance 4</span>
-        </li>
-
-        <hr style="color: gray;">
-        <li>
-            <i class="material-icons">add</i>
-            <span>Add an instance</span>
-        </li>
-    </ul>
-  </div>
-
-  <div class="sidebar" style="top: 90%;">
-    <ul class="menu">
-        <li>
-            <i class="material-icons">download</i>
-            <span>Download the latest update</span>
-        </li>
-        <li id="players-login">
-            <a href="players.html"><i class="material-icons">login</i></a>
-            <span>Login</span>
-        </li>
-        <li>
-            <i class="material-icons" onclick="closeApp()">exit_to_app</i>
-            <span>Exit the launcher</span>
-        </li>
-    </ul>
-  </div>
-<h1>Game Profiles</h1>
+  <!-- Bottom section -->
+  <ul class="menu bottom">
+    <li><i class="material-icons">download</i><span>Download the latest update</span></li>
+    <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
+    <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
+  </ul>
+</div>
 <ul id="profiles-list"></ul>
 
 <!-- Add Instance Modal -->
@@ -151,7 +110,7 @@ const instanceId = urlParams.get("i");
 
 // Fetch profiles
 ipcRenderer.send("get-profiles");
-ipcRenderer.on("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
+ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
 ipcRenderer.on("profiles-updated", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
 
 function fileToBase64(file) {

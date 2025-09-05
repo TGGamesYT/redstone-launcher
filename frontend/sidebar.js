@@ -1,5 +1,12 @@
 players = [];
 selectedPlayerId = null;
+document.getElementById("min-btn").onclick = () => minApp();
+document.getElementById("max-btn").onclick = () => maxApp();
+document.getElementById("close-btn").onclick = () => closeApp();
+
+document.getElementById("close-btn").addEventListener("click", () => {
+  win.close();
+});
 
 function setSelectedPlayer(id) {ipcRenderer.send('set-selected-player', id)}
 async function getSelectedPlayer() {return await ipcRenderer.invoke('get-selected-player')}
@@ -67,13 +74,6 @@ function renderInstances(instances) {
     ul.appendChild(li);
   });
 
-  // Divider if at least one instance
-  if (instances.length > 0) {
-    const hr = document.createElement("hr");
-    hr.style.color = "gray";
-    ul.appendChild(hr);
-  }
-
   // "Add an instance" option
   const liAdd = document.createElement("li");
   const iAdd = document.createElement("i");
@@ -101,6 +101,8 @@ function updateSideBar() {
 }
 
 function closeApp() {ipcRenderer.send("close-app")}
+function minApp() {ipcRenderer.send("min-app")}
+function maxApp() {ipcRenderer.send("max-app")}
 
   ipcRenderer.send("get-players");
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });

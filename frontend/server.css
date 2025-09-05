@@ -1,9 +1,57 @@
+  /* === Toolbar fix === */
+#toolbar {
+  position: fixed;          /* Stick to top */
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  background: #ff0000;
+  color: white;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  -webkit-app-region: drag;
+  z-index: 2000;            /* On top of everything */
+}
+
+  .toolbar-buttons {
+    display: flex;
+  }
+
+  .drag-region {
+  -webkit-app-region: drag;
+  user-select: none;
+  height: 32px;
+  background: #ff0000;
+  color: white;
+  display: flex;
+  align-items: center;
+
+  padding-left: 12px; /* ⬅️ moves text inward from the left */
+}
+
+  .toolbar-buttons button {
+    -webkit-app-region: no-drag; /* buttons should be clickable */
+    background: transparent;
+    border: none;
+    color: white;
+    width: 40px;
+    height: 100%;
+    cursor: pointer;
+  }
+
+  .toolbar-buttons button:hover {
+    background: #444;
+  }
+
+/* Push content down so it doesn’t hide under toolbar */
 body {
-  background-color: rgb(49, 10, 10); /* eredeti háttér */
+  background-color: rgb(49, 10, 10);
   font-family: 'Segoe UI', Tahoma, sans-serif;
-  padding: 16px;
   color: white;
   margin-left: 200px;
+  margin-top: 32px;          /* ← match toolbar height */
+  padding: 16px;
 }
 
 h1 {
@@ -139,79 +187,109 @@ li.server {
   border: 1px solid #333;
 }
 
-/* Sidebar */
+/* ---------- Sidebar container (no overflow hidden so labels can show) ---------- */
 .sidebar {
   position: fixed;
-  top: 15%; /* Középre igazítja a képernyő magasságában */
-  left: 10px; /* Az oldal bal szélén helyezkedik el */
-  transform: translateY(-50%); /* Középre igazítja függőlegesen */
-  width: auto; /* Csak az ikonok szélessége */
+  top: 32px;      /* below the draggable toolbar */
+  bottom: 0;
+  left: 0;
+  width: 70px;
   display: flex;
-  flex-direction: column; /* Az ikonok egymás alatt helyezkednek el */
+  flex-direction: column;
+  justify-content: space-between; /* top / middle / bottom spacing */
   align-items: center;
-  gap: 15px; /* Távolság az ikonok között */
+  padding: 8px 6px;
   z-index: 1000;
+  /* NO overflow: hidden here — allows hover labels to appear */
 }
 
-.menu {
+/* ---------- Generic menu list ---------- */
+.sidebar .menu {
   list-style: none;
   padding: 0;
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px; /* smaller gap between items */
 }
 
-.menu li {
+/* middle section should grow to take available space */
+.sidebar .menu.middle {
+  flex-grow: 1;
+  justify-content: center;
+}
+
+/* each item is positioned relative so the tooltip/label can be absolutely placed */
+.sidebar .menu li {
+  position: relative;
   display: flex;
-  flex-direction: column; /* Az ikon és a szöveg egymás alatt helyezkedik el */
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 10px;
+  padding: 6px;
   cursor: pointer;
-  transition: transform 0.3s; /* Simább animáció */
-  border-radius: 10px; /* Lekerekített sarkok */
+  transition: transform 0.18s ease;
+  border-radius: 8px;
 }
 
-.menu li:hover {
-  transform: scale(1.2); /* Hover állapotban nagyobb lesz */
-}
-
-.menu i {
-  font-size: 24px; /* Ikon mérete */
-  color: white; /* Ikon színe */
-  transition: transform 0.3s; /* Simább animáció az ikonra */
-}
-
-.menu span {
-  opacity: 0; /* Alapértelmezett állapotban nem látható */
-  transform: translateX(10px); /* Alapértelmezett állapotban eltolva jobbra */
-  transition: opacity 0.3s, transform 0.3s; /* Simább animáció */
-  font-size: 0.875rem;
+/* ---------- Icon sizing — responsive, shrinks when vertical space is tight ---------- */
+.sidebar .menu li i,
+.sidebar .menu li img {
+  display: block;
+  width: clamp(18px, 3.2vh, 28px);   /* min 18px, scales with viewport height, max 28px */
+  height: clamp(18px, 3.2vh, 28px);
+  font-size: clamp(16px, 2.8vh, 24px);
+  line-height: 1;
+  transition: transform 0.18s ease;
   color: white;
-  background: rgba(0, 0, 0, 0.7); /* Címkeszerű háttér */
-  padding: 5px 10px; /* Címke belső margója */
-  border-radius: 5px; /* Lekerekített sarkok a címkéhez */
-  position: absolute; /* Pozícionálás az ikonhoz képest */
-  left: 50px; /* Az ikon mellé kerül */
-  white-space: nowrap; /* A szöveg egy sorban marad */
-  pointer-events: none; /* Ne lehessen kattintani rá */
+  text-decoration: none;
 }
 
-/* Hover állapotban megjelenik a szöveg */
+/* reset anchor styling in sidebar */
+.sidebar a {
+  color: inherit;        /* use icon/text color */
+  text-decoration: none; /* remove underline */
+  display: flex;         /* make icon anchor clickable */
+  align-items: center;
+  justify-content: center;
+}
+
+/* When the height is small, make everything slightly smaller */
+@media (max-height: 640px) {
+  .sidebar { width: 60px; padding: 6px; }
+  .sidebar .menu { gap: 6px; }
+  .sidebar .menu li i.material-icons,
+  .sidebar .menu li img { width: 18px; height: 18px; font-size: 16px; }
+}
+
+/* ---------- Hover effects and label (tooltip-like) ---------- */
+.menu li:hover { transform: scale(1.06); }
+
+/* label / span that appears on hover */
+.menu span {
+  opacity: 0;
+  transform: translateX(10px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  font-size: 0.9rem;
+  color: white;
+  background: rgba(0, 0, 0, 0.75);
+  padding: 6px 10px;
+  border-radius: 6px;
+  position: absolute;
+  left: 56px;               /* sits to the right of the sidebar icons */
+  white-space: nowrap;
+  pointer-events: none;     /* click-through the tooltip text */
+  z-index: 1100;            /* ensure it sits above page content */
+}
+
+/* show label on hover */
 .menu li:hover span {
-  opacity: 1; /* Láthatóvá válik */
-  transform: translateX(0); /* Visszaáll az eredeti helyzetbe */
+  opacity: 1;
+  transform: translateX(0);
 }
 
-/* Tartalom */
-.content {
-  margin-left: 70px; /* Alapértelmezett állapotban a sidebar mellett */
-  padding: 20px;
-  transition: margin-left 0.3s; /* Simább animáció */
-}
-
-.sidebar:hover ~ .content {
-  margin-left: 220px; /* Kibővült sidebar mellett a tartalom eltolódik */
-}
-
-.side {
-  margin-right: 20px;
+/* small nicety: reduce hover scale on very tight heights */
+@media (max-height: 480px) {
+  .menu li:hover { transform: scale(1.02); }
 }

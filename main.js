@@ -39,12 +39,18 @@ function loadPlayers() {
 }
 function savePlayers(p) { fs.writeFileSync(playersPath, JSON.stringify(p, null, 2)); }
 let mainWindow;
+const iconPath = path.join(process.resourcesPath, 'frontend', 'icon.png');
+const preload = path.join(process.resourcesPath, 'preload.js');
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1000,
-    height: 700,
-    icon: path.join(dataDir, 'frontend', 'icon.png'),
-    webPreferences: { nodeIntegration: true, contextIsolation: false }
+    width: 1500,
+    height: 1050,
+    icon: path.join(iconPath),
+    frame: false, 
+    webPreferences: { 
+      nodeIntegration: true,
+      contextIsolation: false
+    }
   });
   win.setAccentColor('#FF0000');
   win.loadFile('frontend/index.html');
@@ -170,6 +176,13 @@ ipcMain.on("close-app", () => {
   app.quit();
 });
 
+ipcMain.on("min-app", () => {
+  mainWindow.minimize();
+});
+
+ipcMain.on("max-app", () => {
+  if (!mainWindow.isMaximized()) {mainWindow.maximize()} else {mainWindow.unmaximize};
+});
 
 // Get game profiles
 ipcMain.on('get-profiles', (event) => {
@@ -449,6 +462,47 @@ ipcMain.handle("send-server-command", (event, id, cmd) => {
 });
 
 /* ─────────────── Modrinth ─────────────── */
+
+ipcMain.handle("download-file", async (event, { type, id, relativePath, fileUrl }) => {
+  return new Promise((resolve, reject) => {
+    if (!['client', 'server'].includes(type)) {
+      return reject(new Error(`Invalid type: ${type}`));
+    }
+
+    if (!id || !relativePath || !fileUrl) {
+      return reject(new Error("Missing parameters: id, relativePath, or fileUrl"));
+    }
+
+    // Determine full path
+    const baseDir = path.join(dataDir, type, String(id), relativePath);
+    const fileName = path.basename(fileUrl.split("?")[0]); // removes query params if any
+    const fullPath = path.join(baseDir, fileName);
+
+    // Ensure directory exists
+    fs.mkdirSync(baseDir, { recursive: true });
+
+    // Choose http or https
+    const client = fileUrl.startsWith("https") ? https : http;
+
+    const file = fs.createWriteStream(fullPath);
+    client.get(fileUrl, (response) => {
+      if (response.statusCode !== 200) {
+        return reject(new Error(`Failed to download file: ${response.statusCode}`));
+      }
+
+      response.pipe(file);
+
+      file.on("finish", () => {
+        file.close();
+        resolve({ success: true, path: fullPath });
+      });
+    }).on("error", (err) => {
+      fs.unlinkSync(fullPath); // delete incomplete file
+      reject(err);
+    });
+  });
+});
+
 
 ipcMain.on("open-modrinth-browser", () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
