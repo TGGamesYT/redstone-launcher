@@ -1,7 +1,7 @@
 {
   "name": "redstone-launcher",
   "productName": "Redstone Launcher",
-  "version": "1.6.0",
+  "version": "1.7.6",
   "description": "A Minecraft launcher",
   "author": "TG & Faze_gbr",
   "main": "main.js",
@@ -17,13 +17,19 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
+    "base64url": "^3.0.1",
+    "child_process": "^1.0.2",
+    "crypto": "^1.0.1",
+    "discord-rpc": "^4.0.1",
     "electron-squirrel-startup": "^1.0.1",
     "electron-store": "^10.1.0",
+    "fernet": "^0.3.3",
     "form-data": "^4.0.4",
     "minecraft-launcher-core": "^3.18.2",
     "msmc": "^5.0.5",
     "node-fetch": "^3.3.2",
     "skinview3d": "^3.4.1",
+    "three": "^0.180.0",
     "tomate-loaders": "^2.0.2"
   },
   "build": {

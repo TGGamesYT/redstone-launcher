@@ -189,6 +189,7 @@ li.server {
 
 /* ---------- Sidebar container (no overflow hidden so labels can show) ---------- */
 .sidebar {
+  background-color: #8f0000;
   position: fixed;
   top: 32px;      /* below the draggable toolbar */
   bottom: 0;

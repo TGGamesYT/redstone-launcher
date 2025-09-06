@@ -1,6 +1,7 @@
 import path from 'path';
 import https from 'https';
 import fs from 'fs';
+const fsp = fs.promises;
 import fetch from 'node-fetch';
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
@@ -10,6 +11,11 @@ import serverManager from './serverManager.js';
 import FormData from 'form-data';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
+import { spawn } from "child_process";
+import crypto from "crypto";
+import base64url from "base64url";
+import fernet from 'fernet';
+import RPC from "discord-rpc";
 
 const storage = new Store();
 
@@ -532,23 +538,65 @@ ipcMain.on("open-modrinth-browser", () => {
 });
 
 
-ipcMain.handle("mod-download", async (event, { instanceId, fileUrl }) => {
-  try {
-    const profiles = loadProfiles();
-    const profile = profiles.find(p => p.id === parseInt(instanceId));
-    if (!profile) throw new Error("Instance not found");
+function getTypeFolder(type) {
+  switch (type) {
+    case "mod": return "mods";
+    case "resourcepack": return "resourcepacks";
+    case "datapack": return path.join("world", "datapacks");
+    case "shader": return "shaderpacks";
+    case "plugin": return "plugins";
+    default: throw new Error(`Unknown project type: ${type}`);
+  }
+}
 
-    const modsDir = path.join(app.getPath("userData"), "client", String(profile.id), "mods");
-    fs.mkdirSync(modsDir, { recursive: true });
+// ---------------- mod-download ----------------
+ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType }) => {
+  try {
+    const baseDir = server
+      ? path.join(dataDir, "servers", String(id))
+      : path.join(dataDir, "client", String(id));
+
+    const typeFolder = getTypeFolder(projectType);
+    const targetDir = path.join(baseDir, typeFolder);
+    fs.mkdirSync(targetDir, { recursive: true });
 
     const fileName = path.basename(new URL(fileUrl).pathname);
-    const dest = path.join(modsDir, fileName);
+    const dest = path.join(targetDir, fileName);
 
     await downloadFile(fileUrl, dest);
 
+    // Special case: server-side resourcepack
+    if (server && projectType === "resourcepack") {
+      const serverPropsPath = path.join(baseDir, "server.properties");
+      let props = "";
+      if (fs.existsSync(serverPropsPath)) props = fs.readFileSync(serverPropsPath, "utf8");
+      const lines = props.split(/\r?\n/).filter(l => !l.startsWith("resource-pack="));
+      lines.push(`resource-pack=${fileUrl}`);
+      fs.writeFileSync(serverPropsPath, lines.join("\n"), "utf8");
+    }
+
     return { success: true, path: dest };
   } catch (err) {
-    console.error("Failed to download mod:", err);
+    console.error("Failed to download file:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+// ---------------- install-mrpack-url ----------------
+ipcMain.handle("install-mrpack-url", async (event, url) => {
+  try {
+    // Download .mrpack to temp
+    const tmpDir = app.getPath("temp");
+    const fileName = path.basename(new URL(url).pathname);
+    const tmpPath = path.join(tmpDir, fileName);
+
+    await downloadFile(url, tmpPath);
+
+    // Then run your normal mrpack import logic
+    // Assuming you already have a function `mrpack(path)` that handles installation
+    return await mrpack(tmpPath);
+  } catch (err) {
+    console.error("Failed to install .mrpack from URL:", err);
     return { success: false, error: err.message };
   }
 });
@@ -612,6 +660,320 @@ function downloadFile(url, dest) {
   });
 }
 
+/* ─────────────── Updating ─────────────── */
+
+// ---- CONFIG ----
+const CODEWORD = "sub2TGdoesCode"; // keep only in backend
+const UPDATE_URL = "https://redstone-launcher.com/updates.txt";
+
+// turn password into Fernet key
+function makeKey(codeword) {
+  return base64url(crypto.createHash("sha256").update(codeword).digest());
+}
+
+async function fetchUpdates() {
+  const res = await fetch(UPDATE_URL);
+  const encrypted = await res.text();
+
+  const key = makeKey(CODEWORD); // should return a base32 string
+
+  // create a Secret
+  const secret = new fernet.Secret(key);
+
+  // create a Token instance
+  const token = new fernet.Token({
+    secret: secret,
+    token: encrypted,
+    ttl: 0 // 0 = ignore expiration check
+  });
+
+  // decode the token
+  const decrypted = token.decode();
+
+  return JSON.parse(decrypted);
+}
+
+function compareVersions(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const ai = pa[i] || 0;
+    const bi = pb[i] || 0;
+    if (ai > bi) return 1;
+    if (ai < bi) return -1;
+  }
+  return 0;
+}
+
+ipcMain.handle("check-for-updates", async () => {
+  try {
+    const updates = await fetchUpdates();
+
+    // latest version
+    const versions = Object.keys(updates).sort(compareVersions);
+    const latest = versions[versions.length - 1];
+
+    const current = app.getVersion();
+    const newer = compareVersions(latest, current) > 0;
+
+    if (!newer) {
+      return { updateAvailable: false };
+    }
+
+    return { updateAvailable: true, latest, url: updates[latest] };
+  } catch (err) {
+    console.error("Update check failed:", err);
+    return { updateAvailable: false, error: err.message };
+  }
+});
+
+ipcMain.handle("download-and-install", async (event, fileId, version) => {
+  try {
+    const savePath = path.join(app.getPath("temp"), `RedstoneLauncher-${version}.exe`);
+    const url = `https://drive.google.com/uc?id=${fileId}`;
+
+    // Spawn Python gdown
+    await new Promise((resolve, reject) => {
+      const gdown = spawn("py", ["-m", "gdown", url, "-O", savePath], { stdio: "inherit" });
+
+      gdown.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`gdown exited with code ${code}`));
+      });
+    });
+
+    // Run installer
+    spawn(savePath, { shell: true, detached: true, stdio: "ignore" }).unref();
+    app.quit();
+
+    return { success: true };
+  } catch (err) {
+    console.error("Update download failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+
+/* ─────────────── mrpack export ─────────────── */
+
+// helper: compute hashes for a Buffer
+function computeHashes(buffer) {
+  const sha1 = crypto.createHash('sha1').update(buffer).digest('hex');
+  const sha512 = crypto.createHash('sha512').update(buffer).digest('hex');
+  return { sha1, sha512 };
+}
+
+// helper: simple https GET JSON
+function fetchJson(url, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: 15000, headers: opts.headers || {} }, (res) => {
+      let body = '';
+      res.on('data', (c) => body += c);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(body)); } catch (err) { resolve(null); }
+        } else {
+          resolve({ __errorStatus: res.statusCode, body });
+        }
+      });
+    });
+    req.on('error', (err) => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+
+// Best-effort: try to look up file on Modrinth by sha512 then sha1
+async function lookupModrinthByHash(sha512hex, sha1hex) {
+  // Try both SHA512 and SHA1 against Modrinth API
+  const tryUrls = [
+    `https://api.modrinth.com/v2/version_file/${sha512hex}`,
+    `https://api.modrinth.com/v2/version_file/${sha1hex}`,
+  ];
+
+  for (const url of tryUrls) {
+    try {
+      const res = await fetchJson(url);
+      if (!res) continue;
+      if (res.__errorStatus) continue;
+
+      // Modrinth returns an object with files array
+      if (res.files && Array.isArray(res.files) && res.files.length > 0 && res.files[0].url) {
+        return { url: res.files[0].url, data: res };
+      }
+    } catch (err) {
+      // silently continue
+    }
+  }
+
+  return null;
+}
+
+// Collect files from instance dir matching common folders and arbitrary root files
+async function collectInstanceFiles(instanceFolder) {
+  const disallowedDirs = ['logs', 'assets', 'cache', '.fabric', 'downloads', 'libraries', 'natives', 'screenshots', 'versions'];
+  const disallowedFiles = ['usercache.json', 'command_history.txt', 'debug-profile.json', 'realms_presistence.json'];
+  const results = [];
+
+  async function walk(dir) {
+    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      const rel = path.relative(instanceFolder, full).replace(/\\/g, '/');
+
+      // Skip directories in disallowedDirs
+      if (e.isDirectory() && disallowedDirs.includes(e.name)) continue;
+
+      // Skip files in disallowedFiles
+      if (e.isFile() && disallowedFiles.some(f => rel.toLowerCase().endsWith(f))) continue;
+
+      if (e.isDirectory()) {
+        await walk(full); // recurse
+      } else if (e.isFile()) {
+        results.push({ full, rel });
+      }
+    }
+  }
+
+  await walk(instanceFolder);
+  return results;
+}
+
+/**
+ * Main handler
+ * Returns { success: true, mrpackPath, indexJson } or { success: false, error }
+ */
+ipcMain.handle('export-mrpack', async (event, profileId) => {
+  console.log("[mrpack] START export for profileId:", profileId);
+
+  try {
+    if (!profileId) throw new Error("Missing profile id");
+
+    // Load profiles
+    const profilesPath = path.join(dataDir, 'profiles.json');
+    if (!fs.existsSync(profilesPath)) throw new Error("profiles.json not found");
+    const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    const profile = profiles.find(p => Number(p.id) === Number(profileId));
+    if (!profile) throw new Error("Profile not found");
+    console.log("[mrpack] Profile found:", profile);
+
+    const instanceFolder = path.join(dataDir, 'client', String(profile.id));
+    if (!fs.existsSync(instanceFolder)) throw new Error("Instance folder not found: " + instanceFolder);
+    console.log("[mrpack] Instance folder:", instanceFolder);
+
+    // Collect all files
+    console.log("[mrpack] Collecting files...");
+    const files = await collectInstanceFiles(instanceFolder);
+    console.log("[mrpack] Found", files.length, "files");
+
+    // Prepare index files and overrides
+    const indexFiles = [];
+    const overrideFiles = [];
+
+    for (const f of files) {
+      const buffer = await fsp.readFile(f.full);
+      const { sha1, sha512 } = computeHashes(buffer);
+      const relPath = f.rel.replace(/\\/g,'/');
+
+      // Determine environment
+      let env = { client: 'optional', server: 'optional' };
+      const l = relPath.toLowerCase();
+      if (l.startsWith('mods/') || l.includes('/mods/')) env = { client: 'required', server: 'unsupported' };
+      else if (l.startsWith('resourcepacks/') || l.includes('/resourcepacks/')) env = { client: 'required', server: 'optional' };
+      else if (l.startsWith('shaderpacks/') || l.includes('/shaderpacks/')) env = { client: 'required', server: 'unsupported' };
+
+      console.log("[mrpack] Looking up Modrinth for:", relPath);
+      const lookup = await lookupModrinthByHash(sha512, sha1);
+
+      if (lookup && lookup.url) {
+        console.log("[mrpack] Found on Modrinth:", relPath);
+        indexFiles.push({
+          path: relPath,
+          hashes: { sha1, sha512 },
+          env,
+          downloads: [lookup.url],
+          fileSize: buffer.length
+        });
+      } else {
+        console.log("[mrpack] Not on Modrinth, adding to overrides:", relPath);
+        overrideFiles.push({ relPath, buffer });
+      }
+    }
+
+    // Build modrinth.index.json
+    const indexJson = {
+      formatVersion: 1,
+      game: "minecraft",
+      versionId: String(Date.now()),
+      name: profile.name || `Instance ${profile.id}`,
+      files: indexFiles,
+      dependencies: { minecraft: profile.version || "1.20.1" }
+    };
+    if (profile.loader) {
+      if (profile.loader === 'fabric') indexJson.dependencies['fabric-loader'] = "unknown";
+      else if (profile.loader === 'quilt') indexJson.dependencies['quilt-loader'] = "unknown";
+      else if (profile.loader === 'forge') indexJson.dependencies['forge'] = "unknown";
+      else if (profile.loader === 'neoforge') indexJson.dependencies['neoforge'] = "unknown";
+    }
+
+    // Create .mrpack zip
+    const mrpackName = `${profile.name.replace(/[<>:"/\\|?*\x00-\x1F]/g,'_') || 'pack'}-${profile.id}.mrpack`;
+    const mrpackPath = path.join(dataDir, mrpackName);
+    console.log("[mrpack] Creating zip:", mrpackPath);
+
+    const zip = new AdmZip();
+    zip.addFile('modrinth.index.json', Buffer.from(JSON.stringify(indexJson, null, 2), 'utf8'));
+
+    if (profile.icon) console.log("[mrpack] Icon detected (optional)");
+
+    // Add overrides files
+    console.log("[mrpack] Adding overrides files:", overrideFiles.length);
+    for (const f of overrideFiles) {
+      const target = path.posix.join('overrides', f.relPath);
+      zip.addFile(target, f.buffer);
+    }
+
+    zip.writeZip(mrpackPath);
+    console.log("[mrpack] Export complete:", mrpackPath);
+
+    return { success: true, mrpackPath, indexJson };
+
+  } catch (err) {
+    console.error("[mrpack] Error exporting:", err);
+    return { success: false, error: err.message || String(err) };
+  }
+});
+
+/* ─────────────── dihhcord ─────────────── */
+
+const clientId = '1413838664185679892';
+const rpc = new RPC.Client({ transport: 'ipc' });
+rpc.on('ready', () => {
+  console.log('[Discord RPC] Connected');
+
+  // Set initial presence
+  setActivity();
+});
+
+function setActivity(details = "In launcher", state = "Idle") {
+  if (!rpc) return;
+
+  rpc.setActivity({
+    details,          // e.g., "Playing Minecraft"
+    state,            // e.g., "On version 1.21"
+    startTimestamp: Date.now(),
+    instance: false
+  }).catch(err => console.error('[Discord RPC] Error setting activity:', err));
+}
+
+// Connect to Discord
+rpc.login({ clientId }).catch(console.error);
+
+// Optional: expose a function to update presence dynamically
+global.setDiscordPresence = setActivity;
+
+ipcMain.on('update-discord-presence', (event, { details, state }) => {
+  setActivity(details, state);
+});
 
 
 app.whenReady().then(createWindow);

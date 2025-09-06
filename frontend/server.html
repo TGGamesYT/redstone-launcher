@@ -34,7 +34,7 @@
 
   <!-- Bottom section -->
   <ul class="menu bottom">
-    <li><i class="material-icons">download</i><span>Download the latest update</span></li>
+    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
     <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
@@ -117,6 +117,7 @@
     async function loadServers() {
       try {
         servers = await ipcRenderer.invoke('list-servers');
+        console.log(servers)
         renderServers();
       } catch (err) {
         appendLog(`[ERROR] Failed to list servers: ${err.message}`);
@@ -274,6 +275,10 @@ ipcRenderer.on("profiles-list", (event, profiles) => {
 
     loadServers();
     window.addEventListener('beforeunload', () => stopConsolePolling());
+  function updatePresence(details, state = "Idle") {
+  ipcRenderer.send('update-discord-presence', { details, state });
+}
+    updatePresence("Looking at servers")
   </script>
   <script src="sidebar.js"></script>
 </body>

@@ -34,7 +34,7 @@
 
   <!-- Bottom section -->
   <ul class="menu bottom">
-    <li><i class="material-icons">download</i><span>Download the latest update</span></li>
+    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
     <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
@@ -42,13 +42,19 @@
 <h1>YOOO idk what to put on the main page</h1>
 
 <h2>uh changelog I guess:</h2>
-<p>changed the toolbar to be my own one</p>
-<p>changed the sidebar to have better arrangement</p>
-<p>modified the player manager (it doesnt yet work but it displays the selected player's skin rn)</p>
-<p>settings dont flashbang you anymore (but has a cool text)</p>
-<p>yes 1.6.0 yes yes cool</p>
+<p>the update button now works. (if theres a new update it automatically downloads and installs it)</p>
+<p>modified the instance display to support exporting an instance into a .mrpack</p>
+<p>Added discord presence</p>
+<p>Fixed modrinth integration: it now supports every project type (exept datapacks which are made into mods, those break for now)</p>
+<p>also added a search bar on the modrinth page</p>
+<p>1.7.6 ah yes yes yes very op cool stuff</p>
+<p>I am cringe</p>
 <script>
   const { ipcRenderer } = require('electron');
+  function updatePresence(details, state = "Idle") {
+  ipcRenderer.send('update-discord-presence', { details, state });
+}
+  updatePresence("In Launcher")
 </script>
 <script src="sidebar.js"></script>
 </body>

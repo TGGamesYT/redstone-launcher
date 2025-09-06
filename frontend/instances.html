@@ -49,7 +49,7 @@
 
   <!-- Bottom section -->
   <ul class="menu bottom">
-    <li><i class="material-icons">download</i><span>Download the latest update</span></li>
+    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
     <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
@@ -250,6 +250,28 @@ async function renderListOrDetail() {
       };
       instanceDetail.appendChild(deleteBtn);
     }
+    if (!instanceDetail.querySelector(".mrpack-btn")) {
+      const mrpackBtn = document.createElement("button");
+      mrpackBtn.className = "mrpack-btn";
+      mrpackBtn.textContent = "Export .mrpack";
+      mrpackBtn.onclick = async () => {
+      try {
+        const result = await ipcRenderer.invoke("export-mrpack", profile.id);
+
+        if (result.success) {
+          alert(`Export finished successfully!\nPath: ${result.mrpackPath}`);
+        } else {
+          alert(`Export failed:\n${result.error}`);
+        }
+      } catch (err) {
+        alert(`Unexpected error:\n${err.message || err}`);
+      } finally {
+        // Navigate away after showing alert
+        window.location.href = "instances.html";
+      }
+    };
+      instanceDetail.appendChild(mrpackBtn);
+    }
 
 
   } else {
@@ -383,6 +405,10 @@ importMrpackBtn.onclick = async () => {
     alert("Error importing .mrpack: " + err.message);
   }
 };
+function updatePresence(details, state = "Idle") {
+  ipcRenderer.send('update-discord-presence', { details, state });
+}
+updatePresence("Looking at the instances")
 </script>
 
 <script src="sidebar.js"></script>

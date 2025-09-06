@@ -34,7 +34,7 @@
 
   <!-- Bottom section -->
   <ul class="menu bottom">
-    <li><i class="material-icons">download</i><span>Download the latest update</span></li>
+    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
     <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
@@ -70,6 +70,10 @@ players = [];
     ipcRenderer.send("get-players");
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateSKin(); });
   ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; updateSKin(); });
+function updatePresence(details, state = "Idle") {
+  ipcRenderer.send('update-discord-presence', { details, state });
+}
+updatePresence("Managing skins")
 </script>
   <script src="sidebar.js"></script>
   </div>

@@ -108,4 +108,32 @@ function maxApp() {ipcRenderer.send("max-app")}
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });
   ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });
 
+
+  document.addEventListener("DOMContentLoaded", async () => {
+  const updateEl = document.getElementById("update");
+  const updateText = document.getElementById("updateText");
+  if (!updateEl) return;
+
+  // Ask backend if update exists
+  const result = await ipcRenderer.invoke("check-for-updates");
+
+  if (!result.updateAvailable) {
+    updateEl.style.display = "none";
+    return;
+  }
+
+  // Show button
+  updateEl.style.display = "block";
+  updateText.innerText = `Update to ${result.latest}`;
+
+  updateEl.onclick = async () => {
+    updateText.innerText = "Updating...";
+    const res = await ipcRenderer.invoke("download-and-install", result.url, result.latest);
+    if (!res.success) {
+      updateEl.updateText = "Update failed!";
+      console.error(res.error);
+    }
+  };
+});
+
 updateSideBar()

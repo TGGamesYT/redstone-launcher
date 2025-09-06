@@ -40,12 +40,19 @@
 
   <!-- Bottom section -->
   <ul class="menu bottom">
-    <li><i class="material-icons">download</i><span>Download the latest update</span></li>
+    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
     <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
 </div>
 
+
+<div id="searchPagination">
+  <input type="text" id="searchInput" placeholder="Search projects..." />
+  <button id="prevPage">Prev</button>
+  <span id="pageDisplay">Page 1</span>
+  <button id="nextPage">Next</button>
+</div>
 <div>
   <select id="projectType">
     <option value="mod">Mod</option>
@@ -63,6 +70,17 @@
 
 <script>
 const { ipcRenderer } = require('electron');
+
+let currentPage = 1;
+let totalPages = 1;
+let currentProjects = [];
+const projectsPerPage = 10;
+
+const searchInput = document.getElementById("searchInput");
+const prevBtn = document.getElementById("prevPage");
+const nextBtn = document.getElementById("nextPage");
+const pageDisplay = document.getElementById("pageDisplay");
+
 const typeSelect = document.getElementById('projectType');
 const refreshBtn = document.getElementById('refreshBtn');
 const resultsList = document.getElementById('modrinthResults');
@@ -79,14 +97,19 @@ async function fetchServers() {
 }
 
 // Fetch top 20 projects from Modrinth
-async function fetchProjects(type) {
+async function fetchProjects(type, page = 1, search = "") {
   resultsList.innerHTML = 'Loading...';
   try {
-    const url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=20`;
+    const offset = (page - 1) * projectsPerPage;
+    let url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=${projectsPerPage}&offset=${offset}`;
+    if (search) url += `&query=${encodeURIComponent(search)}`;
+
     const res = await fetch(url);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     const data = await res.json();
-    return data.hits || [];
+    currentProjects = data.hits || [];
+    totalPages = Math.ceil((data.total_hits || 0) / projectsPerPage);
+    return currentProjects;
   } catch(err) {
     console.error(err);
     resultsList.innerHTML = 'Failed to load projects';
@@ -94,15 +117,19 @@ async function fetchProjects(type) {
   }
 }
 
-// Render top projects
+// Render current page projects
 function renderProjects(projects) {
   resultsList.innerHTML = '';
+  if (!projects.length) {
+    resultsList.innerHTML = '<p>No projects found</p>';
+    return;
+  }
+
   projects.forEach(mod => {
     const li = document.createElement('li');
-
     const img = document.createElement('img');
     img.src = mod.icon_url || '';
-    img.className = "imagy"
+    img.className = "imagy";
     li.appendChild(img);
 
     const span = document.createElement('span');
@@ -116,23 +143,101 @@ function renderProjects(projects) {
 
     resultsList.appendChild(li);
   });
+
+  pageDisplay.textContent = `Page ${currentPage} / ${totalPages || 1}`;
 }
+
+// Load current page
+async function loadProjects() {
+  const type = typeSelect.value;
+  const search = searchInput.value.trim();
+  const projects = await fetchProjects(type, currentPage, search);
+  renderProjects(projects);
+}
+
+// Pagination handlers
+prevBtn.onclick = () => {
+  if (currentPage > 1) {
+    currentPage--;
+    loadProjects();
+  }
+};
+nextBtn.onclick = () => {
+  if (currentPage < totalPages) {
+    currentPage++;
+    loadProjects();
+  }
+};
+
+// Search handler
+searchInput.oninput = () => {
+  currentPage = 1;
+  loadProjects();
+};
+
+// Type change & refresh
+typeSelect.onchange = () => { currentPage = 1; loadProjects(); };
+refreshBtn.onclick = () => { currentPage = 1; loadProjects(); };
+
+// Initial load
+loadProjects();
 
 // Show install screen with compatible instances/servers
 async function openInstallScreen(mod) {
   resultsList.innerHTML = `<h3>Install ${mod.title}</h3>`;
 
-  // Determine what is supported
-  const isClientOnly = ['mod', 'modpack', 'shader'].includes(mod.project_type);
-  const isServerOnly = ['datapack', 'plugin'].includes(mod.project_type);
-  const both = mod.project_type === 'resourcepack';
+  const projType = mod.project_type?.toLowerCase();
+  const selectedType = typeSelect.value.toLowerCase();
 
-  if (!isClientOnly && !isServerOnly && !both) {
-    resultsList.innerHTML += '<p>Unsupported type</p>';
+  // Handle modpack early
+  if (projType === "modpack") {
+  let versions = [];
+  try {
+    const res = await fetch(`https://api.modrinth.com/v2/project/${mod.project_id}/version`);
+    versions = await res.json();
+  } catch (err) {
+    console.error("Failed to fetch modpack versions:", err);
+    resultsList.innerHTML += "<p>Failed to fetch modpack versions</p>";
     return;
   }
 
-  // Fetch mod versions from Modrinth
+  if (!Array.isArray(versions) || versions.length === 0) {
+    resultsList.innerHTML += "<p>No versions found for this modpack</p>";
+    return;
+  }
+
+  // Sort newest → oldest by date_published
+  versions.sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
+
+  const list = document.createElement("ul");
+  list.className = "uli";
+
+  versions.forEach(v => {
+    const li = document.createElement("li");
+    li.className = "lii";
+    li.textContent = `${v.name} (${v.version_number})`;
+
+    const btn = document.createElement("button");
+    btn.textContent = "Install";
+    btn.onclick = async () => {
+      const mrpackFile = v.files.find(f => f.url.endsWith(".mrpack"));
+      if (!mrpackFile) return alert("No .mrpack file available for this version");
+
+      await ipcRenderer.invoke("install-mrpack-url", mrpackFile.url);
+      alert(`Started installation of ${mod.title} (${v.version_number})`);
+    };
+
+    li.appendChild(btn);
+    list.appendChild(li);
+  });
+
+  resultsList.appendChild(list);
+  return; // stop here, don’t render client/server lists
+}
+
+
+
+  // Fetch mod versions
   let validVersions = [];
   try {
     const res = await fetch(`https://api.modrinth.com/v2/project/${mod.project_id}/version`);
@@ -140,97 +245,146 @@ async function openInstallScreen(mod) {
     validVersions = Array.isArray(allVersions) ? allVersions : [];
   } catch (err) {
     console.error("Failed to fetch mod versions:", err);
-    resultsList.innerHTML += '<p>Failed to fetch mod versions</p>';
+    resultsList.innerHTML += "<p>Failed to fetch mod versions</p>";
     return;
   }
 
-  // Helper to check compatibility
   function isCompatible(instanceVersion, loader) {
     return validVersions.some(v => {
-      const loaderMap = v.loaders.map(l => l === 'vanilla' ? 'vanilla' : l);
+      const loaderMap = v.loaders.map(l => (l === "vanilla" ? "vanilla" : l));
       return v.game_versions.includes(instanceVersion) && loaderMap.includes(loader);
     });
   }
 
-  // Client instances
-  if (isClientOnly || both) {
-    const clientHeader = document.createElement('h4');
-    clientHeader.textContent = 'Client Instances';
-    resultsList.appendChild(clientHeader);
+  // -----------------------
+// CLIENT INSTANCES
+// -----------------------
+if (
+  projType === "shader" ||
+  projType === "resourcepack" ||
+  (projType === "mod" && selectedType === "mod")
+) {
+  const clientHeader = document.createElement("h4");
+  clientHeader.textContent = "Client Instances";
+  resultsList.appendChild(clientHeader);
 
-    const clientList = document.createElement('ul');
-    clientList.className = "uli"
-    profiles.forEach(p => {
-      // Skip incompatible loaders
-      if ((mod.project_type === 'mod' || mod.project_type === 'shader') && p.loader === 'vanilla') return;
+  const clientList = document.createElement("ul");
+  clientList.className = "uli";
+
+  profiles.forEach(p => {
+    if (projType === "shader") {
+      // Shaders: require modded loader, but ignore loader compatibility in Modrinth
+      if (!["fabric", "quilt", "forge", "neoforge"].includes(p.loader)) return;
+      if (!validVersions.some(v => v.game_versions.includes(p.version))) return;
+    } else if (projType === "mod" && selectedType === "mod") {
+      // Mods: must be modded + loader compatible
+      if (!["fabric", "quilt", "forge", "neoforge"].includes(p.loader)) return;
       if (!isCompatible(p.version, p.loader)) return;
+    }
+    // Resourcepacks: no restrictions
 
-      const li = document.createElement('li');
-      li.className = "lii"
-      li.textContent = `${p.name} (${p.loader}, ${p.version})`;
+    const li = document.createElement("li");
+    li.className = "lii";
+    li.textContent = `${p.name} (${p.loader}, ${p.version})`;
 
-      const btn = document.createElement('button');
-      btn.textContent = 'Install here';
-      btn.onclick = async () => {
-        // Pick the latest compatible version's file
-        const matchedVersion = validVersions.find(v =>
+    const btn = document.createElement("button");
+    btn.textContent = "Install here";
+    btn.onclick = async () => {
+      let matchedVersion;
+
+      if (projType === "shader") {
+        // Just match game version, ignore loaders
+        matchedVersion = validVersions.find(v => v.game_versions.includes(p.version));
+      } else {
+        matchedVersion = validVersions.find(v =>
           v.game_versions.includes(p.version) &&
-          v.loaders.includes(p.loader === 'vanilla' ? 'vanilla' : p.loader)
+          v.loaders.includes(p.loader === "vanilla" ? "vanilla" : p.loader)
         );
-        if (!matchedVersion) return alert(`No compatible version found for ${p.name}`);
-        const fileUrl = matchedVersion.files[0]?.url;
-        if (!fileUrl) return alert("No download file available for this version");
+      }
 
-        await ipcRenderer.invoke('mod-download', {
-          instanceId: p.id,
-          fileUrl,
-          projectType: mod.project_type
-        });
-        alert(`Installed ${mod.title} to ${p.name}`);
-      };
-      li.appendChild(btn);
-      clientList.appendChild(li);
-    });
-    resultsList.appendChild(clientList);
-  }
+      if (!matchedVersion) return alert(`No compatible version found for ${p.name}`);
+      const fileUrl = matchedVersion.files[0]?.url;
+      if (!fileUrl) return alert("No download file available for this version");
 
-  // Server instances
-  if (isServerOnly || both) {
-    const serverHeader = document.createElement('h4');
-    serverHeader.textContent = 'Servers';
+      await ipcRenderer.invoke("mod-download", {
+        server: false,
+        id: p.id,
+        fileUrl,
+        projectType: typeSelect.value
+      });
+      alert(`Installed ${mod.title} to ${p.name}`);
+    };
+
+    li.appendChild(btn);
+    clientList.appendChild(li);
+  });
+
+  resultsList.appendChild(clientList);
+}
+
+  // -----------------------
+  // SERVER INSTANCES
+  // -----------------------
+  await fetchServers();
+  if (
+    projType === "resourcepack" ||
+    (projType === "shader" && false) || // shaders = no servers
+    (projType === "mod" && ["mod", "plugin", "datapack"].includes(selectedType))
+  ) {
+    const serverHeader = document.createElement("h4");
+    serverHeader.textContent = "Servers";
     resultsList.appendChild(serverHeader);
 
-    const serverList = document.createElement('ul');
-    servers.forEach(s => {
-      if (mod.project_type === 'plugin' && s.type !== 'paper') return;
-      if (mod.project_type === 'datapack' && s.type !== 'paper' && s.type !== 'vanilla') return;
+    const serverList = document.createElement("ul");
 
-      // Check server version compatibility
+    servers.forEach(s => {
+      const modded = ["fabric", "quilt", "forge", "neoforge"].includes(s.type);
+      const pluginned = ["purpur", "paper"].includes(s.type);
+
+      // Rules by type
+      if (projType === "mod" && selectedType === "mod") {
+        if (!modded) return;
+      }
+      if (projType === "mod" && selectedType === "plugin") {
+        if (!mod.categories.includes("paper")) return; // must be a plugin
+        if (!pluginned) return;
+      }
+      if (projType === "mod" && selectedType === "datapack") {
+        if (!mod.categories.includes("datapack")) return; // must be a datapack
+        // servers: no loader restrictions
+      }
+      // resourcepacks: no restrictions
+
       const matchedVersion = validVersions.find(v => v.game_versions.includes(s.version));
       if (!matchedVersion) return;
 
-      const li = document.createElement('li');
+      const li = document.createElement("li");
       li.textContent = `${s.name} (${s.type}, ${s.status}, ${s.version})`;
 
-      const btn = document.createElement('button');
-      btn.textContent = 'Install here';
+      const btn = document.createElement("button");
+      btn.textContent = "Install here";
       btn.onclick = async () => {
         const fileUrl = matchedVersion.files[0]?.url;
         if (!fileUrl) return alert("No download file available for this version");
 
-        await ipcRenderer.invoke('mod-download', {
-          serverName: s.name,
+        await ipcRenderer.invoke("mod-download", {
+          server: true,
+          id: s.name,
           fileUrl,
-          projectType: mod.project_type
+          projectType: typeSelect.value
         });
         alert(`Installed ${mod.title} to ${s.name}`);
       };
+
       li.appendChild(btn);
       serverList.appendChild(li);
     });
+
     resultsList.appendChild(serverList);
   }
 }
+
+
 
 
 // Load top projects
@@ -243,7 +397,10 @@ async function loadTopProjects() {
 typeSelect.onchange = loadTopProjects;
 refreshBtn.onclick = loadTopProjects;
 loadTopProjects();
-
+function updatePresence(details, state = "Idle") {
+  ipcRenderer.send('update-discord-presence', { details, state });
+}
+updatePresence("Browsing on Modrinth")
 </script>
 <script src="sidebar.js"></script>
 </body>
