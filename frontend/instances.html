@@ -54,6 +54,39 @@
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
 </div>
+<div id="search-sort">
+<div style="margin-bottom: 10px;">
+  <input id="searchInput" type="text" placeholder="Search instances..." style="padding:5px; width:200px;" />
+
+  <select id="filterLoader">
+    <option value="">All Loaders</option>
+    <option value="vanilla">Vanilla</option>
+    <option value="fabric">Fabric</option>
+    <option value="quilt">Quilt</option>
+    <option value="forge">Forge</option>
+    <option value="neoforge">NeoForge</option>
+  </select>
+
+  <input id="filterVersion" type="text" placeholder="Filter by version..." style="padding:5px; width:120px;" />
+</div>
+<div style="margin-bottom: 10px;">
+  <label for="sortSelect">Sort by: </label>
+  <select id="sortSelect">
+    <option value="custom">Custom</option>
+    <option value="name-asc">By Name (ascending)</option>
+    <option value="name-desc">By Name (descending)</option>
+    <option value="created-asc">By Creation Date (ascending)</option>
+    <option value="created-desc">By Creation Date (descending)</option>
+    <option value="lastused-asc">By Last Used (ascending)</option>
+    <option value="lastused-desc">By Last Used (descending)</option>
+    <option value="loader-asc">By Mod Loader (ascending)</option>
+    <option value="loader-desc">By Mod Loader (descending)</option>
+    <option value="version-asc">By Game Version (ascending)</option>
+    <option value="version-desc">By Game Version (descending)</option>
+  </select>
+  <button id="editOrderBtn" style="display:none;">Edit Order</button>
+</div>
+</div>
 <ul id="profiles-list"></ul>
 
 <!-- Add Instance Modal -->
@@ -95,7 +128,9 @@ const instanceDetail = document.getElementById("instance-detail");
 const nameEl = document.getElementById("instance-name");
 const infoEl = document.getElementById("instance-info");
 const logsEl = document.getElementById("logs");
-
+const searchInput = document.getElementById("searchInput");
+const filterLoader = document.getElementById("filterLoader");
+const filterVersion = document.getElementById("filterVersion");
 const addInstanceModal = document.getElementById("addInstanceModal");
 const modalCreateBtn = document.getElementById("modalCreateBtn");
 const modalCancelBtn = document.getElementById("modalCancelBtn");
@@ -104,6 +139,10 @@ const instanceVersion = document.getElementById("instanceVersion");
 const instanceLoader = document.getElementById("instanceLoader");
 const instanceIcon = document.getElementById("instanceIcon");
 const importMrpackBtn = document.getElementById("importMrpackBtn");
+const sortSelect = document.getElementById("sortSelect");
+const editOrderBtn = document.getElementById("editOrderBtn");
+const searchsort = document.getElementById("search-sort");
+let editingOrder = false;
 
 const urlParams = new URLSearchParams(window.location.search);
 const instanceId = urlParams.get("i");
@@ -112,6 +151,26 @@ const instanceId = urlParams.get("i");
 ipcRenderer.send("get-profiles");
 ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
 ipcRenderer.on("profiles-updated", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
+
+// small debounce helper
+function debounce(fn, wait = 150) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
+}
+
+// Attach listeners (only once)
+function attachFilterListeners() {
+  if (searchInput) searchInput.addEventListener('input', debounce(renderListOrDetail, 120));
+  if (filterLoader) filterLoader.addEventListener('change', renderListOrDetail);
+  if (filterVersion) filterVersion.addEventListener('input', renderListOrDetail);
+  if (sortSelect) sortSelect.addEventListener('change', async () => {
+    // send sort preference to backend if you support it
+    try { await ipcRenderer.invoke('sort-instances', sortSelect.value); } catch (e) {}
+    renderListOrDetail();
+  });
+}
+// call once on load
+attachFilterListeners();
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -122,90 +181,163 @@ function fileToBase64(file) {
   });
 }
 
+sortSelect.addEventListener("change", async () => {
+  const sortValue = sortSelect.value;
+  if (sortValue === "custom") {
+    editOrderBtn.style.display = "inline-block";
+  } else {
+    editOrderBtn.style.display = "none";
+    editingOrder = false;
+  }
 
-async function renderListOrDetail() {
-  updateSideBar()
-  const selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
+  if (sortValue !== "custom") {
+    try {
+      const sortedProfiles = await ipcRenderer.invoke("sort-instances", { mode: sortValue });
+      if (sortedProfiles && Array.isArray(sortedProfiles)) {
+        profiles = sortedProfiles;
+        renderListOrDetail();
+      }
+    } catch (err) {
+      console.error("Failed to sort instances:", err);
+      alert("Sorting failed: " + err.message);
+    }
+  }
+});
 
-  if (instanceId === "NEWINSTANCE") {
-      // Open the Add Instance modal automatically
-      addInstanceModal.style.display = "flex";
-      // List view
-    profilesList.style.display = "block";
-    instanceDetail.style.display = "none";
+[searchInput, filterLoader, filterVersion].forEach(el => {
+  el.addEventListener("input", renderListOrDetail);
+});
 
-    profilesList.innerHTML = "";
+// Toggle editing order
+editOrderBtn.addEventListener("click", () => {
+  editingOrder = !editingOrder;
+  editOrderBtn.textContent = editingOrder ? "Save Order" : "Edit Order";
 
-    profiles.forEach(p => {
-      const li = document.createElement("li");
-      li.className = "profile-item";
+  if (editingOrder) {
+    enableDragAndDrop();
+  } else {
+    saveCustomOrder();
+  }
+});
 
-      const img = document.createElement("img");
-      img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-      li.appendChild(img);
+// Enable drag-and-drop reordering
+function enableDragAndDrop() {
+  const items = profilesList.querySelectorAll("li.profile-item");
+  items.forEach(li => {
+    li.setAttribute("draggable", true);
 
-      const span = document.createElement("span");
-      span.textContent = `${p.name} (v${p.version}, ${p.loader})`;
-      li.appendChild(span);
-
-      const viewBtn = document.createElement("button");
-      viewBtn.textContent = "Open Instance";
-      viewBtn.onclick = () => {
-        window.location.href = `instances.html?i=${p.id}`;
-      };
-      li.appendChild(viewBtn);
-
-      const launchBtn = document.createElement("button");
-      launchBtn.textContent = "Launch";
-      launchBtn.onclick = () => {
-        if (!selectedPlayerId) return alert("Select a player first!");
-        ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
-      };
-      li.appendChild(launchBtn);
-
-      profilesList.appendChild(li);
+    li.addEventListener("dragstart", e => {
+      e.dataTransfer.setData("text/plain", li.dataset.id);
+      li.classList.add("dragging");
     });
 
-    // Add Instance button
-    const liAdd = document.createElement("li");
-    liAdd.className = "profile-item";
-    const iAdd = document.createElement("i");
-    iAdd.className = "material-icons";
-    iAdd.textContent = "add";
-    const spanAdd = document.createElement("span");
-    spanAdd.textContent = "Add an instance";
+    li.addEventListener("dragend", () => li.classList.remove("dragging"));
 
-    liAdd.appendChild(iAdd);
-    liAdd.appendChild(spanAdd);
-    liAdd.style.cursor = "pointer";
-    liAdd.onclick = () => {
-      instanceName.value = "My instance";
-      instanceVersion.value = "1.20.1";
-      instanceLoader.value = "vanilla";
-      addInstanceModal.style.display = "flex";
-    };
-    profilesList.appendChild(liAdd);
-  } else if (instanceId) {
-    // Dedicated instance view
-    const profile = profiles.find(p => String(p.id) === instanceId);
-    if (!profile) return;
+    li.addEventListener("dragover", e => {
+      e.preventDefault();
+      const dragging = document.querySelector(".dragging");
+      if (!dragging) return;
+      const bounding = li.getBoundingClientRect();
+      const offset = e.clientY - bounding.top;
+      if (offset > bounding.height / 2) {
+        li.parentNode.insertBefore(dragging, li.nextSibling);
+      } else {
+        li.parentNode.insertBefore(dragging, li);
+      }
+    });
+  });
+}
 
+// Collect new order and send to backend
+async function saveCustomOrder() {
+  const ids = Array.from(profilesList.querySelectorAll("li.profile-item"))
+    .map(li => li.dataset.id)
+    .filter(Boolean); // ignore the "Add instance" button
+
+  try {
+    const sortedProfiles = await ipcRenderer.invoke("sort-instances", { mode: "custom", order: ids });
+    if (sortedProfiles && Array.isArray(sortedProfiles)) {
+      profiles = sortedProfiles;
+      renderListOrDetail();
+    }
+  } catch (err) {
+    console.error("Failed to save custom order:", err);
+    alert("Saving custom order failed: " + err.message);
+  }
+}
+
+// On load → ask backend for saved sort mode
+(async () => {
+  const mode = await ipcRenderer.invoke("get-sort-mode");
+  if (mode) sortSelect.value = mode;
+})();
+
+function applyFilters(list) {
+  const query = searchInput.value.toLowerCase();
+  const loaderFilter = filterLoader.value;
+  const versionFilter = filterVersion.value.trim();
+
+  return list.filter(p => {
+    if (query && !p.name.toLowerCase().includes(query)) return false;
+    if (loaderFilter && p.loader !== loaderFilter) return false;
+    if (versionFilter && !p.version.includes(versionFilter)) return false;
+    return true;
+  });
+}
+
+
+async function renderListOrDetail() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const instanceId = urlParams.get('i');
+
+  // read filter/search values now
+  const q = (searchInput?.value || '').trim().toLowerCase();
+  const loaderFilterVal = (filterLoader?.value || '').trim();
+  const versionFilterVal = (filterVersion?.value || '').trim().toLowerCase();
+  const sortMode = (sortSelect?.value || 'custom');
+
+  // copy profiles so we can sort/filter safely
+  let list = Array.isArray(profiles) ? profiles.slice() : [];
+
+  // FILTER
+  if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q) || String(p.id).includes(q));
+  if (loaderFilterVal) list = list.filter(p => (p.loader || '').toLowerCase() === loaderFilterVal.toLowerCase());
+  if (versionFilterVal) list = list.filter(p => (p.version || '').toLowerCase().includes(versionFilterVal));
+
+  // SORT
+  if (sortMode && sortMode !== 'custom') {
+    const [key, dir] = sortMode.split('_');
+    list.sort((a, b) => {
+      if (key === 'name') return ((a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase())) * (dir === 'asc'?1:-1);
+      if (key === 'created' || key === 'lastUsed') return ((a[key] || 0) - (b[key] || 0)) * (dir === 'asc'?1:-1);
+      return 0;
+    });
+  }
+
+  const selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
+
+  // SINGLE INSTANCE VIEW
+  if (instanceId && instanceId !== 'NEWINSTANCE') {
+    searchsort.style.display = "none"
+    const profile = list.find(p => String(p.id) === String(instanceId));
+    if (!profile) return; // nothing to show
     profilesList.style.display = "none";
     instanceDetail.style.display = "block";
     nameEl.textContent = profile.name;
     infoEl.textContent = `Version: ${profile.version} | Loader: ${profile.loader}`;
     logsEl.style.display = "block";
     logsEl.textContent = `Showing logs for ${profile.name}...\n`;
-
-    ipcRenderer.on("launcher-log", (event, msg) => {
+    // attach log listeners etc (ensure you don't attach duplicates)
+    ipcRenderer.removeAllListeners('launcher-log');
+    ipcRenderer.on('launcher-log', (event, msg) => {
       logsEl.textContent += msg + "\n";
       logsEl.scrollTop = logsEl.scrollHeight;
     });
-    ipcRenderer.on("launch-error", (event, msg) => {
+    ipcRenderer.removeAllListeners('launch-error');
+    ipcRenderer.on('launch-error', (event, msg) => {
       logsEl.textContent += "[ERROR] " + msg + "\n";
       logsEl.scrollTop = logsEl.scrollHeight;
     });
-
     if (!instanceDetail.querySelector("button")) {
       const launchBtn = document.createElement("button");
       launchBtn.textContent = "Launch Profile";
@@ -272,64 +404,67 @@ async function renderListOrDetail() {
     };
       instanceDetail.appendChild(mrpackBtn);
     }
+    return;
+  }
 
+  // LIST VIEW
+  searchsort.style.display = "block";
+  profilesList.style.display = "block";
+  instanceDetail.style.display = "none";
 
-  } else {
-    // List view
-    profilesList.style.display = "block";
-    instanceDetail.style.display = "none";
+  profilesList.innerHTML = "";
 
-    profilesList.innerHTML = "";
+  list.forEach(p => {
+    const li = document.createElement("li");
+    li.className = "profile-item";
 
-    profiles.forEach(p => {
-      const li = document.createElement("li");
-      li.className = "profile-item";
+    const img = document.createElement("img");
+    img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+    li.appendChild(img);
 
-      const img = document.createElement("img");
-      img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-      li.appendChild(img);
+    const span = document.createElement("span");
+    span.textContent = `${p.name} (v${p.version}, ${p.loader})`;
+    li.appendChild(span);
 
-      const span = document.createElement("span");
-      span.textContent = `${p.name} (v${p.version}, ${p.loader})`;
-      li.appendChild(span);
+    const viewBtn = document.createElement("button");
+    viewBtn.textContent = "Open Instance";
+    viewBtn.onclick = () => { window.location.href = `instances.html?i=${p.id}`; };
+    li.appendChild(viewBtn);
 
-      const viewBtn = document.createElement("button");
-      viewBtn.textContent = "Open Instance";
-      viewBtn.onclick = () => {
-        window.location.href = `instances.html?i=${p.id}`;
-      };
-      li.appendChild(viewBtn);
-
-      const launchBtn = document.createElement("button");
-      launchBtn.textContent = "Launch";
-      launchBtn.onclick = () => {
-        if (!selectedPlayerId) return alert("Select a player first!");
-        ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
-      };
-      li.appendChild(launchBtn);
-
-      profilesList.appendChild(li);
-    });
-
-    // Add Instance button
-    const liAdd = document.createElement("li");
-    liAdd.className = "profile-item";
-    const iAdd = document.createElement("i");
-    iAdd.className = "material-icons";
-    iAdd.textContent = "add";
-    const spanAdd = document.createElement("span");
-    spanAdd.textContent = "Add an instance";
-
-    liAdd.appendChild(iAdd);
-    liAdd.appendChild(spanAdd);
-    liAdd.style.cursor = "pointer";
-    liAdd.onclick = () => {
-      instanceName.value = "My instance";
-      instanceVersion.value = "1.20.1";
-      instanceLoader.value = "vanilla";
-      addInstanceModal.style.display = "flex";
+    const launchBtn = document.createElement("button");
+    launchBtn.textContent = "Launch";
+    launchBtn.onclick = () => {
+      if (!selectedPlayerId) return alert("Select a player first!");
+      ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
     };
-    profilesList.appendChild(liAdd);
+    li.appendChild(launchBtn);
+
+    profilesList.appendChild(li);
+  });
+
+  // Add Instance button
+  const liAdd = document.createElement("li");
+  liAdd.className = "profile-item";
+  const iAdd = document.createElement("i");
+  iAdd.className = "material-icons";
+  iAdd.textContent = "add";
+  const spanAdd = document.createElement("span");
+  spanAdd.textContent = "Add an instance";
+
+  liAdd.appendChild(iAdd);
+  liAdd.appendChild(spanAdd);
+  liAdd.style.cursor = "pointer";
+  liAdd.onclick = () => {
+    instanceName.value = "My instance";
+    instanceVersion.value = "1.20.1";
+    instanceLoader.value = "vanilla";
+    addInstanceModal.style.display = "flex";
+  };
+  profilesList.appendChild(liAdd);
+
+  // ✅ Auto-open the modal if NEWINSTANCE
+  if (instanceId === 'NEWINSTANCE') {
+    liAdd.click();
   }
 }
 

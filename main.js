@@ -18,7 +18,9 @@ import fernet from 'fernet';
 import RPC from "discord-rpc";
 
 const storage = new Store();
-
+const sortStore = new Store({ name: "instance-sorting" });
+if (!sortStore.has("sortMode")) sortStore.set("sortMode", "created-desc");
+if (!sortStore.has("customOrder")) sortStore.set("customOrder", []);
 
 const dataDir = path.join(app.getPath('userData'));
 const profilesPath = path.join(dataDir, 'profiles.json');
@@ -35,9 +37,73 @@ function ensureFile(path) {
 
 function loadProfiles() {
   ensureFile(profilesPath);
-  return JSON.parse(fs.readFileSync(profilesPath));
+  const profiles = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
+  const sortMode = sortStore.get("sortMode");
+  const customOrder = sortStore.get("customOrder");
+  return applySort(profiles, sortMode, customOrder);
 }
 function saveProfiles(p) { fs.writeFileSync(profilesPath, JSON.stringify(p, null, 2)); }
+
+// Helper to fetch Piston meta versions
+let minecraftVersionsCache;
+async function getPistonVersions() {
+  if (minecraftVersionsCache) return minecraftVersionsCache;
+  const res = await fetch("https://launchermeta.mojang.com/mc/game/version_manifest.json");
+  const data = await res.json();
+  minecraftVersionsCache = data.versions.map(v => v.id); // array of version IDs in order
+  return minecraftVersionsCache;
+}
+
+/**
+ * Sort profiles by various modes
+ * @param {Array} profiles 
+ * @param {String} mode 
+ * @param {Array} order optional custom order array of IDs
+ * @returns {Promise<Array>}
+ */
+async function applySort(profiles, mode, order) {
+  switch (mode) {
+    case "name-asc":
+      return [...profiles].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    case "name-desc":
+      return [...profiles].sort((a, b) => (b.name || "").localeCompare(a.name || ""));
+    case "created-asc":
+      return [...profiles].sort((a, b) => (a.created || 0) - (b.created || 0));
+    case "created-desc":
+      return [...profiles].sort((a, b) => (b.created || 0) - (a.created || 0));
+    case "lastused-asc":
+      return [...profiles].sort((a, b) => (a.lastUsed || 0) - (b.lastUsed || 0));
+    case "lastused-desc":
+      return [...profiles].sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+    case "loader-asc":
+      return [...profiles].sort((a, b) => (a.loader || "").localeCompare(b.loader || ""));
+    case "loader-desc":
+      return [...profiles].sort((a, b) => (b.loader || "").localeCompare(a.loader || ""));
+    case "version-asc": {
+      const pistonVersions = await getPistonVersions();
+      const versionIndex = id => pistonVersions.indexOf(id) !== -1 ? pistonVersions.indexOf(id) : Infinity;
+      return [...profiles].sort((a, b) => versionIndex(a.version) - versionIndex(b.version));
+    }
+    case "version-desc": {
+      const pistonVersions = await getPistonVersions();
+      const versionIndex = id => pistonVersions.indexOf(id) !== -1 ? pistonVersions.indexOf(id) : -Infinity;
+      return [...profiles].sort((a, b) => versionIndex(b.version) - versionIndex(a.version));
+    }
+    case "custom":
+      if (Array.isArray(order) && order.length > 0) {
+        const orderMap = new Map(order.map((id, idx) => [String(id), idx]));
+        return [...profiles].sort((a, b) => {
+          const ai = orderMap.has(String(a.id)) ? orderMap.get(String(a.id)) : Infinity;
+          const bi = orderMap.has(String(b.id)) ? orderMap.get(String(b.id)) : Infinity;
+          return ai - bi;
+        });
+      }
+      return profiles;
+    default:
+      return profiles;
+  }
+}
+
 
 function loadPlayers() {
   ensureFile(playersPath);
@@ -116,8 +182,8 @@ ipcMain.on('get-players', (event) => {
 /* ─────────────── Game Profiles ─────────────── */
 
 // Create game profile
-ipcMain.on('create-profile', (event, profile) => {
-  const profiles = loadProfiles();
+ipcMain.on('create-profile', async (event, profile) => {
+  const profiles = await loadProfiles();
 
   const newProfile = {
     id: Date.now(),
@@ -153,8 +219,8 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
 });
 
 
-ipcMain.on("delete-profile", (event, profileId) => {
-  const profiles = loadProfiles();
+ipcMain.on("delete-profile", async (event, profileId) => {
+  const profiles = await loadProfiles();
   const id = parseInt(profileId, 10);
 
   const newProfiles = profiles.filter(p => p.id !== id);
@@ -191,9 +257,31 @@ ipcMain.on("max-app", () => {
 });
 
 // Get game profiles
-ipcMain.on('get-profiles', (event) => {
-  event.reply('profiles-list', loadProfiles());
+ipcMain.on('get-profiles', async (event) => {
+  try {
+    const profiles = await loadProfiles(); // make sure loadProfiles is async now
+    event.reply('profiles-list', profiles);
+  } catch (err) {
+    console.error('Failed to load profiles:', err);
+    event.reply('profiles-list', []); // send empty array on error
+  }
 });
+
+ipcMain.handle("sort-instances", async (event, { mode, order }) => {
+  if (!mode) return await loadProfiles();
+
+  sortStore.set("sortMode", mode);
+  if (mode === "custom" && Array.isArray(order)) {
+    sortStore.set("customOrder", order);
+  }
+
+  return await loadProfiles();
+});
+
+ipcMain.handle("get-sort-mode", () => {
+  return sortStore.get("sortMode", "created-desc");
+});
+
 
 // Import .mrpack
 ipcMain.handle("import-mrpack", async () => {
@@ -231,7 +319,7 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     let quickplaybool = true
     let quickplayip = serverIp
 
-      const profiles = loadProfiles();
+      const profiles = await loadProfiles();
   const players = loadPlayers();
 
   const profile = profiles.find(p => p.id === profileId);
@@ -370,7 +458,7 @@ zip.getEntries().forEach(entry => {
       files: indexJson.files || []
     };
 
-    const profiles = loadProfiles();
+    const profiles = await loadProfiles();
     profiles.push(newProfile);
     saveProfiles(profiles);
 
@@ -379,12 +467,15 @@ zip.getEntries().forEach(entry => {
 
 // Launch profile
 ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
-  const profiles = loadProfiles();
+  const profiles = await loadProfiles();
   const players = loadPlayers();
 
   const profile = profiles.find(p => p.id === profileId);
   if (!profile) return event.reply('launch-error', "Profile not found");
-
+  if (profile) {
+    profile.lastUsed = Date.now();
+    saveProfiles(profiles);
+  }
   const player = players.find(p => p.id === playerId);
   if (!player) return event.reply('launch-error', "Player not found");
 
@@ -734,7 +825,7 @@ ipcMain.handle("download-and-install", async (event, fileId, version) => {
 
     // Spawn Python gdown
     await new Promise((resolve, reject) => {
-      const gdown = spawn("py", ["-m", "gdown", url, "-O", savePath], { stdio: "inherit" });
+      const gdown = spawn("python", ["-m", "gdown", url, "-O", savePath], { stdio: "inherit" });
 
       gdown.on("close", (code) => {
         if (code === 0) resolve();
