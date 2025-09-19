@@ -3,12 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <title>Redstone Launcher — Settings</title>
- <link rel="stylesheet" href="server.css" />
- <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+<link rel="stylesheet" href="server.css" />
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css" rel="stylesheet">
 </head>
 <body>
+
 <div id="toolbar">
-<div class="drag-region">Redstone Launcher - Settings</div>
+<div class="drag-region">Redstone Launcher</div>
 <div class="toolbar-buttons">
     <button id="min-btn">—</button>
     <button id="max-btn">□</button>
@@ -39,13 +41,354 @@
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
 </div>
-<a href="https://redstone-launcher.com/settings" style="color: white; text-decoration: none;">cool settings right</a>
+
+<div class="settings-container">
+
+  <div class="section-switcher">
+    <button data-section="general">⚙️</button>
+    <button data-section="theme">🎨</button>
+    <button data-section="advanced">🛠️</button>
+  </div>
+
+  <!-- === General Section === -->
+  <div class="section active" id="general">
+    <h3>General</h3>
+    <label><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label><br>
+    <label><input type="checkbox" id="discord-presence"> Enable Discord Presence</label><br>
+
+    <label>Font</label>
+    <select id="font-selector">
+      <option value="Pixel">Pixel</option>
+      <option value="Arial">Arial</option>
+      <option value="Verdana">Verdana</option>
+      <option value="Tahoma">Tahoma</option>
+      <option value="Courier New">Courier New</option>
+      <option value="Times New Roman">Times New Roman</option>
+      <option value="Custom">Custom (system)</option>
+    </select>
+
+    <label>Border Radius (px)</label>
+    <input type="range" id="border-radius" min="0" max="15" step="0.2">
+    <span class="slider-value" id="border-radius-value"></span>
+  </div>
+
+  <!-- === Theme Section === -->
+  <div class="section" id="theme">
+    <h3>Theme</h3>
+
+    <div class="color-input">
+      <span>Base:</span>
+      <input type="color" id="base-color">
+      <input type="text" id="base-color-code" placeholder="#RRGGBB">
+      <button data-color="base">Reset</button>
+    </div>
+
+    <div class="color-input">
+      <span>Secondary:</span>
+      <input type="color" id="secondary-color">
+      <input type="text" id="secondary-color-code" placeholder="#RRGGBB">
+      <button data-color="secondary">Reset</button>
+    </div>
+
+    <div class="color-input">
+      <span>Text:</span>
+      <input type="color" id="text-color">
+      <input type="text" id="text-color-code" placeholder="#RRGGBB">
+      <button data-color="text">Reset</button>
+    </div>
+
+    <div class="color-input">
+      <span>Third (Middle):</span>
+      <input type="color" id="third-color">
+      <input type="text" id="third-color-code" placeholder="#RRGGBB">
+      <button data-color="third">Reset</button>
+    </div>
+    <label><input type="checkbox" id="auto-third" checked> Automatic Third Color</label>
+
+    <h4>Predefined Themes:</h4>
+    <div class="theme-list" id="theme-list"></div>
+  </div>
+
+  <!-- === Advanced Section === -->
+  <div class="section" id="advanced">
+    <h3>Advanced</h3>
+
+    <label>RAM for Instances (MB)</label>
+    <div id="ram-instances-slider"></div>
+    <div class="slider-value" id="ram-instances-value"></div>
+
+    <label>RAM for Servers (MB)</label>
+    <div id="ram-servers-slider"></div>
+    <div class="slider-value" id="ram-servers-value"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.js"></script>
 <script>
-  const { ipcRenderer } = require('electron');
-  function updatePresence(details, state = "Idle") {
-  ipcRenderer.send('update-discord-presence', { details, state });
+const { ipcRenderer } = require('electron');
+
+const defaultSettings = {
+  ramInstancesMin: 2048,
+  ramInstancesMax: 4096,
+  ramServersMin: 2048,
+  ramServersMax: 4096,
+  baseColor: "#ff0000",
+  secondaryColor: "#310a0a",
+  thirdColor: null, // null by default, only stored if autoThird = false
+  textColor: "#ffffff",
+  font: "Pixel",
+  borderRadius: 0,
+  autoUpdates: true,
+  discordPresence: true,
+  autoThird: true // new toggle
+};
+
+
+async function init() {
+  const totalRAM = await ipcRenderer.invoke('get-system-ram');
+  const settings = await ipcRenderer.invoke('get-settings');
+
+  function getSetting(key) {
+    return settings[key] ?? defaultSettings[key];
+  }
+
+  // === Section switching ===
+// Correct section switching
+document.querySelectorAll('.section-switcher button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.section').forEach(sec=>sec.style.display='none');
+    const target = btn.dataset.section;
+    const section = document.getElementById(target);
+    if(section) section.style.display='block';
+  });
+});
+
+
+  // === RAM Sliders ===
+  const ramSliders = [
+    ['ram-instances-slider','ram-instances-value','ramInstancesMin','ramInstancesMax'],
+    ['ram-servers-slider','ram-servers-value','ramServersMin','ramServersMax']
+  ];
+
+  ramSliders.forEach(([sliderId,valId,keyMin,keyMax])=>{
+    const slider = document.getElementById(sliderId);
+    const valueLabel = document.getElementById(valId);
+    const startMin = getSetting(keyMin);
+    const startMax = getSetting(keyMax);
+
+    noUiSlider.create(slider,{
+      start:[startMin,startMax],
+      connect:true,
+      step:256,
+      range:{min:512,max:totalRAM},
+      tooltips:false
+    });
+
+    slider.noUiSlider.on('update', values => {
+      valueLabel.innerText = `Min: ${parseInt(values[0])} | Max: ${parseInt(values[1])}`;
+    });
+
+    slider.noUiSlider.on('change', values=>{
+      const update = {};
+      update[keyMin] = parseInt(values[0]);
+      update[keyMax] = parseInt(values[1]);
+      ipcRenderer.send('save-settings', update);
+    });
+  });
+
+  // === Color Inputs & Live CSS ===
+  const colorSettings = [
+    ['base-color','base-color-code','baseColor',defaultSettings.baseColor],
+    ['secondary-color','secondary-color-code','secondaryColor',defaultSettings.secondaryColor],
+    ['third-color','third-color-code','thirdColor',defaultSettings.thirdColor],
+    ['text-color','text-color-code','textColor',defaultSettings.textColor]
+  ];
+
+  function rgbAverage(hex1, hex2) {
+  const rgb1 = hexToRgb(hex1);
+  const rgb2 = hexToRgb(hex2);
+  const middle = rgb1.map((c, i) => Math.round((c + rgb2[i]) / 2));
+  return rgbToHex(middle[0], middle[1], middle[2]);
 }
-  updatePresence("In Settings")
+
+function updateThirdColor(force = false) {
+  const base = document.getElementById('base-color').value;
+  const secondary = document.getElementById('secondary-color').value;
+  const thirdInput = document.getElementById('third-color');
+  const thirdCode = document.getElementById('third-color-code');
+  const autoThird = document.getElementById('auto-third').checked;
+
+  let third;
+
+  if (autoThird || force) {
+    third = rgbAverage(base, secondary);
+  } else {
+    // respect saved manual color
+    third = getSetting('thirdColor') || rgbAverage(base, secondary);
+  }
+
+  thirdInput.value = third;
+  thirdCode.value = third;
+  document.documentElement.style.setProperty('--third-color', third);
+}
+
+// === Third color manual editing ===
+const thirdColor = document.getElementById('third-color');
+const thirdCode = document.getElementById('third-color-code');
+const autoThirdCheckbox = document.getElementById('auto-third');
+
+thirdColor.addEventListener('input', () => {
+  if (!autoThirdCheckbox.checked) {
+    thirdCode.value = thirdColor.value;
+    document.documentElement.style.setProperty('--third-color', thirdColor.value);
+    ipcRenderer.send('save-settings', { thirdColor: thirdColor.value });
+  }
+});
+thirdCode.addEventListener('change', () => {
+  if (!autoThirdCheckbox.checked && /^#([0-9A-Fa-f]{6})$/.test(thirdCode.value)) {
+    thirdColor.value = thirdCode.value;
+    document.documentElement.style.setProperty('--third-color', thirdCode.value);
+    ipcRenderer.send('save-settings', { thirdColor: thirdCode.value });
+  }
+});
+
+// === Toggle auto third ===
+autoThirdCheckbox.checked = getSetting('autoThird');
+autoThirdCheckbox.addEventListener('change', () => {
+  ipcRenderer.send('save-settings', { autoThird: autoThirdCheckbox.checked });
+  if (autoThirdCheckbox.checked) {
+    ipcRenderer.send('save-settings', { thirdColor: null }); // clear manual
+    updateThirdColor(true);
+  } else {
+    // restore manual color or fallback
+    updateThirdColor();
+  }
+});
+
+  colorSettings.forEach(([colorId,codeId,key,def])=>{
+  const color = document.getElementById(colorId);
+  const code = document.getElementById(codeId);
+
+  color.value = getSetting(key);
+  code.value = getSetting(key);
+
+  function saveColor() {
+    // make sure we apply CSS instantly
+    document.documentElement.style.setProperty('--' + key.replace("Color","-color").toLowerCase(), color.value);
+
+    // save setting
+    ipcRenderer.send('save-settings',{[key]:color.value});
+
+    // re-calc third if auto is on
+    if (document.getElementById('auto-third').checked) {
+      updateThirdColor(true);
+    }
+  }
+
+  color.addEventListener('input', ()=>{ 
+    code.value=color.value; 
+    saveColor(); 
+  });
+
+  code.addEventListener('change', ()=>{
+    if(/^#([0-9A-Fa-f]{6})$/.test(code.value)){ 
+      color.value=code.value; 
+      saveColor(); 
+    }
+  });
+
+  // Reset button
+  const btn = color.parentElement.querySelector('button');
+  btn.addEventListener('click', ()=>{
+    color.value = def;
+    code.value = def;
+    saveColor();
+  });
+});
+
+
+  updateThirdColor();
+
+  // === Predefined themes ===
+  // === Predefined themes ===
+// === Predefined themes ===
+const themes = {
+  default: { name: "Default", baseColor:'#ff0000', secondaryColor:'#310a0a', textColor:'#ffffff'},
+  sunset:  { name: "Sunset",  baseColor:'#ff6f61', secondaryColor:'#ffb347', textColor:'#000000'},
+  forest:  { name: "Forest",  baseColor:'#2b580c', secondaryColor:'#97bc62', textColor:'#ffffff'},
+  ocean:   { name: "Ocean",   baseColor:'#0a74da', secondaryColor:'#00bfff', textColor:'#ffffff'}
+};
+
+// mapping from settings key -> element IDs
+const colorInputs = {
+  baseColor: ['base-color','base-color-code'],
+  secondaryColor: ['secondary-color','secondary-color-code'],
+  textColor: ['text-color','text-color-code']
+};
+
+const themeList = document.getElementById('theme-list');
+if (themeList) {
+  Object.entries(themes).forEach(([key, theme]) => {
+    const btn = document.createElement('div');
+    btn.className = 'theme-btn';
+    btn.innerHTML = `
+      <span>${theme.name}</span>
+      <div class="theme-colors">
+        <div class="theme-swatch" style="background:${theme.baseColor}"></div>
+        <div class="theme-swatch" style="background:${theme.secondaryColor}"></div>
+        <div class="theme-swatch" style="background:${theme.textColor}"></div>
+      </div>
+    `;
+
+    btn.addEventListener('click', () => {
+      Object.entries(colorInputs).forEach(([key2,[colorId,codeId]]) => {
+        const val = theme[key2];
+        const colorEl = document.getElementById(colorId);
+        const codeEl = document.getElementById(codeId);
+        if (colorEl && codeEl) {
+          colorEl.value = val;
+          codeEl.value = val;
+          document.documentElement.style.setProperty('--'+key2.replace("Color","-color").toLowerCase(), val);
+          ipcRenderer.send('save-settings',{[key2]:val});
+        }
+      });
+      updateThirdColor(true);
+    });
+
+    themeList.appendChild(btn);
+  });
+}
+
+
+
+  // === Other Settings ===
+  const fontSelect = document.getElementById('font-selector');
+  fontSelect.value = getSetting('font');
+  fontSelect.addEventListener('change', ()=>ipcRenderer.send('save-settings',{font:fontSelect.value}));
+
+  const borderRadius = document.getElementById('border-radius');
+  const borderValue = document.getElementById('border-radius-value');
+  borderRadius.value = getSetting('borderRadius');
+  borderValue.innerText = borderRadius.value;
+  borderRadius.addEventListener('input', ()=>{
+    borderValue.innerText = borderRadius.value;
+    document.documentElement.style.setProperty('--border-radius',borderRadius.value+'px');
+    ipcRenderer.send('save-settings',{borderRadius:parseFloat(borderRadius.value)});
+  });
+
+  const autoUpdates = document.getElementById('auto-updates');
+  autoUpdates.checked = getSetting('autoUpdates');
+  autoUpdates.addEventListener('change', ()=>ipcRenderer.send('save-settings',{autoUpdates:autoUpdates.checked}));
+
+  const discordPresence = document.getElementById('discord-presence');
+  discordPresence.checked = getSetting('discordPresence');
+  discordPresence.addEventListener('change', ()=>ipcRenderer.send('save-settings',{discordPresence:discordPresence.checked}));
+}
+
+init();
+ipcRenderer.send('update-discord-presence', { details: "In Settings", state: "Idle" });
+
+function closeApp(){ ipcRenderer.send('close-app'); }
 </script>
 <script src="sidebar.js"></script>
 </body>

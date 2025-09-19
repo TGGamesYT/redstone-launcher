@@ -1,3 +1,43 @@
+function hexToRgb(hex) {
+  hex = hex.replace(/^#/, '');
+  return [
+    parseInt(hex.substring(0, 2), 16),
+    parseInt(hex.substring(2, 4), 16),
+    parseInt(hex.substring(4, 6), 16)
+  ];
+}
+
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+function getMiddleColor(hex1, hex2) {
+  const rgb1 = hexToRgb(hex1);
+  const rgb2 = hexToRgb(hex2);
+  const middle = rgb1.map((c, i) => Math.round((c + rgb2[i]) / 2));
+  return rgbToHex(middle[0], middle[1], middle[2]);
+}
+
+function applyTheme(settings) {
+  const textColor = settings.textColor;
+  const textFont = settings.font;
+  const base = settings.baseColor;
+  const secondary = settings.secondaryColor;
+  const mid = settings.thirdColor ?? getMiddleColor(base, secondary);
+  document.documentElement.style.setProperty('--base-color', base);
+  document.documentElement.style.setProperty('--secondary-color', secondary);
+  document.documentElement.style.setProperty('--third-color', mid);
+  document.documentElement.style.setProperty('--text-color', textColor);
+  document.documentElement.style.setProperty('--text-font', textFont);
+  document.documentElement.style.setProperty('--border-radius', `${settings.borderRadius}px`);
+}
+
+// Example after loading settings
+ipcRenderer.invoke('get-settings').then(settings => {
+  applyTheme(settings);
+});
+
+
 players = [];
 selectedPlayerId = null;
 document.getElementById("min-btn").onclick = () => minApp();

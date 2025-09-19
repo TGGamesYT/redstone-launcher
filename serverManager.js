@@ -108,14 +108,16 @@ async function makeServer({ name, version, type }) {
 }
 
 // --- Server Lifecycle ---
-function startServer(name) {
+function startServer(name, settings) {
+  const minRam = `${settings.get('ramServersMin', "1024m")}`;
+  const maxRam = `${settings.get('ramServersMax', "4096m")}`;
   const server = servers.get(name);
   if (!server) throw new Error("Server not found");
 
   const jarPath = path.join(server.dir, "server.jar");
   if (!fs.existsSync(jarPath)) throw new Error("Server jar missing");
 
-  const proc = spawn("java", ["-Xmx2G", "-jar", jarPath, "nogui"], { cwd: server.dir });
+  const proc = spawn("java", ["-Xms"+minRam+"m", "-Xmx"+maxRam+"m", "-jar", jarPath, "nogui"], { cwd: server.dir });
 
   server.process = proc;
   server.status = "running";

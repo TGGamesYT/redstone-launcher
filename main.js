@@ -11,13 +11,19 @@ import serverManager from './serverManager.js';
 import FormData from 'form-data';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
-import { spawn } from "child_process";
+import { spawnSync, spawn } from "child_process";
 import crypto from "crypto";
 import base64url from "base64url";
 import fernet from 'fernet';
 import RPC from "discord-rpc";
+import os from 'os';
+import gDriveDownloader from "@abrifq/google-drive-downloader";
+const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
+const WORKER_URL = "https://curseforge.tothgergoci.workers.dev"
 
 const storage = new Store();
+const settings = new Store();
+export default settings;
 const sortStore = new Store({ name: "instance-sorting" });
 if (!sortStore.has("sortMode")) sortStore.set("sortMode", "created-desc");
 if (!sortStore.has("customOrder")) sortStore.set("customOrder", []);
@@ -112,7 +118,7 @@ function loadPlayers() {
 function savePlayers(p) { fs.writeFileSync(playersPath, JSON.stringify(p, null, 2)); }
 let mainWindow;
 const iconPath = path.join(process.resourcesPath, 'frontend', 'icon.png');
-const preload = path.join(process.resourcesPath, 'preload.js');
+const color = settings.get('baseColor', "#FF0000");
 function createWindow() {
   const win = new BrowserWindow({
     width: 1500,
@@ -124,7 +130,7 @@ function createWindow() {
       contextIsolation: false
     }
   });
-  win.setAccentColor('#FF0000');
+  win.setAccentColor(color);
   win.loadFile('frontend/index.html');
   mainWindow = win
 }
@@ -134,6 +140,21 @@ function createWindow() {
 ipcMain.handle("get-selected-player", () => storage.get("selectedPlayerId", null));
 ipcMain.on("set-selected-player", (event, id) => {
   storage.set("selectedPlayerId", id);
+});
+
+
+ipcMain.handle('get-settings', () => {
+  return settings.store;
+});
+
+ipcMain.on('save-settings', (event, newsettings) => {
+  settings.set(newsettings);
+  const color = settings.get('baseColor', "#FF0000");
+  mainWindow.setAccentColor(color);
+});
+
+ipcMain.handle('get-system-ram', () => {
+  return totalRAMMB;
 });
 
 
@@ -453,9 +474,7 @@ zip.getEntries().forEach(entry => {
       name: indexJson.name || "Imported Profile",
       version: mcVersion,
       loader,
-      icon,
-      folder: profileFolder,
-      files: indexJson.files || []
+      icon
     };
 
     const profiles = await loadProfiles();
@@ -465,8 +484,114 @@ zip.getEntries().forEach(entry => {
     return { success: true, profile: newProfile };
 }
 
+async function getDownloadUrl(projectID, fileID) {
+  try {
+    const response = await fetch(WORKER_URL + "/download-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectID, fileID })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.data) throw new Error("No data field in response");
+
+    return data.data; // this is the actual download URL
+  } catch (err) {
+    console.error(`Failed to fetch mod ${projectID}/${fileID}:`, err);
+    return null;
+  }
+}
+
+ipcMain.handle("import-curseforge-zip", async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: "Select CurseForge .zip file",
+      filters: [{ name: "CurseForge Modpack", extensions: ["zip"] }],
+      properties: ["openFile"]
+    });
+    if (canceled || !filePaths.length)
+      return { success: false, error: "No file selected" };
+
+    const zipPath = filePaths[0];
+    return await curseforgeImport(zipPath);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+async function curseforgeImport(zipPath) {
+  const zip = new AdmZip(zipPath);
+
+  const manifestEntry = zip.getEntry("manifest.json");
+  if (!manifestEntry)
+    return { success: false, error: "manifest.json not found in zip" };
+  const manifest = JSON.parse(manifestEntry.getData().toString("utf8"));
+
+  // Loader & Minecraft version
+  const mcVersion = manifest.minecraft.version;
+  let loaderwithshit = manifest.minecraft.modLoaders.find(l => l.primary)?.id || "vanilla";
+  const loader = loaderwithshit.split("-")[0];
+
+  // Create profile folder
+  const profileId = Date.now();
+  const profilesDir = path.join(dataDir, "client");
+  if (!fs.existsSync(profilesDir)) fs.mkdirSync(profilesDir, { recursive: true });
+  const profileFolder = path.join(profilesDir, `${profileId}`);
+  fs.mkdirSync(profileFolder);
+
+  // Extract overrides/
+  zip.getEntries().forEach(entry => {
+    if (!entry.isDirectory && entry.entryName.startsWith("overrides/")) {
+      const relativePath = entry.entryName.replace(/^overrides\//, "");
+      if (!relativePath) return;
+      const outPath = path.join(profileFolder, relativePath);
+      const outDir = path.dirname(outPath);
+      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      fs.writeFileSync(outPath, entry.getData());
+    }
+  });
+
+  // Download mods
+  for (const fileObj of manifest.files || []) {
+    try {
+      const url = await getDownloadUrl(fileObj.projectID, fileObj.fileID);
+      const fileName = path.basename(url.split("?")[0]);
+      const dest = path.join(profileFolder, "mods", fileName);
+      await downloadFile(url, dest);
+    } catch (err) {
+      console.error(`Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
+    }
+  }
+
+  // Optional: read overrides/icon.png if exists
+  let icon = null;
+  const iconEntry = zip.getEntry("overrides/icon.png");
+  if (iconEntry) icon = iconEntry.getData().toString("base64");
+
+  const newProfile = {
+    id: profileId,
+    name: manifest.name || "Imported CurseForge Pack",
+    version: mcVersion,
+    loader,
+    icon
+  };
+
+  const profiles = await loadProfiles();
+  profiles.push(newProfile);
+  saveProfiles(profiles);
+
+  return { success: true, profile: newProfile };
+}
+
+
 // Launch profile
 ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
+  const minRam = `${settings.get('ramInstancesMin', 1024)}m`;
+  const maxRam = `${settings.get('ramInstancesMax', 4096)}m`;
   const profiles = await loadProfiles();
   const players = loadPlayers();
 
@@ -516,7 +641,7 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
   let opts = {
     ...launcherConfig,
     authorization: auth,
-    memory: { max: "4G", min: "1G" },
+    memory: { max: maxRam, min: minRam },
     overrides: {
       detached: false
     },
@@ -535,7 +660,7 @@ ipcMain.handle("make-server", async (event, params) => {
 });
 
 ipcMain.handle("start-server", (event, id) => {
-  return serverManager.startServer(id);
+  return serverManager.startServer(id, settings);
 });
 
 ipcMain.handle("stop-server", (event, id) => {
@@ -733,6 +858,11 @@ ipcMain.handle('set-player-skin', async (event, { playerId, skinPath, model }) =
 /* ─────────────── Helpers ─────────────── */
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
+    const dir = path.dirname(dest);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true }); // create folder if missing
+    }
+
     const file = fs.createWriteStream(dest);
     https.get(url, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -741,9 +871,7 @@ function downloadFile(url, dest) {
         return;
       }
       res.pipe(file);
-      file.on("finish", () => {
-        file.close(resolve); // close ensures file is fully written
-      });
+      file.on("finish", () => file.close(resolve));
     }).on("error", (err) => {
       fs.unlink(dest, ()=>{}); // delete partial file
       reject(err);
@@ -821,17 +949,11 @@ ipcMain.handle("check-for-updates", async () => {
 ipcMain.handle("download-and-install", async (event, fileId, version) => {
   try {
     const savePath = path.join(app.getPath("temp"), `RedstoneLauncher-${version}.exe`);
-    const url = `https://drive.google.com/uc?id=${fileId}`;
 
-    // Spawn Python gdown
-    await new Promise((resolve, reject) => {
-      const gdown = spawn("python", ["-m", "gdown", url, "-O", savePath], { stdio: "inherit" });
+    // Direct download URL for Node
+    const gdriveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
 
-      gdown.on("close", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`gdown exited with code ${code}`));
-      });
-    });
+    await downloadFile(gdriveDownloadUrl, savePath);
 
     // Run installer
     spawn(savePath, { shell: true, detached: true, stdio: "ignore" }).unref();
@@ -843,6 +965,7 @@ ipcMain.handle("download-and-install", async (event, fileId, version) => {
     return { success: false, error: err.message };
   }
 });
+
 
 
 /* ─────────────── mrpack export ─────────────── */
