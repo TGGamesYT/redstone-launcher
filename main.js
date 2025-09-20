@@ -160,6 +160,34 @@ ipcMain.handle('get-system-ram', () => {
 
 /* ─────────────── Player Profiles ─────────────── */
 
+async function refreshPlayer(player) {
+  try {
+    // Create an Auth instance
+    const authManager = new Auth();
+
+    // Call refresh with either:
+    // - The saved msToken object
+    // - Or just the refresh_token string
+    const xboxManager = await authManager.refresh(player.refresh);
+
+    // Get a new Minecraft token
+    const token = await xboxManager.getMinecraft();
+
+    // Convert for launcher-core
+    const launcherAuth = token.mclc();
+
+    // Update your stored player
+    player.auth = launcherAuth;
+    player.refresh = token.parent.msToken;
+
+    return player;
+  } catch (err) {
+    console.error("Failed to refresh player:", err);
+    throw err;
+  }
+}
+
+
 // Add cracked player
 ipcMain.on('create-cracked-player', (event, username) => {
   const players = loadPlayers();
@@ -184,7 +212,8 @@ ipcMain.on("login-microsoft", async (event) => {
     players.push({
       id: Date.now(),
       type: "microsoft",
-      auth: launcherAuth
+      auth: launcherAuth,
+      refresh: token.parent.msToken
     });
     savePlayers(players);
     event.reply("players-updated", players);
@@ -608,7 +637,13 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
   if (player.type === "cracked") {
     auth = { name: player.username, uuid: "0", access_token: "0" };
   } else {
-    auth = player.auth;
+    try {
+      await refreshPlayer(player);
+      auth = player.auth
+    } catch (err) {
+      auth = player.auth
+      event.reply('launch-error', "Failed to refresh Microsoft token: " + err.message);
+    }
   }
   let quickplay = null;
   if (quickplaybool) {
@@ -643,6 +678,7 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     authorization: auth,
     memory: { max: maxRam, min: minRam },
     overrides: {
+      assetRoot: path.join(dataDir, 'assets'),
       detached: false
     },
     quickplay: quickplay
