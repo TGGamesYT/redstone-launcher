@@ -92,30 +92,26 @@ async function updateLoginIcon() {
 function renderInstances(instances) {
   const ul = document.getElementById("instances");
   ul.innerHTML = ""; // clear placeholder items
-  num = 0;
 
   // Add each instance
   instances.forEach(instance => {
-    if (num < 3) {
-      const li = document.createElement("li");
+    const li = document.createElement("li");
 
-      // clickable icon + link
-      const a = document.createElement("a");
-      a.href = `instances.html?i=${instance.id}`;
-      const img = document.createElement("img");
-      img.src = instance.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-      img.alt = instance.name;
-      img.style.width = "24px";
-      a.appendChild(img);
+    // clickable icon + link
+    const a = document.createElement("a");
+    a.href = `instances.html?i=${instance.id}`;
+    const img = document.createElement("img");
+    img.src = instance.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+    img.alt = instance.name;
+    img.style.width = "24px";
+    a.appendChild(img);
 
-      const span = document.createElement("span");
-      span.textContent = instance.name;
+    const span = document.createElement("span");
+    span.textContent = instance.name;
 
-      li.appendChild(a);
-      li.appendChild(span);
-      ul.appendChild(li);
-      num++
-    }
+    li.appendChild(a);
+    li.appendChild(span);
+    ul.appendChild(li);
   });
 
   // "Add an instance" option
@@ -181,44 +177,3 @@ function maxApp() {ipcRenderer.send("max-app")}
 });
 
 updateSideBar()
-
-const currentFile = "frontend/" + window.location.pathname.split(/[/\\]/).pop();
-
-// Track visible .page elements, or the whole HTML if no pages
-const pages = document.querySelectorAll('.page');
-
-if (pages.length === 0) {
-  // No sub-pages; track the whole HTML as one page
-  ipcRenderer.send('track-page', { file: currentFile, pageId: null });
-} else {
-  // MutationObserver tracks .page visibility
-  let historySent = false;
-
-  const observer = new MutationObserver(mutations => {
-    mutations.forEach(m => {
-      if (m.attributeName === 'style') {
-        const el = m.target;
-        const display = window.getComputedStyle(el).display;
-        if (display !== 'none') {
-          ipcRenderer.send('track-page', { file: currentFile, pageId: el.id });
-        }
-      }
-    });
-  });
-
-  pages.forEach(p => observer.observe(p, { attributes: true, attributeFilter: ['style'] }));
-}
-
-// Listen for main telling us to show a page
-ipcRenderer.on('show-page', (event, pageId) => {
-  if (!pageId) return; // nothing to do, whole HTML is shown
-  pages.forEach(p => p.style.display = p.id === pageId ? 'flex' : 'none');
-});
-
-document.getElementById('backBtn').addEventListener('click', () => {
-  ipcRenderer.send('go-back');
-});
-
-document.getElementById('forwardBtn').addEventListener('click', () => {
-  ipcRenderer.send('go-forward');
-});

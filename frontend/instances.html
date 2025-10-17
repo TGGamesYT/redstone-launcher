@@ -1,588 +1,658 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<title>Redstone Launcher - Instances</title>
-<style>
-  body { font-family: sans-serif; padding: 20px; }
-  h1, h2 { margin-bottom: 10px; }
-  ul { list-style: none; padding: 0; }
-  li.profile-item { display: flex; align-items: center; margin-bottom: 10px; }
-  li.profile-item img { width: 32px; height: 32px; border-radius: 4px; margin-right: 10px; }
-  li.profile-item span { flex: 1; }
-  li.profile-item button { margin-left: 5px; }
-  .selected { background: #e0f7fa; }
-  #logs { height: 200px; overflow: auto; border: 1px solid #7c0b0b; padding: 5px; margin-top: 10px; display: none; }
-  #profileModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                  background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
-  #profileModal .modal-content { background: rgb(167, 47, 47); padding: 20px; border-radius: 8px; width: 300px; }
-  #profileModal label { display: block; margin-top: 10px; }
-</style>
- <link rel="stylesheet" href="server.css" />
- <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <meta charset="UTF-8">
+  <title>Redstone Launcher - Instances</title>
+  <link rel="stylesheet" href="server.css">
+  
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
+
 <body>
-<div id="toolbar">
-<div class="drag-region">Redstone Launcher - Instances</div>
-<div class="toolbar-buttons">
-    <button id="min-btn">—</button>
-    <button id="max-btn">□</button>
-    <button id="close-btn">✕</button>
-</div>
-</div>
-<div class="sidebar">
-  <!-- Top section -->
-  <ul class="menu top">
-    <li><a href="index.html"><i class="material-icons">home</i></a><span>Home</span></li>
-    <li><a href="instances.html"><i class="material-icons">play_arrow</i></a><span>Play</span></li>
-    <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" style="width: 24px;"></a><span>Modrinth</span></li>
-    <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
-    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-    <li><a href="players.html"><i class="material-icons">person</i></a><span>Profiles</span></li>
-    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
-  </ul>
+  <div id="toolbar">
+    <div class="toolbar-buttons-left">
+        <button id="backBtn">⬅</button>
+        <button id="forwardBtn">➡</button>
+    </div>
+    <div class="drag-region">Redstone Launcher - Instances</div>
+    <div class="toolbar-buttons">
+      <button id="min-btn">—</button>
+      <button id="max-btn">□</button>
+      <button id="close-btn">✕</button>
+    </div>
+  </div>
+  <div class="sidebar">
+    <!-- Top section -->
+    <ul class="menu top">
+      <li><a href="index.html"><i class="material-icons">home</i></a><span>Home</span></li>
+      <li><a href="instances.html"><i class="material-icons">play_arrow</i></a><span>Play</span></li>
+      <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png"
+            style="width: 24px;"></a><span>Modrinth</span></li>
+      <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
+      <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+      
+      <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
+    </ul>
 
-  <!-- Middle section (instances) -->
-  <ul class="menu middle" id="instances">
-    <li><i class="material-icons">add</i><span>Add an instance</span></li>
-  </ul>
+    <!-- Middle section (instances) -->
+    <ul class="menu middle" id="instances">
+      <li><i class="material-icons">add</i><span>Add an instance</span></li>
+    </ul>
 
-  <!-- Bottom section -->
-  <ul class="menu bottom">
-    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
-    <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
-    <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
-  </ul>
-</div>
-<div id="search-sort">
-<div style="margin-bottom: 10px;">
-  <input id="searchInput" type="text" placeholder="Search instances..." style="padding:5px; width:200px;" />
+    <!-- Bottom section -->
+    <ul class="menu bottom">
+      <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+      <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
+      <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
+    </ul>
+  </div>
+  <div id="search-sort">
+    <div style="margin-bottom: 10px;">
+      <input id="searchInput" type="text" placeholder="Search instances..." style="padding:5px; width:200px;" />
 
-  <select id="filterLoader">
-    <option value="">All Loaders</option>
-    <option value="vanilla">Vanilla</option>
-    <option value="fabric">Fabric</option>
-    <option value="quilt">Quilt</option>
-    <option value="forge">Forge</option>
-    <option value="neoforge">NeoForge</option>
-  </select>
-
-  <input id="filterVersion" type="text" placeholder="Filter by version..." style="padding:5px; width:120px;" />
-</div>
-<div style="margin-bottom: 10px;">
-  <label for="sortSelect">Sort by: </label>
-  <select id="sortSelect">
-    <option value="custom">Custom</option>
-    <option value="name-asc">By Name (ascending)</option>
-    <option value="name-desc">By Name (descending)</option>
-    <option value="created-asc">By Creation Date (ascending)</option>
-    <option value="created-desc">By Creation Date (descending)</option>
-    <option value="lastused-asc">By Last Used (ascending)</option>
-    <option value="lastused-desc">By Last Used (descending)</option>
-    <option value="loader-asc">By Mod Loader (ascending)</option>
-    <option value="loader-desc">By Mod Loader (descending)</option>
-    <option value="version-asc">By Game Version (ascending)</option>
-    <option value="version-desc">By Game Version (descending)</option>
-  </select>
-  <button id="editOrderBtn" style="display:none;">Edit Order</button>
-</div>
-</div>
-<ul id="profiles-list"></ul>
-
-<!-- Add Instance Modal -->
-<div id="addInstanceModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center;">
-  <div style="background:rgb(255, 0, 0); padding:20px; border-radius:8px; width:300px;">
-    <h3>Create Instance</h3>
-    <label>Name: <input id="instanceName" placeholder="Vanilla 1.20" /></label>
-    <label>Version: <input id="instanceVersion" value="1.20.1" /></label>
-    <label>Modloader:
-      <select id="instanceLoader">
+      <select id="filterLoader">
+        <option value="">All Loaders</option>
         <option value="vanilla">Vanilla</option>
         <option value="fabric">Fabric</option>
         <option value="quilt">Quilt</option>
         <option value="forge">Forge</option>
         <option value="neoforge">NeoForge</option>
       </select>
-    </label>
-    <label>Icon: <input type="file" id="instanceIcon" accept="image/*" /></label>
-    <button onclick="document.getElementById('importModal').style.display='flex'">Import</button>
-    <div style="margin-top:10px;">
-      <button id="modalCreateBtn">Create</button>
-      <button id="modalCancelBtn">Cancel</button>
+
+      <input id="filterVersion" type="text" placeholder="Filter by version..." style="padding:5px; width:120px;" />
+    </div>
+    <div style="margin-bottom: 10px;">
+      <label for="sortSelect">Sort by: </label>
+      <select id="sortSelect">
+        <option value="custom">Custom</option>
+        <option value="name-asc">By Name (ascending)</option>
+        <option value="name-desc">By Name (descending)</option>
+        <option value="created-asc">By Creation Date (ascending)</option>
+        <option value="created-desc">By Creation Date (descending)</option>
+        <option value="lastused-asc">By Last Used (ascending)</option>
+        <option value="lastused-desc">By Last Used (descending)</option>
+        <option value="loader-asc">By Mod Loader (ascending)</option>
+        <option value="loader-desc">By Mod Loader (descending)</option>
+        <option value="version-asc">By Game Version (ascending)</option>
+        <option value="version-desc">By Game Version (descending)</option>
+      </select>
+      <button id="editOrderBtn" style="display:none;">Edit Order</button>
     </div>
   </div>
-</div>
+  <ul id="profiles-list" style="max-height: 70vh; overflow-y: auto; overflow-x: hidden;"></ul>
 
-<!-- Import Modal -->
-<div id="importModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; 
+  <!-- Add Instance Modal -->
+  <div id="addInstanceModal"
+    style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center;">
+    <div style="background:var(--third-color); padding:20px; border-radius:8px; width:300px;">
+      <h3>Create Instance</h3>
+      <label>Name: <input id="instanceName" placeholder="Vanilla 1.20" /></label>
+      <br>
+      <label>Version: <select id="instanceVersion"></select><input type="checkbox" id="showAllVersions" style="transform: scale(1.5); transform-origin: center;" /></label>
+      <br>
+      <label>Modloader:
+        <select id="instanceLoader">
+          <option value="vanilla">Vanilla</option>
+          <option value="fabric">Fabric</option>
+          <option value="quilt">Quilt</option>
+          <option value="forge">Forge</option>
+          <option value="neoforge">NeoForge</option>
+        </select>
+      </label>
+      <br>
+      <label>Icon: <input type="file" id="instanceIcon" accept="image/*" /></label>
+      <br>
+      <button onclick="document.getElementById('importModal').style.display='flex'">Import</button>
+      <div style="margin-top:10px;">
+        <button id="modalCreateBtn">Create</button>
+        <button id="modalCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Modal -->
+  <div id="importModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; 
   background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:2000;">
-  <div style="background:rgb(167,47,47); padding:20px; border-radius:8px; width:300px;">
-    <h3>Import Instance</h3>
-    <p>Select source:</p>
-    <button id="importMrpackBtn">From Modrinth (.mrpack)</button>
-    <button id="importFromZipBtn">From CurseForge (.zip)</button>
-    <div style="margin-top:10px;">
-      <button id="importCancelBtn">Cancel</button>
+    <div style="background:var(--third-color); padding:20px; border-radius:8px; width:300px;">
+      <h3>Import Instance</h3>
+      <p>Select source:</p>
+      <button id="importMrpackBtn">From Modrinth (.mrpack)</button>
+      <button id="importFromZipBtn">From CurseForge (.zip)</button>
+      <div style="margin-top:10px;">
+        <button id="importCancelBtn">Cancel</button>
+      </div>
     </div>
   </div>
-</div>
 
 
-<div id="instance-detail" style="display:none;">
-  <h2 id="instance-name"></h2>
-  <p id="instance-info"></p>
-  <pre id="logs" style="height:200px; overflow:auto; border:1px solid #ccc; padding:5px;"></pre>
-</div>
+  <div id="instance-detail" style="display:none;">
+    <h2 id="instance-name"></h2>
+    <p id="instance-info"></p>
+    <pre id="logs" style="height:200px; overflow:auto; border:1px solid #ccc; padding:5px;"></pre>
+  </div>
 
-<script>
-const { ipcRenderer } = require('electron');
-let profiles = [];
+  <script>
+    const { ipcRenderer } = require('electron');
+    let profiles = [];
 
-const profilesList = document.getElementById("profiles-list");
-const instanceDetail = document.getElementById("instance-detail");
-const nameEl = document.getElementById("instance-name");
-const infoEl = document.getElementById("instance-info");
-const logsEl = document.getElementById("logs");
-const searchInput = document.getElementById("searchInput");
-const filterLoader = document.getElementById("filterLoader");
-const filterVersion = document.getElementById("filterVersion");
-const addInstanceModal = document.getElementById("addInstanceModal");
-const modalCreateBtn = document.getElementById("modalCreateBtn");
-const modalCancelBtn = document.getElementById("modalCancelBtn");
-const instanceName = document.getElementById("instanceName");
-const instanceVersion = document.getElementById("instanceVersion");
-const instanceLoader = document.getElementById("instanceLoader");
-const instanceIcon = document.getElementById("instanceIcon");
-const importMrpackBtn = document.getElementById("importMrpackBtn");
-const sortSelect = document.getElementById("sortSelect");
-const editOrderBtn = document.getElementById("editOrderBtn");
-const searchsort = document.getElementById("search-sort");
-let editingOrder = false;
+    const profilesList = document.getElementById("profiles-list");
+    const instanceDetail = document.getElementById("instance-detail");
+    const nameEl = document.getElementById("instance-name");
+    const infoEl = document.getElementById("instance-info");
+    const logsEl = document.getElementById("logs");
+    const searchInput = document.getElementById("searchInput");
+    const filterLoader = document.getElementById("filterLoader");
+    const filterVersion = document.getElementById("filterVersion");
+    const addInstanceModal = document.getElementById("addInstanceModal");
+    const modalCreateBtn = document.getElementById("modalCreateBtn");
+    const modalCancelBtn = document.getElementById("modalCancelBtn");
+    const instanceName = document.getElementById("instanceName");
+    const instanceVersion = document.getElementById("instanceVersion");
+    const instanceLoader = document.getElementById("instanceLoader");
+    const instanceIcon = document.getElementById("instanceIcon");
+    const importMrpackBtn = document.getElementById("importMrpackBtn");
+    const sortSelect = document.getElementById("sortSelect");
+    const editOrderBtn = document.getElementById("editOrderBtn");
+    const searchsort = document.getElementById("search-sort");
+    let editingOrder = false;
 
-const urlParams = new URLSearchParams(window.location.search);
-const instanceId = urlParams.get("i");
+    const urlParams = new URLSearchParams(window.location.search);
+    const instanceId = urlParams.get("i");
 
-// Fetch profiles
-ipcRenderer.send("get-profiles");
-ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
-ipcRenderer.on("profiles-updated", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
+    // Fetch profiles
+    ipcRenderer.send("get-profiles");
+    ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
+    ipcRenderer.on("profiles-updated", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
 
-// small debounce helper
-function debounce(fn, wait = 150) {
-  let t;
-  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
-}
+    // small debounce helper
+    function debounce(fn, wait = 150) {
+      let t;
+      return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
+    }
 
-// Attach listeners (only once)
-function attachFilterListeners() {
-  if (searchInput) searchInput.addEventListener('input', debounce(renderListOrDetail, 120));
-  if (filterLoader) filterLoader.addEventListener('change', renderListOrDetail);
-  if (filterVersion) filterVersion.addEventListener('input', renderListOrDetail);
-  if (sortSelect) sortSelect.addEventListener('change', async () => {
-    // send sort preference to backend if you support it
-    try { await ipcRenderer.invoke('sort-instances', sortSelect.value); } catch (e) {}
-    renderListOrDetail();
-  });
-}
-// call once on load
-attachFilterListeners();
-
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-sortSelect.addEventListener("change", async () => {
-  const sortValue = sortSelect.value;
-  if (sortValue === "custom") {
-    editOrderBtn.style.display = "inline-block";
-  } else {
-    editOrderBtn.style.display = "none";
-    editingOrder = false;
-  }
-
-  if (sortValue !== "custom") {
-    try {
-      const sortedProfiles = await ipcRenderer.invoke("sort-instances", { mode: sortValue });
-      if (sortedProfiles && Array.isArray(sortedProfiles)) {
-        profiles = sortedProfiles;
+    // Attach listeners (only once)
+    function attachFilterListeners() {
+      if (searchInput) searchInput.addEventListener('input', debounce(renderListOrDetail, 120));
+      if (filterLoader) filterLoader.addEventListener('change', renderListOrDetail);
+      if (filterVersion) filterVersion.addEventListener('input', renderListOrDetail);
+      if (sortSelect) sortSelect.addEventListener('change', async () => {
+        // send sort preference to backend if you support it
+        try { await ipcRenderer.invoke('sort-instances', sortSelect.value); } catch (e) { }
         renderListOrDetail();
-      }
-    } catch (err) {
-      console.error("Failed to sort instances:", err);
-      alert("Sorting failed: " + err.message);
+      });
     }
-  }
-});
+    // call once on load
+    attachFilterListeners();
 
-[searchInput, filterLoader, filterVersion].forEach(el => {
-  el.addEventListener("input", renderListOrDetail);
-});
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
 
-// Toggle editing order
-editOrderBtn.addEventListener("click", () => {
-  editingOrder = !editingOrder;
-  editOrderBtn.textContent = editingOrder ? "Save Order" : "Edit Order";
-
-  if (editingOrder) {
-    enableDragAndDrop();
-  } else {
-    saveCustomOrder();
-  }
-});
-
-// Enable drag-and-drop reordering
-function enableDragAndDrop() {
-  const items = profilesList.querySelectorAll("li.profile-item");
-  items.forEach(li => {
-    li.setAttribute("draggable", true);
-
-    li.addEventListener("dragstart", e => {
-      e.dataTransfer.setData("text/plain", li.dataset.id);
-      li.classList.add("dragging");
-    });
-
-    li.addEventListener("dragend", () => li.classList.remove("dragging"));
-
-    li.addEventListener("dragover", e => {
-      e.preventDefault();
-      const dragging = document.querySelector(".dragging");
-      if (!dragging) return;
-      const bounding = li.getBoundingClientRect();
-      const offset = e.clientY - bounding.top;
-      if (offset > bounding.height / 2) {
-        li.parentNode.insertBefore(dragging, li.nextSibling);
+    sortSelect.addEventListener("change", async () => {
+      const sortValue = sortSelect.value;
+      if (sortValue === "custom") {
+        editOrderBtn.style.display = "inline-block";
       } else {
-        li.parentNode.insertBefore(dragging, li);
+        editOrderBtn.style.display = "none";
+        editingOrder = false;
+      }
+
+      if (sortValue !== "custom") {
+        try {
+          const sortedProfiles = await ipcRenderer.invoke("sort-instances", { mode: sortValue });
+          if (sortedProfiles && Array.isArray(sortedProfiles)) {
+            profiles = sortedProfiles;
+            renderListOrDetail();
+          }
+        } catch (err) {
+          console.error("Failed to sort instances:", err);
+          console.log("Sorting failed: " + err.message);
+        }
       }
     });
-  });
-}
 
-// Collect new order and send to backend
-async function saveCustomOrder() {
-  const ids = Array.from(profilesList.querySelectorAll("li.profile-item"))
-    .map(li => li.dataset.id)
-    .filter(Boolean); // ignore the "Add instance" button
-
-  try {
-    const sortedProfiles = await ipcRenderer.invoke("sort-instances", { mode: "custom", order: ids });
-    if (sortedProfiles && Array.isArray(sortedProfiles)) {
-      profiles = sortedProfiles;
-      renderListOrDetail();
-    }
-  } catch (err) {
-    console.error("Failed to save custom order:", err);
-    alert("Saving custom order failed: " + err.message);
-  }
-}
-
-// On load → ask backend for saved sort mode
-(async () => {
-  const mode = await ipcRenderer.invoke("get-sort-mode");
-  if (mode) sortSelect.value = mode;
-})();
-
-function applyFilters(list) {
-  const query = searchInput.value.toLowerCase();
-  const loaderFilter = filterLoader.value;
-  const versionFilter = filterVersion.value.trim();
-
-  return list.filter(p => {
-    if (query && !p.name.toLowerCase().includes(query)) return false;
-    if (loaderFilter && p.loader !== loaderFilter) return false;
-    if (versionFilter && !p.version.includes(versionFilter)) return false;
-    return true;
-  });
-}
-
-
-async function renderListOrDetail() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const instanceId = urlParams.get('i');
-
-  // read filter/search values now
-  const q = (searchInput?.value || '').trim().toLowerCase();
-  const loaderFilterVal = (filterLoader?.value || '').trim();
-  const versionFilterVal = (filterVersion?.value || '').trim().toLowerCase();
-  const sortMode = (sortSelect?.value || 'custom');
-
-  // copy profiles so we can sort/filter safely
-  let list = Array.isArray(profiles) ? profiles.slice() : [];
-
-  // FILTER
-  if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q) || String(p.id).includes(q));
-  if (loaderFilterVal) list = list.filter(p => (p.loader || '').toLowerCase() === loaderFilterVal.toLowerCase());
-  if (versionFilterVal) list = list.filter(p => (p.version || '').toLowerCase().includes(versionFilterVal));
-
-  // SORT
-  if (sortMode && sortMode !== 'custom') {
-    const [key, dir] = sortMode.split('_');
-    list.sort((a, b) => {
-      if (key === 'name') return ((a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase())) * (dir === 'asc'?1:-1);
-      if (key === 'created' || key === 'lastUsed') return ((a[key] || 0) - (b[key] || 0)) * (dir === 'asc'?1:-1);
-      return 0;
+    [searchInput, filterLoader, filterVersion].forEach(el => {
+      el.addEventListener("input", renderListOrDetail);
     });
-  }
 
-  const selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
+    // Toggle editing order
+    editOrderBtn.addEventListener("click", () => {
+      editingOrder = !editingOrder;
+      editOrderBtn.textContent = editingOrder ? "Save Order" : "Edit Order";
 
-  // SINGLE INSTANCE VIEW
-  if (instanceId && instanceId !== 'NEWINSTANCE') {
-    searchsort.style.display = "none"
-    const profile = list.find(p => String(p.id) === String(instanceId));
-    if (!profile) return; // nothing to show
-    profilesList.style.display = "none";
-    instanceDetail.style.display = "block";
-    nameEl.textContent = profile.name;
-    infoEl.textContent = `Version: ${profile.version} | Loader: ${profile.loader}`;
-    logsEl.style.display = "block";
-    logsEl.textContent = `Showing logs for ${profile.name}...\n`;
-    // attach log listeners etc (ensure you don't attach duplicates)
-    ipcRenderer.removeAllListeners('launcher-log');
-    ipcRenderer.on('launcher-log', (event, msg) => {
-      logsEl.textContent += msg + "\n";
-      logsEl.scrollTop = logsEl.scrollHeight;
+      if (editingOrder) {
+        enableDragAndDrop();
+      } else {
+        saveCustomOrder();
+      }
     });
-    ipcRenderer.removeAllListeners('launch-error');
-    ipcRenderer.on('launch-error', (event, msg) => {
-      logsEl.textContent += "[ERROR] " + msg + "\n";
-      logsEl.scrollTop = logsEl.scrollHeight;
-    });
-    if (!instanceDetail.querySelector("button")) {
-      const launchBtn = document.createElement("button");
-      launchBtn.textContent = "Launch Profile";
-      launchBtn.onclick = () => {
-        if (!selectedPlayerId) return alert("Select a player first!");
-        ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId });
-        logsEl.textContent += `Launching ${profile.name}...\n`;
-      };
-      instanceDetail.appendChild(launchBtn);
+
+    // Enable drag-and-drop reordering
+    function enableDragAndDrop() {
+      const items = profilesList.querySelectorAll("li.profile-item");
+      items.forEach(li => {
+        li.setAttribute("draggable", true);
+
+        li.addEventListener("dragstart", e => {
+          e.dataTransfer.setData("text/plain", li.dataset.id);
+          li.classList.add("dragging");
+        });
+
+        li.addEventListener("dragend", () => li.classList.remove("dragging"));
+
+        li.addEventListener("dragover", e => {
+          e.preventDefault();
+          const dragging = document.querySelector(".dragging");
+          if (!dragging) return;
+          const bounding = li.getBoundingClientRect();
+          const offset = e.clientY - bounding.top;
+          if (offset > bounding.height / 2) {
+            li.parentNode.insertBefore(dragging, li.nextSibling);
+          } else {
+            li.parentNode.insertBefore(dragging, li);
+          }
+        });
+      });
     }
 
-    if (!instanceDetail.querySelector(".edit-btn")) {
-      const editBtn = document.createElement("button");
-      editBtn.className = "edit-btn";
-      editBtn.textContent = "Edit Instance";
-      editBtn.onclick = () => {
-        // Pre-fill modal fields
-        instanceName.value = profile.name;
-        instanceVersion.value = profile.version;
-        instanceLoader.value = profile.loader;
-        instanceIcon.value = ""; // file input can't be prefilled
+    // Collect new order and send to backend
+    async function saveCustomOrder() {
+      const ids = Array.from(profilesList.querySelectorAll("li.profile-item"))
+        .map(li => li.dataset.id)
+        .filter(Boolean); // ignore the "Add instance" button
 
-        // save original profile for diffing
-        modalCreateBtn.dataset.editingId = profile.id;
-        modalCreateBtn._originalProfile = profile;
-
-        addInstanceModal.style.display = "flex";
-      };
-
-      instanceDetail.appendChild(editBtn);
-    }
-    if (!instanceDetail.querySelector(".delete-btn")) {
-      const deleteBtn = document.createElement("button");
-      deleteBtn.className = "delete-btn";
-      deleteBtn.textContent = "Delete Instance";
-      deleteBtn.onclick = () => {
-        if (confirm(`Are you sure you want to delete "${profile.name}"? This cannot be undone.`)) {
-          ipcRenderer.send("delete-profile", profile.id);
-          // Go back to list view after deletion
-          window.location.href = "instances.html";
-        }
-      };
-      instanceDetail.appendChild(deleteBtn);
-    }
-    if (!instanceDetail.querySelector(".mrpack-btn")) {
-      const mrpackBtn = document.createElement("button");
-      mrpackBtn.className = "mrpack-btn";
-      mrpackBtn.textContent = "Export .mrpack";
-      mrpackBtn.onclick = async () => {
       try {
-        const result = await ipcRenderer.invoke("export-mrpack", profile.id);
-
-        if (result.success) {
-          alert(`Export finished successfully!\nPath: ${result.mrpackPath}`);
-        } else {
-          alert(`Export failed:\n${result.error}`);
+        const sortedProfiles = await ipcRenderer.invoke("sort-instances", { mode: "custom", order: ids });
+        if (sortedProfiles && Array.isArray(sortedProfiles)) {
+          profiles = sortedProfiles;
+          renderListOrDetail();
         }
       } catch (err) {
-        alert(`Unexpected error:\n${err.message || err}`);
-      } finally {
-        // Navigate away after showing alert
-        window.location.href = "instances.html";
+        console.error("Failed to save custom order:", err);
+        console.log("Saving custom order failed: " + err.message);
       }
-    };
-      instanceDetail.appendChild(mrpackBtn);
-    }
-    return;
-  }
-
-  // LIST VIEW
-  searchsort.style.display = "block";
-  profilesList.style.display = "block";
-  instanceDetail.style.display = "none";
-
-  profilesList.innerHTML = "";
-
-  list.forEach(p => {
-    const li = document.createElement("li");
-    li.className = "profile-item";
-
-    const img = document.createElement("img");
-    img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-    li.appendChild(img);
-
-    const span = document.createElement("span");
-    span.textContent = `${p.name} (v${p.version}, ${p.loader})`;
-    li.appendChild(span);
-
-    const viewBtn = document.createElement("button");
-    viewBtn.textContent = "Open Instance";
-    viewBtn.onclick = () => { window.location.href = `instances.html?i=${p.id}`; };
-    li.appendChild(viewBtn);
-
-    const launchBtn = document.createElement("button");
-    launchBtn.textContent = "Launch";
-    launchBtn.onclick = () => {
-      if (!selectedPlayerId) return alert("Select a player first!");
-      ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
-    };
-    li.appendChild(launchBtn);
-
-    profilesList.appendChild(li);
-  });
-
-  // Add Instance button
-  const liAdd = document.createElement("li");
-  liAdd.className = "profile-item";
-  const iAdd = document.createElement("i");
-  iAdd.className = "material-icons";
-  iAdd.textContent = "add";
-  const spanAdd = document.createElement("span");
-  spanAdd.textContent = "Add an instance";
-
-  liAdd.appendChild(iAdd);
-  liAdd.appendChild(spanAdd);
-  liAdd.style.cursor = "pointer";
-  liAdd.onclick = () => {
-    instanceName.value = "My instance";
-    instanceVersion.value = "1.20.1";
-    instanceLoader.value = "vanilla";
-    addInstanceModal.style.display = "flex";
-  };
-  profilesList.appendChild(liAdd);
-
-  // ✅ Auto-open the modal if NEWINSTANCE
-  if (instanceId === 'NEWINSTANCE') {
-    liAdd.click();
-  }
-}
-
-// Modal buttons
-modalCancelBtn.onclick = () => {
-  addInstanceModal.style.display = "none";
-  delete modalCreateBtn.dataset.editingId;
-  delete modalCreateBtn._originalProfile;
-};
-importMrpackBtn.onclick = async () => {
-  try {
-    const result = await ipcRenderer.invoke("import-mrpack");
-    if (result?.success) {
-      alert(`Imported: ${result.profile.name}`);
-      ipcRenderer.send("get-profiles");
-      importModal.style.display = "none";
-      addInstanceModal.style.display = "none";
-    } else {
-      alert("Failed: " + (result?.error || "Unknown"));
-    }
-  } catch (err) {
-    alert("Error importing .mrpack: " + err.message);
-  }
-};
-
-importFromZipBtn.onclick = async () => {
-  try {
-    const result = await ipcRenderer.invoke("import-curseforge-zip");
-    if (result?.success) {
-      alert(`Imported: ${result.profile.name}`);
-      ipcRenderer.send("get-profiles");
-      importModal.style.display = "none";
-      addInstanceModal.style.display = "none";
-    } else {
-      alert("Failed: " + (result?.error || "Unknown"));
-    }
-  } catch (err) {
-    alert("Error importing .zip: " + err.message);
-  }
-};
-
-importCancelBtn.onclick = () => {
-  importModal.style.display = "none";
-};
-
-modalCreateBtn.onclick = async () => {
-  const editingId = modalCreateBtn.dataset.editingId;
-
-  if (editingId) {
-    const original = modalCreateBtn._originalProfile;
-    const updatedProfile = { id: parseInt(editingId, 10) };
-
-    // Only include changed fields
-    if (instanceName.value.trim() !== original.name) {
-      updatedProfile.name = instanceName.value.trim();
-    }
-    if (instanceVersion.value.trim() !== original.version) {
-      updatedProfile.version = instanceVersion.value.trim();
-    }
-    if (instanceLoader.value !== original.loader) {
-      updatedProfile.loader = instanceLoader.value;
-    }
-    if (instanceIcon.files.length > 0) {
-      updatedProfile.icon = await fileToBase64(instanceIcon.files[0]);
     }
 
-    // If no changes, just close
-    if (Object.keys(updatedProfile).length === 1) {
+    // On load → ask backend for saved sort mode
+    (async () => {
+      const mode = await ipcRenderer.invoke("get-sort-mode");
+      if (mode) sortSelect.value = mode;
+    })();
+
+    function applyFilters(list) {
+      const query = searchInput.value.toLowerCase();
+      const loaderFilter = filterLoader.value;
+      const versionFilter = filterVersion.value.trim();
+
+      return list.filter(p => {
+        if (query && !p.name.toLowerCase().includes(query)) return false;
+        if (loaderFilter && p.loader !== loaderFilter) return false;
+        if (versionFilter && !p.version.includes(versionFilter)) return false;
+        return true;
+      });
+    }
+
+
+    async function renderListOrDetail() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const instanceId = urlParams.get('i');
+
+      // read filter/search values now
+      const q = (searchInput?.value || '').trim().toLowerCase();
+      const loaderFilterVal = (filterLoader?.value || '').trim();
+      const versionFilterVal = (filterVersion?.value || '').trim().toLowerCase();
+      const sortMode = (sortSelect?.value || 'custom');
+
+      // copy profiles so we can sort/filter safely
+      let list = Array.isArray(profiles) ? profiles.slice() : [];
+
+      // FILTER
+      if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q) || String(p.id).includes(q));
+      if (loaderFilterVal) list = list.filter(p => (p.loader || '').toLowerCase() === loaderFilterVal.toLowerCase());
+      if (versionFilterVal) list = list.filter(p => (p.version || '').toLowerCase().includes(versionFilterVal));
+
+      // SORT
+      if (sortMode && sortMode !== 'custom') {
+        const [key, dir] = sortMode.split('_');
+        list.sort((a, b) => {
+          if (key === 'name') return ((a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase())) * (dir === 'asc' ? 1 : -1);
+          if (key === 'created' || key === 'lastUsed') return ((a[key] || 0) - (b[key] || 0)) * (dir === 'asc' ? 1 : -1);
+          return 0;
+        });
+      }
+
+      const selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
+
+      // SINGLE INSTANCE VIEW
+      if (instanceId && instanceId !== 'NEWINSTANCE') {
+        searchsort.style.display = "none"
+        const profile = list.find(p => String(p.id) === String(instanceId));
+        if (!profile) return; // nothing to show
+        profilesList.style.display = "none";
+        instanceDetail.style.display = "block";
+        nameEl.textContent = profile.name;
+        infoEl.textContent = `Version: ${profile.version} | Loader: ${profile.loader}`;
+        logsEl.style.display = "block";
+        logsEl.textContent = `Showing logs for ${profile.name}...\n`;
+        // attach log listeners etc (ensure you don't attach duplicates)
+        ipcRenderer.removeAllListeners('launcher-log');
+        ipcRenderer.on('launcher-log', (event, msg) => {
+          logsEl.textContent += msg + "\n";
+          logsEl.scrollTop = logsEl.scrollHeight;
+        });
+        ipcRenderer.removeAllListeners('launch-error');
+        ipcRenderer.on('launch-error', (event, msg) => {
+          logsEl.textContent += "[ERROR] " + msg + "\n";
+          logsEl.scrollTop = logsEl.scrollHeight;
+        });
+        if (!instanceDetail.querySelector(".launch-button")) {
+          const launchBtn = document.createElement("button");
+          launchBtn.textContent = "Launch Profile";
+          launchBtn.onclick = () => {
+            if (!selectedPlayerId) return launchBtn.innerHTML = "Select a player first!";
+            ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId });
+            logsEl.textContent += `Launching ${profile.name}...\n`;
+          };
+          instanceDetail.appendChild(launchBtn);
+        }
+        if (!instanceDetail.querySelector(".folder-button")) {
+          const openFolderBtn = document.createElement("button");
+          openFolderBtn.textContent = "Open Folder";
+          openFolderBtn.onclick = () => {
+            ipcRenderer.send("open-folder", { id: profile.id, isClient: true });
+          };
+          instanceDetail.appendChild(openFolderBtn);
+        }
+
+        if (!instanceDetail.querySelector(".edit-btn")) {
+          const editBtn = document.createElement("button");
+          editBtn.className = "edit-btn";
+          editBtn.textContent = "Edit Instance";
+          editBtn.onclick = () => {
+            // Pre-fill modal fields
+            instanceName.value = profile.name;
+            instanceVersion.value = profile.version;
+            instanceLoader.value = profile.loader;
+            instanceIcon.value = ""; // file input can't be prefilled
+
+            // save original profile for diffing
+            modalCreateBtn.dataset.editingId = profile.id;
+            modalCreateBtn._originalProfile = profile;
+
+            addInstanceModal.style.display = "flex";
+          };
+
+          instanceDetail.appendChild(editBtn);
+        }
+        if (!instanceDetail.querySelector(".delete-btn")) {
+          const deleteBtn = document.createElement("button");
+          deleteBtn.className = "delete-btn";
+          deleteBtn.textContent = "Delete Instance";
+          deleteBtn.onclick = () => {
+            if (confirm(`Are you sure you want to delete "${profile.name}"? This cannot be undone.`)) {
+              ipcRenderer.send("delete-profile", profile.id);
+              // Go back to list view after deletion
+              window.location.href = "instances.html";
+            }
+          };
+          instanceDetail.appendChild(deleteBtn);
+        }
+        if (!instanceDetail.querySelector(".mrpack-btn")) {
+          const mrpackBtn = document.createElement("button");
+          mrpackBtn.className = "mrpack-btn";
+          mrpackBtn.textContent = "Export .mrpack";
+          mrpackBtn.onclick = async () => {
+            try {
+              const result = await ipcRenderer.invoke("export-mrpack", profile.id);
+
+              if (result.success) {
+                console.log(`Export finished successfully!\nPath: ${result.mrpackPath}`);
+              } else {
+                console.log(`Export failed:\n${result.error}`);
+              }
+            } catch (err) {
+              console.log(`Unexpected error:\n${err.message || err}`);
+            } finally {
+              // Navigate away after showing alert
+              window.location.href = "instances.html";
+            }
+          };
+          instanceDetail.appendChild(mrpackBtn);
+        }
+        return;
+      }
+
+      // LIST VIEW
+      searchsort.style.display = "block";
+      profilesList.style.display = "block";
+      instanceDetail.style.display = "none";
+
+      profilesList.innerHTML = "";
+
+      list.forEach(p => {
+        const li = document.createElement("li");
+        li.className = "profile-item";
+
+        const img = document.createElement("img");
+        img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+        li.appendChild(img);
+
+        const info = document.createElement("div");
+        info.className = "profile-info";
+
+        const name = document.createElement("div");
+        name.className = "profile-name";
+        name.textContent = p.name;
+        info.appendChild(name);
+
+        const details = document.createElement("div");
+        details.className = "profile-details";
+        details.textContent = `v${p.version} • ${p.loader}`;
+        info.appendChild(details);
+
+        li.appendChild(info);
+
+        const viewBtn = document.createElement("button");
+        viewBtn.textContent = "Open Instance";
+        viewBtn.onclick = () => { window.location.href = `instances.html?i=${p.id}`; };
+        li.appendChild(viewBtn);
+
+        const openFolderBtn = document.createElement("button");
+        openFolderBtn.textContent = "Open Folder";
+        openFolderBtn.onclick = () => {
+          ipcRenderer.send("open-folder", { id: p.id, isClient: true });
+        };
+        li.appendChild(openFolderBtn);
+
+        const launchBtn = document.createElement("button");
+        launchBtn.className = "play-button";
+        launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`;
+        launchBtn.onclick = () => {
+          if (!selectedPlayerId) return launchBtn.innerHTML = "Select a player first!";
+          window.location.href = `instances.html?i=${p.id}`;
+          ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
+        };
+        li.appendChild(launchBtn);
+
+        profilesList.appendChild(li);
+      });
+
+      // Add Instance button
+      const liAdd = document.createElement("li");
+      liAdd.className = "profile-item";
+      const iAdd = document.createElement("i");
+      iAdd.className = "material-icons";
+      iAdd.textContent = "add";
+      const spanAdd = document.createElement("span");
+      spanAdd.textContent = "Add an instance";
+
+      liAdd.appendChild(iAdd);
+      liAdd.appendChild(spanAdd);
+      liAdd.style.cursor = "pointer";
+      liAdd.onclick = () => {
+        instanceName.value = "My instance";
+        instanceVersion.value = "1.20.1";
+        instanceLoader.value = "vanilla";
+        addInstanceModal.style.display = "flex";
+      };
+      profilesList.appendChild(liAdd);
+
+      // ✅ Auto-open the modal if NEWINSTANCE
+      if (instanceId === 'NEWINSTANCE') {
+        liAdd.click();
+      }
+    }
+
+    // Modal buttons
+    modalCancelBtn.onclick = () => {
       addInstanceModal.style.display = "none";
       delete modalCreateBtn.dataset.editingId;
       delete modalCreateBtn._originalProfile;
-      return;
-    }
-
-    ipcRenderer.send("edit-profile", updatedProfile);
-    delete modalCreateBtn.dataset.editingId;
-    delete modalCreateBtn._originalProfile;
-  } else {
-    // Create mode
-    const newProfile = {
-      name: instanceName.value.trim(),
-      version: instanceVersion.value.trim(),
-      loader: instanceLoader.value,
-      icon: null
     };
-    if (!newProfile.name || !newProfile.version) {
-      return alert("Fill name and version");
-    }
-    if (instanceIcon.files.length > 0) {
-      newProfile.icon = await fileToBase64(instanceIcon.files[0]);
-    }
-    ipcRenderer.send("create-profile", newProfile);
-  }
+    importMrpackBtn.onclick = async () => {
+      try {
+        const result = await ipcRenderer.invoke("import-mrpack");
+        if (result?.success) {
+          importMrpackBtn.textContent = `Imported: ${result.profile.name}`;
+          ipcRenderer.send("get-profiles");
+          importModal.style.display = "none";
+          addInstanceModal.style.display = "none";
+        } else {
+          importMrpackBtn.textContent = "Failed: " + (result?.error || "Unknown");
+        }
+      } catch (err) {
+        importMrpackBtn.textContent = "Error importing .mrpack: " + err.message;
+      }
+    };
 
-  addInstanceModal.style.display = "none";
-};
+    importFromZipBtn.onclick = async () => {
+      try {
+        const result = await ipcRenderer.invoke("import-curseforge-zip");
+        if (result?.success) {
+          importFromZipBtn.textContent = `Imported: ${result.profile.name}`;
+          ipcRenderer.send("get-profiles");
+          importModal.style.display = "none";
+          addInstanceModal.style.display = "none";
+        } else {
+          importFromZipBtn.textContent = "Failed: " + (result?.error || "Unknown");
+        }
+      } catch (err) {
+        importFromZipBtn.textContent = "Error importing .zip: " + err.message;
+      }
+    };
 
-function updatePresence(details, state = "Idle") {
-  ipcRenderer.send('update-discord-presence', { details, state });
+    importCancelBtn.onclick = () => {
+      importModal.style.display = "none";
+    };
+
+    modalCreateBtn.onclick = async () => {
+      const editingId = modalCreateBtn.dataset.editingId;
+
+      if (editingId) {
+        const original = modalCreateBtn._originalProfile;
+        const updatedProfile = { id: editingId };
+
+        // Only include changed fields
+        if (instanceName.value.trim() !== original.name) {
+          updatedProfile.name = instanceName.value.trim();
+        }
+        if (instanceVersion.value.trim() !== original.version) {
+          updatedProfile.version = instanceVersion.value.trim();
+        }
+        if (instanceLoader.value !== original.loader) {
+          updatedProfile.loader = instanceLoader.value;
+        }
+        if (instanceIcon.files.length > 0) {
+          updatedProfile.icon = await fileToBase64(instanceIcon.files[0]);
+        }
+
+        // If no changes, just close
+        if (Object.keys(updatedProfile).length === 1) {
+          addInstanceModal.style.display = "none";
+          delete modalCreateBtn.dataset.editingId;
+          delete modalCreateBtn._originalProfile;
+          return;
+        }
+
+        ipcRenderer.send("edit-profile", updatedProfile);
+        delete modalCreateBtn.dataset.editingId;
+        delete modalCreateBtn._originalProfile;
+      } else {
+        // Create mode
+        const newProfile = {
+          name: instanceName.value.trim(),
+          version: instanceVersion.value.trim(),
+          loader: instanceLoader.value,
+          icon: null
+        };
+        if (!newProfile.name || !newProfile.version) {
+          return modalCreateBtn.textContent = "Fill name and version";
+        }
+        if (instanceIcon.files.length > 0) {
+          newProfile.icon = await fileToBase64(instanceIcon.files[0]);
+        }
+        ipcRenderer.send("create-profile", newProfile);
+      }
+
+      addInstanceModal.style.display = "none";
+    };
+
+    function updatePresence(details, state = "Idle") {
+      ipcRenderer.send('update-discord-presence', { details, state });
+    }
+    updatePresence("Looking at the instances")
+  </script>
+<script>
+async function fetchVersions() {
+  const response = await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json');
+  const data = await response.json();
+  return data.versions; // array of {id, type, url, ...}
 }
-updatePresence("Looking at the instances")
+
+function populateSelect(versions, showAll) {
+  const select = document.getElementById('instanceVersion');
+  select.innerHTML = ''; // clear existing options
+
+  const filtered = showAll ? versions : versions.filter(v => v.type === 'release');
+
+  filtered.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v.id;
+    opt.textContent = v.id;
+    select.appendChild(opt);
+  });
+
+  // optionally select latest release by default
+  if (!showAll) {
+    const latest = filtered.find(v => v.type === 'release');
+    if (latest) select.value = latest.id;
+  }
+}
+
+async function initVersionSelect() {
+  const versions = await fetchVersions();
+  const checkbox = document.getElementById('showAllVersions');
+
+  // initial populate (release only)
+  populateSelect(versions, false);
+
+  // update select when toggle changes
+  checkbox.addEventListener('change', () => {
+    populateSelect(versions, checkbox.checked);
+  });
+}
+
+// run on page load
+initVersionSelect();
 </script>
 
-<script src="sidebar.js"></script>
+  <script src="sidebar.js"></script>
 </body>
+
 </html>

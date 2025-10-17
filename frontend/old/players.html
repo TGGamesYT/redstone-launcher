@@ -16,7 +16,7 @@
   /* Modal */
   #playerModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
                  background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
-  #playerModal .modal-content { background: var(--third-color); padding: 20px; border-radius: 8px; width: 300px; }
+  #playerModal .modal-content { background: rgb(255, 0, 0); padding: 20px; border-radius: 8px; width: 300px; }
   #playerModal label { display: block; margin-top: 10px; }
   #playerModal button { margin-top: 15px; }
 </style>
@@ -24,11 +24,7 @@
 <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
-  <div id="toolbar">
-    <div class="toolbar-buttons-left">
-        <button id="backBtn">⬅</button>
-        <button id="forwardBtn">➡</button>
-    </div>
+<div id="toolbar">
 <div class="drag-region">Redstone Launcher - Players</div>
 <div class="toolbar-buttons">
     <button id="min-btn">—</button>
@@ -44,7 +40,7 @@
     <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" style="width: 24px;"></a><span>Modrinth</span></li>
     <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-    
+    <li><a href="players.html"><i class="material-icons">person</i></a><span>Profiles</span></li>
     <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
   </ul>
 
@@ -56,7 +52,7 @@
   <!-- Bottom section -->
   <ul class="menu bottom">
     <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
-    <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
+    <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
 </div>
@@ -68,18 +64,15 @@
   <div class="modal-content">
     <h3>Add New Player</h3>
     <label>
-      <input type="radio" name="playerType" value="premium" checked> Premium
+      <input type="radio" name="playerType" value="cracked" checked> Cracked
     </label>
     <label>
-      <input type="radio" name="playerType" value="cracked"> Cracked
+      <input type="radio" name="playerType" value="premium"> Premium
     </label>
     <div id="crackedNameContainer">
       <label>Username:
         <input type="text" id="crackedNameInput" placeholder="Steve">
       </label>
-    </div>
-    <div id="premInfo">
-      <label>Click 'Add player' to begin the login process</label>
     </div>
     <button id="submitPlayerBtn">Add Player</button>
     <button id="cancelPlayerBtn">Cancel</button>
@@ -97,7 +90,6 @@ const addPlayerLine = document.getElementById("addPlayerLine");
 
 const playerModal = document.getElementById("playerModal");
 const crackedNameContainer = document.getElementById("crackedNameContainer");
-const premInfo = document.getElementById("premInfo");
 const crackedNameInput = document.getElementById("crackedNameInput");
 const submitPlayerBtn = document.getElementById("submitPlayerBtn");
 const cancelPlayerBtn = document.getElementById("cancelPlayerBtn");
@@ -152,14 +144,13 @@ function renderPlayers() {
 // Open modal
 addPlayerLine.onclick = () => {
   playerModal.style.display = "flex";
-  premInfo.style.display = "block";
+  crackedNameContainer.style.display = "block";
 };
 
 // Update input visibility when player type changes
 document.querySelectorAll('input[name="playerType"]').forEach(radio => {
   radio.addEventListener('change', () => {
     crackedNameContainer.style.display = radio.value === 'cracked' ? 'block' : 'none';
-    premInfo.style.display = radio.value === 'premium' ? 'block' : 'none';
   });
 });
 

@@ -13,11 +13,7 @@
  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
-  <div id="toolbar">
-    <div class="toolbar-buttons-left">
-        <button id="backBtn">⬅</button>
-        <button id="forwardBtn">➡</button>
-    </div>
+<div id="toolbar">
 <div class="drag-region">Redstone Launcher - Modrinth Browser</div>
 <div class="toolbar-buttons">
     <button id="min-btn">—</button>
@@ -33,7 +29,7 @@
     <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" style="width: 24px;"></a><span>Modrinth</span></li>
     <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-    
+    <li><a href="players.html"><i class="material-icons">person</i></a><span>Profiles</span></li>
     <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
   </ul>
 
@@ -45,7 +41,7 @@
   <!-- Bottom section -->
   <ul class="menu bottom">
     <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
-    <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
+    <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
 </div>
@@ -295,8 +291,6 @@ if (
     btn.textContent = "Install here";
     btn.onclick = async () => {
       let matchedVersion;
-      btn.textContent = "Installing...";
-      btn.disabled = true;
 
       if (projType === "shader") {
         // Just match game version, ignore loaders
@@ -308,15 +302,9 @@ if (
         );
       }
 
-      if (!matchedVersion) {
-        btn.textContent = "Install failed"
-        return;
-      };
+      if (!matchedVersion) return alert(`No compatible version found for ${p.name}`);
       const fileUrl = matchedVersion.files[0]?.url;
-      if (!fileUrl) {
-        btn.textContent = "Install failed"
-        return;
-      };
+      if (!fileUrl) return alert("No download file available for this version");
 
       await ipcRenderer.invoke("mod-download", {
         server: false,
@@ -324,7 +312,7 @@ if (
         fileUrl,
         projectType: typeSelect.value
       });
-      btn.textContent = "Installed";
+      alert(`Installed ${mod.title} to ${p.name}`);
     };
 
     li.appendChild(btn);
@@ -376,13 +364,8 @@ if (
       const btn = document.createElement("button");
       btn.textContent = "Install here";
       btn.onclick = async () => {
-        btn.textContent = "Installing...";
-        btn.disabled = true;
         const fileUrl = matchedVersion.files[0]?.url;
-        if (!fileUrl) {
-          btn.textContent = "Install failed"
-          return;
-        };;
+        if (!fileUrl) return alert("No download file available for this version");
 
         await ipcRenderer.invoke("mod-download", {
           server: true,
@@ -390,7 +373,7 @@ if (
           fileUrl,
           projectType: typeSelect.value
         });
-        btn.textContent = "Installed"
+        alert(`Installed ${mod.title} to ${s.name}`);
       };
 
       li.appendChild(btn);

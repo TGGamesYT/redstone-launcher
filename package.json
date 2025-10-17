@@ -1,7 +1,7 @@
 {
   "name": "redstone-launcher",
   "productName": "Redstone Launcher",
-  "version": "1.9.1",
+  "version": "1.10.0",
   "description": "A Minecraft launcher",
   "author": "TG & Faze_gbr",
   "main": "main.js",
@@ -31,7 +31,8 @@
     "node-fetch": "^3.3.2",
     "skinview3d": "^3.4.1",
     "three": "^0.180.0",
-    "tomate-loaders": "^2.0.2"
+    "tomate-loaders": "^2.0.2",
+    "unzipper": "^0.12.3"
   },
   "build": {
     "appId": "com.redstone-launcher.app",

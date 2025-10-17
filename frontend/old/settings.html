@@ -3,18 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <title>Redstone Launcher — Settings</title>
-<link href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css" rel="stylesheet">
 <link rel="stylesheet" href="server.css" />
 <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css" rel="stylesheet">
 </head>
 <body>
 
-  <div id="toolbar">
-    <div class="toolbar-buttons-left">
-        <button id="backBtn">⬅</button>
-        <button id="forwardBtn">➡</button>
-    </div>
-<div class="drag-region">Redstone Launcher - Settings</div>
+<div id="toolbar">
+<div class="drag-region">Redstone Launcher</div>
 <div class="toolbar-buttons">
     <button id="min-btn">—</button>
     <button id="max-btn">□</button>
@@ -29,7 +25,7 @@
     <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" style="width: 24px;"></a><span>Modrinth</span></li>
     <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-    
+    <li><a href="players.html"><i class="material-icons">person</i></a><span>Profiles</span></li>
     <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
   </ul>
 
@@ -41,7 +37,7 @@
   <!-- Bottom section -->
   <ul class="menu bottom">
     <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
-    <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
+    <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
 </div>
@@ -56,13 +52,11 @@
 
   <!-- === General Section === -->
   <div class="section active" id="general">
-    <h3 style="margin-top: 30px;">General</h3>
-    <div style="margin-bottom: 50px;">
+    <h3>General</h3>
     <label><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label><br>
     <label><input type="checkbox" id="discord-presence"> Enable Discord Presence</label><br>
-    </div>
 
-    <label style="margin-top: 40px;">Font</label>
+    <label>Font</label>
     <select id="font-selector">
       <option value="Pixel">Pixel</option>
       <option value="Arial">Arial</option>
@@ -72,15 +66,14 @@
       <option value="Times New Roman">Times New Roman</option>
       <option value="Custom">Custom (system)</option>
     </select>
- <br>
-    <label>Border Radius (px):</label>
-    <br>
-    <input type="range" id="border-radius" min="0" max="15" step="0.2" style="width: 200px;">
+
+    <label>Border Radius (px)</label>
+    <input type="range" id="border-radius" min="0" max="15" step="0.2">
     <span class="slider-value" id="border-radius-value"></span>
   </div>
 
   <!-- === Theme Section === -->
-  <div class="section" id="theme" style="display: none;">
+  <div class="section" id="theme">
     <h3>Theme</h3>
 
     <div class="color-input">
@@ -117,19 +110,15 @@
   </div>
 
   <!-- === Advanced Section === -->
-  <div class="section" id="advanced" style="display: none;">
+  <div class="section" id="advanced">
     <h3>Advanced</h3>
 
     <label>RAM for Instances (MB)</label>
-    <br><br>
-    <div id="ram-instances-slider" style="margin-right: 40%;"></div>
-    <br>
+    <div id="ram-instances-slider"></div>
     <div class="slider-value" id="ram-instances-value"></div>
-    <br><br><br><br>
+
     <label>RAM for Servers (MB)</label>
-    <br><br>
-    <div id="ram-servers-slider" style="margin-right: 40%;"></div>
-    <br>
+    <div id="ram-servers-slider"></div>
     <div class="slider-value" id="ram-servers-value"></div>
   </div>
 </div>

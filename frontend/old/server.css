@@ -1,0 +1,435 @@
+@font-face {
+  font-family: 'Pixel';
+  src: url('https://tggamesyt.dev/assets/Minecraft-Seven_v2.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+:root {
+  --base-color: #ff0000;
+  --secondary-color: #310a0a;
+  --third-color: #8f0000;
+  --text-color: #ffffff;
+  --text-font: Pixel;
+  --border-radius: 0;
+}
+
+body, .settings-container, .sidebar, .toolbar-buttons, .theme-btn {
+  transition: 
+    background-color 0.6s ease,
+    color 0.6s ease,
+    border-color 0.6s ease;
+}
+
+.theme-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  transition: background-color 0.6s ease;
+}
+
+.theme-list {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.theme-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--third-color);
+  border: 1px solid var(--base-color);
+  border-radius: var(--border-radius);
+  padding: 6px;
+  cursor: pointer;
+  min-width: 80px;
+  transition: transform 0.2s;
+}
+
+.theme-btn:hover {
+  transform: scale(1.05);
+}
+
+.theme-colors {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.theme-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+}
+
+/* === Toolbar fix === */
+#toolbar {
+  -webkit-app-region: drag;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  background: var(--base-color);
+  color: var(--text-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 2000;
+}
+
+  .toolbar-buttons {
+    display: flex;
+  }
+
+  .drag-region {
+    font-family: var(--text-font);
+  -webkit-app-region: drag;
+  user-select: none;
+  height: 32px;
+  background: var(--base-color);
+  color: var(--text-color);
+  display: flex;
+  align-items: center;
+
+  padding-left: 12px; /* ⬅️ moves text inward from the left */
+}
+
+  .toolbar-buttons button {
+    -webkit-app-region: no-drag; /* buttons should be clickable */
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    width: 40px;
+    height: 100%;
+    cursor: pointer;
+  }
+
+  body *:not(#toolbar):not(#toolbar *) {
+    -webkit-app-region: no-drag;
+  }
+
+  body, input, select, textarea, button, .grid, .panel {
+  -webkit-app-region: no-drag;
+}
+
+  .toolbar-buttons button:hover {
+    background: #444;
+  }
+
+/* Push content down so it doesn’t hide under toolbar */
+body {
+  background-color: var(--secondary-color);
+  font-family: var(--text-font);
+  color: var(--text-color);
+  margin-left: 200px;
+  margin-top: 32px;          /* ← match toolbar height */
+  padding: 16px;
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 16px;
+  font-size: 1.8rem;
+  color: var(--text-color);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 20px;
+}
+
+.panel {
+  background: #222;
+  border: 1px solid #333;
+  padding: 16px;
+  border-radius: var(--border-radius);
+}
+
+label {
+  display: block;
+  margin-bottom: 14px;
+  font-size: 0.95rem;
+}
+
+input,
+select {
+  width: 95%;
+  padding: 8px 10px;
+  border-radius: var(--border-radius);
+  border: 1px solid #444;
+  background: #111;
+  color: var(--text-color);
+  font-size: 0.95rem;
+  transition: border 0.2s, background 0.2s;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--third-color);
+  outline: none;
+  background: var(--secondary-color);
+}
+
+/* === Modern gombok === */
+button {
+  border: none;
+  border-radius: var(--border-radius);
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+
+/* Elsődleges */
+#startBtn,
+#createServerBtn {
+  background: var(--third-color);
+  color: var(--text-color);
+}
+#startBtn:hover,
+#createServerBtn:hover {
+  background: #b71c1c;
+  transform: scale(1.03);
+}
+
+/* Másodlagos */
+#stopBtn,
+#restartBtn,
+#refreshListBtn,
+#refreshConsoleBtn,
+#sendCmdBtn {
+  background: var(--secondary-color);
+  color: var(--text-color);
+}
+#stopBtn:hover,
+#restartBtn:hover,
+#refreshListBtn:hover,
+#refreshConsoleBtn:hover,
+#sendCmdBtn:hover {
+  background: var(--base-color);
+  transform: scale(1.03);
+}
+
+/* Lista gombok */
+li.server button {
+  margin-left: 6px;
+  background: var(--third-color);
+  color: var(--text-color);
+  border: 1px solid var(--base-color);
+}
+li.server button:hover {
+  background: var(--base-color);
+  border-color: var(--third-color);
+  transform: scale(1.05);
+}
+
+/* Lista */
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+li.server {
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--base-color);
+  border-radius: var(--border-radius);
+  background: #181818;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.server-meta strong {
+  color: var(--first-color);
+}
+
+/* Console */
+#console {
+  background: var(--secondary-color);
+  color: var(--text-color);
+  height: 360px;
+  overflow: auto;
+  padding: 10px;
+  font-family: var(--text-font);
+  font-size: 0.9rem;
+  border-radius: var(--border-radius);
+  border: 1px solid var(--third-color);
+}
+
+/* ---------- Sidebar container (no overflow hidden so labels can show) ---------- */
+.sidebar {
+  background-color: var(--third-color);
+  position: fixed;
+  top: 32px;      /* below the draggable toolbar */
+  bottom: 0;
+  left: 0;
+  width: 70px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between; /* top / middle / bottom spacing */
+  align-items: center;
+  padding: 8px 6px;
+  z-index: 1000;
+  /* NO overflow: hidden here — allows hover labels to appear */
+}
+
+/* ---------- Generic menu list ---------- */
+.sidebar .menu {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px; /* smaller gap between items */
+}
+
+/* middle section should grow to take available space */
+.sidebar .menu.middle {
+  flex-grow: 1;
+  justify-content: center;
+}
+
+/* each item is positioned relative so the tooltip/label can be absolutely placed */
+.sidebar .menu li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  cursor: pointer;
+  transition: transform 0.18s ease;
+  border-radius: var(--border-radius);
+}
+
+/* ---------- Icon sizing — responsive, shrinks when vertical space is tight ---------- */
+.sidebar .menu li i,
+.sidebar .menu li img {
+  display: block;
+  width: clamp(18px, 3.2vh, 28px);   /* min 18px, scales with viewport height, max 28px */
+  height: clamp(18px, 3.2vh, 28px);
+  font-size: clamp(16px, 2.8vh, 24px);
+  line-height: 1;
+  transition: transform 0.18s ease;
+  color: var(--text-color);
+  text-decoration: none;
+}
+
+/* reset anchor styling in sidebar */
+.sidebar a {
+  color: inherit;        /* use icon/text color */
+  text-decoration: none; /* remove underline */
+  display: flex;         /* make icon anchor clickable */
+  align-items: center;
+  justify-content: center;
+}
+
+/* When the height is small, make everything slightly smaller */
+@media (max-height: 640px) {
+  .sidebar { width: 60px; padding: 6px; }
+  .sidebar .menu { gap: 6px; }
+  .sidebar .menu li i.material-icons,
+  .sidebar .menu li img { width: 18px; height: 18px; font-size: 16px; }
+}
+
+/* ---------- Hover effects and label (tooltip-like) ---------- */
+.menu li:hover { transform: scale(1.06); }
+
+/* label / span that appears on hover */
+.menu span {
+  opacity: 0;
+  transform: translateX(10px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  font-size: 0.9rem;
+  color: var(--text-color);
+  background: var(--base-color);
+  padding: 6px 10px;
+  border-radius: var(--border-radius);
+  position: absolute;
+  left: 56px;               /* sits to the right of the sidebar icons */
+  white-space: nowrap;
+  pointer-events: none;     /* click-through the tooltip text */
+  z-index: 1100;            /* ensure it sits above page content */
+}
+
+/* show label on hover */
+.menu li:hover span {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* small nicety: reduce hover scale on very tight heights */
+@media (max-height: 480px) {
+  .menu li:hover { transform: scale(1.02); }
+}
+.settings-container {
+  padding: 16px;
+  margin-left: 200px;
+  margin-top: 32px; /* same as toolbar height */
+  color: var(--text-color);
+  font-family: var(--text-font);
+  position: relative; /* allows section-switcher positioning if needed */
+}
+
+/* Section styling */
+.section {
+  display: none;
+  border: 1px solid var(--third-color);
+  padding: 16px;
+  border-radius: var(--border-radius);
+  margin-bottom: 24px;
+  background: var(--third-color);
+}
+
+.section.active {
+  display: block;
+}
+
+.section h3 { margin-top: 0; }
+
+/* --- Section Switcher Below Toolbar --- */
+.section-switcher {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px; /* space between icons and first section */
+}
+
+.section-switcher button {
+  cursor: pointer;
+  border: none;
+  background: var(--third-color);
+  color: var(--text-color);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--border-radius);
+  font-size: 20px;
+  transition: transform 0.15s ease;
+}
+
+.section-switcher button:hover {
+  transform: scale(1.1);
+}
+
+#addInstanceModal {
+  z-index: 900;
+}
+
+#importModal {
+  z-index: 901;
+}
+
+/* Color inputs */
+.color-input { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.color-input button { cursor: pointer; border: none; padding: 4px 8px; border-radius: var(--border-radius); background: var(--third-color); color: var(--text-color); }
+
+input[disabled] { background: var(--base-color); cursor: not-allowed; }
+
+/* Sliders */
+.slider-value { font-size: 0.9rem; margin-top: 5px; }

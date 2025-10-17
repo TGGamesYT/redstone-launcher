@@ -7,11 +7,7 @@
  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
-  <div id="toolbar">
-    <div class="toolbar-buttons-left">
-        <button id="backBtn">⬅</button>
-        <button id="forwardBtn">➡</button>
-    </div>
+<div id="toolbar">
 <div class="drag-region">Redstone Launcher - Server Manager</div>
 <div class="toolbar-buttons">
     <button id="min-btn">—</button>
@@ -27,7 +23,7 @@
     <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" style="width: 24px;"></a><span>Modrinth</span></li>
     <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-    
+    <li><a href="players.html"><i class="material-icons">person</i></a><span>Profiles</span></li>
     <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
   </ul>
 
@@ -39,13 +35,13 @@
   <!-- Bottom section -->
   <ul class="menu bottom">
     <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
-    <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
+    <li id="players-login"><a href="players.html"><i class="material-icons">login</i></a><span>Login</span></li>
     <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
   </ul>
 </div>
   <div class="grid">
     <!-- Left: Create + list -->
-    <div class="panel" style="margin-bottom: 20px; scale: 1.2; align-items: center; text-align: center;">
+    <div class="panel">
       <h2>Create Server</h2>
       <div>
         <label>Server name: <input id="srvName" placeholder="My Server" /></label>
@@ -57,7 +53,7 @@
             <option value="fabric">Fabric (server)</option>
           </select>
         </label>
-        <button id="createServerBtn" style="margin-left: 30px; scale: 1.2; background-color: var(--base-color); border-color: var(--third-color);">Create Server</button>
+        <button id="createServerBtn">Create Server</button>
       </div>
 
       <hr/>
@@ -72,7 +68,7 @@
     </div>
 
     <!-- Right: Console / controls -->
-    <div class="panel" style="margin-left: 100px; scale: 1.1;">
+    <div class="panel">
       <h2>Console</h2>
       <div id="console" aria-live="polite"></div>
 
@@ -87,7 +83,7 @@
         <div style="margin-top:10px;">
           <label>Send command to server:
             <input id="cmdInput" placeholder="say hello" style="width:60%;" />
-            <button id="sendCmdBtn" class="btn" style="margin-left: 30px; scale: 1.2; background-color: var(--base-color); border-color: var(--third-color);">Send</button>
+            <button id="sendCmdBtn" class="btn">Send</button>
           </label>
         </div>
       </div>

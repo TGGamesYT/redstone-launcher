@@ -11,16 +11,29 @@ import serverManager from './serverManager.js';
 import FormData from 'form-data';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
-import { spawnSync, spawn } from "child_process";
+import { exec, execSync, spawn } from "child_process";
 import crypto from "crypto";
 import base64url from "base64url";
 import fernet from 'fernet';
 import RPC from "discord-rpc";
 import os from 'os';
+import xml2js from "xml2js";
+import { parseStringPromise } from "xml2js";
+import unzipper from "unzipper";
 import gDriveDownloader from "@abrifq/google-drive-downloader";
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tothgergoci.workers.dev"
 
+const CLASS_ID_FOLDERS = {
+  6: "mods",
+  12: "resourcepacks",
+  5193: "datapacks",
+  6552: "shaderpacks",
+  17: "saves"
+};
+
+let globalHistory = [];
+let globalIndex = -1;
 const storage = new Store();
 const settings = new Store();
 export default settings;
@@ -31,6 +44,12 @@ if (!sortStore.has("customOrder")) sortStore.set("customOrder", []);
 const dataDir = path.join(app.getPath('userData'));
 const profilesPath = path.join(dataDir, 'profiles.json');
 const playersPath = path.join(dataDir, 'players.json');
+const JAVA_DIR = path.join(dataDir, "java_runtimes")
+
+const clientId = '1413838664185679892';
+let rpc = null; // will hold the Discord RPC client
+let rpcConnected = false;
+let shouldconnect = true;
 
 // Ensure files exist
 if (!fs.existsSync(profilesPath)) fs.writeFileSync(profilesPath, JSON.stringify([]));
@@ -135,6 +154,40 @@ function createWindow() {
   mainWindow = win
 }
 
+/* ─────────────── back/forth system ─────────────── */
+
+ipcMain.on('go-back', () => {
+  if (globalIndex > 0) {
+    globalIndex--;
+    const entry = globalHistory[globalIndex];
+    mainWindow.loadFile(entry.file).then(() => {
+      mainWindow.webContents.send('show-page', entry.pageId); // pageId may be null
+    });
+  }
+});
+
+ipcMain.on('go-forward', () => {
+  if (globalIndex < globalHistory.length - 1) {
+    globalIndex++;
+    const entry = globalHistory[globalIndex];
+    mainWindow.loadFile(entry.file).then(() => {
+      mainWindow.webContents.send('show-page', entry.pageId);
+    });
+  }
+});
+
+// Track new page loads from renderer
+ipcMain.on('track-page', (event, { file, pageId }) => {
+  // If we’re in the middle of history, trim forward
+  if (globalIndex < globalHistory.length - 1) {
+    globalHistory = globalHistory.slice(0, globalIndex + 1);
+  }
+
+  globalHistory.push({ file, pageId }); // pageId can be null
+  globalIndex++;
+});
+
+
 /* ─────────────── Storing ─────────────── */
 
 ipcMain.handle("get-selected-player", () => storage.get("selectedPlayerId", null));
@@ -148,9 +201,11 @@ ipcMain.handle('get-settings', () => {
 });
 
 ipcMain.on('save-settings', (event, newsettings) => {
+  let oldshouldconnect = settings.get('discord-presence', true);
   settings.set(newsettings);
   const color = settings.get('baseColor', "#FF0000");
   mainWindow.setAccentColor(color);
+  if (oldshouldconnect != settings.get('discord-presence', true)) updateDiscordPresenceToggle();
 });
 
 ipcMain.handle('get-system-ram', () => {
@@ -187,6 +242,26 @@ async function refreshPlayer(player) {
   }
 }
 
+function getUniqueFolderName(baseName) {
+  const clientDir = path.join(dataDir, 'client');
+
+  // Make sure the clientDir exists
+  if (!fs.existsSync(clientDir)) fs.mkdirSync(clientDir, { recursive: true });
+
+  const existingFolders = fs.readdirSync(clientDir).filter(f =>
+    fs.statSync(path.join(clientDir, f)).isDirectory()
+  );
+
+  let uniqueName = baseName;
+  let counter = 1;
+
+  while (existingFolders.includes(uniqueName)) {
+    uniqueName = `${baseName}-${counter}`;
+    counter++;
+  }
+
+  return uniqueName;
+}
 
 // Add cracked player
 ipcMain.on('create-cracked-player', (event, username) => {
@@ -236,7 +311,7 @@ ipcMain.on('create-profile', async (event, profile) => {
   const profiles = await loadProfiles();
 
   const newProfile = {
-    id: Date.now(),
+    id: getUniqueFolderName(profile.name),
     name: profile.name,
     version: profile.version || "1.20.1",
     loader: profile.loader || "vanilla",
@@ -250,23 +325,28 @@ ipcMain.on('create-profile', async (event, profile) => {
 });
 
 ipcMain.on('edit-profile', (event, updatedProfile) => {
-  const profiles = loadProfiles();
-  const index = profiles.findIndex(p => p.id === updatedProfile.id);
+  const profilesPromise = loadProfiles(); // returns a Promise because applySort is async
+  // handle the promise here
+  profilesPromise
+    .then(profiles => {
+      // ensure it's an array
+      if (!Array.isArray(profiles)) profiles = Object.values(profiles || {});
+      const index = profiles.findIndex(p => String(p.id) === String(updatedProfile.id));
+      if (index === -1) {
+        event.reply('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
+        return;
+      }
+      profiles[index] = { ...profiles[index], ...updatedProfile };
 
-  if (index === -1) {
-    event.reply('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
-    return;
-  }
-
-  // Merge updated fields into the existing profile
-  profiles[index] = {
-    ...profiles[index],
-    ...updatedProfile
-  };
-
-  saveProfiles(profiles);
-  event.reply('profiles-updated', profiles);
+      saveProfiles(profiles);
+      event.reply('profiles-updated', profiles);
+    })
+    .catch(err => {
+      console.error('Failed to load profiles for edit:', err);
+      event.reply('edit-profile-error', 'Failed to load profiles');
+    });
 });
+
 
 
 ipcMain.on("delete-profile", async (event, profileId) => {
@@ -311,6 +391,19 @@ ipcMain.on('get-profiles', async (event) => {
   try {
     const profiles = await loadProfiles(); // make sure loadProfiles is async now
     event.reply('profiles-list', profiles);
+  } catch (err) {
+    console.error('Failed to load profiles:', err);
+    event.reply('profiles-list', []); // send empty array on error
+  }
+});
+
+ipcMain.on('get-profiles-latest', async (event) => {
+  try {
+    ensureFile(profilesPath);
+    let unsorted = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
+    const profiles =  await applySort(unsorted, "lastused-desc", null);
+    event.reply('profiles-list', profiles);
+    console.log(profiles)
   } catch (err) {
     console.error('Failed to load profiles:', err);
     event.reply('profiles-list', []); // send empty array on error
@@ -458,7 +551,7 @@ async function mrpack(mrpackPath) {
     const mcVersion = deps["minecraft"] || "1.20.1";
 
     // Create instance folder
-    const profileId = Date.now();
+    const profileId = getUniqueFolderName(indexJson.name);
     const profilesDir = path.join(dataDir, "client");
     if (!fs.existsSync(profilesDir)) fs.mkdirSync(profilesDir, { recursive: true });
     const profileFolder = path.join(profilesDir, `${profileId}`);
@@ -552,6 +645,18 @@ ipcMain.handle("import-curseforge-zip", async () => {
   }
 });
 
+async function getModInfo(projectID) {
+  const response = await fetch(`${WORKER_URL}/mods?modId=${projectID}`, {
+    method: "GET",
+    headers: { "Accept": "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch mod info for ${projectID}: ${response.status}`);
+  }
+  const data = await response.json();
+  return data.data; // CF wraps data inside { data: {...} }
+}
+
 async function curseforgeImport(zipPath) {
   const zip = new AdmZip(zipPath);
 
@@ -566,7 +671,7 @@ async function curseforgeImport(zipPath) {
   const loader = loaderwithshit.split("-")[0];
 
   // Create profile folder
-  const profileId = Date.now();
+  const profileId = getUniqueFolderName(manifest.name);
   const profilesDir = path.join(dataDir, "client");
   if (!fs.existsSync(profilesDir)) fs.mkdirSync(profilesDir, { recursive: true });
   const profileFolder = path.join(profilesDir, `${profileId}`);
@@ -587,14 +692,34 @@ async function curseforgeImport(zipPath) {
   // Download mods
   for (const fileObj of manifest.files || []) {
     try {
+      // Step 1: Lookup mod info → get classId
+      const modInfo = await getModInfo(fileObj.projectID);
+      let classId = modInfo.classId;
+      if (Array.isArray(modInfo.categories)) {
+        const anyCat = modInfo.categories.find(c => (c.classId || c.classId === 0));
+        if (anyCat) classId = anyCat.classId;
+      }
+
+      // Step 2: Decide folder based on classId
+      const subFolder = CLASS_ID_FOLDERS[classId] || "this_folder_is_for_projects_that_I_have_no_idea_of_what_the_type_is";
+      const targetFolder = path.join(profileFolder, subFolder);
+
+      await fs.promises.mkdir(targetFolder, { recursive: true });
+
+      // Step 3: Get download URL
       const url = await getDownloadUrl(fileObj.projectID, fileObj.fileID);
       const fileName = path.basename(url.split("?")[0]);
-      const dest = path.join(profileFolder, "mods", fileName);
+      const dest = path.join(targetFolder, fileName);
+
+      // Step 4: Download
       await downloadFile(url, dest);
+      console.log(`✅ Installed ${fileName} to ${subFolder}`);
     } catch (err) {
-      console.error(`Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
+      console.error(`❌ Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
     }
   }
+
+
 
   // Optional: read overrides/icon.png if exists
   let icon = null;
@@ -615,6 +740,111 @@ async function curseforgeImport(zipPath) {
 
   return { success: true, profile: newProfile };
 }
+
+async function getJavaForMinecraft(mcVersion) {
+  // 1️⃣ Fetch the version manifest
+  const manifestRes = await fetch("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json");
+  if (!manifestRes.ok) throw new Error("Failed to fetch version manifest");
+  const manifest = await manifestRes.json();
+
+  // 2️⃣ Find the version object with the matching id
+  const versionObj = manifest.versions.find((v) => v.id === mcVersion);
+  if (!versionObj) throw new Error(`Minecraft version ${mcVersion} not found`);
+
+  // 3️⃣ Fetch the version JSON
+  const versionRes = await fetch(versionObj.url);
+  if (!versionRes.ok) throw new Error(`Failed to fetch version JSON for ${mcVersion}`);
+  const versionData = await versionRes.json();
+
+  // 4️⃣ Extract javaVersion.majorVersion
+  const javaVersion = versionData.javaVersion?.majorVersion;
+  if (!javaVersion) throw new Error(`Java version info not found for Minecraft ${mcVersion}`);
+
+  // 5️⃣ Check system Java
+  try {
+    const output = execSync("java -version 2>&1").toString();
+    // Match "java version "23.0.2""
+    const match = output.match(/version "(?<v>\d+)\.?/);
+    if (match && match.groups.v) {
+      const sysVer = parseInt(match.groups.v, 10);
+
+      // Accept exact match only
+      if (sysVer === javaVersion) return "java";
+
+      // Optional: allow minor compatible versions (like Java 17–18)
+      // if (javaVersion >= 17 && sysVer >= 17 && sysVer <= 18) return "java";
+    }
+  } catch (_) {
+    // system Java not found
+  }
+
+  // 6️⃣ Detect OS & Arch
+  const platform = process.platform;
+  let osName;
+  if (platform === "win32") osName = "windows";
+  else if (platform === "darwin") osName = "mac";
+  else if (platform === "linux") osName = "linux";
+  else throw new Error(`Unsupported platform: ${platform}`);
+
+  const arch = os.arch() === "x64" ? "x64" : os.arch() === "arm64" ? "aarch64" : null;
+  if (!arch) throw new Error(`Unsupported architecture: ${os.arch()}`);
+
+  // 7️⃣ Check if we already have extracted Java
+  const installPath = path.join(JAVA_DIR, `${javaVersion}_${osName}_${arch}`);
+  const javaBin = path.join(installPath, platform === "win32" ? "bin/javaw.exe" : "bin/java");
+  if (fs.existsSync(javaBin)) {
+    console.log(`Found existing Java ${javaVersion} at ${javaBin}`);
+    return javaBin;
+  }
+
+  // 8️⃣ Fetch Adoptium API JSON
+  const apiUrl = `https://api.adoptium.net/v3/assets/latest/${javaVersion}/hotspot?architecture=${arch}&os=${osName}&image_type=jre&release_type=ga`;
+  const apiData = await new Promise((resolve, reject) => {
+    https.get(apiUrl, (res) => {
+      let data = "";
+      res.on("data", chunk => data += chunk);
+      res.on("end", () => resolve(JSON.parse(data)));
+      res.on("error", reject);
+    });
+  });
+
+  if (!apiData[0]?.binary?.package?.link) {
+    console.log(apiData);
+    throw new Error("Failed to find Java download link in Adoptium API response.");
+  }
+
+  const downloadUrl = apiData[0].binary.package.link;
+  const tmpZip = path.join(os.tmpdir(), `java${javaVersion}.zip`);
+
+  // 9️⃣ Download
+  console.log(`Downloading Java ${javaVersion} for ${mcVersion} from Adoptium...`);
+  await downloadFile(downloadUrl, tmpZip);
+
+  // 10️⃣ Extract
+  console.log("Extracting Java...");
+  await fs.createReadStream(tmpZip)
+    .pipe(unzipper.Parse())
+    .on("entry", (entry) => {
+      const entryPathParts = entry.path.split(/[/\\]/); // split path into parts
+      entryPathParts.shift(); // remove the top-level folder
+      const relativePath = entryPathParts.join(path.sep);
+      const destPath = path.join(installPath, relativePath);
+
+      if (entry.type === "Directory") {
+        fs.mkdirSync(destPath, { recursive: true });
+        entry.autodrain();
+      } else {
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+        entry.pipe(fs.createWriteStream(destPath));
+      }
+    })
+    .promise();
+
+  fs.unlinkSync(tmpZip);
+
+  return javaBin;
+}
+
 
 
 // Launch profile
@@ -655,6 +885,8 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
 
   const rootDir = path.join(dataDir, 'client', String(profile.id));
   fs.mkdirSync(rootDir, { recursive: true });
+  const javaPath = await getJavaForMinecraft(profile.version);
+  console.log("Java ready at:", javaPath);
 
   const launcher = new Client();
   let loaderer;
@@ -677,6 +909,7 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     ...launcherConfig,
     authorization: auth,
     memory: { max: maxRam, min: minRam },
+    javaPath,
     overrides: {
       assetRoot: path.join(dataDir, 'assets'),
       detached: false
@@ -1194,18 +1427,43 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
 });
 
 /* ─────────────── dihhcord ─────────────── */
+function startDiscordPresence() {
+  shouldconnect = settings.get('discord-presence', true);
+  console.log("start")
+  console.log(rpcConnected)
+  console.log(!shouldconnect)
+  console.log(rpcConnected || !shouldconnect)
+  if (rpcConnected || !shouldconnect) return; // already running or shouldnt connect
 
-const clientId = '1413838664185679892';
-const rpc = new RPC.Client({ transport: 'ipc' });
-rpc.on('ready', () => {
-  console.log('[Discord RPC] Connected');
+  rpc = new RPC.Client({ transport: 'ipc' });
 
-  // Set initial presence
-  setActivity();
-});
+  rpc.on('ready', () => {
+    console.log('[Discord RPC] Connected');
+    rpcConnected = true;
+    setActivity(); // initial presence
+  });
 
+  rpc.login({ clientId }).catch(console.error);
+}
+
+// Function to stop Discord presence
+function stopDiscordPresence() {
+  console.log("stop")
+  if (!rpcConnected || !rpc) return;
+
+  try {
+    rpc.clearActivity(); // optional: clear presence
+    rpc.destroy();       // disconnect
+  } catch (err) {
+    console.error('[Discord RPC] Error stopping:', err);
+  } finally {
+    rpc = null;
+    rpcConnected = false;
+    console.log('[Discord RPC] Disconnected');
+  }
+}
 function setActivity(details = "In launcher", state = "Idle") {
-  if (!rpc) return;
+  if (!rpcConnected || !rpc) return;
 
   rpc.setActivity({
     details,          // e.g., "Playing Minecraft"
@@ -1214,9 +1472,14 @@ function setActivity(details = "In launcher", state = "Idle") {
     instance: false
   }).catch(err => console.error('[Discord RPC] Error setting activity:', err));
 }
-
-// Connect to Discord
-rpc.login({ clientId }).catch(console.error);
+function updateDiscordPresenceToggle() {
+  shouldconnect = settings.get('discord-presence', true);
+  if (!rpcConnected && shouldconnect) {
+    startDiscordPresence();
+  } else {
+    stopDiscordPresence();
+  }
+}
 
 // Optional: expose a function to update presence dynamically
 global.setDiscordPresence = setActivity;
@@ -1225,5 +1488,87 @@ ipcMain.on('update-discord-presence', (event, { details, state }) => {
   setActivity(details, state);
 });
 
+async function getFabricLatestVersion() {
+  const res = await fetch("https://meta.fabricmc.net/v2/versions/loader");
+  const data = await res.json();
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error("No fabric loader versions found");
+  }
+  return `fabric-${data[0].version}`;
+}
 
+// ✅ Quilt (Maven metadata XML)
+async function getQuiltLatestVersion() {
+  const res = await fetch("https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-installer/maven-metadata.xml");
+  const xml = await res.text();
+  const parsed = await xml2js.parseStringPromise(xml);
+  const version = parsed.metadata.versioning[0].latest[0];
+  return `quilt-${version}`;
+}
+
+// ✅ Forge (Maven metadata XML, filter by Minecraft version prefix, strip MC part)
+async function getForgeLatestVersion(minecraftVersion) {
+  const res = await fetch("https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml");
+  const xml = await res.text();
+  const parsed = await xml2js.parseStringPromise(xml);
+
+  const versions = parsed.metadata.versioning[0].versions[0].version;
+  const matching = versions.filter(v => v.startsWith(`${minecraftVersion}-`));
+  if (matching.length === 0) {
+    throw new Error(`No Forge builds found for Minecraft ${minecraftVersion}`);
+  }
+  const latest = matching[matching.length - 1];
+  const forgeVersion = latest.replace(`${minecraftVersion}-`, "");
+  return `forge-${forgeVersion}`;
+}
+
+// ✅ NeoForge (Maven metadata XML, version is standalone)
+
+async function getNeoForgeLatestVersion() {
+  const res = await fetch(
+    "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+  );
+  const xml = await res.text();
+  const parsed = await parseStringPromise(xml);
+
+  const versions = parsed.metadata.versioning[0].versions[0].version;
+  const latest = versions.reduce((max, v) =>
+    compareVersions(v, max) > 0 ? v : max
+  , versions[0]);
+
+  return `neoforge-${latest}`;
+}
+
+async function getCurseForgeLoader(loader, version = "1.20.1") {
+  if (loader == "fabric") return await getFabricLatestVersion()
+  if (loader == "quilt") return await getQuiltLatestVersion()
+  if (loader == "forge") return await getForgeLatestVersion(version)
+  if (loader == "neoforge") return await getNeoForgeLatestVersion()
+}
+// open folder
+
+ipcMain.on('open-folder', (event, { id, isClient }) => {
+  try {
+    const folderPath = path.join(dataDir, isClient ? 'client' : 'server', String(id));
+
+    // Ensure folder exists
+    if (!fs.existsSync(folderPath)) {
+      fs.mkdirSync(folderPath, { recursive: true });
+    }
+
+    // Open folder in default file explorer
+    const platform = process.platform;
+    if (platform === 'win32') {
+      exec(`start "" "${folderPath.replace(/"/g, '\\"')}"`);
+    } else if (platform === 'darwin') {
+      exec(`open "${folderPath}"`);
+    } else {
+      exec(`xdg-open "${folderPath}"`);
+    }
+  } catch (err) {
+    console.error('Error opening folder:', err);
+  }
+});
+
+updateDiscordPresenceToggle()
 app.whenReady().then(createWindow);
