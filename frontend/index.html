@@ -5,31 +5,6 @@
 <title>Redstone Launcher</title>
  <link rel="stylesheet" href="server.css" />
  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-
-<style>
-  /* Basic layout */
-
-  .sidebar { width: 70px; flex-shrink:0; }
-  #content { display:flex; flex:1; height: calc(100vh - 38px); padding: 20px; gap: 20px; box-sizing:border-box; }
-  #main { flex: 2; display:flex; flex-direction:column; gap: 20px; }
-  #news-potw { flex: 1; display:flex; flex-direction:column; gap: 20px; }
-
-  /* Continue Playing list */
-  #continue-playing ul { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
-  .profile-item { display:flex; align-items:center; gap:10px; padding:10px;}
-  .profile-item img { width:40px; height:40px; object-fit:cover; }
-  .profile-item span { flex:1; }
-
-  /* News section */
-  #news { flex:2; padding:10px; position:relative; cursor:pointer; display:flex; flex-direction:column; justify-content:center; align-items:center; }
-  #news img { max-width:100%; max-height:150px; }
-  #news h3 { margin:5px 0; }
-  #news p { margin:0; }
-
-  /* Project of the week */
-  #potw { flex:1; padding:10px; display:flex; align-items:center; gap:10px; cursor:pointer; }
-  #potw img { width:50px; height:50px; object-fit:cover; }
-</style>
 </head>
 <body>
 <div id="toolbar">
@@ -40,39 +15,38 @@
 <div class="drag-region">Redstone Launcher</div>
 <div class="toolbar-buttons">
     <button id="min-btn">—</button>
-    <button id="max-btn">□</button>
+    <button id="max-btn">◻</button>
     <button id="close-btn">✕</button>
 </div>
 </div>
 <div class="sidebar">
-  <!-- Top section -->
   <ul class="menu top">
-    <li><a href="index.html"><i class="material-icons">home</i></a><span>Home</span></li>
-    <li><a href="instances.html"><i class="material-icons">play_arrow</i></a><span>Play</span></li>
-    <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" style="width: 24px;"></a><span>Modrinth</span></li>
-    <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
-    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-    
-    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
+    <a href="index.html"><li><i class="material-icons">home</i><span>Home</span></li></a>
+    <a href="instances.html"><li><i class="material-icons">play_arrow</i><span>Instances</span></li></a>
+    <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
+    <a href="server.html"><li><i class="material-icons">storage</i><span>Server Manager</span></li></a>
   </ul>
-
-  <!-- Middle section (instances) -->
   <ul class="menu middle" id="instances">
     <li><i class="material-icons">add</i><span>Add an instance</span></li>
   </ul>
-
-  <!-- Bottom section -->
   <ul class="menu bottom">
     <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
     <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
-    <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
+    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
   </ul>
 </div>
-
+<div id="news-modal">
+  <div id="news-modal-content">
+    <span id="news-modal-close">&times;</span>
+    <div id="news-modal-body"></div>
+  </div>
+</div>
 <div id="content">
   <div id="main">
+    <h1>Welcome back!</h1>
     <section id="continue-playing">
-      <h2>Continue Playing</h2>
+      <h3 id="continue-title">Continue Playing</h2>
       <ul id="profiles-list"></ul>
     </section>
 
@@ -86,6 +60,7 @@
     <section id="news">
       <h2>News</h2>
       <div id="news-content"></div>
+      <div id="news-dots"></div>
     </section>
 
     <section id="potw">
@@ -109,10 +84,43 @@ ipcRenderer.on('profiles-updates', (e, profiles) => {
 });
 
 function doshit(profiles){
-  console.log(profiles)
   const list = Array.isArray(profiles) ? profiles.slice(0,3) : [];
   const profilesList = document.getElementById("profiles-list");
+  const title = document.getElementById("continue-title");
   profilesList.innerHTML = "";
+  title.textContent = "Continue Playing";
+  title.onclick = () => {
+    shell.openExternal("https://youtu.be/XOq97dxiAfE");
+  };
+  title.style.cursor = 'help';
+  if (list.length == 0) {
+    title.textContent = "Start Playing";
+    const li = document.createElement("li");
+    li.className = "profile-item";
+
+    const img = document.createElement("img");
+    img.src = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+    li.appendChild(img);
+
+    const info = document.createElement("div");
+    info.className = "profile-info";
+
+    const name = document.createElement("div");
+    name.className = "profile-name";
+    name.textContent = "Create An instance";
+    info.appendChild(name);
+
+    li.appendChild(info);
+
+    const launchBtn = document.createElement("button");
+    launchBtn.innerHTML = `+`;
+    launchBtn.onclick = () => {
+      window.location.href = "instances.html?i=NEWINSTANCE";
+    };
+    li.appendChild(launchBtn);
+
+    profilesList.appendChild(li);
+  }
 
   list.forEach(p => {
       const li = document.createElement("li");
@@ -151,60 +159,6 @@ function doshit(profiles){
 
   });
 };
-
-// ------------------ NEWS ------------------
-async function loadNews() {
-  try {
-    const res = await fetch('https://redstone-launcher.com/news.json');
-    const newsObj = await res.json();
-    const newsArr = Object.values(newsObj).filter(n => new Date(n.showuntil) >= new Date());
-    let idx = 0;
-
-    const newsContent = document.getElementById('news-content');
-
-    function showNext() {
-      if(newsArr.length === 0) return;
-      const news = newsArr[idx];
-      newsContent.innerHTML = `
-        <img src="${news.img}" />
-        <h3>${news.title}</h3>
-        <p>${news.summary}</p>
-      `;
-      idx = (idx+1) % newsArr.length;
-    }
-    showNext();
-    setInterval(showNext, 10000);
-
-    document.getElementById('news').onclick = () => {
-      const news = newsArr[(idx-1 + newsArr.length)%newsArr.length];
-      if(news.redirects) {
-        shell.openExternal(news.redirectUrl);
-      } else {
-        const fullDesc = window.open('', '_blank', 'width=600,height=400');
-        fullDesc.document.body.innerHTML = `<h2>${news.title}</h2>${news.description}`;
-      }
-    }
-  } catch(e) { console.error('Failed to load news', e); }
-}
-loadNews();
-
-// ------------------ PROJECT OF THE WEEK ------------------
-async function loadPotW() {
-  try {
-    const res = await fetch('https://redstone-launcher.com/PotW.json');
-    const potwObj = await res.json();
-    const [title, url] = Object.entries(potwObj)[0];
-    const projectName = url.split('/').pop();
-    const modRes = await fetch(`https://api.modrinth.com/v2/project/${projectName}`);
-    const modObj = await modRes.json();
-    const icon = modObj.icon_url || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-
-    document.getElementById('potw-icon').src = icon;
-    document.getElementById('potw-title').textContent = projectName;
-    document.getElementById('potw').onclick = () => shell.openExternal(url);
-  } catch(e) { console.error('Failed to load PotW', e); }
-}
-loadPotW();
 
 // ------------------ DISCORD PRESENCE ------------------
   function updatePresence(details, state = "Idle") {

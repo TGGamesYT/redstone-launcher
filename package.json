@@ -1,7 +1,7 @@
 {
   "name": "redstone-launcher",
   "productName": "Redstone Launcher",
-  "version": "1.10.0",
+  "version": "1.10.5",
   "description": "A Minecraft launcher",
   "author": "TG & Faze_gbr",
   "main": "main.js",

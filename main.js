@@ -151,8 +151,22 @@ function createWindow() {
   });
   win.setAccentColor(color);
   win.loadFile('frontend/index.html');
+  win.on("maximize", () => {
+    win.webContents.send("window-maximized");
+  });
+  win.on("unmaximize", () => {
+    win.webContents.send("window-unmaximized");
+  });
   mainWindow = win
 }
+
+function devtoolsLog(text) {
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send("devtools-log", String(text));
+    console.log(text)
+  }
+}
+
 
 /* ─────────────── back/forth system ─────────────── */
 
@@ -237,7 +251,7 @@ async function refreshPlayer(player) {
 
     return player;
   } catch (err) {
-    console.error("Failed to refresh player:", err);
+    devtoolsLog("Failed to refresh player:", err);
     throw err;
   }
 }
@@ -294,7 +308,7 @@ ipcMain.on("login-microsoft", async (event) => {
     event.reply("players-updated", players);
 
   } catch (err) {
-    console.error("MS login failed:", err);
+    devtoolsLog("MS login failed:", err);
     event.reply("login-error", "MS login failed: " + err.message);
   }
 });
@@ -315,7 +329,8 @@ ipcMain.on('create-profile', async (event, profile) => {
     name: profile.name,
     version: profile.version || "1.20.1",
     loader: profile.loader || "vanilla",
-    icon: profile.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png"
+    icon: profile.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png",
+    created: Date.now()
   };
 
   profiles.push(newProfile);
@@ -333,6 +348,7 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
       if (!Array.isArray(profiles)) profiles = Object.values(profiles || {});
       const index = profiles.findIndex(p => String(p.id) === String(updatedProfile.id));
       if (index === -1) {
+        devtoolsLog('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
         event.reply('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
         return;
       }
@@ -342,7 +358,7 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
       event.reply('profiles-updated', profiles);
     })
     .catch(err => {
-      console.error('Failed to load profiles for edit:', err);
+      devtoolsLog('Failed to load profiles for edit:', err);
       event.reply('edit-profile-error', 'Failed to load profiles');
     });
 });
@@ -367,7 +383,7 @@ ipcMain.on("delete-profile", async (event, profileId) => {
       fs.rmSync(profilePath, { recursive: true, force: true });
     }
   } catch (err) {
-    console.error("Failed to delete profile folder:", err);
+    devtoolsLog("Failed to delete profile folder:", err);
   }
 
   saveProfiles(newProfiles);
@@ -383,7 +399,11 @@ ipcMain.on("min-app", () => {
 });
 
 ipcMain.on("max-app", () => {
-  if (!mainWindow.isMaximized()) {mainWindow.maximize()} else {mainWindow.unmaximize};
+  if (!mainWindow.isMaximized()) {
+    mainWindow.maximize();
+  } else {
+    mainWindow.unmaximize();
+  }
 });
 
 // Get game profiles
@@ -392,7 +412,7 @@ ipcMain.on('get-profiles', async (event) => {
     const profiles = await loadProfiles(); // make sure loadProfiles is async now
     event.reply('profiles-list', profiles);
   } catch (err) {
-    console.error('Failed to load profiles:', err);
+    devtoolsLog('Failed to load profiles:', err);
     event.reply('profiles-list', []); // send empty array on error
   }
 });
@@ -403,9 +423,8 @@ ipcMain.on('get-profiles-latest', async (event) => {
     let unsorted = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
     const profiles =  await applySort(unsorted, "lastused-desc", null);
     event.reply('profiles-list', profiles);
-    console.log(profiles)
   } catch (err) {
-    console.error('Failed to load profiles:', err);
+    devtoolsLog('Failed to load profiles:', err);
     event.reply('profiles-list', []); // send empty array on error
   }
 });
@@ -596,7 +615,8 @@ zip.getEntries().forEach(entry => {
       name: indexJson.name || "Imported Profile",
       version: mcVersion,
       loader,
-      icon
+      icon,
+      created: Date.now()
     };
 
     const profiles = await loadProfiles();
@@ -623,7 +643,7 @@ async function getDownloadUrl(projectID, fileID) {
 
     return data.data; // this is the actual download URL
   } catch (err) {
-    console.error(`Failed to fetch mod ${projectID}/${fileID}:`, err);
+    devtoolsLog(`Failed to fetch mod ${projectID}/${fileID}:`, err);
     return null;
   }
 }
@@ -713,9 +733,9 @@ async function curseforgeImport(zipPath) {
 
       // Step 4: Download
       await downloadFile(url, dest);
-      console.log(`✅ Installed ${fileName} to ${subFolder}`);
+      devtoolsLog(`✅ Installed ${fileName} to ${subFolder}`);
     } catch (err) {
-      console.error(`❌ Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
+      devtoolsLog(`❌ Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
     }
   }
 
@@ -731,7 +751,8 @@ async function curseforgeImport(zipPath) {
     name: manifest.name || "Imported CurseForge Pack",
     version: mcVersion,
     loader,
-    icon
+    icon,
+    created: Date.now()
   };
 
   const profiles = await loadProfiles();
@@ -793,7 +814,7 @@ async function getJavaForMinecraft(mcVersion) {
   const installPath = path.join(JAVA_DIR, `${javaVersion}_${osName}_${arch}`);
   const javaBin = path.join(installPath, platform === "win32" ? "bin/javaw.exe" : "bin/java");
   if (fs.existsSync(javaBin)) {
-    console.log(`Found existing Java ${javaVersion} at ${javaBin}`);
+    devtoolsLog(`Found existing Java ${javaVersion} at ${javaBin}`);
     return javaBin;
   }
 
@@ -809,7 +830,8 @@ async function getJavaForMinecraft(mcVersion) {
   });
 
   if (!apiData[0]?.binary?.package?.link) {
-    console.log(apiData);
+    devtoolsLog(apiData);
+    devtoolsLog("Failed to find Java download link in Adoptium API response.")
     throw new Error("Failed to find Java download link in Adoptium API response.");
   }
 
@@ -817,11 +839,11 @@ async function getJavaForMinecraft(mcVersion) {
   const tmpZip = path.join(os.tmpdir(), `java${javaVersion}.zip`);
 
   // 9️⃣ Download
-  console.log(`Downloading Java ${javaVersion} for ${mcVersion} from Adoptium...`);
+  devtoolsLog(`Downloading Java ${javaVersion} for ${mcVersion} from Adoptium...`);
   await downloadFile(downloadUrl, tmpZip);
 
   // 10️⃣ Extract
-  console.log("Extracting Java...");
+  devtoolsLog("Extracting Java...");
   await fs.createReadStream(tmpZip)
     .pipe(unzipper.Parse())
     .on("entry", (entry) => {
@@ -886,7 +908,7 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
   const rootDir = path.join(dataDir, 'client', String(profile.id));
   fs.mkdirSync(rootDir, { recursive: true });
   const javaPath = await getJavaForMinecraft(profile.version);
-  console.log("Java ready at:", javaPath);
+  devtoolsLog("Java ready at:", javaPath);
 
   const launcher = new Client();
   let loaderer;
@@ -1062,7 +1084,7 @@ ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType 
 
     return { success: true, path: dest };
   } catch (err) {
-    console.error("Failed to download file:", err);
+    devtoolsLog("Failed to download file:", err);
     return { success: false, error: err.message };
   }
 });
@@ -1081,7 +1103,7 @@ ipcMain.handle("install-mrpack-url", async (event, url) => {
     // Assuming you already have a function `mrpack(path)` that handles installation
     return await mrpack(tmpPath);
   } catch (err) {
-    console.error("Failed to install .mrpack from URL:", err);
+    devtoolsLog("Failed to install .mrpack from URL:", err);
     return { success: false, error: err.message };
   }
 });
@@ -1210,7 +1232,7 @@ ipcMain.handle("check-for-updates", async () => {
 
     return { updateAvailable: true, latest, url: updates[latest] };
   } catch (err) {
-    console.error("Update check failed:", err);
+    devtoolsLog("Update check failed:", err);
     return { updateAvailable: false, error: err.message };
   }
 });
@@ -1230,7 +1252,7 @@ ipcMain.handle("download-and-install", async (event, fileId, version) => {
 
     return { success: true };
   } catch (err) {
-    console.error("Update download failed:", err);
+    devtoolsLog("Update download failed:", err);
     return { success: false, error: err.message };
   }
 });
@@ -1326,7 +1348,7 @@ async function collectInstanceFiles(instanceFolder) {
  * Returns { success: true, mrpackPath, indexJson } or { success: false, error }
  */
 ipcMain.handle('export-mrpack', async (event, profileId) => {
-  console.log("[mrpack] START export for profileId:", profileId);
+  devtoolsLog("[mrpack] START export for profileId:", profileId);
 
   try {
     if (!profileId) throw new Error("Missing profile id");
@@ -1337,16 +1359,16 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
     const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
     const profile = profiles.find(p => Number(p.id) === Number(profileId));
     if (!profile) throw new Error("Profile not found");
-    console.log("[mrpack] Profile found:", profile);
+    devtoolsLog("[mrpack] Profile found:", profile);
 
     const instanceFolder = path.join(dataDir, 'client', String(profile.id));
     if (!fs.existsSync(instanceFolder)) throw new Error("Instance folder not found: " + instanceFolder);
-    console.log("[mrpack] Instance folder:", instanceFolder);
+    devtoolsLog("[mrpack] Instance folder:", instanceFolder);
 
     // Collect all files
-    console.log("[mrpack] Collecting files...");
+    devtoolsLog("[mrpack] Collecting files...");
     const files = await collectInstanceFiles(instanceFolder);
-    console.log("[mrpack] Found", files.length, "files");
+    devtoolsLog("[mrpack] Found", files.length, "files");
 
     // Prepare index files and overrides
     const indexFiles = [];
@@ -1364,11 +1386,11 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
       else if (l.startsWith('resourcepacks/') || l.includes('/resourcepacks/')) env = { client: 'required', server: 'optional' };
       else if (l.startsWith('shaderpacks/') || l.includes('/shaderpacks/')) env = { client: 'required', server: 'unsupported' };
 
-      console.log("[mrpack] Looking up Modrinth for:", relPath);
+      devtoolsLog("[mrpack] Looking up Modrinth for:", relPath);
       const lookup = await lookupModrinthByHash(sha512, sha1);
 
       if (lookup && lookup.url) {
-        console.log("[mrpack] Found on Modrinth:", relPath);
+        devtoolsLog("[mrpack] Found on Modrinth:", relPath);
         indexFiles.push({
           path: relPath,
           hashes: { sha1, sha512 },
@@ -1377,7 +1399,7 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
           fileSize: buffer.length
         });
       } else {
-        console.log("[mrpack] Not on Modrinth, adding to overrides:", relPath);
+        devtoolsLog("[mrpack] Not on Modrinth, adding to overrides:", relPath);
         overrideFiles.push({ relPath, buffer });
       }
     }
@@ -1401,27 +1423,25 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
     // Create .mrpack zip
     const mrpackName = `${profile.name.replace(/[<>:"/\\|?*\x00-\x1F]/g,'_') || 'pack'}-${profile.id}.mrpack`;
     const mrpackPath = path.join(dataDir, mrpackName);
-    console.log("[mrpack] Creating zip:", mrpackPath);
+    devtoolsLog("[mrpack] Creating zip:", mrpackPath);
 
     const zip = new AdmZip();
     zip.addFile('modrinth.index.json', Buffer.from(JSON.stringify(indexJson, null, 2), 'utf8'));
 
-    if (profile.icon) console.log("[mrpack] Icon detected (optional)");
-
     // Add overrides files
-    console.log("[mrpack] Adding overrides files:", overrideFiles.length);
+    devtoolsLog("[mrpack] Adding overrides files:", overrideFiles.length);
     for (const f of overrideFiles) {
       const target = path.posix.join('overrides', f.relPath);
       zip.addFile(target, f.buffer);
     }
 
     zip.writeZip(mrpackPath);
-    console.log("[mrpack] Export complete:", mrpackPath);
+    devtoolsLog("[mrpack] Export complete:", mrpackPath);
 
     return { success: true, mrpackPath, indexJson };
 
   } catch (err) {
-    console.error("[mrpack] Error exporting:", err);
+    devtoolsLog("[mrpack] Error exporting:", err);
     return { success: false, error: err.message || String(err) };
   }
 });
@@ -1429,16 +1449,12 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
 /* ─────────────── dihhcord ─────────────── */
 function startDiscordPresence() {
   shouldconnect = settings.get('discord-presence', true);
-  console.log("start")
-  console.log(rpcConnected)
-  console.log(!shouldconnect)
-  console.log(rpcConnected || !shouldconnect)
   if (rpcConnected || !shouldconnect) return; // already running or shouldnt connect
 
   rpc = new RPC.Client({ transport: 'ipc' });
 
   rpc.on('ready', () => {
-    console.log('[Discord RPC] Connected');
+    devtoolsLog('[Discord RPC] Connected');
     rpcConnected = true;
     setActivity(); // initial presence
   });
@@ -1448,18 +1464,17 @@ function startDiscordPresence() {
 
 // Function to stop Discord presence
 function stopDiscordPresence() {
-  console.log("stop")
   if (!rpcConnected || !rpc) return;
 
   try {
     rpc.clearActivity(); // optional: clear presence
     rpc.destroy();       // disconnect
   } catch (err) {
-    console.error('[Discord RPC] Error stopping:', err);
+    devtoolsLog('[Discord RPC] Error stopping:', err);
   } finally {
     rpc = null;
     rpcConnected = false;
-    console.log('[Discord RPC] Disconnected');
+    devtoolsLog('[Discord RPC] Disconnected');
   }
 }
 function setActivity(details = "In launcher", state = "Idle") {
@@ -1470,7 +1485,9 @@ function setActivity(details = "In launcher", state = "Idle") {
     state,            // e.g., "On version 1.21"
     startTimestamp: Date.now(),
     instance: false
-  }).catch(err => console.error('[Discord RPC] Error setting activity:', err));
+  }).catch(err => {
+    devtoolsLog('[Discord RPC] Error setting activity:', err)
+  });
 }
 function updateDiscordPresenceToggle() {
   shouldconnect = settings.get('discord-presence', true);
@@ -1566,7 +1583,7 @@ ipcMain.on('open-folder', (event, { id, isClient }) => {
       exec(`xdg-open "${folderPath}"`);
     }
   } catch (err) {
-    console.error('Error opening folder:', err);
+    devtoolsLog('Error opening folder:', err);
   }
 });
 

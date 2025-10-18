@@ -1,6 +1,12 @@
 @font-face {
   font-family: 'Pixel';
-  src: url('https://tggamesyt.dev/assets/Minecraft-Seven_v2.ttf') format('truetype');
+  src: url('minecraft.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Modrinth';
+  src: url('modrinth.ttf') format('truetype');
   font-weight: normal;
   font-style: normal;
 }
@@ -24,6 +30,106 @@
   --margin: 50px;
 }
 
+.modrinth {
+  font-family: Modrinth;
+}
+  /* Basic layout */
+
+  #content { display:flex; flex:1; height: 100vh; padding: 0; gap: 20vh; box-sizing:border-box; }
+  #main { flex: 2; display:flex; flex-direction:column; gap: 20px; }
+  #news-potw { flex: 1; display:flex; flex-direction:column; gap: 20px; background-color: color-mix(in srgb, var(--base-color) 80%, black);
+  }
+
+  /* Continue Playing list */
+  #content ul { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
+  .profile-item { display:flex; align-items:center; gap:10px; padding:10px;}
+  .profile-item img { width:40px; height:40px; object-fit:cover; }
+  .profile-item span { flex:1; }
+  /* News section */
+  #news { flex:2; padding:1px; position:center; cursor:pointer; display:inline-flex; flex-direction:column; justify-content:baseline; align-items:center; }
+  #news img { max-width:100%; max-height:30vh; }
+  #news h3 { margin:0px 0; }
+  #news p { margin:0; }
+
+  /* Project of the week */
+  #potw { flex:1; padding:10px; display:flex; align-items:center; gap:10px; cursor:pointer; }
+  #potw img { width:50px; height:50px; object-fit:cover; }
+  /* Modal overlay styling */
+#news-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0,0,0,0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+#news-modal-content {
+  background: var(--base-color);
+  color: var(--text-color);
+  padding: 20px;
+  border-radius: 10px;
+  width: 60%;
+  max-width: 700px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 0 20px rgba(0,0,0,0.4);
+  position: relative;
+}
+
+#news-modal-content h2 {
+  margin-top: 0;
+}
+
+#news-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 15px;
+  font-size: 20px;
+  cursor: pointer;
+}
+/* News dots under the carousel */
+#news-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.news-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: color-mix(in srgb, var(--text-color) 50%, gray);
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.news-dot.active {
+  background-color: var(--text-color);
+}
+
+#news-content {
+  perspective: 1000px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  transition: transform 0.6s ease, opacity 0.6s ease;
+  transform-style: preserve-3d;
+}
+
+.news-flip {
+  transform: rotateY(90deg);
+  opacity: 0;
+}
+
 .noUi-connect {
     background: color-mix(in srgb, var(--base-color) 80%, white)
 }
@@ -44,7 +150,16 @@
   box-sizing: border-box;
   user-select: none;
 }
-
+html {
+  height: 100%;
+  background: linear-gradient(
+  to bottom, 
+  var(--toolbar-bg) 0%, 
+  var(--toolbar-bg) 10%, /* end of top color */
+  var(--very-dark) 10%,  /* start of bottom color */
+  var(--very-dark) 100%
+);
+}
 body {
   margin: 0;
   padding: 0;
@@ -52,8 +167,12 @@ body {
   background: var(--very-dark);
   color: var(--text-color);
   overflow: hidden;
-  margin-left: 90px;
-  margin-top: 100px;
+  margin-left: 70px;
+  padding-left: 20px;
+  margin-top: 38px;
+  border-top: 3px  var(--toolbar-bg);
+  border-left: 3px  var(--toolbar-bg);
+  border-top-left-radius: var(--border-radius);
 }
 
 h1,
@@ -62,7 +181,6 @@ h3,
 h4,
 h5 {
   color: var(--text-color);
-  text-transform: uppercase;
   text-shadow: 2px 2px 0 var(--menu-bg);
 }
 
@@ -95,29 +213,36 @@ h5 {
 #toolbar .toolbar-buttons {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding-right: 8px;
+  padding: 10px;
   -webkit-app-region: no-drag;
 }
 
 #toolbar .toolbar-buttons button {
+  height: 36px;
   width: 36px;
-  height: 40px;
-  background: var(--menu-bg);
-  border: 2px solid color-mix(in srgb, var(--secondary-color) 90%, white);
+  background: none;
+  border: 2px solid transparent; /* reserve space for hover */
   color: var(--text-color);
-  font-family: var(--text-font);
+  box-shadow: none;
   font-size: 14px;
+
+  display: flex;
+  justify-content: center; /* horizontal centering */
+  align-items: center;     /* vertical centering */
+  
+  line-height: 1;          /* reset line height */
+  padding: 0;              /* remove extra padding */
+  
   cursor: pointer;
-  box-shadow: 2px 2px 0 var(--menu-bg);
-  transition: 0.15s;
-  border-radius: var(--border-radius);
+  box-sizing: border-box;  /* include border in size */
 }
 
+
 #toolbar .toolbar-buttons button:hover {
-  background: var(--third-color);
-  border-color: var(--base-color);
-  transform: scale(1.05);
+  align-items: center;
+  background: none;
+  border: 2px solid color-mix(in srgb, var(--secondary-color) 50%, gray);
+  border-radius: var(--border-radius);
 }
 
 
@@ -125,35 +250,36 @@ h5 {
 #toolbar .toolbar-buttons-left {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding-left: 8px;
+  padding-left: 10px;
   -webkit-app-region: no-drag;
 }
 
 #toolbar .toolbar-buttons-left button {
+  height: 36px;
   width: 36px;
-  height: 40px;
-  background: var(--menu-bg);
-  border: 2px solid color-mix(in srgb, var(--secondary-color) 90%, white);
+  background: none;
+  border: 2px solid transparent; /* reserve space for hover */
   color: var(--text-color);
-  font-family: var(--text-font);
+  box-shadow: none;
   font-size: 14px;
+
+  display: flex;
+  justify-content: center; /* horizontal centering */
+  align-items: center;     /* vertical centering */
+  
+  line-height: 1;          /* reset line height */
+  padding: 0;              /* remove extra padding */
+  
   cursor: pointer;
-  box-shadow: 2px 2px 0 var(--menu-bg);
-  transition: 0.15s;
-  border-radius: var(--border-radius);
+  box-sizing: border-box;  /* include border in size */
 }
+
 
 #toolbar .toolbar-buttons-left button:hover {
-  background: var(--third-color);
-  border-color: var(--base-color);
-  transform: scale(1.05);
-}
-
-#toolbar #close-btn:hover {
-  background: var(--base-color);
-  border-color: var(--third-color);
-  color: var(--text-color);
+  align-items: center;
+  background: none;
+  border: 2px solid color-mix(in srgb, var(--secondary-color) 50%, gray);
+  border-radius: var(--border-radius);
 }
 
 #toolbar .toolbar-buttons button:active {
@@ -191,12 +317,14 @@ h5 {
 }
 
 .sidebar .menu li {
+  color: var(--text-color);
   position: relative;
   width: 50px;
   height: 50px;
   margin: 8px auto;
   background: var(--menu-bg);
   border: 2px solid var(--border-dark);
+  border-radius: var(--border-radius);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -275,7 +403,7 @@ button,
   border-radius: var(--border-radius);
 }
 
-button:hover,
+button:not(.toolbar-buttons button):hover,
 .btn:hover {
   background: var(--menu-hover-bg);
   border-color: var(--accent);
@@ -411,7 +539,7 @@ a:hover {
   margin: 6px 0;
   transition: background 0.2s, transform 0.2s;
   cursor: pointer;
-  max-width: 50vw;
+  max-width: 60vw;
 }
 
 .profile-item:hover {

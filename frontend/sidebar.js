@@ -146,7 +146,21 @@ function updateSideBar() {
 
 function closeApp() {ipcRenderer.send("close-app")}
 function minApp() {ipcRenderer.send("min-app")}
-function maxApp() {ipcRenderer.send("max-app")}
+function maxApp() {
+  ipcRenderer.send("max-app");
+}
+
+function updateMaxIcon(isMaximized) {
+  if (isMaximized) {
+    document.getElementById("max-btn").innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e3e3e3"><path d="M631.19-164.04q5.19 0 8.75-3.46 3.56-3.46 3.56-8.85v-339.84q0-5.39-3.56-8.85t-8.75-3.46H176.35q-5.39 0-8.85 3.46t-3.46 8.85v339.84q0 5.39 3.46 8.85t8.85 3.46h454.84Zm68.27-211.5v-55.96h84.19q5.39 0 8.85-3.46t3.46-8.85v-339.84q0-5.39-3.46-8.85t-8.85-3.46H329q-5.38 0-8.85 3.46-3.46 3.46-3.46 8.85v199.19h-55.96v-199.19q0-28.44 19.82-48.36 19.81-19.91 48.45-19.91h454.65q28.44 0 48.36 19.91 19.91 19.92 19.91 48.36v339.84q0 28.44-19.91 48.35-19.92 19.92-48.36 19.92h-84.19Zm-523.2 267.46q-28.35 0-48.27-19.91-19.91-19.92-19.91-48.36v-339.84q0-28.44 19.91-48.35 19.92-19.92 48.29-19.92h456.37q27.53 0 47.17 19.51t19.64 46.91v341.77q0 28.36-19.92 48.28-19.91 19.91-48.26 19.91H176.26Zm380.32-579.15ZM403.92-346.27Z"/></svg>`;
+  } else {
+    document.getElementById("max-btn").textContent = "◻";
+  }
+}
+
+// Listen for maximize/unmaximize events from main
+ipcRenderer.on("window-maximized", () => updateMaxIcon(true));
+ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
 
   ipcRenderer.send("get-players");
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });
@@ -222,3 +236,140 @@ document.getElementById('backBtn').addEventListener('click', () => {
 document.getElementById('forwardBtn').addEventListener('click', () => {
   ipcRenderer.send('go-forward');
 });
+
+ipcRenderer.on("devtools-log", (event, text) => {
+  console.log(text);
+});
+
+// ------------------ NEWS ------------------
+async function loadNews() {
+  try {
+    const res = await fetch('https://redstone-launcher.com/news.json');
+    const newsObj = await res.json();
+    const newsArr = Object.values(newsObj).filter(n => new Date(n.showuntil) >= new Date());
+    let idx = 0;
+    let autoSwitch = true;
+    let autoTimer;
+
+    const newsContent = document.getElementById('news-content');
+    const newsDots = document.getElementById('news-dots');
+
+    // Create dots
+    newsDots.innerHTML = "";
+    newsArr.forEach((_, i) => {
+      const dot = document.createElement('div');
+      dot.classList.add('news-dot');
+      if (i === 0) dot.classList.add('active');
+      dot.onclick = () => {
+        idx = i;
+        showNews();
+        pauseAutoAdvance();
+      };
+      newsDots.appendChild(dot);
+    });
+
+    function showNews() {
+  if (newsArr.length === 0) return;
+  const news = newsArr[idx];
+
+  // Add flip animation
+  newsContent.classList.add('news-flip');
+
+  setTimeout(() => {
+    newsContent.innerHTML = `
+      <img src="${news.img}" />
+      <h3>${news.title}</h3>
+      <p>${news.summary}</p>
+    `;
+    newsContent.classList.remove('news-flip');
+  }, 300); // half of transition duration for smooth effect
+
+  // Update dots
+  document.querySelectorAll('.news-dot').forEach((d, j) => {
+    d.classList.toggle('active', j === idx);
+  });
+}
+
+    function nextNews() {
+      idx = (idx + 1) % newsArr.length;
+      showNews();
+    }
+
+    function startAutoAdvance() {
+      autoSwitch = true;
+      clearInterval(autoTimer);
+      autoTimer = setInterval(() => {
+        if (autoSwitch) nextNews();
+      }, 10000);
+    }
+
+    function pauseAutoAdvance() {
+      autoSwitch = false;
+      clearInterval(autoTimer);
+      // Resume after 30 seconds
+      setTimeout(() => startAutoAdvance(), 30000);
+    }
+
+    showNews();
+    startAutoAdvance();
+
+    // Allow mouse scroll to switch manually
+    newsContent.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      pauseAutoAdvance();
+      if (e.deltaY > 0) nextNews();
+      else {
+        idx = (idx - 1 + newsArr.length) % newsArr.length;
+        showNews();
+      }
+    });
+
+    // Clicking on news -> modal or external link
+    document.getElementById('news').onclick = () => {
+      const news = newsArr[idx]; // use current index
+      if (news.redirects) {
+        shell.openExternal(news.redirectUrl);
+      } else {
+        // Show modal instead of new window
+        const modal = document.getElementById('news-modal');
+        const body = document.getElementById('news-modal-body');
+        body.innerHTML = `<h2>${news.title}</h2>${news.description}`;
+        modal.style.display = 'flex';
+      }
+    };
+
+
+    // Close modal handler
+    document.getElementById('news-modal-close').onclick = () => {
+      document.getElementById('news-modal').style.display = 'none';
+    };
+
+    // Close when clicking outside the content
+    window.onclick = (e) => {
+      const modal = document.getElementById('news-modal');
+      if (e.target === modal) modal.style.display = 'none';
+    };
+  } catch (e) {
+    console.error('Failed to load news', e);
+  }
+}
+
+loadNews();
+
+// ------------------ PROJECT OF THE WEEK ------------------
+async function loadPotW() {
+  try {
+    const res = await fetch('https://redstone-launcher.com/PotW.json');
+    const potwObj = await res.json();
+    const [title, url] = Object.entries(potwObj)[0];
+    const projectName = url.split('/').pop();
+    const modRes = await fetch(`https://api.modrinth.com/v2/project/${projectName}`);
+    const modObj = await modRes.json();
+    const icon = modObj.icon_url || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+
+    document.getElementById('potw-icon').src = icon;
+    document.getElementById('potw-title').textContent = projectName;
+    document.getElementById('potw').onclick = () => shell.openExternal(url);
+  } catch(e) { console.error('Failed to load PotW', e); }
+}
+loadPotW();

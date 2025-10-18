@@ -13,44 +13,35 @@
  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
-  <div id="toolbar">
-    <div class="toolbar-buttons-left">
-        <button id="backBtn">⬅</button>
-        <button id="forwardBtn">➡</button>
-    </div>
-<div class="drag-region">Redstone Launcher - Modrinth Browser</div>
+<div id="toolbar">
+  <div class="toolbar-buttons-left">
+      <button id="backBtn">⬅</button>
+      <button id="forwardBtn">➡</button>
+  </div>
+<div class="drag-region">Redstone Launcher</div>
 <div class="toolbar-buttons">
     <button id="min-btn">—</button>
-    <button id="max-btn">□</button>
+    <button id="max-btn">◻</button>
     <button id="close-btn">✕</button>
 </div>
 </div>
 <div class="sidebar">
-  <!-- Top section -->
   <ul class="menu top">
-    <li><a href="index.html"><i class="material-icons">home</i></a><span>Home</span></li>
-    <li><a href="instances.html"><i class="material-icons">play_arrow</i></a><span>Play</span></li>
-    <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" style="width: 24px;"></a><span>Modrinth</span></li>
-    <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
-    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-    
-    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
+    <a href="index.html"><li><i class="material-icons">home</i><span>Home</span></li></a>
+    <a href="instances.html"><li><i class="material-icons">play_arrow</i><span>Instances</span></li></a>
+    <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
+    <a href="server.html"><li><i class="material-icons">storage</i><span>Server Manager</span></li></a>
   </ul>
-
-  <!-- Middle section (instances) -->
   <ul class="menu middle" id="instances">
     <li><i class="material-icons">add</i><span>Add an instance</span></li>
   </ul>
-
-  <!-- Bottom section -->
   <ul class="menu bottom">
     <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
     <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
-    <li><i class="material-icons" onclick="closeApp()">exit_to_app</i><span>Exit the launcher</span></li>
+    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
   </ul>
 </div>
-
-
 <div id="searchPagination">
   <input type="text" id="searchInput" placeholder="Search projects..." />
   <button id="prevPage">Prev</button>
