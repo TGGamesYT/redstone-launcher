@@ -11,14 +11,13 @@
   li.player-item img { width: 32px; height: 32px; border-radius: 4px; margin-right: 10px; }
   li.player-item span { flex: 1; }
   li.player-item button { margin-left: 10px; }
-  .selected-player { border: 2px solid #4CAF50; padding: 2px; border-radius: 4px; }
-  #addPlayerLine { cursor: pointer; color: #ffffff; margin-top: 10px; display: inline-block; }
+  #addPlayerLine { cursor: pointer; color: var(--text-color); margin-top: 10px; display: inline-block; }
   /* Modal */
-  #playerModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+  .playerModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
                  background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
-  #playerModal .modal-content { background: var(--third-color); padding: 20px; border-radius: 8px; width: 300px; }
-  #playerModal label { display: block; margin-top: 10px; }
-  #playerModal button { margin-top: 15px; }
+  .playerModal .modal-content { background: var(--third-color); padding: 20px; border-radius: 8px; width: 300px; }
+  .playerModal label { display: block; margin-top: 10px; }
+  .playerModal button { margin-top: 15px; }
 </style>
 <link rel="stylesheet" href="server.css">
 <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
@@ -31,6 +30,7 @@
   </div>
 <div class="drag-region">Redstone Launcher</div>
 <div class="toolbar-buttons">
+    <div id="instance-processes"></div>
     <button id="min-btn">—</button>
     <button id="max-btn">◻</button>
     <button id="close-btn">✕</button>
@@ -53,11 +53,12 @@
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
   </ul>
 </div>
-<ul id="players-list"></ul>
-<span id="addPlayerLine">➕ Add New Player</span>
+<ul id="players-list">
+  <span id="addPlayerLine" onclick="(async()=>{ await updatePlayerModal(); document.getElementById('playerModal').style.display='flex'; document.getElementById('premInfo').style.display='block'; })()">➕ Add New Player</span>
+</ul>
 
 <!-- Modal -->
-<div id="playerModal">
+<div id="playerModal" class="playerModal">
   <div class="modal-content">
     <h3>Add New Player</h3>
     <label>
@@ -79,14 +80,24 @@
   </div>
 </div>
 
+<div id="deleteModal" class="playerModal">
+  <div class="modal-content">
+    <h3 id="deleteTitle">Are you sure you want to delete this player?</h3>
+    <button onclick = "deletePlayer()">Delete</button>
+    <button onclick = "document.getElementById('deleteModal').style.display = 'none';">Cancel</button>
+  </div>
+</div>
+
 <script>
 const { ipcRenderer } = require('electron');
 
+playerToBeDeleted = null;
 let players = [];
 let selectedPlayerId = null;
 
 const playersList = document.getElementById("players-list");
-const addPlayerLine = document.getElementById("addPlayerLine");
+playersList.classList.add('full-scrolly');
+playersList.style.padding = "10px";
 
 const playerModal = document.getElementById("playerModal");
 const crackedNameContainer = document.getElementById("crackedNameContainer");
@@ -94,13 +105,37 @@ const premInfo = document.getElementById("premInfo");
 const crackedNameInput = document.getElementById("crackedNameInput");
 const submitPlayerBtn = document.getElementById("submitPlayerBtn");
 const cancelPlayerBtn = document.getElementById("cancelPlayerBtn");
+(async () => {
+  selectedPlayerId = (await ipcRenderer.invoke('get-selected-player'))?.id || null;
+  ipcRenderer.send("get-players");
+})();
+async function updatePlayerModal() {
+  const allowed = await ipcRenderer.invoke('are-crackeds-allowed');
 
+  const crackedLabel = document.querySelector('input[name="playerType"][value="cracked"]')?.closest('label');
+  const premiumLabel = document.querySelector('input[name="playerType"][value="premium"]')?.closest('label');
+
+  if (!allowed) {
+    // remove cracked option if exists
+    if (crackedLabel) crackedLabel.remove();
+    // ensure premium is checked
+    const premiumInput = premiumLabel?.querySelector('input');
+    if (premiumInput) premiumInput.checked = true;
+  } else {
+    // show both options (if you previously hid or removed, you may need to re-add it)
+    if (crackedLabel) crackedLabel.style.display = '';
+  }
+
+  // toggle cracked name container based on selection
+  const crackedNameContainer = document.getElementById('crackedNameContainer');
+  crackedNameContainer.style.display = allowed && document.querySelector('input[name="playerType"]:checked').value === 'cracked' ? 'block' : 'none';
+}
 // Selected player
 function setSelectedPlayer(id) { ipcRenderer.send('set-selected-player', id); }
+function deletePlayer() { ipcRenderer.send('delete-player', playerToBeDeleted); document.getElementById('deleteModal').style.display = "none";}
 async function getSelectedPlayer() { return await ipcRenderer.invoke('get-selected-player'); }
 
 // Load players from backend
-ipcRenderer.send("get-players");
 ipcRenderer.on("players-list", (event, newPlayers) => { 
   players = newPlayers; 
   renderPlayers(); 
@@ -112,41 +147,67 @@ ipcRenderer.on("players-updated", (event, newPlayers) => {
 
 // Render player list
 function renderPlayers() {
-  updateSideBar()
+  selectedPlayerId = getSelectedPlayer().id;
+  updateSideBar();
   playersList.innerHTML = "";
+
   players.forEach(p => {
     const li = document.createElement("li");
-    li.classList.add("player-item");
+    li.className = "profile-item";
 
     const img = document.createElement("img");
-    img.src = `https://minotar.net/helm/${encodeURIComponent(p.username || p.auth?.name || "Steve")}/24`;
+    img.src = `https://minotar.net/helm/${encodeURIComponent(p.username || p.auth?.name || "Steve")}/32`;
     img.onerror = () => { img.src = "https://tggamesyt.dev/assets/stevehead.png"; };
     li.appendChild(img);
 
-    const span = document.createElement("span");
-    const displayName = p.type === "microsoft" ? (p.auth?.name ?? "MS Account") : (p.username ?? "Cracked");
-    span.textContent = `[${p.type}] ${displayName}`;
-    li.appendChild(span);
+    const info = document.createElement("div");
+    info.className = "profile-info";
 
-    const selectBtn = document.createElement("button");
-    selectBtn.textContent = "Select";
-    selectBtn.onclick = () => {
+    const name = document.createElement("div");
+    name.className = "profile-name";
+    name.textContent = p.auth?.name || p.username || "Unknown Player";
+    info.appendChild(name);
+
+    const details = document.createElement("div");
+    details.className = "profile-details";
+    const typeLabel = p.type === "microsoft" ? "Premium Account" : "Cracked Account";
+    details.textContent = typeLabel;
+    info.appendChild(details);
+
+    li.appendChild(info);
+
+    const delBtn = document.createElement('button');
+    delBtn.innerHTML = "<i class=\"material-icons\">delete</i>";
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      document.getElementById('deleteModal').style.display = "block";
+      playerToBeDeleted = p;
+      let username = p.auth?.name || p.username || "this player";
+      document.getElementById('deleteTitle').textContent = "Are you sure you want to delete " + username + "?"
+    };
+
+    li.appendChild(delBtn);
+
+    // Click = select player
+    li.onclick = () => {
       selectedPlayerId = p.id;
       setSelectedPlayer(p.id);
-      Array.from(playersList.children).forEach(c => c.classList.remove("selected-player"));
-      li.classList.add("selected-player");
+      Array.from(playersList.children).forEach(c => c.classList.remove("selected"));
+      li.classList.add("selected");
+      let image = document.getElementById('playerIconSiderbar');
+      const username = p.auth?.name || p.username || "Unknown Player";
+      image.src = `https://minotar.net/helm/${encodeURIComponent(username)}/24`;
+      let span = document.getElementById('playerIconTextSidebar');
+      span.textContent = username;
     };
-    li.appendChild(selectBtn);
+
+    // Highlight currently selected one
+    if (p.id === selectedPlayerId) li.classList.add("selected");
 
     playersList.appendChild(li);
   });
+  playersList.innerHTML += '<br><span id="addPlayerLine" onclick="(async()=>{ await updatePlayerModal(); document.getElementById(\'playerModal\').style.display=\'flex\'; document.getElementById(\'premInfo\').style.display=\'block\'; })()">➕ Add New Player</span>';
 }
-
-// Open modal
-addPlayerLine.onclick = () => {
-  playerModal.style.display = "flex";
-  premInfo.style.display = "block";
-};
 
 // Update input visibility when player type changes
 document.querySelectorAll('input[name="playerType"]').forEach(radio => {

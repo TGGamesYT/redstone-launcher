@@ -14,6 +14,7 @@
   </div>
 <div class="drag-region">Redstone Launcher</div>
 <div class="toolbar-buttons">
+    <div id="instance-processes"></div>
     <button id="min-btn">—</button>
     <button id="max-btn">◻</button>
     <button id="close-btn">✕</button>
@@ -114,7 +115,7 @@ function doshit(profiles){
 
     const launchBtn = document.createElement("button");
     launchBtn.innerHTML = `+`;
-    launchBtn.onclick = () => {
+    li.onclick = () => {
       window.location.href = "instances.html?i=NEWINSTANCE";
     };
     li.appendChild(launchBtn);
@@ -148,12 +149,16 @@ function doshit(profiles){
       const launchBtn = document.createElement("button");
       launchBtn.className = "play-button";
       launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`; // placeholder icon
-      launchBtn.onclick = () => {
+      launchBtn.onclick = (e) => {
+        e.stopPropagation();
         if (!selectedPlayerId) return alert("Select a player first!");
         ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
         window.location.href = `instances.html?i=${p.id}`;
       };
       li.appendChild(launchBtn);
+      li.onclick = () => {
+        window.location.href = `instances.html?i=${p.id}`;
+      };
 
       profilesList.appendChild(li);
 

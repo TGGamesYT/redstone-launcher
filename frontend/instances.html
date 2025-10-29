@@ -5,8 +5,32 @@
   <meta charset="UTF-8">
   <title>Redstone Launcher - Instances</title>
   <link rel="stylesheet" href="server.css">
-  
+  <link rel="stylesheet" href="instanceview.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <style>
+    .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+.modal {
+    background: #222;
+    padding: 20px;
+    border-radius: 8px;
+    color: #fff;
+}
+.modal input {
+    width: 100%;
+    margin-bottom: 10px;
+}
+.modal button {
+    margin-right: 5px;
+}
+  </style>
 </head>
 
 <body>
@@ -17,6 +41,7 @@
   </div>
 <div class="drag-region">Redstone Launcher</div>
 <div class="toolbar-buttons">
+    <div id="instance-processes"></div>   
     <button id="min-btn">—</button>
     <button id="max-btn">◻</button>
     <button id="close-btn">✕</button>
@@ -39,6 +64,7 @@
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
   </ul>
 </div>
+<br>
   <div id="search-sort">
     <div style="margin-bottom: 10px;">
       <input id="searchInput" type="text" placeholder="Search instances..." style="padding:5px; width:200px;" />
@@ -72,14 +98,13 @@
       <button id="editOrderBtn" style="display:none;">Edit Order</button>
     </div>
   </div>
-  <ul id="profiles-list" style="max-height: 70vh; overflow-y: auto; overflow-x: hidden;"></ul>
-
+  <ul id="profiles-list" style="max-height: calc(100vh - ( 38px + 112px )); overflow-y: auto; overflow-x: hidden;"></ul>
   <!-- Add Instance Modal -->
   <div id="addInstanceModal"
     style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center;">
     <div style="background:var(--third-color); padding:20px; border-radius:8px; width:300px;">
       <h3>Create Instance</h3>
-      <label>Name: <input id="instanceName" placeholder="Vanilla 1.20" /></label>
+      <label>Name: <input id="instanceName" placeholder="Never gonna.." /></label>
       <br>
       <label>Version: <select id="instanceVersion"></select><input type="checkbox" id="showAllVersions" style="transform: scale(1.5); transform-origin: center;" /></label>
       <br>
@@ -117,12 +142,11 @@
     </div>
   </div>
 
-
   <div id="instance-detail" style="display:none;">
-    <h2 id="instance-name"></h2>
-    <p id="instance-info"></p>
-    <pre id="logs" style="height:200px; overflow:auto; border:1px solid #ccc; padding:5px;"></pre>
-  </div>
+  <div id="instance-toolbar-container"></div>
+  <div id="instance-tab-content" class="tab-content"></div>
+  <pre id="logs" style="height:200px; overflow:auto; border:1px solid var(--secondary-color); border-radius: var(--border-radius); padding:5px;"></pre>
+</div>
 
   <script>
     const { ipcRenderer } = require('electron');
@@ -321,104 +345,407 @@
 
       const selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
 
-      // SINGLE INSTANCE VIEW
-      if (instanceId && instanceId !== 'NEWINSTANCE') {
-        searchsort.style.display = "none"
-        const profile = list.find(p => String(p.id) === String(instanceId));
-        if (!profile) return; // nothing to show
-        profilesList.style.display = "none";
-        instanceDetail.style.display = "block";
-        nameEl.textContent = profile.name;
-        infoEl.textContent = `Version: ${profile.version} | Loader: ${profile.loader}`;
-        logsEl.style.display = "block";
-        logsEl.textContent = `Showing logs for ${profile.name}...\n`;
-        // attach log listeners etc (ensure you don't attach duplicates)
-        ipcRenderer.removeAllListeners('launcher-log');
-        ipcRenderer.on('launcher-log', (event, msg) => {
-          logsEl.textContent += msg + "\n";
-          logsEl.scrollTop = logsEl.scrollHeight;
+if (instanceId && instanceId !== 'NEWINSTANCE') {
+    searchsort.style.display = "none";
+    const profile = list.find(p => String(p.id) === String(instanceId));
+    if (!profile) return;
+
+    profilesList.style.display = "none";
+    instanceDetail.style.display = "block";
+    instanceDetail.innerHTML = ""; // clear previous content
+
+    // TOP ROW: ICON + INFO + BUTTONS
+    const topRow = document.createElement("div");
+    topRow.className = "instance-top-row";
+    topRow.style.display = "flex";
+    topRow.style.alignItems = "center";
+    topRow.style.justifyContent = "space-between";
+    topRow.style.marginBottom = "10px";
+
+    // LEFT: ICON + INFO
+    const left = document.createElement("div");
+    left.style.display = "flex";
+    left.style.alignItems = "center";
+    topRow.appendChild(left);
+
+    const icon = document.createElement("img");
+    icon.src = profile.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+    icon.style.width = "64px";
+    icon.style.height = "64px";
+    icon.style.marginRight = "10px";
+    left.appendChild(icon);
+
+    const info = document.createElement("div");
+    const lastPlayed = profile.lastUsed ? new Date(profile.lastUsed).toLocaleString() : "Never";
+    const created = profile.created ? new Date(profile.created).toLocaleString() : "Unknown";
+    info.innerHTML = `
+        <div style="font-size:1.2em;font-weight:bold">${profile.name}</div>
+        <div style="font-size:0.9em;color:var(--text-color)">
+            <span class="material-icons" style="vertical-align:middle;font-size:16px">sports_esports</span>
+            ${profile.loader} ${profile.version} | Last Played: ${lastPlayed} | Created: ${created}
+        </div>
+    `;
+    left.appendChild(info);
+
+    // RIGHT: BUTTONS
+    const right = document.createElement("div");
+    right.style.display = "flex";
+    right.style.justifyContent = "center";
+    right.style.alignItems = "center";
+    right.style.gap = "5px";
+    right.style.paddingRight = "20px"
+    topRow.appendChild(right);
+
+    // Play button
+    const playBtn = document.createElement("button");
+    playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
+    playBtn.title = "Launch Profile";
+    playBtn.onclick = () => {
+        if (!selectedPlayerId) return (playBtn.innerHTML = "Select a player first!");
+        ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId });
+    };
+    right.appendChild(playBtn);
+
+    // Edit button
+    const editBtn = document.createElement("button");
+    editBtn.innerHTML = `<i class="material-icons">edit</i>`;
+    editBtn.title = "Edit Profile";
+    editBtn.onclick = () => {
+        instanceName.value = profile.name;
+        instanceVersion.value = profile.version;
+        instanceLoader.value = profile.loader;
+        instanceIcon.value = "";
+        modalCreateBtn.dataset.editingId = profile.id;
+        modalCreateBtn._originalProfile = profile;
+        addInstanceModal.style.display = "flex";
+    };
+    right.appendChild(editBtn);
+
+    // Three-dot menu
+    const menuBtn = document.createElement("button");
+    menuBtn.innerHTML = `<i class="material-icons">more_vert</i>`;
+    menuBtn.title = "More Options";
+    right.appendChild(menuBtn);
+
+    instanceDetail.appendChild(topRow);
+
+// CONTEXT MENU
+const menu = document.createElement("div");
+menu.className = "instance-context hidden";
+menu.style.position = "absolute";
+menu.style.background = "var(--toolbar-bg)";
+menu.style.border = "1px solid var(--base-color)";
+menu.style.padding = "5px";
+menu.style.zIndex = 1000;
+menu.innerHTML = `
+    <div class="menu-item" data-action="open">Open Folder</div>
+    <div class="menu-item export-item" data-action="export">Export ▸
+        <div class="submenu hidden">
+            <div class="menu-item" data-export="modrinth">Modrinth Pack</div>
+        </div>
+    </div>
+    <div class="menu-item" data-action="delete">Delete</div>
+`;
+document.body.appendChild(menu);
+
+let menuVisible = false;
+let ignoreNextClick = false;
+
+function positionMenu(menuBtn) {
+    const rect = menuBtn.getBoundingClientRect();
+    menu.style.display = "block";
+
+    let left = rect.left;
+    let top = rect.bottom;
+
+    const menuRect = menu.getBoundingClientRect();
+    if (left + menuRect.width > window.innerWidth) left = window.innerWidth - menuRect.width - 10;
+    if (top + menuRect.height > window.innerHeight) top = rect.top - menuRect.height;
+
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+}
+
+function toggleMenu() {
+    menuVisible = !menuVisible;
+    if (menuVisible) {
+        menu.style.display = "block"; // show
+        positionMenu(menuBtn);
+        ignoreNextClick = true;
+        setTimeout(() => ignoreNextClick = false, 0);
+    } else {
+        menu.style.display = "none"; // hide
+    }
+}
+
+// Toggle menu with button
+menuBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    toggleMenu();
+});
+
+// Close menu clicking outside
+window.addEventListener("click", () => {
+    if (!ignoreNextClick && menuVisible) {
+        menu.style.display = "none";
+        menuVisible = false;
+    }
+});
+
+// Menu follows window resize
+window.addEventListener("resize", () => {
+    if (menuVisible) positionMenu(menuBtn);
+});
+
+// Submenu hover with delay
+menu.querySelectorAll(".export-item").forEach(item => {
+    const submenu = item.querySelector(".submenu");
+    let hoverTimer, leaveTimer;
+    const HOVER_DELAY = 400;
+    const LEAVE_GRACE = 100;
+
+    const showSubmenu = () => {
+        clearTimeout(leaveTimer);
+        hoverTimer = setTimeout(() => {
+            submenu.classList.remove("hidden");
+
+            const parentRect = item.getBoundingClientRect();
+            const subRect = submenu.getBoundingClientRect();
+
+            if (parentRect.right + subRect.width > window.innerWidth) submenu.style.left = `-${subRect.width}px`;
+            else submenu.style.left = `${item.offsetWidth}px`;
+
+            if (parentRect.top + subRect.height > window.innerHeight) submenu.style.top = `${item.offsetHeight - subRect.height}px`;
+            else submenu.style.top = "0px";
+        }, HOVER_DELAY);
+    };
+    const hideSubmenu = () => {
+        clearTimeout(hoverTimer);
+        leaveTimer = setTimeout(() => submenu.classList.add("hidden"), LEAVE_GRACE);
+    };
+
+    item.addEventListener("pointerenter", showSubmenu);
+    item.addEventListener("pointerleave", hideSubmenu);
+    submenu.addEventListener("pointerenter", showSubmenu);
+    submenu.addEventListener("pointerleave", hideSubmenu);
+});
+
+// Main menu item clicks
+menu.querySelectorAll(".menu-item").forEach(item => {
+    if (!item.classList.contains("export-item")) {
+        item.addEventListener("click", e => {
+            e.stopPropagation();
+            if (item.dataset.action === "open") ipcRenderer.send("open-folder", { id: profile.id, isClient: true });
+            if (item.dataset.action === "delete" && confirm(`Delete "${profile.name}"?`)) ipcRenderer.send("delete-profile", profile.id);
+
+            menu.style.display = "none";
+            menuVisible = false;
         });
-        ipcRenderer.removeAllListeners('launch-error');
-        ipcRenderer.on('launch-error', (event, msg) => {
-          logsEl.textContent += "[ERROR] " + msg + "\n";
-          logsEl.scrollTop = logsEl.scrollHeight;
-        });
-        if (!instanceDetail.querySelector(".launch-button")) {
-          const launchBtn = document.createElement("button");
-          launchBtn.textContent = "Launch Profile";
-          launchBtn.onclick = () => {
-            if (!selectedPlayerId) return launchBtn.innerHTML = "Select a player first!";
-            ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId });
-            logsEl.textContent += `Launching ${profile.name}...\n`;
-          };
-          instanceDetail.appendChild(launchBtn);
+    }
+});
+
+// Submenu clicks
+menu.querySelectorAll(".submenu .menu-item").forEach(sub => {
+    sub.addEventListener("click", async e => {
+        e.stopPropagation();
+        if (sub.dataset.export === "modrinth") await ipcRenderer.invoke("export-mrpack", profile.id);
+
+        menu.style.display = "none";
+        menuVisible = false;
+    });
+});
+
+// Prevent menu click from closing itself
+menu.addEventListener("click", e => e.stopPropagation());
+
+
+
+    // TABS ROW
+    const tabsRow = document.createElement("div");
+    tabsRow.className = "instance-tabs-row";
+    instanceDetail.appendChild(tabsRow);
+
+    const tabs = ["Logs", "Resourcepacks", "Mods", "Shaderpacks", "Worlds", "Servers", "Screenshots"];
+    const tabButtons = {};
+    const tabContent = document.createElement("div");
+    tabContent.classList.add("instanceView-scrolly");
+    tabContent.id = "instance-tab-content";
+    tabContent.style.marginTop = "10px";
+    instanceDetail.appendChild(tabContent);
+
+    // Helper to create card
+    function createProfileCard(p, folderPath, button = false, buttontext = null, buttonlink = null) {
+        const li = document.createElement("li");
+        li.className = "profile-item";
+
+        const img = document.createElement("img");
+        img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+        li.appendChild(img);
+
+        const info = document.createElement("div");
+        info.className = "profile-info";
+
+        const name = document.createElement("div");
+        name.className = "profile-name";
+        name.textContent = p.name;
+        info.appendChild(name);
+
+        const details = document.createElement("div");
+        details.className = "profile-details";
+        details.textContent = p.details || "";
+        info.appendChild(details);
+
+        li.appendChild(info);
+
+        li.onclick = (e) => {
+            ipcRenderer.send("open-folder-path", { pather: folderPath });
+        };
+        return li;
+    }
+    // Helper to render tab file lists (keeps scope access to tabContent)
+    function renderTabList(files) {
+        tabContent.innerHTML = "";
+        const ul = document.createElement("ul");
+        ul.className = "profile-list";
+
+        for (let p of files) {
+            ul.appendChild(createProfileCard(p, p.path));
         }
-        if (!instanceDetail.querySelector(".folder-button")) {
-          const openFolderBtn = document.createElement("button");
-          openFolderBtn.textContent = "Open Folder";
-          openFolderBtn.onclick = () => {
-            ipcRenderer.send("open-folder", { id: profile.id, isClient: true });
-          };
-          instanceDetail.appendChild(openFolderBtn);
-        }
 
-        if (!instanceDetail.querySelector(".edit-btn")) {
-          const editBtn = document.createElement("button");
-          editBtn.className = "edit-btn";
-          editBtn.textContent = "Edit Instance";
-          editBtn.onclick = () => {
-            // Pre-fill modal fields
-            instanceName.value = profile.name;
-            instanceVersion.value = profile.version;
-            instanceLoader.value = profile.loader;
-            instanceIcon.value = ""; // file input can't be prefilled
+        tabContent.appendChild(ul);
+    }
 
-            // save original profile for diffing
-            modalCreateBtn.dataset.editingId = profile.id;
-            modalCreateBtn._originalProfile = profile;
+    let currentTabSession = 0; // global counter
+    const tabCache = {}; // cache per profileId+tab combination
+    // tabs loop
+    for (let tab of tabs) {
+        // servers tab always visible
+        let alwaysVisible = tab.toLowerCase() === "logs" || tab.toLowerCase() === "servers";
+        let exists = await ipcRenderer.invoke("check-instance-tab", { profileId: profile.id, tab: tab.toLowerCase() });
+        if (!exists && !alwaysVisible) continue;
 
-            addInstanceModal.style.display = "flex";
-          };
+        const btn = document.createElement("button");
+        btn.textContent = tab;
+        btn.className = "instance-tab-btn";
+        btn.onclick = async () => {
+            const thisSession = ++currentTabSession;
+            const tabName = tab.toLowerCase();
+            const cacheKey = `${profile.id}:${tabName}`;
+            const ensureStillActive = () => thisSession === currentTabSession;
 
-          instanceDetail.appendChild(editBtn);
-        }
-        if (!instanceDetail.querySelector(".delete-btn")) {
-          const deleteBtn = document.createElement("button");
-          deleteBtn.className = "delete-btn";
-          deleteBtn.textContent = "Delete Instance";
-          deleteBtn.onclick = () => {
-            if (confirm(`Are you sure you want to delete "${profile.name}"? This cannot be undone.`)) {
-              ipcRenderer.send("delete-profile", profile.id);
-              // Go back to list view after deletion
-              window.location.href = "instances.html";
+            tabContent.innerHTML = "Loading...";
+            logsEl.style.display = "none";
+
+            // Check cache and show immediately if present
+            if (tabCache[cacheKey]) {
+                renderTabList(tabCache[cacheKey].files);
             }
-          };
-          instanceDetail.appendChild(deleteBtn);
-        }
-        if (!instanceDetail.querySelector(".mrpack-btn")) {
-          const mrpackBtn = document.createElement("button");
-          mrpackBtn.className = "mrpack-btn";
-          mrpackBtn.textContent = "Export .mrpack";
-          mrpackBtn.onclick = async () => {
-            try {
-              const result = await ipcRenderer.invoke("export-mrpack", profile.id);
 
-              if (result.success) {
-                console.log(`Export finished successfully!\nPath: ${result.mrpackPath}`);
-              } else {
-                console.log(`Export failed:\n${result.error}`);
-              }
-            } catch (err) {
-              console.log(`Unexpected error:\n${err.message || err}`);
-            } finally {
-              // Navigate away after showing alert
-              window.location.href = "instances.html";
+            if (tab.toLowerCase() === "logs") {
+                logsEl.style.display = "block";
+                tabContent.innerHTML = "";
+                tabContent.appendChild(logsEl);
+
+                ipcRenderer.removeAllListeners('launcher-log');
+                ipcRenderer.on('launcher-log', (event, msg) => {
+                    if (!ensureStillActive()) return;
+                    logsEl.textContent += msg + "\n";
+                    logsEl.scrollTop = logsEl.scrollHeight;
+                });
+                ipcRenderer.removeAllListeners('launch-error');
+                ipcRenderer.on('launch-error', (event, msg) => {
+                    if (!ensureStillActive()) return;
+                    logsEl.textContent += "[ERROR] " + msg + "\n";
+                    logsEl.scrollTop = logsEl.scrollHeight;
+                });
+
+            } else if (["resourcepacks", "mods", "shaderpacks", "worlds"].includes(tabName)) {
+                const files = await ipcRenderer.invoke("get-instance-tab-files", {
+                    profileId: profile.id,
+                    tab: tabName
+                });
+                if (!ensureStillActive()) return;
+
+                // Start resolving details (with SHA1 + Modrinth lookup)
+                const fileInfos = [];
+                for (let f of files) {
+                    if (!ensureStillActive()) return;
+                    const info = await ipcRenderer.invoke("get-instance-tab-file-info", {
+                        profileId: profile.id,
+                        tab: tabName,
+                        filename: f
+                    });
+                    if (!ensureStillActive()) return;
+                    fileInfos.push(info);
+                }
+
+                if (!ensureStillActive()) return;
+
+                // Cache and render fresh data
+                tabCache[cacheKey] = { files: fileInfos, lastUpdated: Date.now() };
+                renderTabList(fileInfos);
+            } else if (tab.toLowerCase() === "servers") {
+                logsEl.style.display = "none";
+                const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id });
+                if (!ensureStillActive()) return;
+                tabContent.innerHTML = "";
+
+                const ul = document.createElement("ul");
+                ul.className = "profile-list";
+                for (let s of servers) {
+                    if (!ensureStillActive()) return;
+                    let icon = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+                    if (s.icon != null) icon = `data:image/png;base64,${s.icon}`;
+                    const card = createProfileCard({ name: s.name, details: s.ip, icon }, s.folder);
+                    ul.appendChild(card);
+                }
+
+                const addBtn = document.createElement("button");
+                addBtn.textContent = "Add Server";
+                addBtn.onclick = async () => {
+                    // same add server modal logic…
+                };
+                tabContent.appendChild(addBtn);
+                tabContent.appendChild(ul);
+
+            } else if (tab.toLowerCase() === "screenshots") {
+                logsEl.style.display = "none";
+                const screenshots = await ipcRenderer.invoke("get-instance-screenshots", { profileId: profile.id });
+                if (!ensureStillActive()) return;
+                tabContent.innerHTML = "";
+
+                const ul = document.createElement("ul");
+                ul.className = "profile-list";
+                for (let ss of screenshots) {
+                    if (!ensureStillActive()) return;
+                    const li = document.createElement("li");
+                    li.className = "profile-item";
+                    const img = document.createElement("img");
+                    img.src = ss.path;
+                    img.style.height = "50%";
+                    img.style.width = "50%";
+                    li.appendChild(img);
+                    const name = document.createElement("div");
+                    name.textContent = ss.name;
+                    li.appendChild(name);
+                    li.onclick = () => ipcRenderer.send("open-folder-path", { pather: ss.path });
+                    ul.appendChild(li);
+                }
+                if (!ensureStillActive()) return;
+                tabContent.appendChild(ul);
             }
-          };
-          instanceDetail.appendChild(mrpackBtn);
-        }
-        return;
-      }
+        };
+        tabsRow.appendChild(btn);
+        tabButtons[tab.toLowerCase()] = btn;
+    }
+
+    // default select logs if available
+    if (tabButtons.logs) tabButtons.logs.click();
+
+    return;
+}
+
+
 
       // LIST VIEW
       searchsort.style.display = "block";
@@ -450,14 +777,10 @@
 
         li.appendChild(info);
 
-        const viewBtn = document.createElement("button");
-        viewBtn.textContent = "Open Instance";
-        viewBtn.onclick = () => { window.location.href = `instances.html?i=${p.id}`; };
-        li.appendChild(viewBtn);
-
         const openFolderBtn = document.createElement("button");
         openFolderBtn.textContent = "Open Folder";
-        openFolderBtn.onclick = () => {
+        openFolderBtn.onclick = (e) => {
+          e.stopPropagation();
           ipcRenderer.send("open-folder", { id: p.id, isClient: true });
         };
         li.appendChild(openFolderBtn);
@@ -465,12 +788,16 @@
         const launchBtn = document.createElement("button");
         launchBtn.className = "play-button";
         launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`;
-        launchBtn.onclick = () => {
+        launchBtn.onclick = (e) => {
+          e.stopPropagation();
           if (!selectedPlayerId) return launchBtn.innerHTML = "Select a player first!";
           window.location.href = `instances.html?i=${p.id}`;
           ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
         };
         li.appendChild(launchBtn);
+        li.onclick = () => {
+          window.location.href = `instances.html?i=${p.id}`;
+        };
 
         profilesList.appendChild(li);
       });
@@ -488,8 +815,6 @@
       liAdd.appendChild(spanAdd);
       liAdd.style.cursor = "pointer";
       liAdd.onclick = () => {
-        instanceName.value = "My instance";
-        instanceVersion.value = "1.20.1";
         instanceLoader.value = "vanilla";
         addInstanceModal.style.display = "flex";
       };
@@ -577,9 +902,17 @@
         delete modalCreateBtn._originalProfile;
       } else {
         // Create mode
+        if (instanceName.value == null) {
+          let string = `${instanceVersion.value}`;
+          if (instanceLoader.value != "vanilla" && instanceLoader.value != null) {
+            string = `${instanceLoader.value} ${instanceVersion.value}`
+            string = string.replace(/\b\w/g, c => c.toUpperCase());
+          }
+          instanceName.value = `${instanceVersion.value}`;
+        }
         const newProfile = {
           name: instanceName.value.trim(),
-          version: instanceVersion.value.trim(),
+          version: instanceVersion.value,
           loader: instanceLoader.value,
           icon: null
         };

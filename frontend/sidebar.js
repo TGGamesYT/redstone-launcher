@@ -67,10 +67,12 @@ async function updateLoginIcon() {
     img.style.height = '24px';
     img.style.borderRadius = '4px';
     img.href = "players.html";
+    img.id = "playerIconSiderbar"
     li.appendChild(img);
 
     const span = document.createElement('span');
     span.textContent = username;
+    span.id = "playerIconTextSidebar"
     li.appendChild(span);
 
   } else {
@@ -373,3 +375,212 @@ async function loadPotW() {
   } catch(e) { console.error('Failed to load PotW', e); }
 }
 loadPotW();
+
+
+// Instance process list bar
+async function createInstanceInfoBar(container) {
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "flex";
+    wrapper.style.alignItems = "center";
+    wrapper.style.gap = "10px";
+    wrapper.style.padding = "0px";
+    wrapper.style.background = "none";
+    wrapper.style.borderRadius = "var(--border-radius)";
+    container.appendChild(wrapper);
+
+    const stopBtn = document.createElement("button");
+    stopBtn.textContent = "◻";
+    Object.assign(stopBtn.style, {
+        padding: "10px",
+        border: "none",
+        borderRadius: "var(--border-radius)",
+        background: "rgba(255, 0, 0, 0.6)",
+        color: "var(--text-color)",
+        cursor: "pointer",
+        transition: "background 0.2s",
+        display: "none",
+    });
+    stopBtn.onmouseover = () => (stopBtn.style.background = "rgba(255, 0, 0, 0.8)");
+    stopBtn.onmouseout = () => (stopBtn.style.background = "rgba(255, 0, 0, 0.6)");
+    wrapper.appendChild(stopBtn);
+
+    let previousInstances = null;
+    let currentStopHandler = null;
+
+    function areInstancesEqual(a, b) {
+        if (!Array.isArray(a) || !Array.isArray(b)) return false;
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) {
+            if (a[i].id !== b[i].id || a[i].pid !== b[i].pid) return false;
+        }
+        return true;
+    }
+
+    async function refreshInstances() {
+        const instances = await ipcRenderer.invoke("get-running-instances");
+        if (previousInstances !== null && areInstancesEqual(instances, previousInstances)) return;
+        previousInstances = Array.isArray(instances) ? instances.slice() : [];
+
+        // Clear previous instance elements
+        wrapper.querySelectorAll(".instance-element").forEach(el => el.remove());
+
+        // Reset stop button visibility and handler
+        stopBtn.style.display = "none";
+        if (currentStopHandler) {
+            stopBtn.removeEventListener("click", currentStopHandler);
+            currentStopHandler = null;
+        }
+
+        if (!instances || instances.length === 0) {
+            const label = document.createElement("span");
+            label.textContent = "No running instances";
+            label.className = "instance-element";
+            label.style.color = "var(--text-color)";
+            label.style.opacity = "0.8";
+            Object.assign(label.style, {
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                flexShrink: "0",
+            });
+            wrapper.insertBefore(label, stopBtn);
+            return;
+        }
+
+        stopBtn.style.display = "inline-block";
+
+        // Count how many processes per ID
+        const countPerId = {};
+        for (const inst of instances) {
+            countPerId[inst.id] = (countPerId[inst.id] || 0) + 1;
+        }
+
+        const multipleProcesses =
+            instances.length > 1 || Object.values(countPerId).some(c => c > 1);
+
+        if (!multipleProcesses) {
+            // Single instance display
+            const inst = instances[0];
+            const profile = await ipcRenderer.invoke("get-profile-by-id", inst.id);
+            const label = document.createElement("span");
+            label.className = "instance-element";
+            label.textContent = profile?.name || inst.id;
+            label.style.color = "var(--text-color)";
+            label.style.cursor = "pointer";
+            Object.assign(label.style, {
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                flexShrink: "0",
+            });
+            label.onclick = () =>
+                (window.location.href = `instances.html?i=${encodeURIComponent(inst.id)}`);
+            wrapper.insertBefore(label, stopBtn);
+
+            // Stop button handler for single instance
+            currentStopHandler = async () => {
+                await ipcRenderer.invoke("stop-instance-by-pid", inst.pid);
+                await refreshInstances();
+            };
+            stopBtn.addEventListener("click", currentStopHandler);
+        } else {
+            // Multiple instances — dropdown
+            const select = document.createElement("select");
+            select.className = "instance-element";
+            // Base style
+            Object.assign(select.style, {
+                marginTop: "15px",
+                display: "flex",
+                appearance: "none",
+                background: "var(--toolbar-bg)",
+                border: "none",
+                color: "var(--text-color)",
+                cursor: "pointer",
+                font: "inherit",
+                padding: "0px 24px 0px 0px",
+                width: "auto",
+                minWidth: "unset",
+                boxShadow: "none",
+                transition: "background 0.2s, color 0.2s",
+            });
+
+            function setArrow(down = true) {
+                select.style.backgroundImage = down
+                    ? "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"6\"><path fill=\"white\" d=\"M0 0l5 6 5-6z\"/></svg>')"
+                    : "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"6\"><path fill=\"white\" d=\"M0 6l5-6 5 6z\"/></svg>')";
+            }
+
+            setArrow(true);
+
+            // Arrow
+            select.style.backgroundImage =
+                "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"6\"><path fill=\"white\" d=\"M0 0l5 6 5-6z\"/></svg>')";
+            select.style.backgroundRepeat = "no-repeat";
+            select.style.backgroundPosition = "right 6px center";
+            select.style.backgroundSize = "10px 6px";
+            for (const inst of instances) {
+                const profile = await ipcRenderer.invoke("get-profile-by-id", inst.id);
+                const showPid = countPerId[inst.id] > 1;
+                const opt = document.createElement("option");
+                opt.value = `${inst.id}-${inst.pid}`;
+                opt.textContent =
+                    profile?.name
+                        ? `${profile.name}${showPid ? ` (${inst.pid})` : ""}`
+                        : `${inst.id}${showPid ? ` (${inst.pid})` : ""}`;
+                select.appendChild(opt);
+            }
+            wrapper.insertBefore(select, stopBtn);
+            let dropdownOpen = false;
+            select.addEventListener("mousedown", e => {
+            const rect = select.getBoundingClientRect();
+
+            // If clicked in text area (not arrow), open instance page instead
+            if (e.clientX < rect.right - 20) {
+                e.preventDefault();
+                const selectedVal = select.value;
+                if (selectedVal) {
+                    const [id] = selectedVal.split("-");
+                    window.location.href = `instances.html?i=${encodeURIComponent(id)}`;
+                }
+                return;
+            }
+
+            // Otherwise toggle arrow state
+            dropdownOpen = !dropdownOpen;
+            setArrow(!dropdownOpen);
+            });
+
+            // Reset arrow when focus leaves dropdown
+            select.addEventListener("blur", () => {
+                dropdownOpen = false;
+                setArrow(true);
+            });
+            // Stop handler for dropdown
+            currentStopHandler = async () => {
+                const selectedVal = select.value;
+                if (!selectedVal) return;
+                const [, pidStr] = selectedVal.split("-");
+                const pid = parseInt(pidStr, 10);
+                if (!Number.isFinite(pid)) return;
+                await ipcRenderer.invoke("stop-instance-by-pid", pid);
+                await refreshInstances();
+            };
+            stopBtn.addEventListener("click", currentStopHandler);
+        }
+    }
+
+    // Initial + periodic updates
+    await refreshInstances();
+    setInterval(refreshInstances, 3000);
+}
+
+async function allowCracked(newValue, password) {
+  const res = await ipcRenderer.invoke('update-allow-cracked-testing', { value: !!newValue, password });
+  if (res && res.success) {
+    console.log('Updated! new value: ' + res.value);
+  } else {
+    console.log('Failed to update: ' + (res?.error || 'Unknown error'));
+  }
+}
+
+createInstanceInfoBar(document.getElementById("instance-processes"));

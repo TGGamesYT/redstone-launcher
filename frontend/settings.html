@@ -15,6 +15,7 @@
   </div>
 <div class="drag-region">Redstone Launcher</div>
 <div class="toolbar-buttons">
+    <div id="instance-processes"></div>
     <button id="min-btn">—</button>
     <button id="max-btn">◻</button>
     <button id="close-btn">✕</button>
@@ -52,22 +53,6 @@
     <label><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label><br>
     <label><input type="checkbox" id="discord-presence"> Enable Discord Presence</label><br>
     </div>
-
-    <label style="margin-top: 40px;">Font</label>
-    <select id="font-selector">
-      <option value="Pixel">Pixel</option>
-      <option value="Arial">Arial</option>
-      <option value="Verdana">Verdana</option>
-      <option value="Tahoma">Tahoma</option>
-      <option value="Courier New">Courier New</option>
-      <option value="Times New Roman">Times New Roman</option>
-      <option value="Custom">Custom (system)</option>
-    </select>
- <br>
-    <label>Border Radius (px):</label>
-    <br>
-    <input type="range" id="border-radius" min="0" max="15" step="0.2" style="width: 200px;">
-    <span class="slider-value" id="border-radius-value"></span>
   </div>
 
   <!-- === Theme Section === -->
@@ -102,7 +87,22 @@
       <button data-color="third">Reset</button>
     </div>
     <label><input type="checkbox" id="auto-third" checked> Automatic Third Color</label>
-
+    <br>
+    <label style="margin-top: 40px;">Font</label>
+    <select id="font-selector">
+      <option value="Pixel">Pixel</option>
+      <option value="Arial">Arial</option>
+      <option value="Verdana">Verdana</option>
+      <option value="Tahoma">Tahoma</option>
+      <option value="Courier New">Courier New</option>
+      <option value="Times New Roman">Times New Roman</option>
+      <option value="Custom">Custom (system)</option>
+    </select>
+ <br>
+    <label>Border Radius (px):</label>
+    <br>
+    <input type="range" id="border-radius" min="0" max="25" step="0.2" style="width: 200px;">
+    <span class="slider-value" id="border-radius-value"></span>
     <h4>Predefined Themes:</h4>
     <div class="theme-list" id="theme-list"></div>
   </div>
@@ -315,11 +315,18 @@ autoThirdCheckbox.addEventListener('change', () => {
   // === Predefined themes ===
 // === Predefined themes ===
 const themes = {
-  default: { name: "Default", baseColor:'#ff0000', secondaryColor:'#310a0a', textColor:'#ffffff'},
-  sunset:  { name: "Sunset",  baseColor:'#ff6f61', secondaryColor:'#ffb347', textColor:'#000000'},
-  forest:  { name: "Forest",  baseColor:'#2b580c', secondaryColor:'#97bc62', textColor:'#ffffff'},
-  ocean:   { name: "Ocean",   baseColor:'#0a74da', secondaryColor:'#00bfff', textColor:'#ffffff'}
+    redstone:   { name: "Redstone",   baseColor: '#b30c0c', secondaryColor: '#ff4d4d', textColor: '#ffffff' },
+    diamond:    { name: "Diamond",    baseColor: '#0a74da', secondaryColor: '#5ad6ff', textColor: '#ffffff' },
+    emerald:    { name: "Emerald",    baseColor: '#2b580c', secondaryColor: '#97bc62', textColor: '#ffffff' },
+    gold:       { name: "Gold",       baseColor: '#ffcc00', secondaryColor: '#fff275', textColor: '#ffffff' },
+    iron:       { name: "Iron",       baseColor: '#aaaaaa', secondaryColor: '#dddddd', textColor: '#ffffff' },
+    coal:       { name: "Coal",       baseColor: '#333333', secondaryColor: '#555555', textColor: '#ffffff' },
+    lapis:      { name: "Lapis",      baseColor: '#1a3f8f', secondaryColor: '#5c90ff', textColor: '#ffffff' },
+    netherite:  { name: "Netherite",  baseColor: '#3c3c3c', secondaryColor: '#6e6e6e', textColor: '#ffffff' },
+    quartz:     { name: "Quartz",     baseColor: '#f2f2f2', secondaryColor: '#e6e6e6', textColor: '#000000' },
+    copper:     { name: "Copper",     baseColor: '#b87333', secondaryColor: '#d99058', textColor: '#ffffff' }
 };
+
 
 // mapping from settings key -> element IDs
 const colorInputs = {

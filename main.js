@@ -1,9 +1,12 @@
+let ALLOW_CRACKED_TESTING = false;
+
+
 import path from 'path';
 import https from 'https';
 import fs from 'fs';
 const fsp = fs.promises;
 import fetch from 'node-fetch';
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { shell, app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
 import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
@@ -13,6 +16,7 @@ import AdmZip from 'adm-zip';
 import Store from 'electron-store';
 import { exec, execSync, spawn } from "child_process";
 import crypto from "crypto";
+import nbt from "prismarine-nbt";
 import base64url from "base64url";
 import fernet from 'fernet';
 import RPC from "discord-rpc";
@@ -34,6 +38,61 @@ const CLASS_ID_FOLDERS = {
 
 let globalHistory = [];
 let globalIndex = -1;
+// ========== INSTANCE TRACKING SYSTEM ==========
+const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, startTime }
+
+function startInstance(id, pid) {
+    const now = Date.now();
+    const key = `${id}-${pid}`; // unique per process
+    runningInstances.set(key, { id, pid, startTime: now });
+    devtoolsLog(`[Tracker] Started instance ${id} (PID ${pid})`);
+}
+
+function stopInstance(id, pid = null) {
+    if (pid) {
+        const key = `${id}-${pid}`;
+        if (runningInstances.has(key)) {
+            runningInstances.delete(key);
+            devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${pid})`);
+        }
+    } else {
+        // Stop all with same ID
+        for (const [key, data] of runningInstances.entries()) {
+            if (data.id === id) {
+                runningInstances.delete(key);
+                devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${data.pid})`);
+            }
+        }
+    }
+}
+
+function isInstanceRunning(id) {
+    for (const data of runningInstances.values()) {
+        if (data.id === id) return true;
+    }
+    return false;
+}
+
+function getRunningInstances() {
+    return Array.from(runningInstances.values());
+}
+
+function stopByPid(pid) {
+    for (const [key, data] of runningInstances.entries()) {
+        if (data.pid === pid) {
+            try {
+                process.kill(pid);
+                runningInstances.delete(key);
+                devtoolsLog(`[Tracker] Killed instance ${data.id} (PID ${pid})`);
+                return true;
+            } catch (err) {
+                devtoolsLog(`[Tracker] Failed to kill PID ${pid}:`, err.message);
+                return false;
+            }
+        }
+    }
+    return false;
+}
 const storage = new Store();
 const settings = new Store();
 export default settings;
@@ -140,8 +199,10 @@ const iconPath = path.join(process.resourcesPath, 'frontend', 'icon.png');
 const color = settings.get('baseColor', "#FF0000");
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1500,
-    height: 1050,
+    width: 1300,
+    height: 800,
+    minWidth: 1000,
+    minHeight: 800,
     icon: path.join(iconPath),
     frame: false, 
     webPreferences: { 
@@ -208,6 +269,10 @@ ipcMain.handle("get-selected-player", () => storage.get("selectedPlayerId", null
 ipcMain.on("set-selected-player", (event, id) => {
   storage.set("selectedPlayerId", id);
 });
+
+function setSelectedPlayer(id) {
+  storage.set("selectedPlayerId", id);
+}
 
 
 ipcMain.handle('get-settings', () => {
@@ -280,10 +345,51 @@ function getUniqueFolderName(baseName) {
 // Add cracked player
 ipcMain.on('create-cracked-player', (event, username) => {
   const players = loadPlayers();
-  const newPlayer = { id: Date.now(), type: 'cracked', username };
+
+  // Check if there's at least one Microsoft account
+  const hasMicrosoftAccount = players.some(p => p.type === 'microsoft');
+
+  let allowed = hasMicrosoftAccount || ALLOW_CRACKED_TESTING
+  if (!allowed) {
+    devtoolsLog("You must log in with a Microsoft account before adding a cracked player.");
+    return;
+  }
+
+  // Create cracked player
+  const id = Date.now();
+  const newPlayer = { id, type: 'cracked', username };
   players.push(newPlayer);
   savePlayers(players);
   event.reply('players-updated', players);
+
+  // Set as selected player
+  setSelectedPlayer(id);
+});
+
+ipcMain.handle('are-crackeds-allowed', (event) => {
+  const players = loadPlayers();
+
+  // Check if there's at least one Microsoft account
+  const hasMicrosoftAccount = players.some(p => p.type === 'microsoft');
+
+  return(hasMicrosoftAccount || ALLOW_CRACKED_TESTING)
+});
+
+// Delete player by ID
+ipcMain.on('delete-player', (event, playerToBeDeleted) => {
+  let playerId = playerToBeDeleted.id;
+  const players = loadPlayers();
+
+  // Filter out the player with the given ID
+  const updatedPlayers = players.filter(p => p.id !== playerId);
+
+  // Save and notify frontend
+  savePlayers(updatedPlayers);
+  devtoolsLog("deleting player: " + playerId)
+  if (updatedPlayers[0] != null && updatedPlayers[0].id != null) {
+    setSelectedPlayer(updatedPlayers[0].id)
+  }
+  event.reply('players-updated', updatedPlayers);
 });
 
 // Start Microsoft login flow
@@ -298,19 +404,21 @@ ipcMain.on("login-microsoft", async (event) => {
 
     // Save player in players.json
     const players = loadPlayers();
+    id = Date.now();
     players.push({
-      id: Date.now(),
+      id,
       type: "microsoft",
+      username: launcherAuth.name,
       auth: launcherAuth,
       refresh: token.parent.msToken
     });
     savePlayers(players);
     event.reply("players-updated", players);
-
+    setSelectedPlayer(id)
   } catch (err) {
-    devtoolsLog("MS login failed:", err);
-    event.reply("login-error", "MS login failed: " + err.message);
-  }
+  devtoolsLog("MS login failed: " + err);
+  event.reply("login-error", "MS login failed: " + (err?.message || JSON.stringify(err) || String(err)));
+}
 });
 
 // Get all players
@@ -403,6 +511,17 @@ ipcMain.on("max-app", () => {
     mainWindow.maximize();
   } else {
     mainWindow.unmaximize();
+  }
+});
+
+ipcMain.handle('get-profile-by-id', async (event, profileId) => {
+  try {
+    const profiles = await loadProfiles();
+    const profile = profiles.find(p => String(p.id) === String(profileId));
+    return profile || null;
+  } catch (err) {
+    devtoolsLog('Failed to get profile by ID:', err);
+    return null;
   }
 });
 
@@ -871,6 +990,7 @@ async function getJavaForMinecraft(mcVersion) {
 
 // Launch profile
 ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
+  event.reply('launcher-log', "Launching, please wait.");
   const minRam = `${settings.get('ramInstancesMin', 1024)}m`;
   const maxRam = `${settings.get('ramInstancesMax', 4096)}m`;
   const profiles = await loadProfiles();
@@ -938,10 +1058,21 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     },
     quickplay: quickplay
   }
-  launcher.launch(opts);
+  const childProcess = await launcher.launch(opts);
 
-  launcher.on('debug', (msg) => event.reply('launcher-log', msg));
-  launcher.on('error', (err) => event.reply('launcher-log', "ERROR: " + err.message));
+  launcher.on('data', msg => event.reply('launcher-log', msg));
+  launcher.on('debug', msg => event.reply('launcher-log', msg));
+  launcher.on('error', err => event.reply('launcher-log', "ERROR: " + err.message));
+  const pid = childProcess.pid;
+  devtoolsLog("PID: " + pid);
+  startInstance(profileId, pid);
+  event.reply('launcher-log', `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
+
+  // Handle process exit
+  childProcess.on('exit', (code) => {
+      stopInstance(profileId, pid);
+      event.reply('launcher-log', `[INFO] Instance "${profileId}" exited with code ${code}`);
+  });
 });
 
 //shi
@@ -1459,7 +1590,7 @@ function startDiscordPresence() {
     setActivity(); // initial presence
   });
 
-  rpc.login({ clientId }).catch(console.error);
+  rpc.login({ clientId }).catch(devtoolsLog);
 }
 
 // Function to stop Discord presence
@@ -1566,7 +1697,7 @@ async function getCurseForgeLoader(loader, version = "1.20.1") {
 
 ipcMain.on('open-folder', (event, { id, isClient }) => {
   try {
-    const folderPath = path.join(dataDir, isClient ? 'client' : 'server', String(id));
+    const folderPath = path.join(dataDir, isClient ? 'client' : 'servers', String(id));
 
     // Ensure folder exists
     if (!fs.existsSync(folderPath)) {
@@ -1586,6 +1717,301 @@ ipcMain.on('open-folder', (event, { id, isClient }) => {
     devtoolsLog('Error opening folder:', err);
   }
 });
+
+ipcMain.on("open-folder-path", async (event, { pather }) => {
+  try {
+    let targetPath = pather;
+
+    // Determine if path should be trimmed to a directory
+    if (fs.existsSync(pather)) {
+      const stat = fs.statSync(pather);
+
+      // If it's a file and not a PNG, open the parent folder instead
+      if (stat.isFile() && !pather.toLowerCase().endsWith(".png")) {
+        targetPath = path.dirname(pather);
+      }
+    } else {
+      // Path doesn't exist, assume it's a file path (trim if has extension)
+      const ext = path.extname(pather).toLowerCase();
+      if (ext && ext !== ".png") {
+        targetPath = path.dirname(pather);
+      }
+      // Ensure folder exists
+      fs.mkdirSync(targetPath, { recursive: true });
+    }
+
+    console.log("[open-folder-path] Opening:", targetPath);
+
+    // ✅ Use Electron’s built-in shell helper (cross-platform and safe)
+    const result = await shell.openPath(targetPath);
+    if (result) console.error("Error opening folder:", result);
+  } catch (err) {
+    console.error("Error opening folder:", err);
+  }
+});
+
+
+
+// check tab
+ipcMain.handle("check-instance-tab", async (event, { profileId, tab }) => {
+    const basePath = path.join(dataDir, 'client', profileId.toString(), tab);
+    if (!fs.existsSync(basePath)) return false;
+    return tab === "servers" || fs.readdirSync(basePath).length > 0;
+});
+
+// get files
+ipcMain.handle("get-instance-tab-files", async (event, { profileId, tab }) => {
+    const basePath = path.join(dataDir, 'client', profileId.toString(), tab);
+    if (!fs.existsSync(basePath)) return [];
+    return fs.readdirSync(basePath);
+});
+
+// get file info for mods/resourcepacks/shaders
+ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, filename }) => {
+    const fullPath = path.join(dataDir, "client", profileId.toString(), tab, filename);
+
+    // Compute SHA1 of file
+    const fileBuffer = fs.readFileSync(fullPath);
+    const hash = crypto.createHash("sha1").update(fileBuffer).digest("hex");
+
+    try {
+        // 1️⃣ Fetch Modrinth version info by SHA1
+        const versionRes = await fetch(`https://api.modrinth.com/v2/version_file/${hash}`);
+        if (!versionRes.ok) throw new Error(`Modrinth version lookup failed (${versionRes.status})`);
+        const versionData = await versionRes.json();
+
+        // 2️⃣ Extract project_id
+        const projectId = versionData.project_id;
+        if (!projectId) throw new Error("No project_id found in version data");
+
+        // 3️⃣ Fetch Modrinth project info
+        const projectRes = await fetch(`https://api.modrinth.com/v2/project/${projectId}`);
+        if (!projectRes.ok) throw new Error(`Modrinth project lookup failed (${projectRes.status})`);
+        const projectData = await projectRes.json();
+
+        // 4️⃣ Build result object
+        return {
+            name: projectData.title || filename,
+            icon: projectData.icon_url || null,
+            path: fullPath,
+            details: filename,
+        };
+    } catch (err) {
+        devtoolsLog("Error fetching Modrinth info:", err);
+
+        // fallback if Modrinth fails
+        return {
+            name: filename,
+            icon: null,
+            path: fullPath,
+            details: `SHA1: ${hash}`,
+        };
+    }
+});
+
+
+// servers tab
+ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
+    const filePath = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
+
+    // if file doesn't exist, return empty
+    if (!fs.existsSync(filePath)) return [];
+
+    const data = fs.readFileSync(filePath);
+    let nbtData;
+
+    try {
+        // parse using prismarine-nbt
+        nbtData = await nbt.parse(data);
+    } catch (err) {
+        devtoolsLog("Failed to parse servers.dat:", err);
+        return [];
+    }
+
+    // simplify
+    let simplified;
+    try {
+        simplified = nbt.simplify(nbtData.parsed);
+    } catch (err) {
+        devtoolsLog("Failed to simplify servers.dat:", err);
+        return [];
+    }
+
+    // ensure simplified is an object and has servers list
+    const serversList = Array.isArray(simplified.servers) ? simplified.servers : [];
+
+    return serversList.map(s => ({
+        name: s.name || "Unknown",
+        ip: s.ip || "",
+        icon: s.icon || null,
+        acceptTextures: s.acceptTextures ?? 0,
+        folder: path.join(dataDir, 'client', profileId.toString())
+    }));
+});
+
+
+// add server
+ipcMain.handle("add-instance-server", async (event, { profileId, name, ip, icon }) => {
+    const serversFile = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
+
+    let serversList = [];
+
+    if (fs.existsSync(serversFile)) {
+        const data = fs.readFileSync(serversFile);
+        try {
+            const parsed = await nbt.parse(data);
+            const simplified = nbt.simplify(parsed.parsed);
+            serversList = Array.isArray(simplified.servers) ? simplified.servers : [];
+        } catch (err) {
+            devtoolsLog("Failed to parse existing servers.dat, starting empty:", err);
+            serversList = [];
+        }
+    }
+
+    // Add new server safely
+    const newServer = {};
+    if (name != null) newServer.name = name;
+    if (ip != null) newServer.ip = ip;
+    if (icon != null) newServer.icon = icon;
+    newServer.acceptTextures = 1;
+
+    serversList.push(newServer);
+
+    // Build NBT compound: servers is directly an array of compounds
+    const nbtData = {
+        type: "compound",
+        name: "",
+        value: {
+            servers: serversList.map(s => {
+                const compound = { type: "compound", value: {} };
+                if (s.name != null) compound.value.name = { type: "string", value: s.name };
+                if (s.ip != null) compound.value.ip = { type: "string", value: s.ip };
+                if (s.icon != null) compound.value.icon = { type: "string", value: s.icon };
+                compound.value.acceptTextures = { type: "byte", value: s.acceptTextures ?? 1 };
+                return compound;
+            })
+        }
+    };
+
+    const buffer = await nbt.writeUncompressed(nbtData);
+    fs.writeFileSync(serversFile, buffer);
+
+    return { name, ip, icon };
+});
+
+// screenshots
+ipcMain.handle("get-instance-screenshots", async (event, { profileId }) => {
+    const folder = path.join(dataDir, "client", profileId.toString(), "screenshots");
+
+    if (!fs.existsSync(folder)) return [];
+
+    return fs.readdirSync(folder)
+        .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
+        .map(f => {
+            const fullPath = path.join(folder, f);
+            const stats = fs.statSync(fullPath);
+            return {
+                name: f,
+                path: fullPath,
+                mtime: stats.mtimeMs, // modification timestamp
+            };
+        })
+        .sort((a, b) => b.mtime - a.mtime) // newest → oldest
+        .map(({ mtime, ...rest }) => rest); // remove mtime from final object
+});
+
+
+// Check if an instance is running
+ipcMain.handle("is-instance-running", (event, id) => {
+    return isInstanceRunning(id);
+});
+
+// Get list of all running instances
+ipcMain.handle("get-running-instances", () => {
+    return getRunningInstances();
+});
+
+// Stop an instance by process ID
+ipcMain.handle("stop-instance-by-pid", (event, pid) => {
+    return stopByPid(pid);
+});
+
+function checkIfFileExists(instanceID, isClient, fileUrl) {
+  const clientOrServer = isClient ? "client" : "server";
+  const baseDir = path.join(dataDir, clientOrServer, instanceID);
+
+  const allowedSubfolders = [
+    "mods",
+    "resourcepacks",
+    "saves",
+    "shaderpacks",
+    "plugins",
+    "datapacks",
+    "world/datapacks"
+  ];
+
+  const filename = path.basename(fileUrl);
+
+  // Helper: recursively check inside subfolders
+  function fileExistsInDir(dir) {
+    if (!fs.existsSync(dir)) return false;
+    const files = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of files) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (fileExistsInDir(fullPath)) return true;
+      } else if (entry.name === filename) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Check all allowed folders
+  for (const subfolder of allowedSubfolders) {
+    const fullPath = path.join(baseDir, subfolder);
+
+    // Special case: check all "saves/*/datapacks"
+    if (subfolder === "saves") {
+      if (!fs.existsSync(fullPath)) continue;
+      const saves = fs.readdirSync(fullPath);
+      for (const world of saves) {
+        const datapacksDir = path.join(fullPath, world, "datapacks");
+        if (fileExistsInDir(datapacksDir)) return true;
+      }
+    } else {
+      if (fileExistsInDir(fullPath)) return true;
+    }
+  }
+
+  return false;
+}
+
+// IPC handler so the renderer can call it
+ipcMain.handle("check-file-exists", async (event, instanceID, isClient, fileUrl) => {
+  return checkIfFileExists(instanceID, isClient, fileUrl);
+});
+
+const ALLOW_CRACKED_SALT = 'redstone-launcher-allow-cracked-salt-v1';
+const passwordHash = "8309f4ba88041e24ba50328ed6155e3aa0866a97e1f61994dca9a083b7c3765ef770b38dac0aae967940472dd8807e7bbe02c7d258eeba543c504ea9c6c276ae";
+function hashPassword(password) {
+  // scrypt is slow and safe enough here for local app password checking
+  return crypto.scryptSync(String(password), ALLOW_CRACKED_SALT, 64).toString('hex');
+}
+
+ipcMain.handle('get-allow-cracked-testing', async () => {
+  return ALLOW_CRACKED_TESTING;
+});
+
+ipcMain.handle('update-allow-cracked-testing', async (event, { value, password }) => {
+  if (hashPassword(password) == passwordHash) {
+    ALLOW_CRACKED_TESTING = value;
+    return { success: true, value };
+  } else {
+    return { success: false, error: 'Incorrect password' };
+  }
+});
+
 
 updateDiscordPresenceToggle()
 app.whenReady().then(createWindow);

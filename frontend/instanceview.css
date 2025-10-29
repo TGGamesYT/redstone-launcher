@@ -1,0 +1,74 @@
+:root {
+  --base-color: #ff0000;
+  --secondary-color: #310a0a;
+  --third-color: #8f0000;
+  --text-color: #ffffff;
+  --text-font: Pixel;
+  --border-radius: 0;
+  --toolbar-bg: var(--secondary-color);
+  --sidebar-bg: linear-gradient(180deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
+  --sidebar-border: color-mix(in srgb, var(--secondary-color) 50%, black);
+  --menu-bg: color-mix(in srgb, var(--secondary-color) 50%, black);
+  --very-dark: color-mix(in srgb, var(--secondary-color) 30%, black);
+  --menu-hover-bg: var(--third-color);
+  --menu-hover-border: var(--base-color);
+  --accent: var(--base-color);
+  --border-dark: color-mix(in srgb, var(--secondary-color) 90%, black);
+  --margin: 50px;
+}
+
+
+.instance-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--toolbar-bg);
+  padding: 6px 12px;
+}
+.toolbar-mid {
+  display: flex;
+  gap: 8px;
+}
+.toolbar-tab {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 6px 10px;
+  transition: background 0.2s, transform 0.2s;
+}
+.toolbar-tab:hover {
+  background: var(--third-color);
+  transform: scale(1.05);
+}
+.tab-content {
+  transition: opacity 0.3s ease;
+  opacity: 1;
+}
+.instance-context {
+  position: absolute;
+  background: var(--base-color);
+  border: 1px solid var(--secondary-color);
+  border-radius: var(--border-radius);
+  padding: 4px 0;
+  z-index: 9999;
+}
+.instance-context.hidden {
+  display: none;
+}
+.menu-item {
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.submenu {
+  position: absolute;
+  left: 150px;
+  top: 55px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--base-color);
+  border-radius: var(--border-radius);
+  padding: 4px 0;
+}
+.submenu.hidden {
+  display: none;
+}

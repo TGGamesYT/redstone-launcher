@@ -3,8 +3,57 @@
 <head>
   <meta charset="utf-8" />
   <title>Redstone Launcher — Server Manager</title>
- <link rel="stylesheet" href="server.css" />
- <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <link rel="stylesheet" href="server.css" />
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <style>
+    #serversList {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow-y: auto;
+      max-height: calc(100vh - 140px);
+      padding-right: 8px;
+    }
+
+    /* Modal */
+    #createServerModal {
+      display: none;
+      position: fixed;
+      padding: 1px;
+      inset: 0;
+      background: red;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    .modal-content {
+      background: var(--bg-color);
+      color: var(--text-color);
+      border-radius: var(--border-radius);
+      padding: 20px;
+      width: 400px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #consoleView {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #console {
+      background: #111;
+      color: #0f0;
+      font-family: monospace;
+      padding: 10px;
+      border-radius: var(--border-radius);
+      height: 400px;
+      overflow-y: auto;
+    }
+  </style>
 </head>
 <body>
 <div id="toolbar">
@@ -14,6 +63,7 @@
   </div>
 <div class="drag-region">Redstone Launcher</div>
 <div class="toolbar-buttons">
+    <div id="instance-processes"></div>
     <button id="min-btn">—</button>
     <button id="max-btn">◻</button>
     <button id="close-btn">✕</button>
@@ -36,246 +86,171 @@
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
   </ul>
 </div>
-  <div class="grid">
-    <!-- Left: Create + list -->
-    <div class="panel" style="margin-bottom: 20px; scale: 1.2; align-items: center; text-align: center;">
-      <h2>Create Server</h2>
-      <div>
-        <label>Server name: <input id="srvName" placeholder="My Server" /></label>
-        <label>Version: <input id="srvVersion" value="1.20.1" /></label>
-        <label>Type:
-          <select id="srvType">
-            <option value="vanilla">Vanilla</option>
-            <option value="paper">Paper</option>
-            <option value="fabric">Fabric (server)</option>
-          </select>
-        </label>
-        <button id="createServerBtn" style="margin-left: 30px; scale: 1.2; background-color: var(--base-color); border-color: var(--third-color);">Create Server</button>
-      </div>
+<div id="news-modal">
+  <div id="news-modal-content">
+    <span id="news-modal-close">&times;</span>
+    <div id="news-modal-body"></div>
+  </div>
+</div>
 
-      <hr/>
+  <div class="main">
+    <div id="serverListView">
       <h2>Servers</h2>
-      <div class="small">Select a server to view console | Use the buttons to control it</div>
-      <ul id="serversList" style="margin-top:8px;"></ul>
-
-      <div style="margin-top:12px;">
-        <button id="refreshListBtn">Refresh List</button>
-        <button id="refreshConsoleBtn">Refresh Console Now</button>
-      </div>
+      <ul id="serversList"></ul>
+      <button id="openCreateModal" class="create-btn">+ Create Server</button>
     </div>
 
-    <!-- Right: Console / controls -->
-    <div class="panel" style="margin-left: 100px; scale: 1.1;">
-      <h2>Console</h2>
-      <div id="console" aria-live="polite"></div>
+    <div id="consoleView">
+      <h2 id="consoleTitle">Console</h2>
+      <div id="console"></div>
+      <div>
+        <input id="cmdInput" placeholder="say hello" />
+        <button id="sendCmdBtn">Send</button>
+      </div>
+      <div>
+        <button id="startBtn">Start</button>
+        <button id="stopBtn">Stop</button>
+        <button id="restartBtn">Restart</button>
+      </div>
+    </div>
+  </div>
 
-      <div style="margin-top:10px;">
-        <label>Selected server id: <span id="selectedId">—</span></label>
-        <div style="margin-top:8px;">
-          <button id="startBtn" class="btn">Start</button>
-          <button id="stopBtn" class="btn">Stop</button>
-          <button id="restartBtn" class="btn">Restart</button>
-        </div>
-
-        <div style="margin-top:10px;">
-          <label>Send command to server:
-            <input id="cmdInput" placeholder="say hello" style="width:60%;" />
-            <button id="sendCmdBtn" class="btn" style="margin-left: 30px; scale: 1.2; background-color: var(--base-color); border-color: var(--third-color);">Send</button>
-          </label>
-        </div>
+  <!-- Modal -->
+  <div id="createServerModal">
+    <div class="modal-content">
+      <h3>Create New Server</h3>
+      <label>Server Name: <input id="srvName" placeholder="My Server" /></label>
+      <label>Version: <input id="srvVersion" value="1.20.1" /></label>
+      <label>Type:
+        <select id="srvType">
+          <option value="vanilla">Vanilla</option>
+          <option value="paper">Paper</option>
+          <option value="fabric">Fabric (server)</option>
+        </select>
+      </label>
+      <div style="display:flex; gap:10px; justify-content:end;">
+        <button id="cancelCreate">Cancel</button>
+        <button id="createServerBtn">Create</button>
       </div>
     </div>
   </div>
 
   <script>
-    // Requires nodeIntegration=true (or expose ipcRenderer via preload)
     const { ipcRenderer } = require('electron');
-
     const serversList = document.getElementById('serversList');
+    const openCreateModal = document.getElementById('openCreateModal');
+    const createServerModal = document.getElementById('createServerModal');
     const createServerBtn = document.getElementById('createServerBtn');
+    const cancelCreate = document.getElementById('cancelCreate');
     const srvName = document.getElementById('srvName');
     const srvVersion = document.getElementById('srvVersion');
     const srvType = document.getElementById('srvType');
-    const refreshListBtn = document.getElementById('refreshListBtn');
+    const consoleView = document.getElementById('consoleView');
+    const serverListView = document.getElementById('serverListView');
     const consoleBox = document.getElementById('console');
-    const selectedIdSpan = document.getElementById('selectedId');
+    const cmdInput = document.getElementById('cmdInput');
+    const sendCmdBtn = document.getElementById('sendCmdBtn');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const restartBtn = document.getElementById('restartBtn');
-    const refreshConsoleBtn = document.getElementById('refreshConsoleBtn');
-    const cmdInput = document.getElementById('cmdInput');
-    const sendCmdBtn = document.getElementById('sendCmdBtn');
+    const consoleTitle = document.getElementById('consoleTitle');
 
     let servers = [];
-    let selectedServerId = null;
-    let consolePollHandle = null;
+    let selectedServer = null;
 
-    // Helper to refresh server list from backend
+    openCreateModal.onclick = () => (createServerModal.style.display = "flex");
+    cancelCreate.onclick = () => (createServerModal.style.display = "none");
+
+    createServerBtn.onclick = async () => {
+      const name = srvName.value.trim() || `Server-${Date.now()}`;
+      const version = srvVersion.value.trim() || "1.20.1";
+      const type = srvType.value;
+      await ipcRenderer.invoke('make-server', { name, version, type });
+      createServerModal.style.display = "none";
+      await loadServers();
+    };
+
     async function loadServers() {
-      try {
-        servers = await ipcRenderer.invoke('list-servers');
-        console.log(servers)
-        renderServers();
-      } catch (err) {
-        appendLog(`[ERROR] Failed to list servers: ${err.message}`);
-      }
+      servers = await ipcRenderer.invoke('list-servers');
+      renderServers();
     }
 
     function renderServers() {
       serversList.innerHTML = '';
-      if (!servers || servers.length === 0) {
-        serversList.innerHTML = '<li class="small">No servers created yet.</li>';
-        return;
-      }
+      servers.forEach(p => {
+        const li = document.createElement("li");
+        li.className = "profile-item";
 
-      servers.forEach(s => {
-        const li = document.createElement('li');
-        li.className = 'server';
-        const meta = document.createElement('div');
-        meta.className = 'server-meta';
-        meta.innerHTML = `<strong>${s.name}</strong> <span class="small">[${s.type}] ${s.status === 'running' ? '<em>running</em>' : '<em>stopped</em>'}</span>`;
-        li.appendChild(meta);
+        const img = document.createElement("img");
+        img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+        li.appendChild(img);
 
-        const controls = document.createElement('div');
+        const info = document.createElement("div");
+        info.className = "profile-info";
 
-        const selectBtn = document.createElement('button');
-        selectBtn.textContent = "Select";
-        selectBtn.onclick = () => selectServer(s.name); // use name
-        controls.appendChild(selectBtn);
+        const name = document.createElement("div");
+        name.className = "profile-name";
+        name.textContent = p.name;
+        info.appendChild(name);
 
-        const start = document.createElement('button');
-        start.textContent = 'Start';
-        start.onclick = async () => {
-          await ipcRenderer.invoke('start-server', s.name).catch(e => appendLog('[ERROR] ' + e.message));
-          setTimeout(loadServers, 500);
+        const details = document.createElement("div");
+        details.className = "profile-details";
+        details.textContent = `v${p.version} • ${p.type}`;
+        info.appendChild(details);
+
+        li.appendChild(info);
+
+        const openFolderBtn = document.createElement("button");
+        openFolderBtn.textContent = "Open Folder";
+        openFolderBtn.onclick = (e) => {
+          e.stopPropagation();
+          ipcRenderer.send("open-folder", { id: p.name, isClient: false });
         };
-        controls.appendChild(start);
+        li.appendChild(openFolderBtn);
 
-        const stop = document.createElement('button');
-        stop.textContent = 'Stop';
-        stop.onclick = async () => {
-          await ipcRenderer.invoke('stop-server', s.name).catch(e => appendLog('[ERROR] ' + e.message));
-          setTimeout(loadServers, 500);
+        const launchBtn = document.createElement("button");
+        launchBtn.className = "play-button";
+        launchBtn.innerHTML = `<i class="material-icons">terminal</i>`;
+        launchBtn.onclick = (e) => {
+          e.stopPropagation();
+          openConsoleView(p);
         };
-        controls.appendChild(stop);
+        li.appendChild(launchBtn);
 
-        const restart = document.createElement('button');
-        restart.textContent = 'Restart';
-        restart.onclick = async () => {
-          await ipcRenderer.invoke('restart-server', s.name).catch(e => appendLog('[ERROR] ' + e.message));
-          setTimeout(loadServers, 500);
-        };
-        controls.appendChild(restart);
-
-        li.appendChild(controls);
+        li.onclick = () => openConsoleView(p);
         serversList.appendChild(li);
       });
     }
 
-    // Select a server to show console
-    function selectServer(id) {
-      selectedServerId = id;
-      selectedIdSpan.textContent = String(id);
-      startConsolePolling();
-      appendLog(`[INFO] Selected server ${id}`);
+    function openConsoleView(server) {
+      selectedServer = server;
+      consoleTitle.textContent = `Console — ${server.name}`;
+      serverListView.style.display = "none";
+      consoleView.style.display = "flex";
+      pollConsole();
     }
 
-    // Console polling
-    async function pollConsoleOnce() {
-      if (!selectedServerId) return;
-      try {
-        const content = await ipcRenderer.invoke('server-console', selectedServerId);
-        // content can be string or array — normalize
-        let text = '';
-        if (Array.isArray(content)) text = content.join('');
-        else text = String(content);
-        consoleBox.textContent = text;
-        consoleBox.scrollTop = consoleBox.scrollHeight;
-      } catch (err) {
-        appendLog('[ERROR] failed to fetch console: ' + err.message);
-      }
-    }
-
-    function startConsolePolling() {
-      stopConsolePolling();
-      pollConsoleOnce(); // immediate
-      consolePollHandle = setInterval(pollConsoleOnce, 1000);
-    }
-    function stopConsolePolling() {
-      if (consolePollHandle) {
-        clearInterval(consolePollHandle);
-        consolePollHandle = null;
-      }
-    }
-
-    // Append message to the right-side log box (keeps previous)
-    function appendLog(msg) {
-      const now = new Date().toLocaleTimeString();
-      consoleBox.textContent += `[${now}] ${msg}\n`;
+    async function pollConsole() {
+      if (!selectedServer) return;
+      const content = await ipcRenderer.invoke('server-console', selectedServer.name);
+      consoleBox.textContent = Array.isArray(content) ? content.join('') : content;
       consoleBox.scrollTop = consoleBox.scrollHeight;
+      setTimeout(pollConsole, 1000);
     }
 
-    // Create server
-    createServerBtn.addEventListener('click', async () => {
-      const name = srvName.value.trim() || `Server-${Date.now()}`;
-      const version = srvVersion.value.trim() || '1.20.1';
-      const type = srvType.value;
-      // let backend choose id if you like — send no id
-      try {
-        const result = await ipcRenderer.invoke('make-server', { name, version, type });
-        appendLog(`[INFO] Server created: ${JSON.stringify(result)}`);
-        await loadServers();
-      } catch (err) {
-        appendLog('[ERROR] create-server: ' + err.message);
-      }
-    });
-
-    // Start / stop / restart buttons for selected server
-    startBtn.addEventListener('click', async () => {
-      if (!selectedServerId) { appendLog('[WARN] No server selected'); return; }
-      await ipcRenderer.invoke('start-server', selectedServerId).catch(e => appendLog('[ERROR] ' + e.message));
-      setTimeout(loadServers, 500);
-    });
-    stopBtn.addEventListener('click', async () => {
-      if (!selectedServerId) { appendLog('[WARN] No server selected'); return; }
-      await ipcRenderer.invoke('stop-server', selectedServerId).catch(e => appendLog('[ERROR] ' + e.message));
-      setTimeout(loadServers, 500);
-    });
-    restartBtn.addEventListener('click', async () => {
-      if (!selectedServerId) { appendLog('[WARN] No server selected'); return; }
-      await ipcRenderer.invoke('restart-server', selectedServerId).catch(e => appendLog('[ERROR] ' + e.message));
-      setTimeout(loadServers, 500);
-    });
-
-    // Manual refresh
-    refreshListBtn.addEventListener('click', loadServers);
-    refreshConsoleBtn.addEventListener('click', pollConsoleOnce);
-
-    // Send command to server (calls server console API which may accept commands — note: your server manager must forward command into process stdin)
-    sendCmdBtn.addEventListener('click', async () => {
-      if (!selectedServerId) { appendLog('[WARN] No server selected'); return; }
+    sendCmdBtn.onclick = async () => {
+      if (!selectedServer) return;
       const cmd = cmdInput.value.trim();
       if (!cmd) return;
-      try {
-        await ipcRenderer.invoke('send-server-command', selectedServerId, cmd);
-        cmdInput.value = '';
-      } catch (err) {
-        appendLog('[ERROR] send command: ' + err.message);
-      }
-    });
+      await ipcRenderer.invoke('send-server-command', selectedServer.name, cmd);
+      cmdInput.value = '';
+    };
 
-
-    ipcRenderer.send("get-profiles");
-ipcRenderer.on("profiles-list", (event, profiles) => {
-  renderInstances(profiles);
-});
+    startBtn.onclick = () => ipcRenderer.invoke('start-server', selectedServer.name);
+    stopBtn.onclick = () => ipcRenderer.invoke('stop-server', selectedServer.name);
+    restartBtn.onclick = () => ipcRenderer.invoke('restart-server', selectedServer.name);
 
     loadServers();
-    window.addEventListener('beforeunload', () => stopConsolePolling());
-  function updatePresence(details, state = "Idle") {
-  ipcRenderer.send('update-discord-presence', { details, state });
-}
-    updatePresence("Looking at servers")
   </script>
   <script src="sidebar.js"></script>
 </body>

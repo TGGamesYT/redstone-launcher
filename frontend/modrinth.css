@@ -1,0 +1,197 @@
+@font-face {
+  font-family: 'Pixel';
+  src: url('minecraft.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Modrinth';
+  src: url('modrinth.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+:root {
+  --base-color: #ff0000;
+  --secondary-color: #310a0a;
+  --third-color: #8f0000;
+  --text-color: #ffffff;
+  --text-font: Pixel;
+  --border-radius: 0;
+  --toolbar-bg: var(--secondary-color);
+  --sidebar-bg: linear-gradient(180deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
+  --sidebar-border: color-mix(in srgb, var(--secondary-color) 50%, black);
+  --menu-bg: color-mix(in srgb, var(--secondary-color) 50%, black);
+  --very-dark: color-mix(in srgb, var(--secondary-color) 30%, black);
+  --menu-hover-bg: var(--third-color);
+  --menu-hover-border: var(--base-color);
+  --accent: var(--base-color);
+  --border-dark: color-mix(in srgb, var(--secondary-color) 90%, black);
+  --margin: 50px;
+}
+
+
+/* ----------- MODRINTH BROWSER PAGE ----------- */
+
+#searchPagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: var(--margin) auto 10px auto;
+  justify-content: center;
+}
+
+#searchPagination input {
+  padding: 6px 10px;
+  border-radius: var(--border-radius);
+  border: 1px solid var(--border-dark);
+  background: var(--very-dark);
+  color: var(--text-color);
+  font-family: var(--text-font);
+}
+
+#searchPagination button {
+  background: var(--third-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  padding: 6px 12px;
+  cursor: pointer;
+  font-family: var(--text-font);
+  transition: background 0.2s;
+}
+
+#searchPagination button:hover {
+  background: var(--menu-hover-bg);
+  border-color: var(--menu-hover-border);
+}
+
+/* ----------- PROJECT CARDS ----------- */
+
+#modrinthResults {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+
+.project-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--menu-bg);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  padding: 10px 16px;
+  color: var(--text-color);
+  transition: background 0.2s, transform 0.1s;
+}
+
+.project-card:hover {
+  background: var(--menu-hover-bg);
+  transform: scale(1.01);
+}
+
+.project-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.project-left img {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--border-radius);
+  background: #111;
+  object-fit: cover;
+}
+
+.project-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.project-title {
+  font-weight: bold;
+  font-size: 1.1em;
+}
+
+.project-meta {
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+
+/* ----------- ACTION BUTTONS ----------- */
+
+.project-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-actions button {
+  background: var(--third-color);
+  border: 1px solid var(--border-dark);
+  color: var(--text-color);
+  border-radius: var(--border-radius);
+  padding: 5px 10px;
+  cursor: pointer;
+  font-family: var(--text-font);
+  transition: background 0.2s, border 0.2s;
+}
+
+.project-actions button:hover {
+  background: var(--menu-hover-bg);
+  border-color: var(--menu-hover-border);
+}
+
+/* "More Info" Modal/Page */
+.project-details {
+  background: var(--menu-bg);
+  color: var(--text-color);
+  border-radius: var(--border-radius);
+  padding: 20px;
+  border: 1px solid var(--border-dark);
+  margin: 10px;
+}
+
+.project-details h3 {
+  margin-bottom: 10px;
+}
+
+.project-details p {
+  opacity: 0.9;
+}
+.project-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.install-scroll-area {
+  height: calc(100vh - 250px);
+  overflow-y: auto;
+  padding: 0px;
+}
+.projectView-scrolly {
+  height: calc(100vh - 170px);
+  overflow-y: auto;
+  padding: 0px;
+}
+.mainModView-scrolly {
+  height: calc(100vh - 170px);
+  overflow-y: auto;
+  padding: 0px;
+}
+
+/* Sticky section headers */
+.install-scroll-area h4 {
+  position: sticky;
+  top: 0;
+  background: var(--very-dark);
+  z-index: 10;
+  padding: 8px 12px;
+  font-size: 1.1em;
+  font-weight: 600;
+  border-bottom: 1px solid var(--secondary-color);
+}
