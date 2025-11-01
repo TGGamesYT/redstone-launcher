@@ -14,3 +14,7 @@ To build the app, clone the repo and run:
 ```npm run buildWin```
 or
 ```npm run buildLinux```
+
+to build the linux version from windows with docker installed:
+in Powershell:
+```docker run --rm -ti -v "${PWD}:/project" -v "${PWD}/dist:/project/dist" electronuserland/builder:latest /bin/bash -c "npm run buildLinux"```
