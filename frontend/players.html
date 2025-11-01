@@ -206,7 +206,23 @@ function renderPlayers() {
 
     playersList.appendChild(li);
   });
-  playersList.innerHTML += '<br><span id="addPlayerLine" onclick="(async()=>{ await updatePlayerModal(); document.getElementById(\'playerModal\').style.display=\'flex\'; document.getElementById(\'premInfo\').style.display=\'block\'; })()">➕ Add New Player</span>';
+  const addPlayerLine = document.createElement('span');
+addPlayerLine.id = 'addPlayerLine';
+addPlayerLine.textContent = '➕ Add New Player';
+addPlayerLine.style.cursor = 'pointer';
+
+// Attach click handler
+addPlayerLine.addEventListener('click', async () => {
+  await updatePlayerModal();
+  const playerModal = document.getElementById('playerModal');
+  const premInfo = document.getElementById('premInfo');
+  playerModal.style.display = 'flex';
+  premInfo.style.display = 'block';
+});
+
+// Append a <br> first
+playersList.appendChild(document.createElement('br'));
+playersList.appendChild(addPlayerLine);
 }
 
 // Update input visibility when player type changes

@@ -206,7 +206,7 @@ if (downloadBtn.textContent == "Back") {
 
 
   const projType = mod.project_type?.toLowerCase();
-  const selectedType = localStorage.getItem("modrinthSelectedType") || "mod";
+  const selectedType = localStorage.getItem("selectedProjectType") || "mod";
 
   // --- Handle modpacks ---
   if (projType === "modpack") {

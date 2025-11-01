@@ -37,15 +37,10 @@
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
   </ul>
 </div>
-<div id="news-modal">
-  <div id="news-modal-content">
-    <span id="news-modal-close">&times;</span>
-    <div id="news-modal-body"></div>
-  </div>
-</div>
 <div id="content">
   <div id="main">
     <h1>Welcome back!</h1>
+    <div class="main-scrolly">
     <section id="continue-playing">
       <h3 id="continue-title">Continue Playing</h2>
       <ul id="profiles-list"></ul>
@@ -53,21 +48,18 @@
 
     <section id="discover">
       <h2>Discover</h2>
-      <p>Coming soon...</p>
+      <div id="discover-content">
+        <div class="discover-section" id="discover-modpacks">
+          <h3>Featured Modpacks</h3>
+          <ul class="profile-list"></ul>
+        </div>
+        <div class="discover-section" id="discover-mods">
+          <h3>Featured Mods</h3>
+          <ul class="profile-list"></ul>
+        </div>
+      </div>
     </section>
-  </div>
-
-  <div id="news-potw">
-    <section id="news">
-      <h2>News</h2>
-      <div id="news-content"></div>
-      <div id="news-dots"></div>
-    </section>
-
-    <section id="potw">
-      <img id="potw-icon" src="">
-      <span id="potw-title"></span>
-    </section>
+    </div>
   </div>
 </div>
 
@@ -90,10 +82,6 @@ function doshit(profiles){
   const title = document.getElementById("continue-title");
   profilesList.innerHTML = "";
   title.textContent = "Continue Playing";
-  title.onclick = () => {
-    shell.openExternal("https://youtu.be/XOq97dxiAfE");
-  };
-  title.style.cursor = 'help';
   if (list.length == 0) {
     title.textContent = "Start Playing";
     const li = document.createElement("li");
@@ -164,6 +152,114 @@ function doshit(profiles){
 
   });
 };
+function seededRandom(seed) {
+  // Simple LCG PRNG for deterministic randomness
+  let s = seed % 2147483647;
+  return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+function formatNumber(num) {
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + " M";
+  if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, "") + " K";
+  return num.toString();
+}
+
+function todaySeed() {
+  const d = new Date();
+  return parseInt(`${d.getFullYear()}${(d.getMonth()+1).toString().padStart(2,"0")}${d.getDate().toString().padStart(2,"0")}`);
+}
+
+function seededShuffle(array, rand) {
+  const arr = array.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+async function fetchModrinthProjects(type, limit) {
+  const url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=${limit}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "RedstoneLauncher/1.0 (contact@tggamesyt.dev)" },
+  });
+  if (!res.ok) throw new Error("Failed to fetch Modrinth projects");
+  const data = await res.json();
+  return data.hits;
+}
+
+function createDiscoverCard(p, type) {
+  const li = document.createElement("li");
+  li.className = "profile-item";
+
+  const img = document.createElement("img");
+  img.src = p.icon_url || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+  li.appendChild(img);
+
+  const info = document.createElement("div");
+  info.className = "profile-info";
+
+  const name = document.createElement("div");
+  name.className = "profile-name";
+  name.textContent = p.title;
+  info.appendChild(name);
+
+  const details = document.createElement("div");
+  details.className = "profile-details";
+  const author = p.author || (p.authors?.[0]?.name ?? "Unknown");
+  const downloads = formatNumber(p.downloads ?? "0");
+  details.textContent = `by ${author} • ${formatNumber(downloads)} downloads`;
+  info.appendChild(details);
+
+  li.appendChild(info);
+
+  const btn = document.createElement("button");
+  btn.className = "play-button";
+  btn.innerHTML = `<i class="material-icons">play_arrow</i>`;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    localStorage.setItem("selectedModrinthProject", JSON.stringify(p));
+    localStorage.setItem("selectedProjectType", type);
+    window.location.href = "modrinth_project.html";
+  };
+  li.appendChild(btn);
+
+  li.onclick = () => {
+    localStorage.setItem("selectedModrinthProject", JSON.stringify(p));
+    localStorage.setItem("selectedProjectType", type);
+    window.location.href = "modrinth_project.html";
+  };
+
+  return li;
+}
+
+async function renderDiscoverSection() {
+  const modpacksListEl = document.querySelector("#discover-modpacks ul.profile-list");
+  const modsListEl = document.querySelector("#discover-mods ul.profile-list");
+
+  const seed = todaySeed();
+  const rand = seededRandom(seed);
+
+  // === MODPACKS ===
+  const modpacks = await fetchModrinthProjects("modpack", 30);
+  const shuffledModpacks = seededShuffle(modpacks, rand);
+  const randomModpacks = shuffledModpacks.slice(0, 10); // pick 10 random from top 30
+  const picksModpacks = seededShuffle(randomModpacks, rand).slice(0, 3);
+  picksModpacks.forEach((p) => modpacksListEl.appendChild(createDiscoverCard(p, "modpack")));
+
+  // === MODS ===
+  const mods = await fetchModrinthProjects("mod", 55);
+  const modsTrimmed = mods.slice(5); // skip top 5
+  const shuffledMods = seededShuffle(modsTrimmed, rand);
+  const randomMods = shuffledMods.slice(0, 40); // pick 40 random from 50
+  const picksMods = seededShuffle(randomMods, rand).slice(0, 3);
+  picksMods.forEach((p) => modsListEl.appendChild(createDiscoverCard(p, "mod")));
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  renderDiscoverSection().catch((err) => console.error("Discover load error:", err));
+});
+
 
 // ------------------ DISCORD PRESENCE ------------------
   function updatePresence(details, state = "Idle") {

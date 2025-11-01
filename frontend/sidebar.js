@@ -243,140 +243,6 @@ ipcRenderer.on("devtools-log", (event, text) => {
   console.log(text);
 });
 
-// ------------------ NEWS ------------------
-async function loadNews() {
-  try {
-    const res = await fetch('https://redstone-launcher.com/news.json');
-    const newsObj = await res.json();
-    const newsArr = Object.values(newsObj).filter(n => new Date(n.showuntil) >= new Date());
-    let idx = 0;
-    let autoSwitch = true;
-    let autoTimer;
-
-    const newsContent = document.getElementById('news-content');
-    const newsDots = document.getElementById('news-dots');
-
-    // Create dots
-    newsDots.innerHTML = "";
-    newsArr.forEach((_, i) => {
-      const dot = document.createElement('div');
-      dot.classList.add('news-dot');
-      if (i === 0) dot.classList.add('active');
-      dot.onclick = () => {
-        idx = i;
-        showNews();
-        pauseAutoAdvance();
-      };
-      newsDots.appendChild(dot);
-    });
-
-    function showNews() {
-  if (newsArr.length === 0) return;
-  const news = newsArr[idx];
-
-  // Add flip animation
-  newsContent.classList.add('news-flip');
-
-  setTimeout(() => {
-    newsContent.innerHTML = `
-      <img src="${news.img}" />
-      <h3>${news.title}</h3>
-      <p>${news.summary}</p>
-    `;
-    newsContent.classList.remove('news-flip');
-  }, 300); // half of transition duration for smooth effect
-
-  // Update dots
-  document.querySelectorAll('.news-dot').forEach((d, j) => {
-    d.classList.toggle('active', j === idx);
-  });
-}
-
-    function nextNews() {
-      idx = (idx + 1) % newsArr.length;
-      showNews();
-    }
-
-    function startAutoAdvance() {
-      autoSwitch = true;
-      clearInterval(autoTimer);
-      autoTimer = setInterval(() => {
-        if (autoSwitch) nextNews();
-      }, 10000);
-    }
-
-    function pauseAutoAdvance() {
-      autoSwitch = false;
-      clearInterval(autoTimer);
-      // Resume after 30 seconds
-      setTimeout(() => startAutoAdvance(), 30000);
-    }
-
-    showNews();
-    startAutoAdvance();
-
-    // Allow mouse scroll to switch manually
-    newsContent.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      pauseAutoAdvance();
-      if (e.deltaY > 0) nextNews();
-      else {
-        idx = (idx - 1 + newsArr.length) % newsArr.length;
-        showNews();
-      }
-    });
-
-    // Clicking on news -> modal or external link
-    document.getElementById('news').onclick = () => {
-      const news = newsArr[idx]; // use current index
-      if (news.redirects) {
-        shell.openExternal(news.redirectUrl);
-      } else {
-        // Show modal instead of new window
-        const modal = document.getElementById('news-modal');
-        const body = document.getElementById('news-modal-body');
-        body.innerHTML = `<h2>${news.title}</h2>${news.description}`;
-        modal.style.display = 'flex';
-      }
-    };
-
-
-    // Close modal handler
-    document.getElementById('news-modal-close').onclick = () => {
-      document.getElementById('news-modal').style.display = 'none';
-    };
-
-    // Close when clicking outside the content
-    window.onclick = (e) => {
-      const modal = document.getElementById('news-modal');
-      if (e.target === modal) modal.style.display = 'none';
-    };
-  } catch (e) {
-    console.error('Failed to load news', e);
-  }
-}
-
-loadNews();
-
-// ------------------ PROJECT OF THE WEEK ------------------
-async function loadPotW() {
-  try {
-    const res = await fetch('https://redstone-launcher.com/PotW.json');
-    const potwObj = await res.json();
-    const [title, url] = Object.entries(potwObj)[0];
-    const projectName = url.split('/').pop();
-    const modRes = await fetch(`https://api.modrinth.com/v2/project/${projectName}`);
-    const modObj = await modRes.json();
-    const icon = modObj.icon_url || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-
-    document.getElementById('potw-icon').src = icon;
-    document.getElementById('potw-title').textContent = projectName;
-    document.getElementById('potw').onclick = () => shell.openExternal(url);
-  } catch(e) { console.error('Failed to load PotW', e); }
-}
-loadPotW();
-
-
 // Instance process list bar
 async function createInstanceInfoBar(container) {
     const wrapper = document.createElement("div");
@@ -581,6 +447,15 @@ async function allowCracked(newValue, password) {
   } else {
     console.log('Failed to update: ' + (res?.error || 'Unknown error'));
   }
+}
+
+const title = document.querySelector('div.drag-region'); // only matches <div class="drag-region">
+
+if (title && Math.random() < 0.1) {
+  title.style.cursor = 'help';
+  title.onclick = () => {
+    shell.openExternal("https://youtu.be/XOq97dxiAfE");
+  };
 }
 
 createInstanceInfoBar(document.getElementById("instance-processes"));

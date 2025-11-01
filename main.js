@@ -36,8 +36,6 @@ const CLASS_ID_FOLDERS = {
   17: "saves"
 };
 
-let globalHistory = [];
-let globalIndex = -1;
 // ========== INSTANCE TRACKING SYSTEM ==========
 const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, startTime }
 
@@ -232,34 +230,15 @@ function devtoolsLog(text) {
 /* ─────────────── back/forth system ─────────────── */
 
 ipcMain.on('go-back', () => {
-  if (globalIndex > 0) {
-    globalIndex--;
-    const entry = globalHistory[globalIndex];
-    mainWindow.loadFile(entry.file).then(() => {
-      mainWindow.webContents.send('show-page', entry.pageId); // pageId may be null
-    });
+  if (mainWindow.webContents.navigationHistory.canGoBack()) {
+    mainWindow.webContents.navigationHistory.goBack();
   }
 });
 
 ipcMain.on('go-forward', () => {
-  if (globalIndex < globalHistory.length - 1) {
-    globalIndex++;
-    const entry = globalHistory[globalIndex];
-    mainWindow.loadFile(entry.file).then(() => {
-      mainWindow.webContents.send('show-page', entry.pageId);
-    });
+  if (mainWindow.webContents.navigationHistory.canGoForward()) {
+    mainWindow.webContents.navigationHistory.goForward();
   }
-});
-
-// Track new page loads from renderer
-ipcMain.on('track-page', (event, { file, pageId }) => {
-  // If we’re in the middle of history, trim forward
-  if (globalIndex < globalHistory.length - 1) {
-    globalHistory = globalHistory.slice(0, globalIndex + 1);
-  }
-
-  globalHistory.push({ file, pageId }); // pageId can be null
-  globalIndex++;
 });
 
 
@@ -404,7 +383,7 @@ ipcMain.on("login-microsoft", async (event) => {
 
     // Save player in players.json
     const players = loadPlayers();
-    id = Date.now();
+    let id = Date.now();
     players.push({
       id,
       type: "microsoft",

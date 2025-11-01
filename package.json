@@ -1,13 +1,14 @@
 {
   "name": "redstone-launcher",
   "productName": "Redstone Launcher",
-  "version": "1.11.0",
+  "version": "1.11.5",
   "description": "A Minecraft launcher",
   "author": "TG & Faze_gbr",
   "main": "main.js",
   "scripts": {
     "app": "electron .",
-    "build": "electron-builder --win"
+    "buildWin": "electron-builder --win",
+    "buildLinux": "electron-builder --linux AppImage"
   },
   "keywords": [],
   "license": "ISC",
