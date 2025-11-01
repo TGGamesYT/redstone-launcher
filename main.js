@@ -24,7 +24,6 @@ import os from 'os';
 import xml2js from "xml2js";
 import { parseStringPromise } from "xml2js";
 import unzipper from "unzipper";
-import gDriveDownloader from "@abrifq/google-drive-downloader";
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tothgergoci.workers.dev"
 
