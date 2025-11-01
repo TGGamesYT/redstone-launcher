@@ -3,7 +3,7 @@
   "productName": "Redstone Launcher",
   "version": "1.11.5",
   "description": "A Minecraft launcher",
-  "author": "TG & Faze_gbr",
+  "author": "Redstone Launcher Team",
   "main": "main.js",
   "scripts": {
     "app": "electron .",

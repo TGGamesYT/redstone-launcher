@@ -11,4 +11,6 @@ to run the app, clone the repo and run the app command
 
 To build the app, clone the repo and run:
 
-```npm run build```
+```npm run buildWin```
+or
+```npm run buildLinux```
