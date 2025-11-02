@@ -263,7 +263,9 @@ ipcMain.on('save-settings', (event, newsettings) => {
   let oldshouldconnect = settings.get('discord-presence', true);
   settings.set(newsettings);
   const color = settings.get('baseColor', "#FF0000");
-  mainWindow.setAccentColor(color);
+  if (typeof mainWindow.setAccentColor === "function") {
+    mainWindow.setAccentColor(color);
+  }
   if (oldshouldconnect != settings.get('discord-presence', true)) updateDiscordPresenceToggle();
 });
 
