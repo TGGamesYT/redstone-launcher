@@ -41,7 +41,6 @@
     "directories": {
       "output": "dist/${version}"
     },
-    "artifactName": "${productName}.${ext}",
     "files": [
       "**/*"
     ],
