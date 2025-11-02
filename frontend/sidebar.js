@@ -457,5 +457,15 @@ if (title && Math.random() < 0.1) {
     shell.openExternal("https://youtu.be/XOq97dxiAfE");
   };
 }
+let settings;
+let third;
+async () => {
+  settings = await ipcRenderer.invoke('get-settings')
+  third = getSetting('thirdColor') || getMiddleColor(base, secondary);
+};
+
+function getSetting(key) {
+  return settings[key] ?? defaultSettings[key];
+}
 
 createInstanceInfoBar(document.getElementById("instance-processes"));

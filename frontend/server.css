@@ -12,9 +12,9 @@
 }
 
 :root {
-  --base-color: #ff0000;
-  --secondary-color: #310a0a;
-  --third-color: #8f0000;
+  --base-color: #b30c0c;
+  --secondary-color: #ff4d4d;
+  --third-color: #d92d2d;
   --text-color: #ffffff;
   --text-font: Pixel;
   --border-radius: 0;
@@ -194,7 +194,7 @@ h3,
 h4,
 h5 {
   color: var(--text-color);
-  text-shadow: 2px 2px 0 var(--menu-bg);
+  font-weight: 900; /* try 700, 800, 900 */
 }
 
 #toolbar {
@@ -216,8 +216,7 @@ h5 {
   font-family: var(--text-font);
   font-size: 14px;
   letter-spacing: 1px;
-  padding-left: 80px;
-  text-shadow: 2px 2px 0 var(--menu-bg);
+    font-weight: 900; /* try 700, 800, 900 */
   width: 100%;
   text-align: center;
   pointer-events: none;
@@ -618,6 +617,12 @@ a:hover {
 }
 
 .main-scrolly {
+  height: calc(100vh - 130px);
+  overflow-y: auto;
+  padding-left: 12px;
+}
+
+.settings-scrolly {
   height: calc(100vh - 130px);
   overflow-y: auto;
   padding-left: 12px;

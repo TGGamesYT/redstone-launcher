@@ -6,6 +6,127 @@
 <link href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css" rel="stylesheet">
 <link rel="stylesheet" href="server.css" />
 <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+<style>
+  .settings-container {
+      margin-right: 20px;
+  }
+/* === TAB BAR === */
+.section-switcher {
+  display: flex;
+  justify-content: flex-start;
+  gap: 6px;
+  background: var(--very-dark);
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--border-dark);
+  border-radius: var(--border-radius);
+}
+
+.section-switcher button {
+  background: color-mix(in srgb, var(--third-color) 40%, black);
+  color: var(--text-color);
+  border: 1px solid var(--border-dark);
+  border-bottom: none;
+  border-radius: var(--border-radius);
+  font-family: var(--text-font), sans-serif;
+  font-size: 1rem;
+  padding: 8px 22px;
+  cursor: pointer;
+  transition: background 0.25s, transform 0.1s;
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.4);
+}
+
+.section-switcher button:hover {
+  background: var(--third-color);
+  transform: translateY(-1px);
+}
+
+.section-switcher button.active {
+  background: var(--base-color);
+  color: var(--text-color);
+  box-shadow: 0 2px 0 var(--base-color), inset 0 -3px 0 var(--base-color);
+  font-weight: bold;
+}
+
+/* === SECTION AREA === */
+.section {
+  display: none;
+  background: color-mix(in srgb, var(--secondary-color) 70%, black);
+  border: 1px solid var(--border-dark);
+  border-top: none;
+  border-radius: var(--border-radius);
+  padding: 30px 40px;
+  animation: fadeIn 0.25s ease;
+  box-shadow: inset 0 0 15px rgba(0,0,0,0.4);
+}
+
+.section.active {
+  display: block;
+}
+
+/* === ANIMATION === */
+@keyframes fadeIn {
+  from {opacity: 0; transform: translateY(5px);}
+  to {opacity: 1; transform: translateY(0);}
+}
+
+/* === SECTION HEADINGS === */
+.section h3 {
+  border-bottom: 2px solid var(--third-color);
+  padding-bottom: 5px;
+  margin-bottom: 20px;
+  color: var(--text-color);
+  font-weight: bold;
+}
+/* === THEME CARDS === */
+.theme-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.theme-btn {
+  background: color-mix(in srgb, var(--secondary-color) 60%, black);
+  border: 2px solid var(--border-dark);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+  color: var(--text-color);
+  font-family: var(--text-font), sans-serif;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border 0.15s ease;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+
+.theme-btn:hover {
+  transform: translateY(-2px);
+  border-color: var(--third-color);
+  box-shadow: 0 0 10px var(--third-color);
+}
+
+.theme-btn span {
+  display: block;
+  font-weight: bold;
+  margin-bottom: 10px;
+  color: var(--text-color);
+  letter-spacing: 0.5px;
+}
+
+.theme-colors {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.theme-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px solid var(--border-dark);
+  box-shadow: inset 0 0 4px rgba(0,0,0,0.4);
+}
+
+</style>
 </head>
 <body>
 <div id="toolbar">
@@ -47,7 +168,7 @@
   </div>
 
   <!-- === General Section === -->
-  <div class="section active" id="general">
+  <div class="section active settings-scrolly" id="general">
     <h3 style="margin-top: 30px;">General</h3>
     <div style="margin-bottom: 50px;">
     <label><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label><br>
@@ -56,7 +177,7 @@
   </div>
 
   <!-- === Theme Section === -->
-  <div class="section" id="theme" style="display: none;">
+  <div class="section settings-scrolly" id="theme" style="display: none;">
     <h3>Theme</h3>
 
     <div class="color-input">
@@ -108,7 +229,7 @@
   </div>
 
   <!-- === Advanced Section === -->
-  <div class="section" id="advanced" style="display: none;">
+  <div class="section settings-scrolly" id="advanced" style="display: none;">
     <h3>Advanced</h3>
 
     <label>RAM for Instances (MB)</label>
@@ -134,9 +255,9 @@ const defaultSettings = {
   ramInstancesMax: 4096,
   ramServersMin: 2048,
   ramServersMax: 4096,
-  baseColor: "#ff0000",
-  secondaryColor: "#310a0a",
-  thirdColor: null, // null by default, only stored if autoThird = false
+  baseColor: "#b30c0c",
+  secondaryColor: "#ff4d4d",
+  thirdColor: "#d92d2d", // null by default, only stored if autoThird = false
   textColor: "#ffffff",
   font: "Pixel",
   borderRadius: 0,
@@ -205,7 +326,18 @@ document.querySelectorAll('.section-switcher button').forEach(btn=>{
     ['third-color','third-color-code','thirdColor',defaultSettings.thirdColor],
     ['text-color','text-color-code','textColor',defaultSettings.textColor]
   ];
+  function hexToRgb(hex) {
+  hex = hex.replace(/^#/, '');
+  return [
+    parseInt(hex.substring(0, 2), 16),
+    parseInt(hex.substring(2, 4), 16),
+    parseInt(hex.substring(4, 6), 16)
+  ];
+}
 
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+}
   function rgbAverage(hex1, hex2) {
   const rgb1 = hexToRgb(hex1);
   const rgb2 = hexToRgb(hex2);

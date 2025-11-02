@@ -207,10 +207,8 @@ function createWindow() {
       contextIsolation: false
     }
   });
-  try {
+  if (typeof win.setAccentColor === "function") {
     win.setAccentColor(color);
-  } catch {
-    console.debug("Couldn't set accent color.")
   }
   win.loadFile('frontend/index.html');
   win.on("maximize", () => {
