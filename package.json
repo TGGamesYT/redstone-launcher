@@ -39,7 +39,7 @@
     "appId": "com.redstone-launcher.app",
     "productName": "Redstone Launcher",
     "directories": {
-      "output": "dist/${version}"
+      "output": "dist"
     },
     "files": [
       "**/*"
