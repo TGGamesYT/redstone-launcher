@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>CurseForge Project</title>
+<link rel="stylesheet" href="modrinth.css" />
+<link rel="stylesheet" href="server.css" />
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+<style>
+.project-header { display: flex; align-items: flex-start; gap: 20px; padding-right: 20px; margin-bottom: 20px; padding-top: 20px; }
+.project-header img { width: 96px; height: 96px; border-radius: var(--border-radius); }
+.project-header .info { flex: 1; }
+.project-header h1 { margin: 0; font-size: 1.8em; }
+.project-header p.summary { margin: 4px 0; font-size: 1em; opacity: 0.8; }
+.project-meta { display: flex; gap: 15px; opacity: 0.8; }
+.download-btn { background: var(--base-color); border: none; border-radius: var(--border-radius); color: var(--text-color); padding: 10px 15px; cursor: pointer; }
+.download-btn:hover { background: var(--third-color); }
+.description { background: var(--very-dark); border-radius: var(--border-radius); padding: 15px; line-height: 1.5; }
+</style>
+</head>
+<body>
+    <div id="toolbar">
+  <div class="toolbar-buttons-left">
+      <button id="backBtn">⬅</button>
+      <button id="forwardBtn">➡</button>
+  </div>
+<div class="drag-region">Redstone Launcher</div>
+<div class="toolbar-buttons">
+    <div id="instance-processes"></div>
+    <button id="min-btn">—</button>
+    <button id="max-btn">◻</button>
+    <button id="close-btn">✕</button>
+</div>
+</div>
+<div class="sidebar">
+  <ul class="menu top">
+    <a href="index.html"><li><i class="material-icons">home</i><span>Home</span></li></a>
+    <a href="instances.html"><li><i class="material-icons">play_arrow</i><span>Instances</span></li></a>
+    <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
+    <a href="server.html"><li><i class="material-icons">storage</i><span>Server Manager</span></li></a>
+  </ul>
+  <ul class="menu middle" id="instances">
+    <li><i class="material-icons">add</i><span>Add an instance</span></li>
+  </ul>
+  <ul class="menu bottom">
+    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
+    <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
+    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+  </ul>
+</div>
+  <div id="project-container" class="project-container">
+    <div id="projectHeader" class="project-header"></div>
+    <div id="projectDescription" class="description"></div>
+  </div>
+
+<script>
+const { ipcRenderer, shell } = require('electron');
+let profiles = [];
+let servers = [];
+
+async function fetchServers() {
+  servers = await ipcRenderer.invoke('list-servers');
+}
+
+// Fetch profiles & servers
+ipcRenderer.send('get-profiles');
+ipcRenderer.on('profiles-list', (e, data) => profiles = data);
+async function loadProjectDetails() {
+  const proj = JSON.parse(localStorage.getItem("selectedCurseforgeProject"));
+  if (!proj) {
+    document.body.innerHTML = "<p>Missing project data</p>";
+    return;
+  }
+
+  document.title = proj.name + " - CurseForge";
+
+  const header = document.getElementById("projectHeader");
+  header.innerHTML = `
+    <img src="${proj.logo?.url || ''}" alt="Icon">
+    <div class="info">
+      <h1>${proj.name}</h1>
+      <p class="summary">${proj.summary || "No summary available"}</p>
+      <div class="project-meta">
+        <span>${formatNumber(proj.downloadCount) || 0} downloads</span>
+        <span>by ${proj.authors?.[0]?.name || "Unknown"}</span>
+      </div>
+    </div>
+    <button id="downloadProjectBtn" class="download-btn">Install</button>
+  `;
+
+  const descEl = document.getElementById("projectDescription");
+  descEl.innerHTML = "Loading description...";
+
+  try {
+    let desc = await getModDescription(proj.id)
+    descEl.innerHTML = `<p>${desc}</p>`;
+    descEl.classList.add("projectView-scrolly")
+  } catch {
+    descEl.innerHTML = "Failed to load description.";
+  }
+
+  document.getElementById("downloadProjectBtn").onclick = () => openInstallScreenCF(proj);
+}
+
+async function openInstallScreenCF(mod) {
+  const shouldDostuff = localStorage.getItem("shouldDownload") || false;
+  const downloadBtn = document.getElementById("downloadProjectBtn");
+  if (shouldDostuff) return (downloadBtn.style.display = "none");
+
+  if (downloadBtn.textContent === "Back") {
+    downloadBtn.textContent = "Install";
+    loadProjectDetails();
+    return;
+  } else {
+    downloadBtn.textContent = "Back";
+    const descEl = document.getElementById("projectDescription");
+    descEl.classList.remove("projectView-scrolly");
+  }
+
+  const descEl = document.getElementById("projectDescription");
+  descEl.innerHTML = `
+    <h3 style="margin-bottom:10px;">Install ${mod.name}</h3>
+    <div class="install-scroll-area" id="installArea"></div>
+  `;
+  const installArea = document.getElementById("installArea");
+
+  const projType = (mod.projectType || mod.classId || "").toString();
+  const selectedType = localStorage.getItem("selectedProjectType") || "mod";
+
+  // --- Handle modpacks ---
+  if (projType === "4471" || mod.classId === 4471) {
+    let files = [];
+    try {
+      const res = await fetch(`https://curseforge.tgdoescode.workers.dev/files?projectID=${mod.id}`);
+      const data = await res.json();
+      files = Array.isArray(data.data) ? data.data : [];
+    } catch (err) {
+      console.error("Failed to fetch modpack files:", err);
+      installArea.innerHTML += "<p>Failed to fetch modpack files</p>";
+      return;
+    }
+
+    if (files.length === 0) {
+      installArea.innerHTML += "<p>No versions found for this modpack</p>";
+      return;
+    }
+
+    files.sort((a, b) => new Date(b.fileDate) - new Date(a.fileDate));
+
+    const list = document.createElement("ul");
+    list.className = "uli";
+
+    files.forEach(f => {
+      const li = document.createElement("li");
+      li.className = "profile-item";
+
+      const info = document.createElement("div");
+      info.className = "profile-info";
+
+      const name = document.createElement("div");
+      name.className = "profile-name";
+      name.textContent = f.displayName;
+      info.appendChild(name);
+
+      const details = document.createElement("div");
+      details.className = "profile-details";
+      details.textContent = `Version: ${f.fileName}`;
+      info.appendChild(details);
+
+      li.appendChild(info);
+
+      const installBtn = document.createElement("button");
+      installBtn.textContent = "Install";
+      installBtn.onclick = async () => {
+        const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectID: mod.id, fileID: f.id }),
+        });
+        const dlData = await dl.json();
+        const dlUrl = dlData.data;
+        if (!dlUrl) return alert("Failed to get download URL");
+
+        await ipcRenderer.invoke("install-mrpack-url", dlUrl);
+        alert(`Started installation of ${mod.name} (${f.displayName})`);
+      };
+      li.appendChild(installBtn);
+      list.appendChild(li);
+    });
+
+    installArea.appendChild(list);
+    return;
+  }
+
+  // --- Fetch all files (versions) ---
+  let allFiles = [];
+  try {
+    const res = await fetch(`https://curseforge.tgdoescode.workers.dev/files?projectID=${mod.id}`);
+    const data = await res.json();
+    allFiles = Array.isArray(data.data) ? data.data : [];
+  } catch (err) {
+    console.error("Failed to fetch files:", err);
+    installArea.innerHTML += "<p>Failed to fetch files</p>";
+    return;
+  }
+
+  // --- Helper: Find compatible file ---
+  function findCompatibleFile(version, loader) {
+    return allFiles.find(f => {
+      const gv = f.gameVersions.map(v => v.toLowerCase());
+      const normalizedLoader = loader.charAt(0).toUpperCase() + loader.slice(1).toLowerCase();
+      return gv.includes(version.toLowerCase()) && gv.includes(normalizedLoader.toLowerCase());
+    });
+  }
+  function findCompatibleFiles(version, loader) {
+    const normalizedLoader = loader.charAt(0).toUpperCase() + loader.slice(1).toLowerCase();
+    return allFiles.filter(f => {
+      const gv = f.gameVersions.map(v => v.toLowerCase());
+      return gv.includes(version.toLowerCase()) && gv.includes(normalizedLoader.toLowerCase());
+    });
+  }
+
+  // --- CLIENT INSTANCES ---
+  if (
+    projType === "6552" || // shader
+    projType === "12" || // resourcepack
+    (projType === "6" && selectedType === "mod") // mod
+  ) {
+    const clientHeader = document.createElement("h4");
+    clientHeader.textContent = "Client Instances";
+    installArea.appendChild(clientHeader);
+
+    profiles.forEach(p => {
+      const compatibleFile = findCompatibleFile(p.version, p.loader);
+      if (!compatibleFile) return;
+
+      const li = document.createElement("li");
+      li.className = "profile-item";
+
+      const img = document.createElement("img");
+      img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      li.appendChild(img);
+
+      const info = document.createElement("div");
+      info.className = "profile-info";
+
+      const name = document.createElement("div");
+      name.className = "profile-name";
+      name.textContent = p.name;
+      info.appendChild(name);
+
+      const details = document.createElement("div");
+      details.className = "profile-details";
+      details.textContent = `v${p.version} • ${p.loader}`;
+      info.appendChild(details);
+
+      li.appendChild(info);
+
+      const installBtn = document.createElement("button");
+      (async () => {
+        const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectID: mod.id, fileID: compatibleFile.id }),
+        });
+        const dlData = await dl.json();
+        const fileUrl = dlData.data;
+        if (!fileUrl) {
+          installBtn.textContent = "Unavailable";
+          installBtn.disabled = true;
+          return;
+        }
+
+        const found = await ipcRenderer.invoke("check-file-exists", String(p.id), true, fileUrl);
+        if (found) {
+          installBtn.textContent = "Installed";
+          installBtn.disabled = true;
+        } else {
+          installBtn.textContent = "Install Here";
+          installBtn.onclick = async () => {
+            installBtn.textContent = "Installing...";
+            installBtn.disabled = true;
+            await ipcRenderer.invoke("mod-download", {
+              server: false,
+              id: p.id,
+              fileUrl,
+              projectType: selectedType,
+            });
+            installBtn.textContent = "Installed";
+          };
+        }
+      })();
+
+      li.appendChild(installBtn);
+      // --- Installed checking ---
+      (async () => {
+        const compatibleFiles = findCompatibleFiles(p.version, p.loader);
+        let found = false;
+        let usableFile = null;
+        for (const f of compatibleFiles) {
+          const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectID: mod.id, fileID: f.id }),
+          });
+          const dlData = await dl.json();
+          const fileUrl = dlData.data;
+          if (!fileUrl) continue;
+
+          const exists = await ipcRenderer.invoke("check-file-exists", String(p.id), true, fileUrl);
+          if (exists) {
+            found = true;
+            break;
+          }
+          usableFile = usableFile || { file: f, fileUrl };
+        }
+
+        if (!usableFile) {
+          installBtn.textContent = "Unavailable";
+          installBtn.disabled = true;
+          return;
+        }
+
+        if (found) {
+          installBtn.textContent = "Installed";
+          installBtn.disabled = true;
+        } else {
+          installBtn.textContent = "Install Here";
+          installBtn.onclick = async () => {
+            installBtn.textContent = "Installing...";
+            installBtn.disabled = true;
+
+            await ipcRenderer.invoke("mod-download", {
+              server: false,
+              id: p.id,
+              fileUrl: usableFile.fileUrl,
+              projectType: selectedType,
+            });
+
+            installBtn.textContent = "Installed";
+          };
+        }
+      })();
+      installArea.appendChild(li);
+    });
+  }
+
+  // --- SERVER INSTANCES ---
+  await fetchServers();
+  if (
+    projType === "12" ||
+    (projType === "6" && ["mod", "plugin", "datapack"].includes(selectedType))
+  ) {
+    const serverHeader = document.createElement("h4");
+    serverHeader.textContent = "Servers";
+    installArea.appendChild(serverHeader);
+
+    servers.forEach(s => {
+      const matchedFile = findCompatibleFile(s.version, s.type);
+      if (!matchedFile) return;
+
+      const li = document.createElement("li");
+      li.className = "profile-item";
+
+      const img = document.createElement("img");
+      img.src = s.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      li.appendChild(img);
+
+      const info = document.createElement("div");
+      info.className = "profile-info";
+
+      const name = document.createElement("div");
+      name.className = "profile-name";
+      name.textContent = s.name;
+      info.appendChild(name);
+
+      const details = document.createElement("div");
+      details.className = "profile-details";
+      details.textContent = `${s.type} • ${s.version}`;
+      info.appendChild(details);
+
+      li.appendChild(info);
+
+      const installBtn = document.createElement("button");
+      installBtn.textContent = "Install Here";
+      installBtn.onclick = async () => {
+        installBtn.textContent = "Installing...";
+        installBtn.disabled = true;
+
+        const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectID: mod.id, fileID: matchedFile.id }),
+        });
+        const dlData = await dl.json();
+        const fileUrl = dlData.data;
+        if (!fileUrl) {
+          installBtn.textContent = "Failed";
+          return;
+        }
+
+        await ipcRenderer.invoke("mod-download", {
+          server: true,
+          id: s.name,
+          fileUrl,
+          projectType: selectedType,
+        });
+
+        installBtn.textContent = "Installed";
+      };
+      li.appendChild(installBtn);
+      // --- Installed checking ---
+      (async () => {
+        const compatibleFiles = findCompatibleFiles(s.version, s.type);
+        let found = false;
+        let usableFile = null;
+        for (const f of compatibleFiles) {
+          const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectID: mod.id, fileID: f.id }),
+          });
+          const dlData = await dl.json();
+          const fileUrl = dlData.data;
+          if (!fileUrl) continue;
+
+          const exists = await ipcRenderer.invoke("check-file-exists", String(s.name), false, fileUrl);
+          if (exists) {
+            found = true;
+            break;
+          }
+          usableFile = usableFile || { file: f, fileUrl };
+        }
+
+        if (!usableFile) {
+          installBtn.textContent = "Unavailable";
+          installBtn.disabled = true;
+          return;
+        }
+
+        if (found) {
+          installBtn.textContent = "Installed";
+          installBtn.disabled = true;
+        } else {
+          installBtn.textContent = "Install Here";
+          installBtn.onclick = async () => {
+            installBtn.textContent = "Installing...";
+            installBtn.disabled = true;
+
+            await ipcRenderer.invoke("mod-download", {
+              server: true,
+              id: s.name,
+              fileUrl: usableFile.fileUrl,
+              projectType: selectedType,
+            });
+
+            installBtn.textContent = "Installed";
+          };
+        }
+      })();
+      installArea.appendChild(li);
+    });
+  }
+}
+
+
+async function getModDescription(modId) {
+  const res = await fetch("https://curseforge.tgdoescode.workers.dev/mod-description", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ modId }),
+  });
+
+  const data = await res.json();
+  if (!data.success) {
+    console.error("Failed to fetch mod description:", data);
+    return null;
+  }
+  return data.data;
+}
+function formatNumber(num) {
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
+  return num.toString();
+}
+
+loadProjectDetails();
+</script>
+<script src="sidebar.js"></script>
+</body>
+</html>

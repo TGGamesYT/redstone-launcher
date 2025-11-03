@@ -40,6 +40,10 @@
 </div>
 <div id="searchPagination" style="padding-top: 20px;">
   <input type="text" id="searchInput" placeholder="Search projects..." />
+  <select id="apiSelector">
+    <option value="modrinth">Modrinth</option>
+    <option value="curseforge">CurseForge</option>
+  </select>
   <button id="prevPage">Prev</button>
   <span id="pageDisplay">Page 1</span>
   <button id="nextPage">Next</button>
@@ -89,36 +93,74 @@ async function fetchServers() {
 
 // Fetch top 20 projects from Modrinth
 async function fetchProjects(type, page = 1, search = "") {
+  const api = apiSelector.value;
   resultsList.innerHTML = 'Loading...';
   try {
-    const offset = (page - 1) * projectsPerPage;
-    let url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=${projectsPerPage}&offset=${offset}`;
-    if (search) url += `&query=${encodeURIComponent(search)}`;
+    if (api === "modrinth") {
+      const offset = (page - 1) * projectsPerPage;
+      let url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=${projectsPerPage}&offset=${offset}`;
+      if (search) url += `&query=${encodeURIComponent(search)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      currentProjects = data.hits || [];
+      totalPages = Math.ceil((data.total_hits || 0) / projectsPerPage);
+      return currentProjects;
+    } else {
+      const curseforgeTypeMap = {
+        mod: 6,           // Minecraft Mods
+        resourcepack: 12, // Resource Packs
+        shader: 6552,     // Shaders
+        modpack: 4471,    // Modpacks
+        datapack: 6945,   // Data Packs
+        plugin: 5         // Bukkit Plugins
+      };
 
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    const data = await res.json();
-    currentProjects = data.hits || [];
-    totalPages = Math.ceil((data.total_hits || 0) / projectsPerPage);
-    return currentProjects;
-  } catch(err) {
+      const classId = curseforgeTypeMap[type] || 6; // Default to mods
+      const searchBody = {
+        gameId: 432, // 432 = Minecraft
+        classId,
+        searchFilter: search || "",
+        sortField: 2, // Sort by popularity
+        pageSize: projectsPerPage,
+        index: (page - 1) * projectsPerPage
+      };
+
+      const res = await fetch("https://curseforge.tgdoescode.workers.dev/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(searchBody)
+      });
+      const data = await res.json();
+      currentProjects = data.data || [];
+      totalPages = 1;
+      return currentProjects;
+    }
+  } catch (err) {
     console.error(err);
     resultsList.innerHTML = 'Failed to load projects';
     return [];
   }
 }
+
 function formatNumber(num) {
   if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + " M";
   if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, "") + " K";
-  return num.toString();
+  return num.toString() || "0";
 }
 
-async function openProjectDetails(mod) {
-  // Save project data for next page
-  localStorage.setItem("selectedModrinthProject", JSON.stringify(mod));
-  localStorage.setItem("selectedProjectType", JSON.stringify(typeSelect.value.toLowerCase()));
-  window.location.href = "modrinth_project.html";
+function openProjectDetails(proj) {
+  const api = apiSelector.value;
+  if (api === "modrinth") {
+    localStorage.setItem("selectedModrinthProject", JSON.stringify(proj));
+    localStorage.setItem("selectedProjectType", typeSelect.value.toLowerCase());
+    window.location.href = "modrinth_project.html";
+  } else {
+    localStorage.setItem("selectedCurseforgeProject", JSON.stringify(proj));
+    localStorage.setItem("selectedProjectType", typeSelect.value.toLowerCase());
+    window.location.href = "curseforge_project.html";
+  }
 }
+
 
 // Render current page projects
 function renderProjects(projects) {
@@ -128,7 +170,8 @@ function renderProjects(projects) {
     return;
   }
 
-  projects.forEach(mod => {
+  const api = apiSelector.value;
+  projects.forEach(proj => {
     const card = document.createElement("div");
     card.className = "project-card";
 
@@ -136,30 +179,29 @@ function renderProjects(projects) {
     left.className = "project-left";
 
     const img = document.createElement("img");
-    img.src = mod.icon_url || "";
+    img.src = proj.icon_url || proj.logo?.url || "";
     left.appendChild(img);
 
     const info = document.createElement("div");
     info.className = "project-info";
+    const title = api === "modrinth" ? proj.title : proj.name;
+    const author = api === "modrinth" ? proj.author : proj.authors?.[0]?.name || "Unknown";
+    const downloads = api === "modrinth" ? proj.downloads : proj.downloadCount;
+
     info.innerHTML = `
-      <div class="project-title">${mod.title}</div>
-      <div class="project-meta">by ${mod.author || "Unknown"} • ${formatNumber(mod.downloads) || 0} downloads</div>
+      <div class="project-title">${title}</div>
+      <div class="project-meta">by ${author} • ${formatNumber(downloads)} downloads</div>
     `;
     left.appendChild(info);
 
     const actions = document.createElement("div");
     actions.className = "project-actions";
-
     const installBtn = document.createElement("button");
     installBtn.textContent = "Install";
-    installBtn.onclick = (event) => {
-      event.stopPropagation();
-      openInstallScreen(mod);
-    };
-
     actions.append(installBtn);
+
     card.append(left, actions);
-    card.onclick = () => openProjectDetails(mod);
+    card.onclick = () => openProjectDetails(proj);
     card.style.cursor = "pointer";
     resultsList.appendChild(card);
   });
@@ -198,6 +240,7 @@ searchInput.oninput = () => {
 // Type change & refresh
 typeSelect.onchange = () => { currentPage = 1; loadProjects(); };
 refreshBtn.onclick = () => { currentPage = 1; loadProjects(); };
+apiSelector.onchange = () => { currentPage = 1; loadProjects(); };
 
 // Initial load
 loadProjects();
