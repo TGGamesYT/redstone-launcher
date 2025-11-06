@@ -38,26 +38,31 @@
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
   </ul>
 </div>
-<div id="searchPagination" style="padding-top: 20px;">
-  <input type="text" id="searchInput" placeholder="Search projects..." />
-  <select id="apiSelector">
-    <option value="modrinth">Modrinth</option>
-    <option value="curseforge">CurseForge</option>
-  </select>
-  <button id="prevPage">Prev</button>
-  <span id="pageDisplay">Page 1</span>
-  <button id="nextPage">Next</button>
-</div>
-<div>
-  <select id="projectType">
-    <option value="mod">Mod</option>
-    <option value="resourcepack">Resourcepack</option>
-    <option value="datapack">Datapack</option>
-    <option value="shader">Shader</option>
-    <option value="modpack">Modpack</option>
-    <option value="plugin">Plugin</option>
-  </select>
-  <button id="refreshBtn">Refresh</button>
+<div id="searchPagination">
+  <div class="top-row">
+    <input type="text" id="searchInput" placeholder="Search projects..." />
+    <select id="apiSelector">
+      <option value="modrinth">Modrinth</option>
+      <option value="curseforge">CurseForge</option>
+    </select>
+  </div>
+
+  <div class="bottom-row">
+    <div id="typeTabs">
+      <button class="tab active" data-type="mod">Mod</button>
+      <button class="tab" data-type="resourcepack">Resourcepack</button>
+      <button class="tab" data-type="datapack">Datapack</button>
+      <button class="tab" data-type="shader">Shader</button>
+      <button class="tab" data-type="modpack">Modpack</button>
+      <button class="tab" data-type="plugin">Plugin</button>
+    </div>
+
+    <div id="paginationControls">
+      <button id="prevPage">&lt;</button>
+      <span id="pageDisplay">1</span>
+      <button id="nextPage">&gt;</button>
+    </div>
+  </div>
 </div>
 
 <ul id="modrinthResults"></ul>
@@ -75,8 +80,6 @@ const prevBtn = document.getElementById("prevPage");
 const nextBtn = document.getElementById("nextPage");
 const pageDisplay = document.getElementById("pageDisplay");
 
-const typeSelect = document.getElementById('projectType');
-const refreshBtn = document.getElementById('refreshBtn');
 const resultsList = document.getElementById('modrinthResults');
 resultsList.classList.add("mainModView-scrolly");
 
@@ -143,20 +146,22 @@ async function fetchProjects(type, page = 1, search = "") {
 }
 
 function formatNumber(num) {
+  if (typeof num !== "number" || isNaN(num)) {console.log(num); return "0"};
+
   if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + " M";
   if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, "") + " K";
-  return num.toString() || "0";
+  return num.toString();
 }
 
 function openProjectDetails(proj) {
   const api = apiSelector.value;
   if (api === "modrinth") {
     localStorage.setItem("selectedModrinthProject", JSON.stringify(proj));
-    localStorage.setItem("selectedProjectType", typeSelect.value.toLowerCase());
+    localStorage.setItem("selectedProjectType", document.querySelector('#typeTabs .tab.active') ? document.querySelector('#typeTabs .tab.active').dataset.type : 'mod'.toLowerCase());
     window.location.href = "modrinth_project.html";
   } else {
     localStorage.setItem("selectedCurseforgeProject", JSON.stringify(proj));
-    localStorage.setItem("selectedProjectType", typeSelect.value.toLowerCase());
+    localStorage.setItem("selectedProjectType", document.querySelector('#typeTabs .tab.active') ? document.querySelector('#typeTabs .tab.active').dataset.type : 'mod'.toLowerCase());
     window.location.href = "curseforge_project.html";
   }
 }
@@ -172,6 +177,7 @@ function renderProjects(projects) {
 
   const api = apiSelector.value;
   projects.forEach(proj => {
+    console.log(proj)
     const card = document.createElement("div");
     card.className = "project-card";
 
@@ -206,30 +212,80 @@ function renderProjects(projects) {
     resultsList.appendChild(card);
   });
 
-  pageDisplay.textContent = `Page ${currentPage} / ${totalPages || 1}`;
+  updatePaginationDisplay()
 }
+
+function updatePaginationDisplay() {
+  const pageContainer = document.getElementById("paginationControls");
+  pageContainer.innerHTML = "";
+  pageContainer.classList.add("pagination-container");
+
+  // --- Prev button ---
+  if (currentPage > 1) {
+    const prevBtn = document.createElement("button");
+    prevBtn.className = "page-btn";
+    prevBtn.textContent = "<";
+    prevBtn.onclick = async () => {
+      currentPage--;
+      await loadProjects();
+    };
+    pageContainer.appendChild(prevBtn);
+  }
+
+  // --- Pages list ---
+  const span = document.createElement("span");
+  span.className = "page-numbers";
+
+  const pagesToShow = [];
+  if (currentPage > 1) pagesToShow.push(currentPage - 1);
+  pagesToShow.push(currentPage);
+  if (currentPage < totalPages) pagesToShow.push(currentPage + 1);
+
+  // Always show first & last if not already included
+  if (!pagesToShow.includes(1)) pagesToShow.unshift(1);
+  if (!pagesToShow.includes(totalPages)) pagesToShow.push(totalPages);
+
+  span.innerHTML = pagesToShow
+    .map(p =>
+      p === currentPage
+        ? `<span class="page-number current">${p}</span>`
+        : `<button class="page-number">${p}</button>`
+    )
+    .join(" - ");
+
+  pageContainer.appendChild(span);
+
+  // Add click handlers for page buttons
+  span.querySelectorAll(".page-number").forEach(btn => {
+    if (!btn.classList.contains("current")) {
+      btn.onclick = async () => {
+        currentPage = parseInt(btn.textContent);
+        await loadProjects();
+      };
+    }
+  });
+
+  // --- Next button ---
+  if (currentPage < totalPages) {
+    const nextBtn = document.createElement("button");
+    nextBtn.className = "page-btn";
+    nextBtn.textContent = ">";
+    nextBtn.onclick = async () => {
+      currentPage++;
+      await loadProjects();
+    };
+    pageContainer.appendChild(nextBtn);
+  }
+}
+
 
 // Load current page
 async function loadProjects() {
-  const type = typeSelect.value;
+  const type = document.querySelector('#typeTabs .tab.active') ? document.querySelector('#typeTabs .tab.active').dataset.type : 'mod';
   const search = searchInput.value.trim();
   const projects = await fetchProjects(type, currentPage, search);
   renderProjects(projects);
 }
-
-// Pagination handlers
-prevBtn.onclick = () => {
-  if (currentPage > 1) {
-    currentPage--;
-    loadProjects();
-  }
-};
-nextBtn.onclick = () => {
-  if (currentPage < totalPages) {
-    currentPage++;
-    loadProjects();
-  }
-};
 
 // Search handler
 searchInput.oninput = () => {
@@ -238,8 +294,6 @@ searchInput.oninput = () => {
 };
 
 // Type change & refresh
-typeSelect.onchange = () => { currentPage = 1; loadProjects(); };
-refreshBtn.onclick = () => { currentPage = 1; loadProjects(); };
 apiSelector.onchange = () => { currentPage = 1; loadProjects(); };
 
 // Initial load
@@ -255,7 +309,7 @@ async function openInstallScreen(mod) {
 
 
   const projType = mod.project_type?.toLowerCase();
-  const selectedType = typeSelect.value.toLowerCase();
+  const selectedType = document.querySelector('#typeTabs .tab.active') ? document.querySelector('#typeTabs .tab.active').dataset.type : 'mod'.toLowerCase();
 
   // --- Handle modpacks ---
   if (projType === "modpack") {
@@ -483,13 +537,25 @@ async function openInstallScreen(mod) {
 }
 // Load top projects
 async function loadTopProjects() {
-  const type = typeSelect.value;
+  const type = document.querySelector('#typeTabs .tab.active') ? document.querySelector('#typeTabs .tab.active').dataset.type : 'mod';
   const projects = await fetchProjects(type);
   renderProjects(projects);
 }
+const typeTabs = document.getElementById("typeTabs");
 
-typeSelect.onchange = loadTopProjects;
-refreshBtn.onclick = loadTopProjects;
+typeTabs.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    // remove previous active tab
+    typeTabs.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    // activate clicked one
+    tab.classList.add("active");
+
+    // optionally reload projects
+    currentPage = 1;
+    loadProjects();
+    loadTopProjects();
+  });
+});
 loadTopProjects();
 function updatePresence(details, state = "Idle") {
   ipcRenderer.send('update-discord-presence', { details, state });

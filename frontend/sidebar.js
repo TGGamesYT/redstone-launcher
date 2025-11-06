@@ -242,6 +242,9 @@ document.getElementById('forwardBtn').addEventListener('click', () => {
 ipcRenderer.on("devtools-log", (event, text) => {
   console.log(text);
 });
+ipcRenderer.on("alert-message", (event, message) => {
+  alert(message);
+});
 
 // Instance process list bar
 async function createInstanceInfoBar(container) {

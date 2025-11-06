@@ -24,8 +24,9 @@ import os from 'os';
 import xml2js from "xml2js";
 import { parseStringPromise } from "xml2js";
 import unzipper from "unzipper";
+import { profile } from 'console';
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
-const WORKER_URL = "https://curseforge.tothgergoci.workers.dev"
+const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
 
 const CLASS_ID_FOLDERS = {
   6: "mods",
@@ -34,6 +35,61 @@ const CLASS_ID_FOLDERS = {
   6552: "shaderpacks",
   17: "saves"
 };
+
+
+const _WHITESPACE_BYTES = new Set([
+  9, 10, 13, 32 // \t, \n, \r, space  <-- match the Python set exactly
+]);
+
+// use Python's / CurseForge's multiplier constant (0x5bd1e995 == 1540483477)
+const _MULTIPLEX = 0x5bd1e995;
+
+function getFingerprint(path) {
+  if (!fs.existsSync(path) || !fs.statSync(path).isFile()) {
+    throw new Error(`File not found: ${path}`);
+  }
+
+  const data = fs.readFileSync(path);
+  let lenNoWs = 0;
+  for (const b of data) {
+    if (!_WHITESPACE_BYTES.has(b)) lenNoWs++;
+  }
+
+  let num2 = (1 ^ lenNoWs) >>> 0;
+  let num3 = 0;
+  let num4 = 0;
+
+  for (const b of data) {
+    if (_WHITESPACE_BYTES.has(b)) continue;
+
+    num3 |= (b << num4);
+    num4 += 8;
+    if (num4 === 32) {
+      const num6 = Math.imul(num3, _MULTIPLEX) >>> 0;
+      const num7 = Math.imul((num6 ^ (num6 >>> 24)) >>> 0, _MULTIPLEX) >>> 0;
+      num2 = Math.imul(num2, _MULTIPLEX) ^ num7;
+      num2 >>>= 0;
+      num3 = 0;
+      num4 = 0;
+    }
+  }
+
+  if (num4 > 0) {
+    num2 = Math.imul(num2 ^ num3, _MULTIPLEX) >>> 0;
+  }
+
+  let num6 = Math.imul(num2 ^ (num2 >>> 13), _MULTIPLEX) >>> 0;
+  return (num6 ^ (num6 >>> 15)) >>> 0;
+}
+
+function computeSHA1(filePath) {
+  if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+  const st = fs.statSync(filePath);
+  if (!st.isFile()) throw new Error(`Not a file: ${filePath}`);
+  const fileBuffer = fs.readFileSync(filePath);
+  return crypto.createHash("sha1").update(fileBuffer).digest("hex");
+}
+
 
 // ========== INSTANCE TRACKING SYSTEM ==========
 const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, startTime }
@@ -224,6 +280,12 @@ function devtoolsLog(text) {
   if (mainWindow && mainWindow.webContents) {
     mainWindow.webContents.send("devtools-log", String(text));
     console.log(text)
+  }
+}
+
+export function alert(message) {
+  if (mainWindow && message) {
+    mainWindow.webContents.send("alert-message", String(message));
   }
 }
 
@@ -457,9 +519,10 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
 
 ipcMain.on("delete-profile", async (event, profileId) => {
   const profiles = await loadProfiles();
-  const id = parseInt(profileId, 10);
+  const id = profileId
 
   const newProfiles = profiles.filter(p => p.id !== id);
+  devtoolsLog(newProfiles)
 
   if (newProfiles.length === profiles.length) {
     event.reply("delete-profile-error", `Profile with id ${id} not found`);
@@ -478,6 +541,7 @@ ipcMain.on("delete-profile", async (event, profileId) => {
 
   saveProfiles(newProfiles);
   event.reply("profiles-updated", newProfiles);
+  alert("deleted: " + id)
 });
 
 ipcMain.on("close-app", () => {
@@ -671,7 +735,6 @@ async function mrpack(mrpackPath) {
     const mcVersion = deps["minecraft"] || "1.20.1";
 
     // Create instance folder
-    const profileId = getUniqueFolderName(indexJson.name);
     const profilesDir = path.join(dataDir, "client");
     if (!fs.existsSync(profilesDir)) fs.mkdirSync(profilesDir, { recursive: true });
     const profileFolder = path.join(profilesDir, `${profileId}`);
@@ -723,6 +786,7 @@ zip.getEntries().forEach(entry => {
     const profiles = await loadProfiles();
     profiles.push(newProfile);
     saveProfiles(profiles);
+    devtoolsLog(profileId)
 
     return { success: true, profile: newProfile };
 }
@@ -1743,53 +1807,172 @@ ipcMain.handle("check-instance-tab", async (event, { profileId, tab }) => {
 
 // get files
 ipcMain.handle("get-instance-tab-files", async (event, { profileId, tab }) => {
-    const basePath = path.join(dataDir, 'client', profileId.toString(), tab);
-    if (!fs.existsSync(basePath)) return [];
-    return fs.readdirSync(basePath);
+  const basePath = path.join(dataDir, "client", profileId.toString(), tab);
+  if (!fs.existsSync(basePath)) return [];
+
+  return fs
+    .readdirSync(basePath)
+    .filter(file => file.toLowerCase() !== "mods.json");
 });
 
 // get file info for mods/resourcepacks/shaders
 ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, filename }) => {
-    const fullPath = path.join(dataDir, "client", profileId.toString(), tab, filename);
+  const basePath = path.join(dataDir, "client", profileId.toString(), tab);
+  const fullPath = path.join(basePath, filename);
+  const cacheFile = path.join(basePath, "mods.json");
 
-    // Compute SHA1 of file
-    const fileBuffer = fs.readFileSync(fullPath);
-    const hash = crypto.createHash("sha1").update(fileBuffer).digest("hex");
+  if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
+    const mcmetaPath = path.join(fullPath, "pack.mcmeta");
+    let details = "(folder)";
 
-    try {
-        // 1️⃣ Fetch Modrinth version info by SHA1
-        const versionRes = await fetch(`https://api.modrinth.com/v2/version_file/${hash}`);
-        if (!versionRes.ok) throw new Error(`Modrinth version lookup failed (${versionRes.status})`);
-        const versionData = await versionRes.json();
-
-        // 2️⃣ Extract project_id
-        const projectId = versionData.project_id;
-        if (!projectId) throw new Error("No project_id found in version data");
-
-        // 3️⃣ Fetch Modrinth project info
-        const projectRes = await fetch(`https://api.modrinth.com/v2/project/${projectId}`);
-        if (!projectRes.ok) throw new Error(`Modrinth project lookup failed (${projectRes.status})`);
-        const projectData = await projectRes.json();
-
-        // 4️⃣ Build result object
-        return {
-            name: projectData.title || filename,
-            icon: projectData.icon_url || null,
-            path: fullPath,
-            details: filename,
-        };
-    } catch (err) {
-        devtoolsLog("Error fetching Modrinth info:", err);
-
-        // fallback if Modrinth fails
-        return {
-            name: filename,
-            icon: null,
-            path: fullPath,
-            details: `SHA1: ${hash}`,
-        };
+    if (fs.existsSync(mcmetaPath)) {
+      try {
+        const mcmeta = JSON.parse(fs.readFileSync(mcmetaPath, "utf-8"));
+        const desc = mcmeta?.pack?.description;
+        if (desc && typeof desc === "string") details = desc;
+      } catch (err) {
+        console.warn(`⚠️ Failed to read pack.mcmeta in ${filename}:`, err);
+      }
     }
+
+    return {
+      name: filename,
+      icon: null,
+      path: fullPath,
+      details,
+    };
+  }
+
+  // ⛔ Skip mods.json itself completely
+  if (filename === "mods.json") {
+    return {
+      name: filename,
+      icon: null,
+      path: fullPath,
+      details: "(cache file, ignored)",
+    };
+  }
+
+  // 🧩 Load existing cache or initialize
+  let cache = {
+    modrinthFiles: {},      // filename -> hash
+    modrinthProjects: {},   // hash -> projectId
+    curseFiles: {},         // filename -> fingerprint
+    curseProjects: {},      // fingerprint -> projectId
+  };
+
+  if (fs.existsSync(cacheFile)) {
+    try {
+      cache = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
+    } catch (err) {
+      console.warn("⚠️ Failed to parse mods.json, resetting:", err);
+    }
+  }
+
+  // 1️⃣ Compute identifiers (SHA1 + fingerprint)
+  const sha1 = cache.modrinthFiles[filename] || computeSHA1(fullPath);
+  const fingerprint = cache.curseFiles[filename] || (await getFingerprint(fullPath));
+
+  cache.modrinthFiles[filename] = sha1;
+  cache.curseFiles[filename] = fingerprint;
+
+  // 2️⃣ Lookup Modrinth project ID
+  let modrinthProjectId = cache.modrinthProjects[sha1];
+  if (!modrinthProjectId) {
+    try {
+      const res = await fetch(`https://api.modrinth.com/v2/version_file/${sha1}`);
+      if (res.ok) {
+        const versionData = await res.json();
+        if (versionData.project_id) {
+          modrinthProjectId = versionData.project_id;
+          cache.modrinthProjects[sha1] = modrinthProjectId;
+        }
+      }
+    } catch (err) {
+      console.warn("Modrinth lookup failed:", err);
+    }
+  }
+
+  // 3️⃣ Lookup CurseForge ONLY if Modrinth failed
+  let curseProjectId = null;
+  if (!modrinthProjectId) {
+    curseProjectId = cache.curseProjects[fingerprint];
+    if (!curseProjectId) {
+      try {
+        const res = await fetch(`${WORKER_URL}/fingerprints`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fingerprints: [fingerprint] }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const match = data.data?.exactMatches?.[0];
+          console.log(data)
+          if (match?.id) {
+            curseProjectId = match.id;
+            cache.curseProjects[fingerprint] = curseProjectId;
+          }
+        }
+      } catch (err) {
+        console.warn("CurseForge lookup failed:", err);
+      }
+    }
+  }
+
+  // 4️⃣ Save updated cache (safe write)
+  try {
+    fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 2));
+  } catch (err) {
+    console.warn("Failed to write mods.json:", err);
+  }
+
+  // 5️⃣ Fetch project info (Modrinth preferred)
+  let projectData = null;
+
+  if (modrinthProjectId) {
+    try {
+      const res = await fetch(`https://api.modrinth.com/v2/project/${modrinthProjectId}`);
+      if (res.ok) projectData = await res.json();
+    } catch (err) {
+      console.warn("Failed to fetch Modrinth project info:", err);
+    }
+  } else if (curseProjectId) {
+    try {
+      const res = await fetch(`${WORKER_URL}/mods`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modId: curseProjectId }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        projectData = data.data || null;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch CurseForge project info:", err);
+    }
+  }
+
+  // 6️⃣ Build return object
+  if (projectData) {
+    return {
+      name: projectData.title || projectData.name || filename,
+      icon: projectData.icon_url || projectData.logo?.url || null,
+      path: fullPath,
+      details: filename,
+    };
+  }
+
+  return {
+    name: filename,
+    icon: null,
+    path: fullPath,
+    details: `SHA1: ${sha1}, Fingerprint: ${fingerprint}`,
+  };
 });
+
+
 
 
 // servers tab

@@ -30,41 +30,6 @@
   --margin: 50px;
 }
 
-
-/* ----------- MODRINTH BROWSER PAGE ----------- */
-
-#searchPagination {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: center;
-}
-
-#searchPagination input {
-  padding: 6px 10px;
-  border-radius: var(--border-radius);
-  border: 1px solid var(--border-dark);
-  background: var(--very-dark);
-  color: var(--text-color);
-  font-family: var(--text-font);
-}
-
-#searchPagination button {
-  background: var(--third-color);
-  color: var(--text-color);
-  border: 1px solid var(--border-dark);
-  border-radius: var(--border-radius);
-  padding: 6px 12px;
-  cursor: pointer;
-  font-family: var(--text-font);
-  transition: background 0.2s;
-}
-
-#searchPagination button:hover {
-  background: var(--menu-hover-bg);
-  border-color: var(--menu-hover-border);
-}
-
 /* ----------- PROJECT CARDS ----------- */
 
 #modrinthResults {
@@ -193,4 +158,112 @@
   font-size: 1.1em;
   font-weight: 600;
   border-bottom: 1px solid var(--secondary-color);
+}
+
+/* ---------------- SEARCH + PAGINATION AREA ---------------- */
+
+#searchPagination {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 10px 20px;
+  gap: 12px;
+}
+
+#searchPagination .top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#searchInput {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: var(--border-radius);
+  border: 1px solid var(--border-dark);
+  background: var(--very-dark);
+  color: var(--text-color);
+  font-family: var(--text-font);
+}
+
+#apiSelector {
+  background: var(--third-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  padding: 8px 10px;
+  font-family: var(--text-font);
+  cursor: pointer;
+}
+
+/* ---------------- TYPE TABS ---------------- */
+
+#searchPagination .bottom-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#typeTabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: 80%;
+}
+
+#typeTabs .tab {
+  background: var(--very-dark);
+  color: var(--text-color);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  padding: 6px 12px;
+  cursor: pointer;
+  font-family: var(--text-font);
+  transition: background 0.2s, border 0.2s, transform 0.1s;
+}
+
+#typeTabs .tab:hover {
+  background: var(--menu-hover-bg);
+  transform: scale(1.05);
+}
+
+#typeTabs .tab.active {
+  background: var(--third-color);
+  border-color: var(--accent);
+  transform: scale(1.08);
+}
+
+/* ---------------- PAGINATION ---------------- */
+
+#paginationControls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--text-font);
+  color: var(--text-color);
+  white-space: nowrap;
+}
+
+#paginationControls button {
+  background: var(--third-color);
+  border: 1px solid var(--border-dark);
+  color: var(--text-color);
+  border-radius: var(--border-radius);
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#paginationControls button:hover {
+  background: var(--menu-hover-bg);
+  border-color: var(--menu-hover-border);
+}
+
+/* Highlight current page number */
+#paginationControls .current {
+  background: var(--accent);
+  border-color: var(--accent);
+  padding: 4px 8px;
+  border-radius: var(--border-radius);
 }
