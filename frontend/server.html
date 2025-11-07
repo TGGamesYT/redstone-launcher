@@ -17,18 +17,13 @@
 
     /* Modal */
     #createServerModal {
-      display: none;
-      position: fixed;
-      padding: 1px;
-      inset: 0;
-      background: red;
-      align-items: center;
-      justify-content: center;
-      z-index: 10;
+      display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                 background: rgba(0,0,0,0.5); justify-content: center; align-items: center; 
     }
 
     .modal-content {
-      background: var(--bg-color);
+      background: var(--third-color); 
+      padding: 20px;
       color: var(--text-color);
       border-radius: var(--border-radius);
       padding: 20px;
@@ -52,6 +47,7 @@
       border-radius: var(--border-radius);
       height: 400px;
       overflow-y: auto;
+      white-space: pre-wrap; /* 👈 This is the key! */
     }
   </style>
 </head>
@@ -114,7 +110,7 @@
     <div class="modal-content">
       <h3>Create New Server</h3>
       <label>Server Name: <input id="srvName" placeholder="My Server" /></label>
-      <label>Version: <input id="srvVersion" value="1.20.1" /></label>
+      <label>Version: <select id="srvVersion"></select><input type="checkbox" id="showAllVersions" style="transform: scale(1.5); transform-origin: center;" /></label>
       <label>Type:
         <select id="srvType">
           <option value="vanilla">Vanilla</option>
@@ -227,6 +223,7 @@
     async function pollConsole() {
       if (!selectedServer) return;
       const content = await ipcRenderer.invoke('server-console', selectedServer.name);
+      console.log(content)
       consoleBox.textContent = Array.isArray(content) ? content.join('') : content;
       consoleBox.scrollTop = consoleBox.scrollHeight;
       setTimeout(pollConsole, 1000);
@@ -243,7 +240,43 @@
     startBtn.onclick = () => ipcRenderer.invoke('start-server', selectedServer.name);
     stopBtn.onclick = () => ipcRenderer.invoke('stop-server', selectedServer.name);
     restartBtn.onclick = () => ipcRenderer.invoke('restart-server', selectedServer.name);
+async function fetchVersions() {
+  const response = await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json');
+  const data = await response.json();
+  return data.versions; // array of {id, type, url, ...}
+}
+function populateSelect(versions, showAll) {
+  const select = document.getElementById('srvVersion');
+  select.innerHTML = ''; // clear existing options
 
+  const filtered = showAll ? versions : versions.filter(v => v.type === 'release');
+
+  filtered.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v.id;
+    opt.textContent = v.id;
+    select.appendChild(opt);
+  });
+
+  // optionally select latest release by default
+  if (!showAll) {
+    const latest = filtered.find(v => v.type === 'release');
+    if (latest) select.value = latest.id;
+  }
+}
+async function initVersionSelect() {
+  const versions = await fetchVersions();
+  const checkbox = document.getElementById('showAllVersions');
+
+  // initial populate (release only)
+  populateSelect(versions, false);
+
+  // update select when toggle changes
+  checkbox.addEventListener('change', () => {
+    populateSelect(versions, checkbox.checked);
+  });
+}
+initVersionSelect();
     loadServers();
   </script>
   <script src="sidebar.js"></script>
