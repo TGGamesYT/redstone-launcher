@@ -19,7 +19,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm ci
+        run: npm i
 
       - name: Build Windows
         run: npm run buildWin
@@ -42,7 +42,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm ci
+        run: npm i
 
       - name: Build Linux
         run: npm run buildLinux
@@ -65,7 +65,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm ci
+        run: npm i
 
       - name: Build macOS
         run: npx electron-builder --mac
