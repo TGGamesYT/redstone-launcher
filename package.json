@@ -6,10 +6,10 @@
   "author": "Redstone Launcher Team",
   "main": "main.js",
   "scripts": {
-    "app": "electron .",
-    "buildWin": "electron-builder --win",
-    "buildLinux": "electron-builder --linux AppImage",
-    "buildLinux1": "electron-builder --linux AppImage --config dockerImage=electronuserland/builder:latest"
+  "app": "electron .",
+  "buildWin": "electron-builder --win --publish=never",
+  "buildLinux": "electron-builder --linux AppImage --publish=never",
+  "buildMac": "electron-builder --mac --publish=never"
   },
   "keywords": [],
   "license": "ISC",
