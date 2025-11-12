@@ -25,10 +25,17 @@ jobs:
         run: npm run buildWin
         
       - name: Rename output
+        shell: pwsh
         run: |
-          $exe = Get-ChildItem dist/*.exe | Select-Object -First 1
-          Rename-Item $exe.FullName "dist/Redstone-Launcher.exe"
-
+          $exe = Get-ChildItem -Path 'dist' -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "No .exe found in dist/ — build likely failed."
+            exit 1
+          }
+          $dest = Join-Path $exe.DirectoryName 'Redstone-Launcher.exe'
+          Write-Host "Renaming '$($exe.Name)' -> '$dest'"
+          Move-Item -Path $exe.FullName -Destination $dest -Force
+          
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
