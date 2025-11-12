@@ -23,6 +23,11 @@ jobs:
 
       - name: Build Windows
         run: npm run buildWin
+        
+      - name: Rename output
+        run: |
+          $exe = Get-ChildItem dist/*.exe | Select-Object -First 1
+          Rename-Item $exe.FullName "dist/Redstone-Launcher.exe"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -47,6 +52,10 @@ jobs:
       - name: Build Linux
         run: npm run buildLinux
 
+      - name: Rename output
+        run: |
+          mv dist/*.AppImage dist/Redstone-Launcher.AppImage || true
+
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
@@ -69,6 +78,10 @@ jobs:
 
       - name: Build macOS
         run: npm run buildMac
+
+      - name: Rename output
+        run: |
+          mv dist/*.dmg dist/Redstone-Launcher.dmg || true
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
