@@ -276,6 +276,38 @@ function createWindow() {
   mainWindow = win
 }
 
+// --- Prevent multiple instances ---
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+    process.exit(0); // ✅ Ensures the process really stops here
+    } else {
+      app.on('second-instance', () => {
+          // Focus existing window instead of opening new
+              if (mainWindow) {
+                    if (mainWindow.isMinimized()) mainWindow.restore();
+                          mainWindow.focus();
+                              }
+                                });
+
+                                  app.whenReady().then(() => {
+                                      if (!mainWindow) createWindow(); // ✅ Only create once
+                                        });
+
+                                          app.on('activate', () => {
+                                              // On macOS: only recreate if there are no open windows
+                                                  if (BrowserWindow.getAllWindows().length === 0) {
+                                                        createWindow();
+                                                            }
+                                                              });
+
+                                                                app.on('window-all-closed', () => {
+                                                                    if (process.platform !== 'darwin') {
+                                                                          app.quit();
+                                                                              }
+                                                                                });
+                                                                                }
 function devtoolsLog(text) {
   if (mainWindow && mainWindow.webContents) {
     mainWindow.webContents.send("devtools-log", String(text));
