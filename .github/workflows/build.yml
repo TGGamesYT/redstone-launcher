@@ -28,7 +28,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: redstone-launcher-win
-          path: dist/
+          path: dist/*.exe
 
   build-linux:
     name: Build Linux
@@ -51,14 +51,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: redstone-launcher-linux
-          path: dist/
+          path: dist/*.AppImage
 
   build-mac:
     name: Build macOS
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
-
+ 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
@@ -74,7 +74,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: redstone-launcher-mac
-          path: dist/
+          path: dist/*.dmg
 
   create-release:
     name: Create GitHub Release
@@ -83,6 +83,24 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Download Windows executable
+        uses: actions/download-artifact@v4
+        with:
+          name: redstone-launcher-win
+          path: ./release-artifacts/
+
+      - name: Download Linux executable
+        uses: actions/download-artifact@v4
+        with:
+          name: redstone-launcher-linux
+          path: ./release-artifacts/
+
+      - name: Download macOS executable
+        uses: actions/download-artifact@v4
+        with:
+          name: redstone-launcher-mac
+          path: ./release-artifacts/
+     
       - name: Get version from package.json
         id: get_version
         run: |
@@ -113,9 +131,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          files: |
-            dist/*.exe
-            dist/*.AppImage
-            dist/*.dmg
+          files: ./release-artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
