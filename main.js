@@ -2212,4 +2212,4 @@ ipcMain.handle('update-allow-cracked-testing', async (event, { value, password }
 
 
 updateDiscordPresenceToggle()
-app.whenReady().then(createWindow);
+//app.whenReady().then(createWindow);
