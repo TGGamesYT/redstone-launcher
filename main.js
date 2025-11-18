@@ -2285,7 +2285,7 @@ remote_port = ${tunnela.remote_port}
   fs.writeFileSync(iniPath, ini);
 
   // Spawn frpc process
-  const frpProcess = spawn(FRPC_BIN, ["-c", iniPath], { stdio: "inherit" });
+  const frpProcess = spawn(FRPC_BIN, ["-c", iniPath], { stdio: "inherit", windowsHide: true});
 
   // Track the running process
   runningTunnels[tunnela.identifier] = frpProcess;
