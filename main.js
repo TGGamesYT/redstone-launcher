@@ -3,6 +3,10 @@ let ALLOW_CRACKED_TESTING = false;
 
 import path from 'path';
 import https from 'https';
+import http from 'http';
+import readline from "readline";
+import tar from "tar-fs";
+import zlib from "zlib";
 import fs from 'fs';
 const fsp = fs.promises;
 import fetch from 'node-fetch';
@@ -35,6 +39,7 @@ const CLASS_ID_FOLDERS = {
   6552: "shaderpacks",
   17: "saves"
 };
+
 
 
 const _WHITESPACE_BYTES = new Set([
@@ -153,7 +158,11 @@ const sortStore = new Store({ name: "instance-sorting" });
 if (!sortStore.has("sortMode")) sortStore.set("sortMode", "created-desc");
 if (!sortStore.has("customOrder")) sortStore.set("customOrder", []);
 
+const localdirname = path.dirname(new URL(import.meta.url).pathname);
 const dataDir = path.join(app.getPath('userData'));
+const credsPath = path.join(dataDir, "creds.json");
+const frpcConfigPath = path.join(localdirname, "frpc.ini");
+let frpcProcess = null;
 const profilesPath = path.join(dataDir, 'profiles.json');
 const playersPath = path.join(dataDir, 'players.json');
 const JAVA_DIR = path.join(dataDir, "java_runtimes")
@@ -2209,6 +2218,340 @@ ipcMain.handle('update-allow-cracked-testing', async (event, { value, password }
     return { success: false, error: 'Incorrect password' };
   }
 });
+// proxy szar
+
+
+const runningTunnels = {};
+const VPS_API = "http://157.180.40.103:8080";
+const DATA_DIR = path.join(dataDir, "frpc");
+const CREDS_FILE = path.join(DATA_DIR, "creds.json");
+const FRPC_BIN = path.join(DATA_DIR, os.platform() === "win32" ? "frpc.exe" : "frpc");
+
+/* ---------------------------------------------------------
+   INTERNAL HELPERS
+--------------------------------------------------------- */
+
+async function apiRequest(endpoint, body) {
+  const r = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return await r.json();
+}
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+  return DATA_DIR;
+}
+
+function loadCreds() {
+  if (!fs.existsSync(CREDS_FILE)) return null;
+  return JSON.parse(fs.readFileSync(CREDS_FILE));
+}
+
+function saveCreds(username, password) {
+  fs.writeFileSync(CREDS_FILE, JSON.stringify({ username, password }, null, 2));
+  return true;
+}
+
+function requireLogin() {
+  return fs.existsSync(CREDS_FILE);
+}
+
+async function startTunnel(tunnel) {
+  const tunnelsRes = await listTunnels();
+  const tunnela = tunnelsRes.tunnels.find(t => t.identifier === tunnel);
+  devtoolsLog("starting tunnel: " + tunnela.identifier);
+
+  // Ensure FRP binary exists
+  if (!fs.existsSync(FRPC_BIN)) {
+    await installLatestFrp();
+  }
+
+  // Write frpc.ini inside DATA_DIR
+  const ini = `[common]
+server_addr = ${tunnela.frp_server || "157.180.40.103"}
+server_port = 7000
+token = redston
+
+[${tunnela.identifier}]
+type = tcp
+local_port = ${tunnela.local_port}
+remote_port = ${tunnela.remote_port}
+`;
+
+  const iniPath = path.join(DATA_DIR, `${tunnela.identifier}.ini`);
+  fs.writeFileSync(iniPath, ini);
+
+  // Spawn frpc process
+  const frpProcess = spawn(FRPC_BIN, ["-c", iniPath], { stdio: "inherit" });
+
+  // Track the running process
+  runningTunnels[tunnela.identifier] = frpProcess;
+
+  // Remove from map on exit
+  frpProcess.on("exit", (code) => {
+    devtoolsLog(`Tunnel ${tunnela.identifier} exited with code ${code}`);
+    delete runningTunnels[tunnela.identifier];
+  });
+
+  return { ok: true };
+}
+
+function stopTunnel(identifier) {
+  const proc = runningTunnels[identifier];
+  if (!proc) return { ok: false, error: "Tunnel not running" };
+
+  proc.kill("SIGTERM");
+  delete runningTunnels[identifier];
+  return { ok: true };
+}
+
+function listRunningTunnels() {
+  return Object.keys(runningTunnels);
+}
+
+/* ---------------------------------------------------------
+   1. loginMenu → login()
+--------------------------------------------------------- */
+function login(username, password) {
+  ensureDataDir();
+  saveCreds(username, password);
+  return { ok: true };
+}
+
+/* ---------------------------------------------------------
+   2. createAccount()
+--------------------------------------------------------- */
+async function createAccount(username, password) {
+  const res = await apiRequest(VPS_API + "/createUser", { username, password });
+  if (res.ok) saveCreds(username, password);
+  return res;
+}
+
+/* ---------------------------------------------------------
+   3. checkUsername()
+--------------------------------------------------------- */
+async function checkUsername(username) {
+  return await apiRequest(VPS_API + "/checkUser", { username });
+}
+
+/* ---------------------------------------------------------
+   4. createTunnel()
+--------------------------------------------------------- */
+async function createTunnel({ identifier, localport, hasdomain, subdomain }) {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "not_logged_in" };
+
+  const body = {
+    username: creds.username,
+    password: creds.password,
+    identifier,
+    localport,
+    hasdomain,
+    ...(hasdomain ? { subdomain } : {})
+  };
+
+  const res = await apiRequest(VPS_API + "/createTunnel", body);
+  return res;
+}
+
+/* ---------------------------------------------------------
+   5. connectTunnel()
+--------------------------------------------------------- */
+async function connectTunnel(identifier) {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "not_logged_in" };
+
+  // Call your existing startTunnel function
+  return await startTunnel(identifier);
+}
+
+/* ---------------------------------------------------------
+   6. listTunnels()
+--------------------------------------------------------- */
+async function listTunnels() {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "not_logged_in" };
+  let req = await apiRequest(VPS_API + "/listTunnels", creds)
+  devtoolsLog(req)
+  return req;
+}
+
+/* ---------------------------------------------------------
+   7. deleteTunnel()
+--------------------------------------------------------- */
+async function deleteTunnel(identifier) {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "not_logged_in" };
+
+  return await apiRequest(VPS_API + "/deleteTunnel", {
+    username: creds.username,
+    password: creds.password,
+    identifier
+  });
+}
+
+/* ---------------------------------------------------------
+   8. checkSub()
+--------------------------------------------------------- */
+async function checkSub(subdomain) {
+  return await apiRequest(VPS_API + "/checkSubdomain", { subdomain });
+}
+
+/* ---------------------------------------------------------
+   9. deleteAccount()
+--------------------------------------------------------- */
+async function deleteAccount() {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "not_logged_in" };
+
+  const res = await apiRequest(VPS_API + "/deleteUser", creds);
+  if (fs.existsSync(CREDS_FILE)) fs.unlinkSync(CREDS_FILE);
+  return res;
+}
+
+/* ---------------------------------------------------------
+   10. writeFrpcConfig()   (used to generate frpc.ini)
+--------------------------------------------------------- */
+function writeFrpcConfig({ frpServer, identifier, localPort, remotePort }) {
+  const ini = `
+[common]
+server_addr = ${frpServer}
+server_port = 7000
+token = redston
+
+[${identifier}]
+type = tcp
+local_port = ${localPort}
+remote_port = ${remotePort}
+`.trim();
+
+  fs.writeFileSync("frpc.ini", ini);
+  return ini;
+}
+
+/* ---------------------------------------------------------
+   +1 AUTO-INSTALL LATEST FRP BINARY
+--------------------------------------------------------- */
+async function installLatestFrp() {
+  ensureDataDir();
+
+  const release = await fetch("https://api.github.com/repos/fatedier/frp/releases/latest")
+    .then(r => r.json());
+
+  const version = release.tag_name.replace("v", "");
+
+  const platform =
+    process.platform === "win32" ? "windows" :
+    process.platform === "darwin" ? "darwin" :
+    "linux";
+
+  const arch =
+    process.arch === "x64" ? "amd64" :
+    process.arch === "arm64" ? "arm64" :
+    "386";
+
+  const fileName =
+    `frp_${version}_${platform}_${arch}` + (platform === "windows" ? ".zip" : ".tar.gz");
+
+  const asset = release.assets.find(a => a.name === fileName);
+  if (!asset) return { ok: false, error: "platform_not_supported" };
+
+  const buf = await fetch(asset.browser_download_url).then(r => r.buffer());
+  const tmp = path.join(DATA_DIR, fileName);
+  fs.writeFileSync(tmp, buf);
+
+  if (platform === "windows") {
+    const zip = new AdmZip(tmp);
+    zip.extractAllTo(DATA_DIR, true);
+    fs.copyFileSync(
+      path.join(DATA_DIR, `frp_${version}_${platform}_${arch}`, "frpc.exe"),
+      FRPC_BIN
+    );
+  } else {
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(tmp)
+        .pipe(zlib.createGunzip())
+        .pipe(tar.extract(DATA_DIR))
+        .on("finish", resolve)
+        .on("error", reject);
+    });
+
+    fs.copyFileSync(
+      path.join(DATA_DIR, `frp_${version}_${platform}_${arch}`, "frpc"),
+      FRPC_BIN
+    );
+    fs.chmodSync(FRPC_BIN, 0o755);
+  }
+
+  return { ok: true, path: FRPC_BIN };
+}
+
+
+/* -----------------------------------------------------
+   IPC BINDINGS
+   (Zero logs, zero side effects, returns values only)
+----------------------------------------------------- */
+
+// 1. login(username, password)
+ipcMain.handle("frpc:login", async (_, username, password) => {
+  return await login(username, password);
+});
+
+// 2. createAccount(username, password)
+ipcMain.handle("frpc:createAccount", async (_, username, password) => {
+  return await createAccount(username, password);
+});
+
+// 3. checkUsername(username)
+ipcMain.handle("frpc:checkUsername", async (_, username) => {
+  return await checkUsername(username);
+});
+
+// 4. createTunnel(options)
+ipcMain.handle("frpc:createTunnel", async (_, params) => {
+  return await createTunnel(params);
+});
+
+// 5. connectTunnel(identifier)
+ipcMain.handle("frpc:connectTunnel", async (_, identifier) => {
+  return await connectTunnel(identifier);
+});
+
+// 6. listTunnels()
+ipcMain.handle("frpc:listTunnels", async () => {
+  return await listTunnels();
+});
+
+// 7. deleteTunnel(identifier)
+ipcMain.handle("frpc:deleteTunnel", async (_, identifier) => {
+  return await deleteTunnel(identifier);
+});
+
+// 8. checkSub(subdomain)
+ipcMain.handle("frpc:checkSub", async (_, subdomain) => {
+  return await checkSub(subdomain);
+});
+
+// 9. deleteAccount()
+ipcMain.handle("frpc:deleteAccount", async () => {
+  return await deleteAccount();
+});
+
+ipcMain.handle("frpc:listRunningTunnels", async () => {
+  return await listRunningTunnels();
+});
+
+ipcMain.handle("frpc:stopTunnel", async (_, identifier) => {
+  return await stopTunnel(identifier);
+});
+
+ipcMain.handle("frpc:getCreds", async () => {
+  return loadCreds(); // returns { username, ... } or null
+});
+
 
 
 updateDiscordPresenceToggle()

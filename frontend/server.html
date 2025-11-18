@@ -49,6 +49,21 @@
       overflow-y: auto;
       white-space: pre-wrap; /* 👈 This is the key! */
     }
+    .promain {
+      display: flex;
+    }
+    #serverListView {
+  flex: 2;              /* 2 parts */
+  padding: 20px;
+  overflow-y: auto;
+}
+
+/* Right panel */
+#proxysidebar {
+  flex: 1;              /* 1 part → 1/3 of space */
+  padding: 20px;
+  overflow-y: auto;
+}
   </style>
 </head>
 <body>
@@ -83,11 +98,37 @@
   </ul>
 </div>
 
-  <div class="main" style="padding-top: 1px;">
+  <div class="promain" style="padding-top: 1px;">
     <div id="serverListView">
       <h2>Servers</h2>
       <ul id="serversList"></ul>
       <button id="openCreateModal" class="create-btn">+ Create Server</button>
+    </div>
+
+    <div id="proxysidebar">
+      <div>
+        <button  onclick="() => {document.getElementById('proxypart').style.display = 'block'; document.getElementById('newproxypart').style.display = 'none'; document.getElementById('loginpart').style.display = 'none';}">Proxies</button>
+        <button   onclick="() => {document.getElementById('proxypart').style.display = 'none'; document.getElementById('newproxypart').style.display = 'none'; document.getElementById('loginpart').style.display = 'block';}">Log in</button>
+      </div>
+      <div id="proxypart">
+        <h1>Proxies</h1>
+        <button onclick="() => {document.getElementById('proxypart').style.display = 'none'; document.getElementById('newproxypart').style.display = 'block';}">create new proxy</button>
+        <ul id="proxies"></ul>
+      </div>
+      <div id="loginpart" style="display:none;">
+        <h1>Log in</h1>
+        Logged in as <span id="loggedinas"></span><br>
+        <button id="deleteaccount">Delete Account</button><br>
+        <input type="text" id="username" placeholder="username"><br>
+        <input type="text" id="password" placeholder="password"><br>
+        <button id="loginbutton">log in</button>
+      </div>
+      <div id="newproxypart" style="display:none;">
+        <h1>Create new proxy</h1>
+        <input type="text" id="proxyid" placeholder="proserver"><br>
+        <input type="text" id="port" placeholder="port"><br>
+        <button id="createproxy">create</button>
+      </div>
     </div>
 
     <div id="consoleView">
@@ -213,6 +254,7 @@
     }
 
     function openConsoleView(server) {
+      document.getElementById('proxysidebar').style.display = 'none';
       selectedServer = server;
       consoleTitle.textContent = `Console — ${server.name}`;
       serverListView.style.display = "none";
@@ -278,6 +320,161 @@ async function initVersionSelect() {
 }
 initVersionSelect();
     loadServers();
+
+async function updateLoginInfo() {
+  const user = await ipcRenderer.invoke("frpc:getCreds");
+  if (user?.username) {
+    $("loggedinas").textContent = user.username;
+    $("loggedininfo").style.display = "block";
+    $("username").style.display = "none";
+    $("password").style.display = "none";
+    $("loginbutton").style.display = "none";
+  } else {
+    $("loggedininfo").style.display = "none";
+    $("username").style.display = "block";
+    $("password").style.display = "block";
+    $("loginbutton").style.display = "block";
+  }
+}
+
+    const $ = (id) => document.getElementById(id);
+
+/* ---------------------------------------------------
+   PANEL SWITCH
+--------------------------------------------------- */
+function show(id) {
+  $("proxypart").style.display = "none";
+  $("loginpart").style.display = "none";
+  $("newproxypart").style.display = "none";
+  $(id).style.display = "block";
+}
+
+/* ---------------------------------------------------
+   LOGIN
+--------------------------------------------------- */
+async function loginHandler() {
+  const username = $("username").value;
+  const password = $("password").value;
+
+  const res = await ipcRenderer.invoke("frpc:login", username, password);
+  if (res?.ok) {
+    await refreshProxyList();
+    show("proxypart");
+    await updateLoginInfo();
+  }
+}
+
+/* ---------------------------------------------------
+   CREATE NEW PROXY
+--------------------------------------------------- */
+async function createProxyHandler() {
+  const identifier = $("proxyid").value;
+  const localport = Number($("port").value);
+
+  const params = {
+    identifier,
+    localport,
+    hasdomain: false
+  };
+
+  const res = await ipcRenderer.invoke("frpc:createTunnel", params);
+
+  if (res?.ok) {
+    await refreshProxyList();
+    show("proxypart");
+    await updateLoginInfo();
+  }
+}
+
+/* ---------------------------------------------------
+   LIST PROXIES (Updated with Start/Stop)
+--------------------------------------------------- */
+async function refreshProxyList() {
+  const res = await ipcRenderer.invoke("frpc:listTunnels");
+  const running = await ipcRenderer.invoke("frpc:listRunningTunnels");
+  const ul = $("proxies");
+  ul.innerHTML = "";
+
+  if (!res || !res.tunnels) return;
+
+  for (const t of res.tunnels) {
+    const li = document.createElement("li");
+    li.className = "proxy-item";
+
+    const remotePort = t.publicip?.split(":")[1] || "???";
+    const isRunning = running.includes(t.identifier);
+
+    li.innerHTML = `
+      <span>${t.identifier} | localhost:${t.local_port} → ${t.hasdomain ? t.publicdomain : t.publicip}</span><br>
+      <button class="toggle">${isRunning ? "Stop" : "Start"}</button>
+      <button class="delete">Delete</button>
+    `;
+
+    // Start / Stop tunnel
+    li.querySelector(".toggle").addEventListener("click", async (e) => {
+      if (isRunning) {
+        await ipcRenderer.invoke("frpc:stopTunnel", t.identifier);
+      } else {
+        await ipcRenderer.invoke("frpc:connectTunnel", t.identifier);
+      }
+      await refreshProxyList(); // refresh buttons and list
+    });
+
+    // Delete tunnel
+    li.querySelector(".delete").addEventListener("click", async () => {
+      await ipcRenderer.invoke("frpc:deleteTunnel", t.identifier);
+      await refreshProxyList();
+    });
+
+    ul.appendChild(li);
+  }
+}
+
+
+/* ---------------------------------------------------
+   EVENT BINDINGS (Fixing your broken inline onclick)
+--------------------------------------------------- */
+
+// Sidebar
+document.querySelectorAll("#proxysidebar button").forEach(btn => {
+  btn.addEventListener("click", (e) => {
+    const t = e.target.innerText.trim().toLowerCase();
+    if (t === "proxies") show("proxypart");
+    if (t === "log in") show("loginpart");
+  });
+});
+
+// Login button
+$("loginbutton").addEventListener("click", loginHandler);
+
+// Create new proxy button
+$("createproxy").addEventListener("click", createProxyHandler);
+//delete button
+$("deleteaccount").addEventListener("click", async () => {
+  await ipcRenderer.invoke("frpc:deleteAccount");
+  await updateLoginInfo();
+  show("loginpart");
+});
+
+// Inside proxy menu → show creation
+document.querySelector("#proxypart button")?.addEventListener("click", () => {
+  show("newproxypart");
+});
+
+/* ---------------------------------------------------
+   INITIAL LOAD
+--------------------------------------------------- */
+(async () => {
+  const res = await ipcRenderer.invoke("frpc:listTunnels");
+  if (res?.ok) {
+    await refreshProxyList();
+    show("proxypart");
+  } else {
+    show("loginpart");
+  }
+})();
+
+
   </script>
   <script src="sidebar.js"></script>
 </body>
