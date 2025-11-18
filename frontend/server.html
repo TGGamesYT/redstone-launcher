@@ -127,6 +127,7 @@
         <h1>Create new proxy</h1>
         <input type="text" id="proxyid" placeholder="proserver"><br>
         <input type="text" id="port" placeholder="port"><br>
+        Use domain: <input type="checkbox" id="domain"><br>
         <button id="createproxy">create</button>
       </div>
     </div>
@@ -325,12 +326,10 @@ async function updateLoginInfo() {
   const user = await ipcRenderer.invoke("frpc:getCreds");
   if (user?.username) {
     $("loggedinas").textContent = user.username;
-    $("loggedininfo").style.display = "block";
     $("username").style.display = "none";
     $("password").style.display = "none";
     $("loginbutton").style.display = "none";
   } else {
-    $("loggedininfo").style.display = "none";
     $("username").style.display = "block";
     $("password").style.display = "block";
     $("loginbutton").style.display = "block";
@@ -367,14 +366,20 @@ async function loginHandler() {
 /* ---------------------------------------------------
    CREATE NEW PROXY
 --------------------------------------------------- */
+let domain = false;
+document.getElementById('domain').addEventListener("change", e => {
+    domain = e.target.checked;
+  });
+
 async function createProxyHandler() {
   const identifier = $("proxyid").value;
   const localport = Number($("port").value);
-
+  console.log(domain)
   const params = {
     identifier,
     localport,
-    hasdomain: false
+    hasdomain: domain,
+    subdomain: identifier
   };
 
   const res = await ipcRenderer.invoke("frpc:createTunnel", params);
@@ -467,6 +472,7 @@ document.querySelector("#proxypart button")?.addEventListener("click", () => {
 (async () => {
   const res = await ipcRenderer.invoke("frpc:listTunnels");
   if (res?.ok) {
+    await updateLoginInfo();
     await refreshProxyList();
     show("proxypart");
   } else {
