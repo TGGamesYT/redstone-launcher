@@ -31,6 +31,7 @@ import unzipper from "unzipper";
 import { profile } from 'console';
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
+let ACCESS_TOKEN = ""; 
 
 const CLASS_ID_FOLDERS = {
   6: "mods",
@@ -388,10 +389,10 @@ async function refreshPlayer(player) {
     // Call refresh with either:
     // - The saved msToken object
     // - Or just the refresh_token string
-    const xboxManager = await authManager.refresh(player.refresh);
+    const xboxManager = await authManager.refresh(player.refresh)
 
     // Get a new Minecraft token
-    const token = await xboxManager.getMinecraft();
+    const token = await xboxManager.getMinecraft()
 
     // Convert for launcher-core
     const launcherAuth = token.mclc();
@@ -2552,7 +2553,77 @@ ipcMain.handle("frpc:getCreds", async () => {
   return loadCreds(); // returns { username, ... } or null
 });
 
+async function authHeaders() {
+  let id = storage.get("selectedPlayerId", null);
+  let players = await loadPlayers();
+  let obj = players.find(item => item.id === id);
+  obj = await refreshPlayer(obj);
+  ACCESS_TOKEN = obj?.auth?.access_token || null;
+  return {
+    "Authorization": "Bearer " + ACCESS_TOKEN,
+    "Content-Type": "application/json"
+  };
+}
 
+// ---- FETCH SKINS + CAPES ----
+ipcMain.handle("mc:getProfile", async () => {
+  // 1️⃣ Get selected player
+  let id = storage.get("selectedPlayerId", null);
+  let players = await loadPlayers();
+  let obj1 = players.find(item => item.id === id);
+  obj1 = await refreshPlayer(obj1);
+  console.log(obj1);
+  let accessToken = obj1?.auth?.access_token || null;
+
+  //shit
+  const response = await fetch("https://api.minecraftservices.com/minecraft/profile", {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP error! Status: ${response.status}`);
+  }
+
+  const data = await response.json();
+  console.log(data)
+  return data; 
+});
+
+// ---- APPLY SKIN ----
+ipcMain.handle("mc:applySkin", async (event, skin) => {
+  let headers = await authHeaders();
+  const body = {
+    url: skin.url,
+    variant: skin.variant.toLowerCase()
+  };
+
+  const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) throw new Error(await res.text());
+  return true;
+});
+
+// ---- APPLY CAPE ----
+ipcMain.handle("mc:applyCape", async (event, capeId) => {
+  console.log(capeId)
+  const body = { capeId };
+  let headers = await authHeaders();
+
+  const res = await fetch("https://api.minecraftservices.com/minecraft/profile/capes/active", {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) throw new Error(await res.text());
+  return true;
+});
 
 updateDiscordPresenceToggle()
-//app.whenReady().then(createWindow);

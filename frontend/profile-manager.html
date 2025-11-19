@@ -38,12 +38,15 @@
   </ul>
 </div>
 <canvas id="skin_container"></canvas>
+<div id="skins"></div>
+<div id="capes"></div>
+
 <script>
 players = [];
       const { ipcRenderer } = require('electron');
       async function getSelectedPlayer() {return await ipcRenderer.invoke('get-selected-player')}
       const skinview3d = require("skinview3d");
-      selectedplayer = getSelectedPlayer
+      let selectedplayer;
 
   async function updateSKin() {
     selectedplayer = await getSelectedPlayer();
@@ -61,16 +64,75 @@ players = [];
       height: 800
     });
     skinViewer.loadPanorama("https://skinview3d-demo.vercel.app/img/panorama.png");
+    const res = await fetch(`https://api.capes.dev/load/${encodeURIComponent(name)}`);
+    if (!res.ok) {
+      throw new Error(`API error: ${res.status}`);
+    }
+  
+    const data = await res.json();
+    
+    skinViewer.loadCape(data?.minecraft?.imageUrl || null);
   }
-
-	// Load a cape
-	//skinViewer.loadCape("img/cape.png");
     ipcRenderer.send("get-players");
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateSKin(); });
   ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; updateSKin(); });
 function updatePresence(details, state = "Idle") {
   ipcRenderer.send('update-discord-presence', { details, state });
 }
+
+(async () => {
+  const profile = await ipcRenderer.invoke("mc:getProfile");
+  const skinsDiv = document.getElementById("skins");
+  const capesDiv = document.getElementById("capes");
+
+  // ---- Current skins ----
+  profile.skins.forEach(skin => {
+    const btn = document.createElement("button");
+    btn.textContent = "Skin: " + (skin.alias || skin.id);
+    btn.onclick = () => {
+      ipcRenderer.invoke("mc:applySkin", skin)
+        .catch(err => console.error("skin fail:", err));
+    };
+    skinsDiv.appendChild(btn);
+  });
+
+  // ---- Current capes ----
+  profile.capes.forEach(cape => {
+    const btn = document.createElement("button");
+    btn.textContent = "Cape: " + (cape.alias || cape.id);
+    btn.onclick = () => {
+      ipcRenderer.invoke("mc:applyCape", cape.id)
+        .catch(err => console.error("cape fail:", err));
+    };
+    capesDiv.appendChild(btn);
+  });
+
+  // ---- Previous skins from NameMC-like API ----
+  try {
+    const res = await fetch(`https://api.capes.dev/load/${profile.name}`);
+    if (res.ok) {
+      const previous = await res.json();
+      if (previous?.skins) {
+        previous.skins.forEach(skin => {
+          // skip duplicates (already in current profile)
+          if (!profile.skins.some(s => s.textureKey === skin.textureKey)) {
+            const btn = document.createElement("button");
+            btn.textContent = "Old Skin: " + (skin.alias || skin.id);
+            btn.onclick = () => {
+              ipcRenderer.invoke("mc:applySkin", skin)
+                .catch(err => console.error("skin fail:", err));
+            };
+            skinsDiv.appendChild(btn);
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to fetch previous skins:", err);
+  }
+})();
+
+
 updatePresence("Managing skins")
 </script>
   <script src="sidebar.js"></script>
