@@ -38,6 +38,7 @@
   </ul>
 </div>
 <canvas id="skin_container"></canvas>
+<img id="myImage" style="display: none;" />
 <div id="skins"></div>
 <div id="capes"></div>
 
@@ -50,6 +51,23 @@ players = [];
 
   async function updateSKin() {
     selectedplayer = await getSelectedPlayer();
+    if (skinview3d === null) {
+      let canvas = document.getElementById('skin_container');
+      const ctx = canvas.getContext('2d');
+
+      const img = new Image();
+      img.src = 'path/to/your/image.jpg';
+
+      img.onload = function() {
+        // Once the image is loaded, set the canvas size to the image size:
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+
+        // Draw the image on the canvas:
+        ctx.drawImage(img, 0, 0);
+      };
+      return;
+    }
     const player = players.find(p => p.id === selectedPlayerId);
     let name;
     if (!player.auth || !player.auth.name) {
@@ -72,6 +90,7 @@ players = [];
     const data = await res.json();
     
     skinViewer.loadCape(data?.minecraft?.imageUrl || null);
+    return;
   }
     ipcRenderer.send("get-players");
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateSKin(); });
