@@ -28,7 +28,7 @@ import os from 'os';
 import xml2js from "xml2js";
 import { parseStringPromise } from "xml2js";
 import unzipper from "unzipper";
-import { profile } from 'console';
+import { getSkinHistory } from "namemc-skinhistory";
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
 let ACCESS_TOKEN = ""; 
@@ -2588,9 +2588,44 @@ ipcMain.handle("mc:getProfile", async () => {
   }
 
   const data = await response.json();
-  console.log(data)
-  return data; 
+  let playerskinhistory = await getSkinHistory(obj1.username);
+
+  // Pre-compute hashes for existing skins in data.skins
+  for (const skin of data.skins) {
+    if (!skin.hash) {
+      skin.hash = await hashImage(skin.url);
+    }
+  }
+
+  for (let i = 0; i < playerskinhistory.length; i++) {
+    const newUrl = playerskinhistory[i];
+
+    // Get hash of the candidate image
+    const newHash = await hashImage(newUrl);
+
+    // Check if this hash already exists
+    const duplicate = data.skins.some(skin => skin.hash === newHash);
+
+    if (!duplicate) {
+      data.skins.push({
+        id: newUrl,
+        url: newUrl,
+        hash: newHash
+      });
+    }
+  }
+
+  console.log(data);
+  return data;
 });
+
+async function hashImage(url) {
+  const buffer = await fetch(url).then(r => r.arrayBuffer());
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 // ---- APPLY SKIN ----
 ipcMain.handle("mc:applySkin", async (event, skin) => {
