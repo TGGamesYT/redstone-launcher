@@ -1390,92 +1390,166 @@ function downloadFile(url, dest) {
   });
 }
 
-/* ─────────────── Updating ─────────────── */
+/* ─────────────── GitHub-Based Updater ─────────────── */
 
-// ---- CONFIG ----
-const CODEWORD = "sub2TGdoesCode"; // keep only in backend
-const UPDATE_URL = "https://redstone-launcher.com/updates.txt";
-
-// turn password into Fernet key
-function makeKey(codeword) {
-  return base64url(crypto.createHash("sha256").update(codeword).digest());
-}
-
-async function fetchUpdates() {
-  const res = await fetch(UPDATE_URL);
-  const encrypted = await res.text();
-
-  const key = makeKey(CODEWORD); // should return a base32 string
-
-  // create a Secret
-  const secret = new fernet.Secret(key);
-
-  // create a Token instance
-  const token = new fernet.Token({
-    secret: secret,
-    token: encrypted,
-    ttl: 0 // 0 = ignore expiration check
-  });
-
-  // decode the token
-  const decrypted = token.decode();
-
-  return JSON.parse(decrypted);
-}
-
-function compareVersions(a, b) {
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const ai = pa[i] || 0;
-    const bi = pb[i] || 0;
-    if (ai > bi) return 1;
-    if (ai < bi) return -1;
+/* ---------- Determine platform-specific asset ---------- */
+function getPlatformAssetName() {
+  switch (os.platform()) {
+    case "win32":
+      return "Redstone-Launcher.exe";
+    case "linux":
+      return "Redstone-Launcher.AppImage";
+    case "darwin":
+      return "Redstone-Launcher.dmg";
+    default:
+      return null;
   }
-  return 0;
 }
 
-ipcMain.handle("check-for-updates", async () => {
+/* ---------- Fetch JSON from GitHub ---------- */
+async function fetchJSON(url) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, { headers: { "User-Agent": "RedstoneLauncher-Updater" } }, res => {
+        let data = "";
+        res.on("data", chunk => (data += chunk));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch (err) {
+            reject(err);
+          }
+        });
+      })
+      .on("error", reject);
+  });
+}
+
+/* ---------- Check for updates ---------- */
+async function checkForUpdate() {
+  const apiURL = `https://api.github.com/repos/tggamesyt/redstone-launcher/releases/latest`;
+
+  let latest;
   try {
-    const updates = await fetchUpdates();
-
-    // latest version
-    const versions = Object.keys(updates).sort(compareVersions);
-    const latest = versions[versions.length - 1];
-
-    const current = app.getVersion();
-    const newer = compareVersions(latest, current) > 0;
-
-    if (!newer) {
-      return { updateAvailable: false };
-    }
-
-    return { updateAvailable: true, latest, url: updates[latest] };
+    latest = await fetchJSON(apiURL);
   } catch (err) {
-    devtoolsLog("Update check failed:", err);
+    console.error("Failed to check for updates:", err);
     return { updateAvailable: false, error: err.message };
   }
+
+  const currentVersion = app.getVersion();
+  const latestVersion = (latest.tag_name || "").replace(/^v/i, "");
+  devtoolsLog("current: " + currentVersion + ", latest: " + latestVersion)
+  if (!latestVersion || !isVersionNewer(latestVersion, currentVersion)) {
+    return { updateAvailable: false };
+  }
+  
+
+  const assetName = getPlatformAssetName();
+  const asset = latest.assets?.find(a => a.name === assetName);
+  devtoolsLog(assetName)
+  devtoolsLog(latest)
+
+  if (!asset) {
+    console.error("No matching asset found for this platform");
+    return { updateAvailable: false, error: "No asset for this platform" };
+  }
+
+  return {
+    updateAvailable: true,
+    version: latestVersion,
+    assetURL: asset.browser_download_url,
+    assetName
+  };
+}
+
+/* ---------- Download the update ---------- */
+async function downloadUpdate(assetURL, assetName) {
+  const downloadPath = path.join(app.getPath("temp"), assetName);
+
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(downloadPath);
+
+    function request(url) {
+      https.get(url, { headers: { "User-Agent": "RedstoneLauncher-Updater" } }, res => {
+        // Handle redirect (GitHub asset URLs ALWAYS redirect)
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return request(res.headers.location);
+        }
+
+        // Reject on bad status
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Download failed. Status: ${res.statusCode}`));
+        }
+
+        // Pipe into file
+        res.pipe(file);
+        file.on("finish", () => file.close(() => resolve(downloadPath)));
+      })
+      .on("error", err => {
+        fs.unlink(downloadPath, () => reject(err));
+      });
+    }
+
+    request(assetURL);
+  });
+}
+
+
+/* ---------- Install downloaded update ---------- */
+async function installUpdate(downloadPath) {
+  switch (os.platform()) {
+    case "win32":
+      spawn(downloadPath, [], {
+        detached: true,
+        stdio: "ignore"
+      }).unref();
+      app.quit();
+      break;
+
+    case "linux":
+      fs.chmodSync(downloadPath, 0o755);
+      spawn(downloadPath, [], { detached: true, stdio: "ignore" }).unref();
+      app.quit();
+      break;
+
+    case "darwin":
+      shell.openPath(downloadPath);
+      app.quit();
+      break;
+  }
+}
+
+/* ---------- IPC handlers ---------- */
+
+ipcMain.handle("check-for-updates", async () => {
+  return await checkForUpdate();
 });
 
-ipcMain.handle("download-and-install", async (event, fileId, version) => {
+ipcMain.handle("download-and-install", async (event, assetURL, assetName) => {
   try {
-    const savePath = path.join(app.getPath("temp"), `RedstoneLauncher-${version}.exe`);
-
-    // Direct download URL for Node
-    const gdriveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-
-    await downloadFile(gdriveDownloadUrl, savePath);
-
-    // Run installer
-    spawn(savePath, { shell: true, detached: true, stdio: "ignore" }).unref();
-    app.quit();
-
+    const path = await downloadUpdate(assetURL, assetName);
+    devtoolsLog(path)
+    await installUpdate(path);
     return { success: true };
   } catch (err) {
-    devtoolsLog("Update download failed:", err);
     return { success: false, error: err.message };
   }
 });
+
+function isVersionNewer(latest, current) {
+  const latestParts = latest.split('.').map(Number);
+  const currentParts = current.split('.').map(Number);
+
+  for (let i = 0; i < Math.max(latestParts.length, currentParts.length); i++) {
+    const l = latestParts[i] || 0;
+    const c = currentParts[i] || 0;
+    if (l > c) return true;     // latest is newer
+    if (l < c) return false;    // current is newer
+  }
+  return false; // equal
+}
+
 
 
 

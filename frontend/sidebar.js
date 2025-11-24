@@ -170,31 +170,55 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
 
 
   document.addEventListener("DOMContentLoaded", async () => {
-  const updateEl = document.getElementById("update");
-  const updateText = document.getElementById("updateText");
-  if (!updateEl) return;
-
-  // Ask backend if update exists
-  const result = await ipcRenderer.invoke("check-for-updates");
-
-  if (!result.updateAvailable) {
-    updateEl.style.display = "none";
-    return;
-  }
-
-  // Show button
-  updateEl.style.display = "block";
-  updateText.innerText = `Update to ${result.latest}`;
-
-  updateEl.onclick = async () => {
-    updateText.innerText = "Updating...";
-    const res = await ipcRenderer.invoke("download-and-install", result.url, result.latest);
-    if (!res.success) {
-      updateEl.updateText = "Update failed!";
-      console.error(res.error);
+    const updateEl = document.getElementById("update");
+    const updateText = document.getElementById("updateText");
+  
+    if (!updateEl || !updateText) return;
+  
+    // Ask backend if update exists
+    const result = await ipcRenderer.invoke("check-for-updates");
+  
+    // No update → hide list item
+    if (!result || !result.updateAvailable) {
+      updateEl.style.display = "none";
+      return;
     }
-  };
-});
+    const settings = await ipcRenderer.invoke('get-settings');
+    const autoUpdates = settings.autoUpdates ?? true;
+    if (!autoUpdates) {
+    // Show update button
+    updateEl.style.display = "flex"; // looks better than block for <li>
+    updateText.textContent = `Update to ${result.version}`;
+  
+    // Handle click
+    updateEl.onclick = async () => {
+  
+      updateText.textContent = "Downloading...";
+  
+      const res = await ipcRenderer.invoke(
+        "download-and-install",
+        result.assetURL,
+        result.assetName
+      );
+  
+      if (!res.success) {
+        updateText.textContent = "Update failed!";
+        console.error(res.error);
+        updateEl.style.pointerEvents = "auto";
+        return;
+      }
+  
+      updateText.textContent = "Installing...";
+    };
+  } else {
+    const res = await ipcRenderer.invoke(
+      "download-and-install",
+      result.assetURL,
+      result.assetName
+    );
+  }
+  });
+  
 
 updateSideBar()
 
