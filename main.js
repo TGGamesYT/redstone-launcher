@@ -2702,22 +2702,51 @@ async function hashImage(url) {
 }
 
 // ---- APPLY SKIN ----
+async function downloadSkin(url) {
+  return new Promise((resolve, reject) => {
+    const tempPath = path.join(os.tmpdir(), 'mc-skin.png');
+    const file = fs.createWriteStream(tempPath);
+
+    const options = {
+      headers: { 'User-Agent': 'RedstoneLauncher-SkinDownloader' }
+    };
+
+    https.get(url, options, res => {
+      if (res.statusCode !== 200) {
+        return reject(new Error(`Failed to download skin, status code ${res.statusCode}`));
+      }
+
+      res.pipe(file);
+      file.on('finish', () => file.close(() => resolve(tempPath)));
+    }).on('error', reject);
+  });
+}
+
+
 ipcMain.handle("mc:applySkin", async (event, skin) => {
-  let headers = await authHeaders();
-  const body = {
-    url: skin.url,
-    variant: skin.variant.toLowerCase()
-  };
+  const headers = await authHeaders(); // includes Authorization: Bearer <token>
+
+  // Download remote PNG first
+  const skinPath = await downloadSkin(skin.url);
+
+  const form = new FormData();
+  form.append('variant', (skin.variant || 'classic').toLowerCase());
+  form.append('file', fs.createReadStream(skinPath), {
+    contentType: 'image/png',
+    filename: 'skin.png'
+  });
 
   const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body)
+    method: 'POST',
+    headers: { ...headers, ...form.getHeaders() },
+    body: form
   });
 
   if (!res.ok) throw new Error(await res.text());
   return true;
 });
+
+
 
 // ---- APPLY CAPE ----
 ipcMain.handle("mc:applyCape", async (event, capeId) => {

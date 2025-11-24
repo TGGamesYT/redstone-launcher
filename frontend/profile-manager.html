@@ -10,7 +10,6 @@
 #content-wrapper {
   display: flex;
   flex-direction: row;
-  margin-left: 240px; /* space for sidebar */
   margin-top: 20px;
 }
 
@@ -18,8 +17,7 @@
 #skin_container {
   flex: 0 0 auto;
   margin-right: 20px;
-  border: 1px solid #333;
-  border-radius: 8px;
+  border-radius: var(--border-radius);
 }
 
 /* Cards column on the right */
@@ -28,13 +26,13 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-height: 800px;
+  max-height: calc(100vh - 38px);
   overflow-y: auto;
 }
 
 /* Group label (Skins / Capes headers) */
 .cards-header {
-  color: white;
+  color: var(--text-color);
   font-size: 20px;
   margin-bottom: 6px;
 }
@@ -47,9 +45,8 @@
 }
     .card {
   width: 160px;
-  border: 1px solid #444;
-  background: #222;
-  border-radius: 8px;
+  background: var(--base-color);
+  border-radius: var(--border-radius);
   margin: 10px;
   padding: 8px;
   cursor: pointer;
@@ -65,11 +62,11 @@
 
 .card-image {
   width: 100%;
-  border-radius: 6px;
+  border-radius: var(--border-radius);
 }
 
 .card-label {
-  color: white;
+  color: var(--text-color);
   margin-top: 6px;
   font-size: 14px;
 }
@@ -169,7 +166,6 @@ players = [];
       width: 600,
       height: 800
     });
-    skinViewer.loadPanorama("https://skinview3d-demo.vercel.app/img/panorama.png");
     const res = await fetch(`https://api.capes.dev/load/${encodeURIComponent(name)}`);
     if (!res.ok) {
       throw new Error(`API error: ${res.status}`);
@@ -202,12 +198,7 @@ function updatePresence(details, state = "Idle") {
     img.src = imgUrl;
     img.className = "card-image";
 
-    const text = document.createElement("div");
-    text.className = "card-label";
-    text.textContent = label;
-
     card.appendChild(img);
-    card.appendChild(text);
 
     card.onclick = onClick;
     return card;
@@ -236,7 +227,7 @@ function updatePresence(details, state = "Idle") {
 
     const imgUrl =
       `https://starlightskins.lunareclipse.studio/render/ultimate/notch/bust` +
-      `?cameraPosition=%7B"x"%3A"0"%2C"y"%3A"0"%2C"z"%3A"35"%7D&cameraFocalPoint=%20%7B"x"%3A"0"%2C"y"%3A"0"%2C"z"%3A"0"%7D` +
+      `?cameraPosition=%7B"x"%3A"0"%2C"y"%3A"0"%2C"z"%3A"35"%7D&cameraFocalPoint=%20%7B"x"%3A"0"%2C"y"%3A"0"%2C"z"%3A"0"%7D&dirLightPos=%7B"x"%3A"10"%2C"y"%3A"10"%2C"z"%3A"10"%7D` +
       `&capeTexture=${encodeURIComponent(cape.url)}`;
 
     const card = createCard(
