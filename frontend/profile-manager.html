@@ -136,7 +136,7 @@ players = [];
 
   async function updateSKin() {
     selectedplayer = await getSelectedPlayer();
-    const player = players.find(p => p.id === selectedplayer);
+    let player = players.find(p => p.id === selectedplayer);
     let name;
     if (!player.auth || !player.auth.name) {
       name = player.username;
@@ -185,6 +185,8 @@ function updatePresence(details, state = "Idle") {
 }
 
 (async () => {
+  let player = players.find(p => p.id === selectedplayer);
+  if (player?.type != "cracked") {
   const profile = await ipcRenderer.invoke("mc:getProfile");
   const skinsDiv = document.getElementById("skins");
   const capesDiv = document.getElementById("capes");
@@ -224,10 +226,10 @@ function updatePresence(details, state = "Idle") {
   // ---- Current capes ----
   profile.capes.forEach(cape => {
     const displayName = cape.alias || cape.id;
-
+    let player = players.find(p => p.id === selectedplayer);
     const imgUrl =
-      `https://starlightskins.lunareclipse.studio/render/ultimate/notch/bust` +
-      `?cameraPosition=%7B"x"%3A"0"%2C"y"%3A"0"%2C"z"%3A"35"%7D&cameraFocalPoint=%20%7B"x"%3A"0"%2C"y"%3A"0"%2C"z"%3A"0"%7D&dirLightPos=%7B"x"%3A"10"%2C"y"%3A"10"%2C"z"%3A"10"%7D` +
+      `https://starlightskins.lunareclipse.studio/render/ultimate/${player.username}/bust` +
+      `?cameraPosition=%7B"x"%3A"0"%2C"y"%3A"20"%2C"z"%3A"35"%7D&cameraFocalPoint=%20%7B"x"%3A"0"%2C"y"%3A"10"%2C"z"%3A"0"%7D&dirLightPos=%7B"x"%3A"10"%2C"y"%3A"10"%2C"z"%3A"10"%7D&cameraWidth=250&cameraHeight=600&cameraFOV=50` +
       `&capeTexture=${encodeURIComponent(cape.url)}`;
 
     const card = createCard(
@@ -239,6 +241,10 @@ function updatePresence(details, state = "Idle") {
 
     capesDiv.appendChild(card);
   });
+} else {
+  document.getElementById('cards-column').style.display = "none";
+  document.getElementById("content-wrapper").append("Skin Changing isnt available for cracked players");
+}
 })();
 
 

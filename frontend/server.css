@@ -627,3 +627,70 @@ a:hover {
   overflow-y: auto;
   padding-left: 12px;
 }
+
+#error-container {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 999999;
+}
+
+.error-popup {
+  position: relative;
+  min-width: 260px;
+  max-width: 400px;
+  padding: 14px 16px;
+  border-radius: var(--border-radius);
+  color: white;
+  font-family: sans-serif;
+  background: linear-gradient(135deg, #ff4d4d, #b30000);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+  animation: slideDown 0.25s ease-out;
+}
+
+.error-popup .close-btn {
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 16px;
+  color: rgba(255,255,255,0.8);
+}
+
+.error-popup .close-btn:hover {
+  color: white;
+}
+
+.error-timer {
+  height: 4px;
+  width: 100%;
+  background: rgba(255,255,255,0.3);
+  border-radius: 0 0 var(--border-radius) var(--border-radius);
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+}
+
+.error-timer-fill {
+  height: 100%;
+  background: white;
+  width: 100%;
+  transform-origin: left;
+  animation: timerShrink linear forwards;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translate(-50%, -15px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes timerShrink {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}

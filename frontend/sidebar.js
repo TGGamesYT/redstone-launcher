@@ -1,3 +1,36 @@
+function error(text, duration = 3000) {
+  console.error(text)
+  // Create container if needed
+  let container = document.getElementById("error-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "error-container";
+    document.body.appendChild(container);
+  }
+
+  // Create the popup
+  const popup = document.createElement("div");
+  popup.className = "error-popup";
+  popup.innerHTML = `
+    <span>${text}</span>
+    <span class="close-btn">&times;</span>
+    <div class="error-timer"><div class="error-timer-fill"></div></div>
+  `;
+
+  // Timer bar animation
+  popup.querySelector(".error-timer-fill").style.animationDuration = duration + "ms";
+
+  container.appendChild(popup);
+
+  // Close on "X"
+  popup.querySelector(".close-btn").onclick = () => popup.remove();
+
+  // Auto-remove
+  setTimeout(() => {
+    popup.remove();
+  }, duration);
+}
+
 function hexToRgb(hex) {
   hex = hex.replace(/^#/, '');
   return [

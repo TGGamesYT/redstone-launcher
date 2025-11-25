@@ -2401,6 +2401,7 @@ function login(username, password) {
 --------------------------------------------------------- */
 async function createAccount(username, password) {
   const res = await apiRequest(VPS_API + "/createUser", { username, password });
+  devtoolsLog(res)
   if (res.ok) saveCreds(username, password);
   return res;
 }
@@ -2485,6 +2486,22 @@ async function deleteAccount() {
   const res = await apiRequest(VPS_API + "/deleteUser", creds);
   if (fs.existsSync(CREDS_FILE)) fs.unlinkSync(CREDS_FILE);
   return res;
+}
+
+// log out
+async function logout() {
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "not_logged_in" };
+
+  // Just remove local creds, no API calls
+  try {
+    if (fs.existsSync(CREDS_FILE)) {
+      fs.unlinkSync(CREDS_FILE);
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: "logout_failed", details: err.message };
+  }
 }
 
 /* ---------------------------------------------------------
@@ -2613,6 +2630,10 @@ ipcMain.handle("frpc:checkSub", async (_, subdomain) => {
 // 9. deleteAccount()
 ipcMain.handle("frpc:deleteAccount", async () => {
   return await deleteAccount();
+});
+
+ipcMain.handle("frpc:logout", async () => {
+  return await logout();
 });
 
 ipcMain.handle("frpc:listRunningTunnels", async () => {

@@ -116,12 +116,30 @@
         <ul id="proxies"></ul>
       </div>
       <div id="loginpart" style="display:none;">
-        <h1>Log in</h1>
-        Logged in as <span id="loggedinas"></span><br>
+        <div id="loggedinpart" style="display: none;">
+          <h1>Logged in</h1>
+          Logged in as <span id="loggedinas"></span><br><br>
         <button id="deleteaccount">Delete Account</button><br>
+        <button id="logout">Log out</button><br>
+        </div>
+        <div id="loginerpart">
+          <h1>Log in</h1>
         <input type="text" id="username" placeholder="username"><br>
         <input type="text" id="password" placeholder="password"><br>
-        <button id="loginbutton">log in</button>
+        <button id="loginbutton">log in</button><br><br>
+        <a onclick="document.getElementById('createaccount').style.display='block';
+                    document.getElementById('loginerpart').style.display='none';" style="cursor: pointer;">
+            create a new account instead
+        </a>
+
+        </div>
+        <div id="createaccount" style="display: none;">
+          <h1>Create Account</h1>
+          <input type="text" id="createusername" placeholder="username"><br>
+          <input type="text" id="createpassword" placeholder="password"><br>
+          <input type="text" id="createpassword1" placeholder="password again"><br>
+          <button id="createaccountbutton">create</button>
+          </div>
       </div>
       <div id="newproxypart" style="display:none;">
         <h1>Create new proxy</h1>
@@ -325,14 +343,14 @@ initVersionSelect();
 async function updateLoginInfo() {
   const user = await ipcRenderer.invoke("frpc:getCreds");
   if (user?.username) {
+    $("loggedinpart").style.display = "block"
     $("loggedinas").textContent = user.username;
-    $("username").style.display = "none";
-    $("password").style.display = "none";
-    $("loginbutton").style.display = "none";
+    $("loginerpart").style.display = "none";
+
   } else {
-    $("username").style.display = "block";
-    $("password").style.display = "block";
-    $("loginbutton").style.display = "block";
+    $("loggedinpart").style.display = "none"
+    $("createaccount").style.display = "none"
+    $("loginerpart").style.display = "block";
   }
 }
 
@@ -345,6 +363,7 @@ function show(id) {
   $("proxypart").style.display = "none";
   $("loginpart").style.display = "none";
   $("newproxypart").style.display = "none";
+  $("createaccount").style.display = "none"
   $(id).style.display = "block";
 }
 
@@ -364,6 +383,29 @@ async function loginHandler() {
 }
 
 /* ---------------------------------------------------
+   create account
+--------------------------------------------------- */
+async function createaccount() {
+  if($("createpassword").value === $("createpassword1").value) {
+  const username = $("createusername").value;
+  const password = $("createpassword").value;
+  console.log("username: " + username)
+  console.log("password: " + password)
+
+  const res = await ipcRenderer.invoke("frpc:createAccount", username, password);
+  if (res?.ok) {
+    await refreshProxyList();
+    show("proxypart");
+    await updateLoginInfo();
+  } else {
+    error("Error: " + res.error)
+  }
+} else {
+  error("passwords not the same")
+}
+}
+
+/* ---------------------------------------------------
    CREATE NEW PROXY
 --------------------------------------------------- */
 let domain = false;
@@ -372,18 +414,19 @@ document.getElementById('domain').addEventListener("change", e => {
   });
 
 async function createProxyHandler() {
+  console.log("creating...")
   const identifier = $("proxyid").value;
   const localport = Number($("port").value);
-  console.log(domain)
   const params = {
     identifier,
     localport,
     hasdomain: domain,
     subdomain: identifier
   };
+  console.log(params)
 
   const res = await ipcRenderer.invoke("frpc:createTunnel", params);
-
+  console.log(res)
   if (res?.ok) {
     await refreshProxyList();
     show("proxypart");
@@ -451,12 +494,18 @@ document.querySelectorAll("#proxysidebar button").forEach(btn => {
 
 // Login button
 $("loginbutton").addEventListener("click", loginHandler);
+$("createaccountbutton").addEventListener("click", createaccount);
 
 // Create new proxy button
 $("createproxy").addEventListener("click", createProxyHandler);
 //delete button
 $("deleteaccount").addEventListener("click", async () => {
   await ipcRenderer.invoke("frpc:deleteAccount");
+  await updateLoginInfo();
+  show("loginpart");
+});
+$("logout").addEventListener("click", async () => {
+  await ipcRenderer.invoke("frpc:logout");
   await updateLoginInfo();
   show("loginpart");
 });
