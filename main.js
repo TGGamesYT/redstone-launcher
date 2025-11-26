@@ -2295,7 +2295,7 @@ ipcMain.handle('update-allow-cracked-testing', async (event, { value, password }
 });
 // proxy szar
 
-
+const heartbeatIntervals = {};
 const runningTunnels = {};
 const VPS_API = "http://157.180.40.103:8080";
 const DATA_DIR = path.join(dataDir, "frpc");
@@ -2305,7 +2305,25 @@ const FRPC_BIN = path.join(DATA_DIR, os.platform() === "win32" ? "frpc.exe" : "f
 /* ---------------------------------------------------------
    INTERNAL HELPERS
 --------------------------------------------------------- */
+function startHeartbeat(identifier) {
+  // már fut → ne indítsuk újra
+  if (heartbeatIntervals[identifier]) return;
 
+  heartbeatIntervals[identifier] = setInterval(async () => {
+    try {
+      await apiRequest(VPS_API + "/tunnelHeartbeat", { identifier });
+      devtoolsLog("Heartbeat sent for " + identifier);
+    } catch (err) {
+      devtoolsLog("Heartbeat failed for " + identifier + ": " + err.message);
+    }
+  }, 10_000); // 10 sec
+}
+function stopHeartbeat(identifier) {
+  if (heartbeatIntervals[identifier]) {
+    clearInterval(heartbeatIntervals[identifier]);
+    delete heartbeatIntervals[identifier];
+  }
+}
 async function apiRequest(endpoint, body) {
   const r = await fetch(endpoint, {
     method: "POST",
@@ -2364,10 +2382,11 @@ remote_port = ${tunnela.remote_port}
 
   // Track the running process
   runningTunnels[tunnela.identifier] = frpProcess;
-
+  startHeartbeat(tunnel)
   // Remove from map on exit
   frpProcess.on("exit", (code) => {
     devtoolsLog(`Tunnel ${tunnela.identifier} exited with code ${code}`);
+    stopHeartbeat(tunnel)
     delete runningTunnels[tunnela.identifier];
   });
 
@@ -2377,7 +2396,7 @@ remote_port = ${tunnela.remote_port}
 function stopTunnel(identifier) {
   const proc = runningTunnels[identifier];
   if (!proc) return { ok: false, error: "Tunnel not running" };
-
+  stopHeartbeat(identifier)
   proc.kill("SIGTERM");
   delete runningTunnels[identifier];
   return { ok: true };
