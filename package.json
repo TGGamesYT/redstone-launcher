@@ -1,7 +1,7 @@
 {
   "name": "redstone-launcher",
   "productName": "Redstone Launcher",
-  "version": "1.13.2",
+  "version": "1.13.3",
   "description": "A Minecraft launcher",
   "author": "Redstone Launcher Team",
   "main": "main.js",
@@ -32,7 +32,9 @@
     "namemc-skinhistory": "^1.0.1",
     "node-fetch": "^3.3.2",
     "prismarine-nbt": "^2.7.0",
+    "sharp": "^0.34.5",
     "skinview3d": "^3.4.1",
+    "ssim.js": "^3.5.0",
     "tar": "^7.5.2",
     "tar-fs": "^3.1.1",
     "three": "^0.180.0",

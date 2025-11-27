@@ -9,6 +9,8 @@ import tar from "tar-fs";
 import zlib from "zlib";
 import fs from 'fs';
 const fsp = fs.promises;
+import { ssim } from "ssim.js";
+import sharp from "sharp";
 import fetch from 'node-fetch';
 import { shell, app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
@@ -2678,60 +2680,227 @@ async function authHeaders() {
     "Content-Type": "application/json"
   };
 }
+const texturesDir = path.join(dataDir, "textures");
+const skinsJsonPath = path.join(texturesDir, "skins.json");
+const capesJsonPath = path.join(texturesDir, "capes.json");
 
-// ---- FETCH SKINS + CAPES ----
+// ------------------------
+// Helper: load JSON
+async function loadJSON(filePath) {
+  try {
+    const content = await fs.readFile(filePath, "utf-8");
+    return JSON.parse(content);
+  } catch {
+    return [];
+  }
+}
+
+// Helper: save JSON
+async function saveJSON(filePath, data) {
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+}
+
+// Helper: letöltés
+async function downloadFile(url, dest) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to download ${url}: ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  await fs.writeFile(dest, buffer);
+  return dest;
+}
+
+// ------------------------
+// 1️⃣ Skin törlése
+ipcMain.handle("skin:delete", async (event, skinHash) => {
+  const skins = await loadJSON(skinsJsonPath);
+  const index = skins.findIndex(s => s.hash === skinHash);
+  if (index === -1) return false;
+
+  const skin = skins[index];
+
+  // Törlés fájlból
+  try { await fs.unlink(skin.file); } catch {}
+
+  skins.splice(index, 1);
+  await saveJSON(skinsJsonPath, skins);
+  return true;
+});
+
+// ------------------------
+// 2️⃣ Új skin létrehozása (URL vagy local)
+ipcMain.handle("skin:add", async (event, options) => {
+  // options: { url: string, localFile?: string }
+  await fs.mkdir(texturesDir, { recursive: true });
+
+  let filePath;
+  if (options.url) {
+    const hash = crypto.createHash("sha256").update(options.url).digest("hex");
+    filePath = path.join(texturesDir, `${hash}.png`);
+    try {
+      await fs.access(filePath);
+    } catch {
+      await downloadFile(options.url, filePath);
+    }
+  } else if (options.localFile) {
+    const buffer = await fs.readFile(options.localFile);
+    const hash = crypto.createHash("sha256").update(buffer).digest("hex");
+    filePath = path.join(texturesDir, `${hash}.png`);
+    await fs.writeFile(filePath, buffer);
+  } else {
+    throw new Error("No url or localFile provided");
+  }
+
+  const hash = await hashImage(filePath);
+  const skins = await loadJSON(skinsJsonPath);
+  skins.push({ url: options.url || null, file: filePath, hash });
+  await saveJSON(skinsJsonPath, skins);
+
+  return { file: filePath, hash };
+});
+
+// ------------------------
+// 3️⃣ Cape letöltés (Mojang API, fallback a textures mappából)
+ipcMain.handle("capes:fetch", async (event, accessToken) => {
+  await fs.mkdir(texturesDir, { recursive: true });
+
+  let capes = [];
+  try {
+    const res = await fetch("https://api.minecraftservices.com/minecraft/profile", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) throw new Error("Mojang API error");
+    const data = await res.json();
+    capes = data.capes ?? [];
+
+    for (const cape of capes) {
+      const filePath = path.join(texturesDir, `${cape.id}.png`);
+      try { await fs.access(filePath); } catch {
+        await downloadFile(cape.url, filePath);
+      }
+      cape.localFile = filePath;
+    }
+
+    await saveJSON(capesJsonPath, capes);
+  } catch (err) {
+    console.warn("Mojang API failed, fallback to textures folder", err);
+    capes = await loadJSON(capesJsonPath);
+  }
+
+  return capes;
+});
+
+
+// SSIM compare függvény
+async function ssimCompare(file1, file2) {
+  try {
+    const i1 = await sharp(file1).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const i2 = await sharp(file2).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+    const { data: data1, info: info1 } = i1;
+    const { data: data2, info: info2 } = i2;
+
+    if (info1.width !== info2.width || info1.height !== info2.height) return 0;
+
+    const result = ssim(
+      { data: data1, width: info1.width, height: info1.height },
+      { data: data2, width: info2.width, height: info2.height }
+    );
+
+    return result.mssim;
+  } catch (err) {
+    console.error("SSIM decode error:", err);
+    return 0;
+  }
+}
+
 ipcMain.handle("mc:getProfile", async () => {
   // 1️⃣ Get selected player
-  let id = storage.get("selectedPlayerId", null);
-  let players = await loadPlayers();
+  const id = storage.get("selectedPlayerId", null);
+  const players = await loadPlayers();
   let obj1 = players.find(item => item.id === id);
   obj1 = await refreshPlayer(obj1);
-  console.log(obj1);
-  let accessToken = obj1?.auth?.access_token || null;
 
-  //shit
+  const accessToken = obj1?.auth?.access_token || null;
+  const skinsDir = path.join(dataDir, "textures");
+  const skinsJsonPath = path.join(skinsDir, "skins.json");
+
+  // 2️⃣ Create folder if missing
+  await fsp.mkdir(skinsDir, { recursive: true });
+
+  // 3️⃣ Fetch Mojang profile
   const response = await fetch("https://api.minecraftservices.com/minecraft/profile", {
     method: "GET",
-    headers: {
-      "Authorization": `Bearer ${accessToken}`
-    }
+    headers: { "Authorization": `Bearer ${accessToken}` }
   });
 
-  if (!response.ok) {
-    throw new Error(`HTTP error! Status: ${response.status}`);
-  }
-
+  if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
   const data = await response.json();
-  let playerskinhistory = await getSkinHistory(obj1.username);
 
-  // Pre-compute hashes for existing skins in data.skins
+  // Ensure arrays exist
+  data.skins ??= [];
+  data.capes ??= [];
+
+  // 4️⃣ Download Mojang skins locally
   for (const skin of data.skins) {
-    if (!skin.hash) {
-      skin.hash = await hashImage(skin.url);
+    const filePath = path.join(skinsDir, `${skin.textureKey || skin.hash || skin.id}.png`);
+    try { await fsp.access(filePath); } catch {
+      const img = await fetch(skin.url);
+      const buffer = Buffer.from(await img.arrayBuffer());
+      await fsp.writeFile(filePath, buffer);
+    }
+    skin.localFile = filePath;
+    if (!skin.hash) skin.hash = await hashImage(skin.url); // opcionális
+  }
+
+  // 5️⃣ Fetch NameMC skins
+  const nmSkins = await getSkinHistory(obj1.username);
+  const savedSkins = [];
+
+  for (const url of nmSkins) {
+    const hash = await hashImage(url); // opcionális, fájl névhez
+    const filePath = path.join(skinsDir, `${hash}_nm.png`);
+
+    // Download
+    try { await fsp.access(filePath); } catch {
+      try {
+        const img = await fetch(url);
+        const buffer = Buffer.from(await img.arrayBuffer());
+        await fsp.writeFile(filePath, buffer);
+      } catch (err) { console.error("Failed to download NM skin:", err); continue; }
+    }
+
+    // SSIM alapú duplikáció ellenőrzés
+    let isDuplicate = false;
+    for (const mSkin of data.skins) {
+      if (!mSkin.localFile) continue;
+      const similarity = await ssimCompare(filePath, mSkin.localFile);
+      if (similarity > 0.99) {
+        isDuplicate = true;
+        break;
+      }
+    }
+
+    if (!isDuplicate) {
+      const newSkin = { id: url, url, hash, localFile: filePath };
+      data.skins.push(newSkin);
+      savedSkins.push(newSkin);
     }
   }
 
-  for (let i = 0; i < playerskinhistory.length; i++) {
-    const newUrl = playerskinhistory[i];
+  // 6️⃣ Save JSON of NM skins
+  await fsp.writeFile(skinsJsonPath, JSON.stringify(savedSkins, null, 2));
 
-    // Get hash of the candidate image
-    const newHash = await hashImage(newUrl);
-
-    // Check if this hash already exists
-    const duplicate = data.skins.some(skin => skin.hash === newHash);
-
-    if (!duplicate) {
-      data.skins.push({
-        id: newUrl,
-        url: newUrl,
-        hash: newHash
-      });
-    }
-  }
-
-  console.log(data);
-  return data;
+  // 7️⃣ Return final structure
+  return {
+    id: data.id,
+    name: data.name,
+    skins: data.skins,     // Mojang + NM
+    capes: data.capes,     // csak Mojang capek
+    profileActions: data.profileActions || {}
+  };
 });
+
+
 
 async function hashImage(url) {
   const buffer = await fetch(url).then(r => r.arrayBuffer());

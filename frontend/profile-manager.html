@@ -121,17 +121,11 @@
   </div>
 
 </div>
-
+<script src="skinview3d.bundle.js"></script>
 <script>
 players = [];
       const { ipcRenderer } = require('electron');
       async function getSelectedPlayer() {return await ipcRenderer.invoke('get-selected-player')}
-      let skinview3d = null;
-      try {
-        skinview3d = require("skinview3d");
-      } catch (err) {
-        console.warn("skinview3d failed to load:", err);
-      }
       let selectedplayer;
 
   async function updateSKin() {
