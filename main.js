@@ -2700,15 +2700,6 @@ async function saveJSON(filePath, data) {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2));
 }
 
-// Helper: letöltés
-async function downloadFile(url, dest) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to download ${url}: ${res.status}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  await fs.writeFile(dest, buffer);
-  return dest;
-}
-
 // ------------------------
 // 1️⃣ Skin törlése
 ipcMain.handle("skin:delete", async (event, skinHash) => {
