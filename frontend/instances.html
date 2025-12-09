@@ -134,8 +134,12 @@
     <div style="background:var(--third-color); padding:20px; border-radius:8px; width:300px;">
       <h3>Import Instance</h3>
       <p>Select source:</p>
+      <div id="otherimports">
       <button id="importMrpackBtn">From Modrinth (.mrpack)</button>
       <button id="importFromZipBtn">From CurseForge (.zip)</button>
+    </div>
+      <button id="importFromCodeBtn">From CurseForge Share Code</button>
+      <label id="cursecodeholder" style="display: none;">Enter Code: <input id="cursecode" placeholder="Never gonna.." /></label>
       <div style="margin-top:10px;">
         <button id="importCancelBtn">Cancel</button>
       </div>
@@ -862,6 +866,34 @@ menu.addEventListener("click", e => e.stopPropagation());
       } catch (err) {
         importFromZipBtn.textContent = "Error importing .zip: " + err.message;
       }
+    };
+    let codedisplay = false;
+    importFromCodeBtn.onclick = async () => {
+      if (codedisplay) {
+      try {
+        let code = document.getElementById('cursecode')
+        codedisplay = false;
+        document.getElementById('cursecodeholder').style.display = "none";
+        document.getElementById('otherimports').style.display = "block"
+        importFromCodeBtn.textContent = "From CurseForge Share Code";
+        const result = await ipcRenderer.invoke("import-curseforge-code", code.value);
+        if (result?.success) {
+          importFromCodeBtn.textContent = `Imported: ${result.profile.name}`;
+          ipcRenderer.send("get-profiles");
+          importModal.style.display = "none";
+          addInstanceModal.style.display = "none";
+        } else {
+          importFromCodeBtn.textContent = "Failed: " + (result?.error || "Unknown");
+        }
+      } catch (err) {
+        importFromCodeBtn.textContent = "Error importing .zip: " + err.message;
+      } 
+    } else {
+      importFromCodeBtn.textContent = "Import!";
+      document.getElementById('otherimports').style.display = "none"
+      document.getElementById('cursecodeholder').style.display = "block";
+      codedisplay = true;
+    }
     };
 
     importCancelBtn.onclick = () => {

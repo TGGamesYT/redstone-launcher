@@ -874,6 +874,38 @@ ipcMain.handle("import-curseforge-zip", async () => {
     return { success: false, error: err.message };
   }
 });
+ipcMain.handle("import-curseforge-code", async (e, code) => {
+  try {
+    // --- 1. Validate input ---
+    if (!code || typeof code !== "string" || code.trim() === "") {
+      return { success: false, error: "No CurseForge code provided"};
+    }
+
+    const dataDir = path.join(process.env.APPDATA || process.env.HOME, ".yourApp");
+    const tempDir = path.join(dataDir, "temp");
+
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+    const zipPath = path.join(tempDir, `${code}.zip`);
+    const url = `https://api.curseforge.com/v1/shared-profile/${code}`;
+
+    // --- 2. Download file ---
+    try {
+      await downloadFile(url, zipPath);
+    } catch (downloadErr) {
+      return { 
+        success: false, 
+        error: downloadErr.message || "Failed to download CurseForge profile"
+      };
+    }
+
+    // --- 3. Call your existing import handler ---
+    return await curseforgeImport(zipPath);
+
+  } catch (err) {
+    return { success: false, error: err.message,};
+  }
+});
 
 async function getModInfo(projectID) {
   const response = await fetch(`${WORKER_URL}/mods?modId=${projectID}`, {
