@@ -33,7 +33,7 @@ import unzipper from "unzipper";
 import { getSkinHistory } from "namemc-skinhistory";
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
-let ACCESS_TOKEN = ""; 
+let ACCESS_TOKEN = "";
 
 const CLASS_ID_FOLDERS = {
   6: "mods",
@@ -103,56 +103,56 @@ function computeSHA1(filePath) {
 const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, startTime }
 
 function startInstance(id, pid) {
-    const now = Date.now();
-    const key = `${id}-${pid}`; // unique per process
-    runningInstances.set(key, { id, pid, startTime: now });
-    devtoolsLog(`[Tracker] Started instance ${id} (PID ${pid})`);
+  const now = Date.now();
+  const key = `${id}-${pid}`; // unique per process
+  runningInstances.set(key, { id, pid, startTime: now });
+  devtoolsLog(`[Tracker] Started instance ${id} (PID ${pid})`);
 }
 
 function stopInstance(id, pid = null) {
-    if (pid) {
-        const key = `${id}-${pid}`;
-        if (runningInstances.has(key)) {
-            runningInstances.delete(key);
-            devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${pid})`);
-        }
-    } else {
-        // Stop all with same ID
-        for (const [key, data] of runningInstances.entries()) {
-            if (data.id === id) {
-                runningInstances.delete(key);
-                devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${data.pid})`);
-            }
-        }
+  if (pid) {
+    const key = `${id}-${pid}`;
+    if (runningInstances.has(key)) {
+      runningInstances.delete(key);
+      devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${pid})`);
     }
+  } else {
+    // Stop all with same ID
+    for (const [key, data] of runningInstances.entries()) {
+      if (data.id === id) {
+        runningInstances.delete(key);
+        devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${data.pid})`);
+      }
+    }
+  }
 }
 
 function isInstanceRunning(id) {
-    for (const data of runningInstances.values()) {
-        if (data.id === id) return true;
-    }
-    return false;
+  for (const data of runningInstances.values()) {
+    if (data.id === id) return true;
+  }
+  return false;
 }
 
 function getRunningInstances() {
-    return Array.from(runningInstances.values());
+  return Array.from(runningInstances.values());
 }
 
 function stopByPid(pid) {
-    for (const [key, data] of runningInstances.entries()) {
-        if (data.pid === pid) {
-            try {
-                process.kill(pid);
-                runningInstances.delete(key);
-                devtoolsLog(`[Tracker] Killed instance ${data.id} (PID ${pid})`);
-                return true;
-            } catch (err) {
-                devtoolsLog(`[Tracker] Failed to kill PID ${pid}:`, err.message);
-                return false;
-            }
-        }
+  for (const [key, data] of runningInstances.entries()) {
+    if (data.pid === pid) {
+      try {
+        process.kill(pid);
+        runningInstances.delete(key);
+        devtoolsLog(`[Tracker] Killed instance ${data.id} (PID ${pid})`);
+        return true;
+      } catch (err) {
+        devtoolsLog(`[Tracker] Failed to kill PID ${pid}:`, err.message);
+        return false;
+      }
     }
-    return false;
+  }
+  return false;
 }
 const storage = new Store();
 const settings = new Store();
@@ -269,8 +269,8 @@ function createWindow() {
     minWidth: 1000,
     minHeight: 800,
     icon: path.join(iconPath),
-    frame: false, 
-    webPreferences: { 
+    frame: false,
+    webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
     }
@@ -364,6 +364,10 @@ function setSelectedPlayer(id) {
 
 ipcMain.handle('get-settings', () => {
   return settings.store;
+});
+
+ipcMain.handle('get-setting', (event, key) => {
+  return settings.get(key);
 });
 
 ipcMain.on('save-settings', (event, newsettings) => {
@@ -461,7 +465,7 @@ ipcMain.handle('are-crackeds-allowed', (event) => {
   // Check if there's at least one Microsoft account
   const hasMicrosoftAccount = players.some(p => p.type === 'microsoft');
 
-  return(hasMicrosoftAccount || ALLOW_CRACKED_TESTING)
+  return (hasMicrosoftAccount || ALLOW_CRACKED_TESTING)
 });
 
 // Delete player by ID
@@ -505,9 +509,9 @@ ipcMain.on("login-microsoft", async (event) => {
     event.reply("players-updated", players);
     setSelectedPlayer(id)
   } catch (err) {
-  devtoolsLog("MS login failed: " + err);
-  event.reply("login-error", "MS login failed: " + (err?.message || JSON.stringify(err) || String(err)));
-}
+    devtoolsLog("MS login failed: " + err);
+    event.reply("login-error", "MS login failed: " + (err?.message || JSON.stringify(err) || String(err)));
+  }
 });
 
 // Get all players
@@ -631,7 +635,7 @@ ipcMain.on('get-profiles-latest', async (event) => {
   try {
     ensureFile(profilesPath);
     let unsorted = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
-    const profiles =  await applySort(unsorted, "lastused-desc", null);
+    const profiles = await applySort(unsorted, "lastused-desc", null);
     event.reply('profiles-list', profiles);
   } catch (err) {
     devtoolsLog('Failed to load profiles:', err);
@@ -691,62 +695,62 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     let quickplaybool = true
     let quickplayip = serverIp
 
-      const profiles = await loadProfiles();
-  const players = loadPlayers();
+    const profiles = await loadProfiles();
+    const players = loadPlayers();
 
-  const profile = profiles.find(p => p.id === profileId);
-  if (!profile) return event.reply('launch-error', "Profile not found");
+    const profile = profiles.find(p => p.id === profileId);
+    if (!profile) return event.reply('launch-error', "Profile not found");
 
-  const player = players.find(p => p.id === playerId);
-  if (!player) return event.reply('launch-error', "Player not found");
+    const player = players.find(p => p.id === playerId);
+    if (!player) return event.reply('launch-error', "Player not found");
 
-  let auth;
-  if (player.type === "cracked") {
-    auth = { name: player.username, uuid: "0", access_token: "0" };
-  } else {
-    auth = player.auth;
-  }
-  let quickplay = null;
-  if (quickplaybool) {
-    quickplay = {
-      "type": 'legacy',
-      "identifier": quickplayip
+    let auth;
+    if (player.type === "cracked") {
+      auth = { name: player.username, uuid: "0", access_token: "0" };
+    } else {
+      auth = player.auth;
     }
-  }
+    let quickplay = null;
+    if (quickplaybool) {
+      quickplay = {
+        "type": 'legacy',
+        "identifier": quickplayip
+      }
+    }
 
-  const rootDir = path.join(dataDir, 'client', String(profile.id));
-  fs.mkdirSync(rootDir, { recursive: true });
+    const rootDir = path.join(dataDir, 'client', String(profile.id));
+    fs.mkdirSync(rootDir, { recursive: true });
 
-  const launcher = new Client();
-  let loaderer;
-  if (profile.loader == "fabric") {
-    loaderer = fabric
-  } else if (profile.loader == "quilt") {
-    loaderer = quilt
-  } else if (profile.loader == "forge") {
-    loaderer = forge
-  } else if (profile.loader == "neoforge") {
-    loaderer = neoforge
-  } else {
-    loaderer = vanilla
-  } 
-  const launcherConfig = await loaderer.getMCLCLaunchConfig({
-    gameVersion: profile.version,
-    rootPath: rootDir
-  });
-  let opts = {
-    ...launcherConfig,
-    authorization: auth,
-    memory: { max: "4G", min: "1G" },
-    overrides: {
-      detached: false
-    },
-    quickplay
-  }
-  launcher.launch(opts);
+    const launcher = new Client();
+    let loaderer;
+    if (profile.loader == "fabric") {
+      loaderer = fabric
+    } else if (profile.loader == "quilt") {
+      loaderer = quilt
+    } else if (profile.loader == "forge") {
+      loaderer = forge
+    } else if (profile.loader == "neoforge") {
+      loaderer = neoforge
+    } else {
+      loaderer = vanilla
+    }
+    const launcherConfig = await loaderer.getMCLCLaunchConfig({
+      gameVersion: profile.version,
+      rootPath: rootDir
+    });
+    let opts = {
+      ...launcherConfig,
+      authorization: auth,
+      memory: { max: "4G", min: "1G" },
+      overrides: {
+        detached: false
+      },
+      quickplay
+    }
+    launcher.launch(opts);
 
-  launcher.on('debug', (msg) => event.reply('launcher-log', msg));
-  launcher.on('error', (err) => event.reply('launcher-log', "ERROR: " + err.message));
+    launcher.on('debug', (msg) => event.reply('launcher-log', msg));
+    launcher.on('error', (err) => event.reply('launcher-log', "ERROR: " + err.message));
 
     return { success: true, profile_main };
   } catch (err) {
@@ -755,7 +759,7 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
 });
 
 async function mrpackFromUrl(url) {
-  const tmpFile = join(os.tmpdir(), `tmp-${Date.now()}.mrpack`);
+  const tmpFile = path.join(os.tmpdir(), `tmp-${Date.now()}.mrpack`);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to download mrpack: ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
@@ -766,74 +770,74 @@ async function mrpackFromUrl(url) {
 async function mrpack(mrpackPath) {
   const zip = new AdmZip(mrpackPath);
 
-    const indexEntry = zip.getEntry("modrinth.index.json");
-    if (!indexEntry) return { success: false, error: "modrinth.index.json not found in .mrpack" };
-    const indexJson = JSON.parse(indexEntry.getData().toString("utf8"));
+  const indexEntry = zip.getEntry("modrinth.index.json");
+  if (!indexEntry) return { success: false, error: "modrinth.index.json not found in .mrpack" };
+  const indexJson = JSON.parse(indexEntry.getData().toString("utf8"));
 
-    // Determine loader and Minecraft version
-    const deps = indexJson.dependencies || {};
-    let loader = "vanilla";
-    if (deps["fabric-loader"]) loader = "fabric";
-    else if (deps["quilt-loader"]) loader = "quilt";
-    else if (deps["forge"]) loader = "forge";
-    else if (deps["neoforge"]) loader = "neoforge";
-    const mcVersion = deps["minecraft"] || "1.20.1";
+  // Determine loader and Minecraft version
+  const deps = indexJson.dependencies || {};
+  let loader = "vanilla";
+  if (deps["fabric-loader"]) loader = "fabric";
+  else if (deps["quilt-loader"]) loader = "quilt";
+  else if (deps["forge"]) loader = "forge";
+  else if (deps["neoforge"]) loader = "neoforge";
+  const mcVersion = deps["minecraft"] || "1.20.1";
 
-    // Create instance folder
-    const profilesDir = path.join(dataDir, "client");
-    if (!fs.existsSync(profilesDir)) fs.mkdirSync(profilesDir, { recursive: true });
-    const profileFolder = path.join(profilesDir, `${profileId}`);
-    fs.mkdirSync(profileFolder);
+  // Create instance folder
+  const profilesDir = path.join(dataDir, "client");
+  if (!fs.existsSync(profilesDir)) fs.mkdirSync(profilesDir, { recursive: true });
+  const profileFolder = path.join(profilesDir, `${profileId}`);
+  fs.mkdirSync(profileFolder);
 
-    // Handle overrides inside the .mrpack (everything except modrinth.index.json)
-zip.getEntries().forEach(entry => {
-  if (!entry.isDirectory && entry.entryName !== "modrinth.index.json") {
-    // If the entry is inside "overrides/", strip that prefix
-    let relativePath = entry.entryName;
-    if (relativePath.startsWith("overrides/")) {
-      relativePath = relativePath.slice("overrides/".length);
+  // Handle overrides inside the .mrpack (everything except modrinth.index.json)
+  zip.getEntries().forEach(entry => {
+    if (!entry.isDirectory && entry.entryName !== "modrinth.index.json") {
+      // If the entry is inside "overrides/", strip that prefix
+      let relativePath = entry.entryName;
+      if (relativePath.startsWith("overrides/")) {
+        relativePath = relativePath.slice("overrides/".length);
+      }
+
+      // Only process files inside overrides or other root-level files
+      if (!relativePath) return;
+
+      const entryPath = path.join(profileFolder, relativePath);
+      const entryDir = path.dirname(entryPath);
+      if (!fs.existsSync(entryDir)) fs.mkdirSync(entryDir, { recursive: true });
+      fs.writeFileSync(entryPath, entry.getData());
     }
+  });
 
-    // Only process files inside overrides or other root-level files
-    if (!relativePath) return;
+  // Download files listed in indexJson.files
+  for (const fileObj of indexJson.files || []) {
+    const filePath = path.join(profileFolder, fileObj.path.replace(/\//g, path.sep));
+    const fileDir = path.dirname(filePath);
+    if (!fs.existsSync(fileDir)) fs.mkdirSync(fileDir, { recursive: true });
 
-    const entryPath = path.join(profileFolder, relativePath);
-    const entryDir = path.dirname(entryPath);
-    if (!fs.existsSync(entryDir)) fs.mkdirSync(entryDir, { recursive: true });
-    fs.writeFileSync(entryPath, entry.getData());
+    const url = fileObj.downloads[0]; // we take the first URL
+    await downloadFile(url, filePath)
   }
-});
 
-    // Download files listed in indexJson.files
-    for (const fileObj of indexJson.files || []) {
-      const filePath = path.join(profileFolder, fileObj.path.replace(/\//g, path.sep));
-      const fileDir = path.dirname(filePath);
-      if (!fs.existsSync(fileDir)) fs.mkdirSync(fileDir, { recursive: true });
+  // Optional: read icon from pack
+  let icon = null;
+  const iconEntry = zip.getEntry("icon.png");
+  if (iconEntry) icon = iconEntry.getData().toString("base64");
 
-      const url = fileObj.downloads[0]; // we take the first URL
-      await downloadFile(url, filePath)
-    }
+  const newProfile = {
+    id: profileId,
+    name: indexJson.name || "Imported Profile",
+    version: mcVersion,
+    loader,
+    icon,
+    created: Date.now()
+  };
 
-    // Optional: read icon from pack
-    let icon = null;
-    const iconEntry = zip.getEntry("icon.png");
-    if (iconEntry) icon = iconEntry.getData().toString("base64");
+  const profiles = await loadProfiles();
+  profiles.push(newProfile);
+  saveProfiles(profiles);
+  devtoolsLog(profileId)
 
-    const newProfile = {
-      id: profileId,
-      name: indexJson.name || "Imported Profile",
-      version: mcVersion,
-      loader,
-      icon,
-      created: Date.now()
-    };
-
-    const profiles = await loadProfiles();
-    profiles.push(newProfile);
-    saveProfiles(profiles);
-    devtoolsLog(profileId)
-
-    return { success: true, profile: newProfile };
+  return { success: true, profile: newProfile };
 }
 
 async function getDownloadUrl(projectID, fileID) {
@@ -878,7 +882,7 @@ ipcMain.handle("import-curseforge-code", async (e, code) => {
   try {
     // --- 1. Validate input ---
     if (!code || typeof code !== "string" || code.trim() === "") {
-      return { success: false, error: "No CurseForge code provided"};
+      return { success: false, error: "No CurseForge code provided" };
     }
 
     const dataDir = path.join(process.env.APPDATA || process.env.HOME, ".yourApp");
@@ -893,8 +897,8 @@ ipcMain.handle("import-curseforge-code", async (e, code) => {
     try {
       await downloadFile(url, zipPath);
     } catch (downloadErr) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: downloadErr.message || "Failed to download CurseForge profile"
       };
     }
@@ -903,7 +907,7 @@ ipcMain.handle("import-curseforge-code", async (e, code) => {
     return await curseforgeImport(zipPath);
 
   } catch (err) {
-    return { success: false, error: err.message,};
+    return { success: false, error: err.message, };
   }
 });
 
@@ -1165,7 +1169,7 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     loaderer = neoforge
   } else {
     loaderer = vanilla
-  } 
+  }
   const launcherConfig = await loaderer.getMCLCLaunchConfig({
     gameVersion: profile.version,
     rootPath: rootDir
@@ -1193,8 +1197,8 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
 
   // Handle process exit
   childProcess.on('exit', (code) => {
-      stopInstance(profileId, pid);
-      event.reply('launcher-log', `[INFO] Instance "${profileId}" exited with code ${code}`);
+    stopInstance(profileId, pid);
+    event.reply('launcher-log', `[INFO] Instance "${profileId}" exited with code ${code}`);
   });
 });
 
@@ -1373,29 +1377,29 @@ ipcMain.handle("get-player", async (event, playerId) => {
 });
 
 ipcMain.handle('set-player-skin', async (event, { playerId, skinPath, model }) => {
-    const players = loadPlayers();
-    const player = players.find(p => p.id === Number(playerId));
-    if (!player || player.type !== 'microsoft') throw new Error('Invalid Microsoft player');
+  const players = loadPlayers();
+  const player = players.find(p => p.id === Number(playerId));
+  if (!player || player.type !== 'microsoft') throw new Error('Invalid Microsoft player');
 
-    const token = player.auth.access_token;
+  const token = player.auth.access_token;
 
-    const skinBuffer = fs.readFileSync(skinPath);
-    const fileName = require('path').basename(skinPath);
+  const skinBuffer = fs.readFileSync(skinPath);
+  const fileName = require('path').basename(skinPath);
 
-    const form = new FormData();
-    form.append('model', model);
-    form.append('file', skinBuffer, { filename: fileName });
+  const form = new FormData();
+  form.append('model', model);
+  form.append('file', skinBuffer, { filename: fileName });
 
-    const res = await fetch('https://api.minecraftservices.com/minecraft/profile/skins', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            ...form.getHeaders()
-        },
-        body: form
-    });
+  const res = await fetch('https://api.minecraftservices.com/minecraft/profile/skins', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      ...form.getHeaders()
+    },
+    body: form
+  });
 
-    if (!res.ok) throw new Error(`Failed to upload skin: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to upload skin: ${res.statusText}`);
 });
 
 
@@ -1418,7 +1422,7 @@ function downloadFile(url, dest) {
       res.pipe(file);
       file.on("finish", () => file.close(resolve));
     }).on("error", (err) => {
-      fs.unlink(dest, ()=>{}); // delete partial file
+      fs.unlink(dest, () => { }); // delete partial file
       reject(err);
     });
   });
@@ -1477,7 +1481,7 @@ async function checkForUpdate() {
   if (!latestVersion || !isVersionNewer(latestVersion, currentVersion)) {
     return { updateAvailable: false };
   }
-  
+
 
   const assetName = getPlatformAssetName();
   const asset = latest.assets?.find(a => a.name === assetName);
@@ -1520,9 +1524,9 @@ async function downloadUpdate(assetURL, assetName) {
         res.pipe(file);
         file.on("finish", () => file.close(() => resolve(downloadPath)));
       })
-      .on("error", err => {
-        fs.unlink(downloadPath, () => reject(err));
-      });
+        .on("error", err => {
+          fs.unlink(downloadPath, () => reject(err));
+        });
     }
 
     request(assetURL);
@@ -1705,7 +1709,7 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
     for (const f of files) {
       const buffer = await fsp.readFile(f.full);
       const { sha1, sha512 } = computeHashes(buffer);
-      const relPath = f.rel.replace(/\\/g,'/');
+      const relPath = f.rel.replace(/\\/g, '/');
 
       // Determine environment
       let env = { client: 'optional', server: 'optional' };
@@ -1749,7 +1753,7 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
     }
 
     // Create .mrpack zip
-    const mrpackName = `${profile.name.replace(/[<>:"/\\|?*\x00-\x1F]/g,'_') || 'pack'}-${profile.id}.mrpack`;
+    const mrpackName = `${profile.name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_') || 'pack'}-${profile.id}.mrpack`;
     const mrpackPath = path.join(dataDir, mrpackName);
     devtoolsLog("[mrpack] Creating zip:", mrpackPath);
 
@@ -1879,7 +1883,7 @@ async function getNeoForgeLatestVersion() {
   const versions = parsed.metadata.versioning[0].versions[0].version;
   const latest = versions.reduce((max, v) =>
     compareVersions(v, max) > 0 ? v : max
-  , versions[0]);
+    , versions[0]);
 
   return `neoforge-${latest}`;
 }
@@ -1951,9 +1955,9 @@ ipcMain.on("open-folder-path", async (event, { pather }) => {
 
 // check tab
 ipcMain.handle("check-instance-tab", async (event, { profileId, tab }) => {
-    const basePath = path.join(dataDir, 'client', profileId.toString(), tab);
-    if (!fs.existsSync(basePath)) return false;
-    return tab === "servers" || fs.readdirSync(basePath).length > 0;
+  const basePath = path.join(dataDir, 'client', profileId.toString(), tab);
+  if (!fs.existsSync(basePath)) return false;
+  return tab === "servers" || fs.readdirSync(basePath).length > 0;
 });
 
 // get files
@@ -2128,128 +2132,128 @@ ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, fil
 
 // servers tab
 ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
-    const filePath = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
+  const filePath = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
 
-    // if file doesn't exist, return empty
-    if (!fs.existsSync(filePath)) return [];
+  // if file doesn't exist, return empty
+  if (!fs.existsSync(filePath)) return [];
 
-    const data = fs.readFileSync(filePath);
-    let nbtData;
+  const data = fs.readFileSync(filePath);
+  let nbtData;
 
-    try {
-        // parse using prismarine-nbt
-        nbtData = await nbt.parse(data);
-    } catch (err) {
-        devtoolsLog("Failed to parse servers.dat:", err);
-        return [];
-    }
+  try {
+    // parse using prismarine-nbt
+    nbtData = await nbt.parse(data);
+  } catch (err) {
+    devtoolsLog("Failed to parse servers.dat:", err);
+    return [];
+  }
 
-    // simplify
-    let simplified;
-    try {
-        simplified = nbt.simplify(nbtData.parsed);
-    } catch (err) {
-        devtoolsLog("Failed to simplify servers.dat:", err);
-        return [];
-    }
+  // simplify
+  let simplified;
+  try {
+    simplified = nbt.simplify(nbtData.parsed);
+  } catch (err) {
+    devtoolsLog("Failed to simplify servers.dat:", err);
+    return [];
+  }
 
-    // ensure simplified is an object and has servers list
-    const serversList = Array.isArray(simplified.servers) ? simplified.servers : [];
+  // ensure simplified is an object and has servers list
+  const serversList = Array.isArray(simplified.servers) ? simplified.servers : [];
 
-    return serversList.map(s => ({
-        name: s.name || "Unknown",
-        ip: s.ip || "",
-        icon: s.icon || null,
-        acceptTextures: s.acceptTextures ?? 0,
-        folder: path.join(dataDir, 'client', profileId.toString())
-    }));
+  return serversList.map(s => ({
+    name: s.name || "Unknown",
+    ip: s.ip || "",
+    icon: s.icon || null,
+    acceptTextures: s.acceptTextures ?? 0,
+    folder: path.join(dataDir, 'client', profileId.toString())
+  }));
 });
 
 
 // add server
 ipcMain.handle("add-instance-server", async (event, { profileId, name, ip, icon }) => {
-    const serversFile = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
+  const serversFile = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
 
-    let serversList = [];
+  let serversList = [];
 
-    if (fs.existsSync(serversFile)) {
-        const data = fs.readFileSync(serversFile);
-        try {
-            const parsed = await nbt.parse(data);
-            const simplified = nbt.simplify(parsed.parsed);
-            serversList = Array.isArray(simplified.servers) ? simplified.servers : [];
-        } catch (err) {
-            devtoolsLog("Failed to parse existing servers.dat, starting empty:", err);
-            serversList = [];
-        }
+  if (fs.existsSync(serversFile)) {
+    const data = fs.readFileSync(serversFile);
+    try {
+      const parsed = await nbt.parse(data);
+      const simplified = nbt.simplify(parsed.parsed);
+      serversList = Array.isArray(simplified.servers) ? simplified.servers : [];
+    } catch (err) {
+      devtoolsLog("Failed to parse existing servers.dat, starting empty:", err);
+      serversList = [];
     }
+  }
 
-    // Add new server safely
-    const newServer = {};
-    if (name != null) newServer.name = name;
-    if (ip != null) newServer.ip = ip;
-    if (icon != null) newServer.icon = icon;
-    newServer.acceptTextures = 1;
+  // Add new server safely
+  const newServer = {};
+  if (name != null) newServer.name = name;
+  if (ip != null) newServer.ip = ip;
+  if (icon != null) newServer.icon = icon;
+  newServer.acceptTextures = 1;
 
-    serversList.push(newServer);
+  serversList.push(newServer);
 
-    // Build NBT compound: servers is directly an array of compounds
-    const nbtData = {
-        type: "compound",
-        name: "",
-        value: {
-            servers: serversList.map(s => {
-                const compound = { type: "compound", value: {} };
-                if (s.name != null) compound.value.name = { type: "string", value: s.name };
-                if (s.ip != null) compound.value.ip = { type: "string", value: s.ip };
-                if (s.icon != null) compound.value.icon = { type: "string", value: s.icon };
-                compound.value.acceptTextures = { type: "byte", value: s.acceptTextures ?? 1 };
-                return compound;
-            })
-        }
-    };
+  // Build NBT compound: servers is directly an array of compounds
+  const nbtData = {
+    type: "compound",
+    name: "",
+    value: {
+      servers: serversList.map(s => {
+        const compound = { type: "compound", value: {} };
+        if (s.name != null) compound.value.name = { type: "string", value: s.name };
+        if (s.ip != null) compound.value.ip = { type: "string", value: s.ip };
+        if (s.icon != null) compound.value.icon = { type: "string", value: s.icon };
+        compound.value.acceptTextures = { type: "byte", value: s.acceptTextures ?? 1 };
+        return compound;
+      })
+    }
+  };
 
-    const buffer = await nbt.writeUncompressed(nbtData);
-    fs.writeFileSync(serversFile, buffer);
+  const buffer = await nbt.writeUncompressed(nbtData);
+  fs.writeFileSync(serversFile, buffer);
 
-    return { name, ip, icon };
+  return { name, ip, icon };
 });
 
 // screenshots
 ipcMain.handle("get-instance-screenshots", async (event, { profileId }) => {
-    const folder = path.join(dataDir, "client", profileId.toString(), "screenshots");
+  const folder = path.join(dataDir, "client", profileId.toString(), "screenshots");
 
-    if (!fs.existsSync(folder)) return [];
+  if (!fs.existsSync(folder)) return [];
 
-    return fs.readdirSync(folder)
-        .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
-        .map(f => {
-            const fullPath = path.join(folder, f);
-            const stats = fs.statSync(fullPath);
-            return {
-                name: f,
-                path: fullPath,
-                mtime: stats.mtimeMs, // modification timestamp
-            };
-        })
-        .sort((a, b) => b.mtime - a.mtime) // newest → oldest
-        .map(({ mtime, ...rest }) => rest); // remove mtime from final object
+  return fs.readdirSync(folder)
+    .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
+    .map(f => {
+      const fullPath = path.join(folder, f);
+      const stats = fs.statSync(fullPath);
+      return {
+        name: f,
+        path: fullPath,
+        mtime: stats.mtimeMs, // modification timestamp
+      };
+    })
+    .sort((a, b) => b.mtime - a.mtime) // newest → oldest
+    .map(({ mtime, ...rest }) => rest); // remove mtime from final object
 });
 
 
 // Check if an instance is running
 ipcMain.handle("is-instance-running", (event, id) => {
-    return isInstanceRunning(id);
+  return isInstanceRunning(id);
 });
 
 // Get list of all running instances
 ipcMain.handle("get-running-instances", () => {
-    return getRunningInstances();
+  return getRunningInstances();
 });
 
 // Stop an instance by process ID
 ipcMain.handle("stop-instance-by-pid", (event, pid) => {
-    return stopByPid(pid);
+  return stopByPid(pid);
 });
 
 function checkIfFileExists(instanceID, isClient, fileUrl) {
@@ -2412,7 +2416,7 @@ remote_port = ${tunnela.remote_port}
   fs.writeFileSync(iniPath, ini);
 
   // Spawn frpc process
-  const frpProcess = spawn(FRPC_BIN, ["-c", iniPath], { stdio: "inherit", windowsHide: true});
+  const frpProcess = spawn(FRPC_BIN, ["-c", iniPath], { stdio: "inherit", windowsHide: true });
 
   // Track the running process
   runningTunnels[tunnela.identifier] = frpProcess;
@@ -2590,13 +2594,13 @@ async function installLatestFrp() {
 
   const platform =
     process.platform === "win32" ? "windows" :
-    process.platform === "darwin" ? "darwin" :
-    "linux";
+      process.platform === "darwin" ? "darwin" :
+        "linux";
 
   const arch =
     process.arch === "x64" ? "amd64" :
-    process.arch === "arm64" ? "arm64" :
-    "386";
+      process.arch === "arm64" ? "arm64" :
+        "386";
 
   const fileName =
     `frp_${version}_${platform}_${arch}` + (platform === "windows" ? ".zip" : ".tar.gz");
@@ -2742,7 +2746,7 @@ ipcMain.handle("skin:delete", async (event, skinHash) => {
   const skin = skins[index];
 
   // Törlés fájlból
-  try { await fs.unlink(skin.file); } catch {}
+  try { await fs.unlink(skin.file); } catch { }
 
   skins.splice(index, 1);
   await saveJSON(skinsJsonPath, skins);

@@ -4,6 +4,7 @@
   font-weight: normal;
   font-style: normal;
 }
+
 @font-face {
   font-family: 'Modrinth';
   src: url('modrinth.ttf') format('truetype');
@@ -33,19 +34,55 @@
 .modrinth {
   font-family: Modrinth;
 }
-  /* Basic layout */
 
-  #content { display:flex; flex:1; height: 100vh; padding: 0; gap: 20vh; box-sizing:border-box; }
-  #main { flex: 2; display:flex; flex-direction:column; gap: 20px; }
-  #news-potw { flex: 1; display:flex; flex-direction:column; gap: 20px; background-color: color-mix(in srgb, var(--base-color) 80%, black);
-  }
+/* Basic layout */
 
-  /* Continue Playing list */
-  #content ul { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
-  .profile-item { display:flex; align-items:center; gap:10px; padding:10px; transition: all 0.2s ease-in-out;}
-  .profile-item img { width:40px; height:40px; object-fit:cover; }
-  .profile-item span { flex:1; }
-  .profile-item.selected {
+#content {
+  display: flex;
+  flex: 1;
+  height: 100vh;
+  padding: 0;
+  gap: 20vh;
+  box-sizing: border-box;
+}
+
+#main {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+#news-potw {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background-color: color-mix(in srgb, var(--base-color) 80%, black);
+}
+
+/* Continue Playing list */
+#content ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+
+.profile-item img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+}
+
+.profile-item span {
+  flex: 1;
+}
+
+.profile-item.selected {
   border: 2px solid var(--third-color);
   box-shadow: 0 0 10px var(--third-color);
   background-color: var(--secondary-color);
@@ -55,26 +92,60 @@
 .profile-item.selected img {
   filter: brightness(1.2);
 }
+
 .profile-item.selected:hover {
   background-color: var(--base-color);
 }
-  /* News section */
-  #news { flex:2; padding:1px; position:center; cursor:pointer; display:inline-flex; flex-direction:column; justify-content:baseline; align-items:center; }
-  #news img { max-width:100%; max-height:30vh; }
-  #news h3 { margin:0px 0; }
-  #news p { margin:0; }
 
-  /* Project of the week */
-  #potw { flex:1; padding:10px; display:flex; align-items:center; gap:10px; cursor:pointer; }
-  #potw img { width:50px; height:50px; object-fit:cover; }
-  /* Modal overlay styling */
+/* News section */
+#news {
+  flex: 2;
+  padding: 1px;
+  position: center;
+  cursor: pointer;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: baseline;
+  align-items: center;
+}
+
+#news img {
+  max-width: 100%;
+  max-height: 30vh;
+}
+
+#news h3 {
+  margin: 0px 0;
+}
+
+#news p {
+  margin: 0;
+}
+
+/* Project of the week */
+#potw {
+  flex: 1;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+#potw img {
+  width: 50px;
+  height: 50px;
+  object-fit: cover;
+}
+
+/* Modal overlay styling */
 #news-modal {
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0,0,0,0.7);
+  background-color: rgba(0, 0, 0, 0.7);
   display: none;
   align-items: center;
   justify-content: center;
@@ -90,7 +161,7 @@
   max-width: 700px;
   max-height: 80vh;
   overflow-y: auto;
-  box-shadow: 0 0 20px rgba(0,0,0,0.4);
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
   position: relative;
 }
 
@@ -105,6 +176,7 @@
   font-size: 20px;
   cursor: pointer;
 }
+
 /* News dots under the carousel */
 #news-dots {
   display: flex;
@@ -144,35 +216,39 @@
 }
 
 .noUi-connect {
-    background: color-mix(in srgb, var(--base-color) 80%, white)
+  background: color-mix(in srgb, var(--base-color) 80%, white)
 }
+
 .noUi-target {
-    background: color-mix(in srgb, var(--secondary-color) 60%, white);
-    border-radius: var(--border-radius);
-    border: 1px solid color-mix(in srgb, var(--secondary-color) 60%, white);
-    box-shadow: none;
+  background: color-mix(in srgb, var(--secondary-color) 60%, white);
+  border-radius: var(--border-radius);
+  border: 1px solid color-mix(in srgb, var(--secondary-color) 60%, white);
+  box-shadow: none;
 }
+
 .noUi-handle {
-    border: 1px solid color-mix(in srgb, var(--secondary-color) 60%, white);
-    border-radius: var(--border-radius);
-    background: color-mix(in srgb, var(--base-color) 90%, white);
-    box-shadow: none;
+  border: 1px solid color-mix(in srgb, var(--secondary-color) 60%, white);
+  border-radius: var(--border-radius);
+  background: color-mix(in srgb, var(--base-color) 90%, white);
+  box-shadow: none;
 }
 
 * {
   box-sizing: border-box;
   user-select: none;
 }
+
 html {
   height: 100%;
-  background: linear-gradient(
-  to bottom, 
-  var(--toolbar-bg) 0%, 
-  var(--toolbar-bg) 10%, /* end of top color */
-  var(--very-dark) 10%,  /* start of bottom color */
-  var(--very-dark) 100%
-);
+  background: linear-gradient(to bottom,
+      var(--toolbar-bg) 0%,
+      var(--toolbar-bg) 10%,
+      /* end of top color */
+      var(--very-dark) 10%,
+      /* start of bottom color */
+      var(--very-dark) 100%);
 }
+
 body {
   margin: 0;
   padding: 0;
@@ -183,8 +259,8 @@ body {
   margin-left: 70px;
   padding-left: 20px;
   margin-top: 38px;
-  border-top: 3px  var(--toolbar-bg);
-  border-left: 3px  var(--toolbar-bg);
+  border-top: 3px var(--toolbar-bg);
+  border-left: 3px var(--toolbar-bg);
   border-top-left-radius: var(--border-radius);
 }
 
@@ -194,7 +270,8 @@ h3,
 h4,
 h5 {
   color: var(--text-color);
-  font-weight: 900; /* try 700, 800, 900 */
+  font-weight: 900;
+  /* try 700, 800, 900 */
 }
 
 #toolbar {
@@ -216,7 +293,8 @@ h5 {
   font-family: var(--text-font);
   font-size: 14px;
   letter-spacing: 1px;
-    font-weight: 900; /* try 700, 800, 900 */
+  font-weight: 900;
+  /* try 700, 800, 900 */
   width: 100%;
   text-align: center;
   pointer-events: none;
@@ -233,20 +311,26 @@ h5 {
   height: 36px;
   width: 36px;
   background: none;
-  border: 2px solid transparent; /* reserve space for hover */
+  border: 2px solid transparent;
+  /* reserve space for hover */
   color: var(--text-color);
   box-shadow: none;
   font-size: 14px;
 
   display: flex;
-  justify-content: center; /* horizontal centering */
-  align-items: center;     /* vertical centering */
-  
-  line-height: 1;          /* reset line height */
-  padding: 0;              /* remove extra padding */
-  
+  justify-content: center;
+  /* horizontal centering */
+  align-items: center;
+  /* vertical centering */
+
+  line-height: 1;
+  /* reset line height */
+  padding: 0;
+  /* remove extra padding */
+
   cursor: pointer;
-  box-sizing: border-box;  /* include border in size */
+  box-sizing: border-box;
+  /* include border in size */
 }
 
 
@@ -270,20 +354,26 @@ h5 {
   height: 36px;
   width: 36px;
   background: none;
-  border: 2px solid transparent; /* reserve space for hover */
+  border: 2px solid transparent;
+  /* reserve space for hover */
   color: var(--text-color);
   box-shadow: none;
   font-size: 14px;
 
   display: flex;
-  justify-content: center; /* horizontal centering */
-  align-items: center;     /* vertical centering */
-  
-  line-height: 1;          /* reset line height */
-  padding: 0;              /* remove extra padding */
-  
+  justify-content: center;
+  /* horizontal centering */
+  align-items: center;
+  /* vertical centering */
+
+  line-height: 1;
+  /* reset line height */
+  padding: 0;
+  /* remove extra padding */
+
   cursor: pointer;
-  box-sizing: border-box;  /* include border in size */
+  box-sizing: border-box;
+  /* include border in size */
 }
 
 
@@ -297,6 +387,7 @@ h5 {
 #toolbar .toolbar-buttons button:active {
   transform: scale(0.9);
 }
+
 #toolbar .toolbar-buttons-left button:active {
   transform: scale(0.9);
 }
@@ -446,6 +537,7 @@ textarea {
   float: center;
   align-items: center;
   border-radius: var(--border-radius);
+  user-select: auto;
 }
 
 input:focus,
@@ -541,6 +633,8 @@ a:hover {
   }
 }
 
+
+/* Base styles for list view (default) */
 .profile-item {
   display: flex;
   align-items: center;
@@ -555,12 +649,69 @@ a:hover {
   max-width: 60vw;
 }
 
+/* Grid View Styles */
+#profiles-list.grid-mode {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+  padding: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  display: grid !important;
+  list-style-type: none;
+}
+
+#profiles-list.grid-mode .profile-item {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100%;
+  max-width: unset;
+  /* Remove the 60vw limit */
+  margin: 0;
+  /* Remove centering margin, let grid gap handle it */
+  aspect-ratio: 1 / 1.2;
+  justify-content: center;
+  background: var(--menu-bg);
+  /* Enforce background consistency */
+}
+
+#profiles-list.grid-mode .profile-item img {
+  width: 96px;
+  height: 96px;
+  margin-bottom: 15px;
+  margin-left: 0;
+  /* Reset list view margin if any */
+  border-radius: 12px;
+}
+
+#profiles-list.grid-mode .profile-info {
+  margin-left: 0;
+  align-items: center;
+}
+
+#profiles-list.grid-mode .profile-name {
+  font-size: 1.2rem;
+  margin-bottom: 5px;
+}
+
+#profiles-list.grid-mode .profile-details {
+  font-size: 0.9rem;
+}
+
+#profiles-list.grid-mode .profile-item button {
+  /* Fix for buttons if they appear in grid view */
+  margin-top: 10px;
+}
+
 /* If the screen width is smaller than 300px */
 @media (max-width: 1200px) {
   .profile-item {
     max-width: 95%;
   }
 }
+
 @media (max-width: 800px) {
   .profile-item {
     max-width: 100%;
@@ -579,7 +730,6 @@ a:hover {
   height: 48px;
   border-radius: 10px;
   object-fit: cover;
-  flex-shrink: 0;
 }
 
 /* Info area */
@@ -648,7 +798,7 @@ a:hover {
   color: white;
   font-family: sans-serif;
   background: linear-gradient(135deg, #ff4d4d, #b30000);
-  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
   animation: slideDown 0.25s ease-out;
 }
 
@@ -659,7 +809,7 @@ a:hover {
   cursor: pointer;
   font-weight: bold;
   font-size: 16px;
-  color: rgba(255,255,255,0.8);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .error-popup .close-btn:hover {
@@ -669,7 +819,7 @@ a:hover {
 .error-timer {
   height: 4px;
   width: 100%;
-  background: rgba(255,255,255,0.3);
+  background: rgba(255, 255, 255, 0.3);
   border-radius: 0 0 var(--border-radius) var(--border-radius);
   position: absolute;
   bottom: 0;
@@ -686,11 +836,23 @@ a:hover {
 }
 
 @keyframes slideDown {
-  from { opacity: 0; transform: translate(-50%, -15px); }
-  to   { opacity: 1; transform: translate(-50%, 0); }
+  from {
+    opacity: 0;
+    transform: translate(-50%, -15px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 @keyframes timerShrink {
-  from { transform: scaleX(1); }
-  to   { transform: scaleX(0); }
+  from {
+    transform: scaleX(1);
+  }
+
+  to {
+    transform: scaleX(0);
+  }
 }

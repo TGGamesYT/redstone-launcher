@@ -117,7 +117,7 @@ function startServer(name, settings) {
   const jarPath = path.join(server.dir, "server.jar");
   if (!fs.existsSync(jarPath)) throw new Error("Server jar missing");
 
-  const proc = spawn("java", ["-Xms"+minRam+"m", "-Xmx"+maxRam+"m", "-jar", jarPath, "nogui"], { cwd: server.dir });
+  const proc = spawn("java", ["-Xms" + minRam + "m", "-Xmx" + maxRam + "m", "-jar", jarPath, "nogui"], { cwd: server.dir });
 
   server.process = proc;
   server.status = "running";

@@ -1,478 +1,502 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-<meta charset="UTF-8">
-<title>Redstone Launcher — Settings</title>
-<link href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css" rel="stylesheet">
-<link rel="stylesheet" href="server.css" />
-<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-<style>
-  .settings-container {
+  <meta charset="UTF-8">
+  <title>Redstone Launcher — Settings</title>
+  <link href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="server.css" />
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <style>
+    .settings-container {
       margin-right: 20px;
-  }
-/* === TAB BAR === */
-.section-switcher {
-  display: flex;
-  justify-content: flex-start;
-  gap: 6px;
-  background: var(--very-dark);
-  padding: 8px 12px;
-  border-bottom: 2px solid var(--border-dark);
-  border-radius: var(--border-radius);
-}
+    }
 
-.section-switcher button {
-  background: color-mix(in srgb, var(--third-color) 40%, black);
-  color: var(--text-color);
-  border: 1px solid var(--border-dark);
-  border-bottom: none;
-  border-radius: var(--border-radius);
-  font-family: var(--text-font), sans-serif;
-  font-size: 1rem;
-  padding: 8px 22px;
-  cursor: pointer;
-  transition: background 0.25s, transform 0.1s;
-  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.4);
-}
+    /* === TAB BAR === */
+    .section-switcher {
+      display: flex;
+      justify-content: flex-start;
+      gap: 6px;
+      background: var(--very-dark);
+      padding: 8px 12px;
+      border-bottom: 2px solid var(--border-dark);
+      border-radius: var(--border-radius);
+    }
 
-.section-switcher button:hover {
-  background: var(--third-color);
-  transform: translateY(-1px);
-}
+    .section-switcher button {
+      background: color-mix(in srgb, var(--third-color) 40%, black);
+      color: var(--text-color);
+      border: 1px solid var(--border-dark);
+      border-bottom: none;
+      border-radius: var(--border-radius);
+      font-family: var(--text-font), sans-serif;
+      font-size: 1rem;
+      padding: 8px 22px;
+      cursor: pointer;
+      transition: background 0.25s, transform 0.1s;
+      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.4);
+    }
 
-.section-switcher button.active {
-  background: var(--base-color);
-  color: var(--text-color);
-  box-shadow: 0 2px 0 var(--base-color), inset 0 -3px 0 var(--base-color);
-  font-weight: bold;
-}
+    .section-switcher button:hover {
+      background: var(--third-color);
+      transform: translateY(-1px);
+    }
 
-/* === SECTION AREA === */
-.section {
-  display: none;
-  background: color-mix(in srgb, var(--secondary-color) 70%, black);
-  border: 1px solid var(--border-dark);
-  border-top: none;
-  border-radius: var(--border-radius);
-  padding: 30px 40px;
-  animation: fadeIn 0.25s ease;
-  box-shadow: inset 0 0 15px rgba(0,0,0,0.4);
-}
+    .section-switcher button.active {
+      background: var(--base-color);
+      color: var(--text-color);
+      box-shadow: 0 2px 0 var(--base-color), inset 0 -3px 0 var(--base-color);
+      font-weight: bold;
+    }
 
-.section.active {
-  display: block;
-}
+    /* === SECTION AREA === */
+    .section {
+      display: none;
+      background: color-mix(in srgb, var(--secondary-color) 70%, black);
+      border: 1px solid var(--border-dark);
+      border-top: none;
+      border-radius: var(--border-radius);
+      padding: 30px 40px;
+      animation: fadeIn 0.25s ease;
+      box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.4);
+    }
 
-/* === ANIMATION === */
-@keyframes fadeIn {
-  from {opacity: 0; transform: translateY(5px);}
-  to {opacity: 1; transform: translateY(0);}
-}
+    .section.active {
+      display: block;
+    }
 
-/* === SECTION HEADINGS === */
-.section h3 {
-  border-bottom: 2px solid var(--third-color);
-  padding-bottom: 5px;
-  margin-bottom: 20px;
-  color: var(--text-color);
-  font-weight: bold;
-}
-/* === THEME CARDS === */
-.theme-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 14px;
-  margin-top: 10px;
-}
+    /* === ANIMATION === */
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(5px);
+      }
 
-.theme-btn {
-  background: color-mix(in srgb, var(--secondary-color) 60%, black);
-  border: 2px solid var(--border-dark);
-  border-radius: 8px;
-  padding: 12px;
-  text-align: center;
-  color: var(--text-color);
-  font-family: var(--text-font), sans-serif;
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border 0.15s ease;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-}
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
 
-.theme-btn:hover {
-  transform: translateY(-2px);
-  border-color: var(--third-color);
-  box-shadow: 0 0 10px var(--third-color);
-}
+    /* === SECTION HEADINGS === */
+    .section h3 {
+      border-bottom: 2px solid var(--third-color);
+      padding-bottom: 5px;
+      margin-bottom: 20px;
+      color: var(--text-color);
+      font-weight: bold;
+    }
 
-.theme-btn span {
-  display: block;
-  font-weight: bold;
-  margin-bottom: 10px;
-  color: var(--text-color);
-  letter-spacing: 0.5px;
-}
+    /* === THEME CARDS === */
+    .theme-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }
 
-.theme-colors {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-}
+    .theme-btn {
+      background: color-mix(in srgb, var(--secondary-color) 60%, black);
+      border: 2px solid var(--border-dark);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+      color: var(--text-color);
+      font-family: var(--text-font), sans-serif;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border 0.15s ease;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    }
 
-.theme-swatch {
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
-  border: 1px solid var(--border-dark);
-  box-shadow: inset 0 0 4px rgba(0,0,0,0.4);
-}
+    .theme-btn:hover {
+      transform: translateY(-2px);
+      border-color: var(--third-color);
+      box-shadow: 0 0 10px var(--third-color);
+    }
 
-</style>
+    .theme-btn span {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: var(--text-color);
+      letter-spacing: 0.5px;
+    }
+
+    .theme-colors {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .theme-swatch {
+      width: 26px;
+      height: 26px;
+      border-radius: 4px;
+      border: 1px solid var(--border-dark);
+      box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.4);
+    }
+  </style>
 </head>
+
 <body>
-<div id="toolbar">
-  <div class="toolbar-buttons-left">
+  <div id="toolbar">
+    <div class="toolbar-buttons-left">
       <button id="backBtn">⬅</button>
       <button id="forwardBtn">➡</button>
+    </div>
+    <div class="drag-region">Redstone Launcher</div>
+    <div class="toolbar-buttons">
+      <div id="instance-processes"></div>
+      <button id="min-btn">—</button>
+      <button id="max-btn">◻</button>
+      <button id="close-btn">✕</button>
+    </div>
   </div>
-<div class="drag-region">Redstone Launcher</div>
-<div class="toolbar-buttons">
-    <div id="instance-processes"></div>
-    <button id="min-btn">—</button>
-    <button id="max-btn">◻</button>
-    <button id="close-btn">✕</button>
-</div>
-</div>
-<div class="sidebar">
-  <ul class="menu top">
-    <a href="index.html"><li><i class="material-icons">home</i><span>Home</span></li></a>
-    <a href="instances.html"><li><i class="material-icons">play_arrow</i><span>Instances</span></li></a>
-    <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
-    <a href="server.html"><li><i class="material-icons">storage</i><span>Server Manager</span></li></a>
-  </ul>
-  <ul class="menu middle" id="instances">
-    <li><i class="material-icons">add</i><span>Add an instance</span></li>
-  </ul>
-  <ul class="menu bottom">
-    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
-    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
-    <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
-    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-  </ul>
-</div>
-<div class="settings-container">
-
-  <div class="section-switcher">
-    <button data-section="general">⚙️</button>
-    <button data-section="theme">🎨</button>
-    <button data-section="advanced">🛠️</button>
+  <div class="sidebar">
+    <ul class="menu top">
+      <a href="index.html">
+        <li><i class="material-icons">home</i><span>Home</span></li>
+      </a>
+      <a href="instances.html">
+        <li><i class="material-icons">play_arrow</i><span>Instances</span></li>
+      </a>
+      <a href="modrinth.html" class="modrinth">
+        <li><span>Modrinth</span></li>
+      </a>
+      <a href="server.html">
+        <li><i class="material-icons">storage</i><span>Server Manager</span></li>
+      </a>
+    </ul>
+    <ul class="menu middle" id="instances">
+      <li><i class="material-icons">add</i><span>Add an instance</span></li>
+    </ul>
+    <ul class="menu bottom">
+      <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+      <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
+      <a href="players.html">
+        <li id="players-login"><i class="material-icons">login</i><span>Login</span></li>
+      </a>
+      <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+    </ul>
   </div>
+  <div class="settings-container">
 
-  <!-- === General Section === -->
-  <div class="section active settings-scrolly" id="general">
-    <h3 style="margin-top: 30px;">General</h3>
-    <div style="margin-bottom: 50px;">
-    <label><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label><br>
-    <label><input type="checkbox" id="discord-presence"> Enable Discord Presence</label><br>
+    <div class="section-switcher">
+      <button data-section="general">⚙️</button>
+      <button data-section="theme">🎨</button>
+      <button data-section="advanced">🛠️</button>
+    </div>
+
+    <!-- === General Section === -->
+    <div class="section active settings-scrolly" id="general">
+      <h3 style="margin-top: 30px;">General</h3>
+      <div style="margin-bottom: 50px;">
+        <label><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label><br>
+        <label><input type="checkbox" id="discord-presence"> Enable Discord Presence</label><br>
+        <label><input type="checkbox" id="grid-view"> Enable Grid View</label><br>
+      </div>
+    </div>
+
+    <!-- === Theme Section === -->
+    <div class="section settings-scrolly" id="theme" style="display: none;">
+      <h3>Theme</h3>
+
+      <div class="color-input">
+        <span>Base:</span>
+        <input type="color" id="base-color">
+        <input type="text" id="base-color-code" placeholder="#RRGGBB">
+        <button data-color="base">Reset</button>
+      </div>
+
+      <div class="color-input">
+        <span>Secondary:</span>
+        <input type="color" id="secondary-color">
+        <input type="text" id="secondary-color-code" placeholder="#RRGGBB">
+        <button data-color="secondary">Reset</button>
+      </div>
+
+      <div class="color-input">
+        <span>Text:</span>
+        <input type="color" id="text-color">
+        <input type="text" id="text-color-code" placeholder="#RRGGBB">
+        <button data-color="text">Reset</button>
+      </div>
+
+      <div class="color-input">
+        <span>Third (Middle):</span>
+        <input type="color" id="third-color">
+        <input type="text" id="third-color-code" placeholder="#RRGGBB">
+        <button data-color="third">Reset</button>
+      </div>
+      <label><input type="checkbox" id="auto-third" checked> Automatic Third Color</label>
+      <br>
+      <label style="margin-top: 40px;">Font</label>
+      <select id="font-selector">
+        <option value="Pixel">Pixel</option>
+        <option value="Arial">Arial</option>
+        <option value="Verdana">Verdana</option>
+        <option value="Tahoma">Tahoma</option>
+        <option value="Courier New">Courier New</option>
+        <option value="Times New Roman">Times New Roman</option>
+        <option value="Custom">Custom (system)</option>
+      </select>
+      <br>
+      <label>Border Radius (px):</label>
+      <br>
+      <input type="range" id="border-radius" min="0" max="25" step="0.2" style="width: 200px;">
+      <span class="slider-value" id="border-radius-value"></span>
+      <h4>Predefined Themes:</h4>
+      <div class="theme-list" id="theme-list"></div>
+    </div>
+
+    <!-- === Advanced Section === -->
+    <div class="section settings-scrolly" id="advanced" style="display: none;">
+      <h3>Advanced</h3>
+
+      <label>RAM for Instances (MB)</label>
+      <br><br>
+      <div id="ram-instances-slider" style="margin-right: 40%;"></div>
+      <br>
+      <div class="slider-value" id="ram-instances-value"></div>
+      <br><br><br><br>
+      <label>RAM for Servers (MB)</label>
+      <br><br>
+      <div id="ram-servers-slider" style="margin-right: 40%;"></div>
+      <br>
+      <div class="slider-value" id="ram-servers-value"></div>
     </div>
   </div>
 
-  <!-- === Theme Section === -->
-  <div class="section settings-scrolly" id="theme" style="display: none;">
-    <h3>Theme</h3>
+  <script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.js"></script>
+  <script>
+    const { ipcRenderer } = require('electron');
 
-    <div class="color-input">
-      <span>Base:</span>
-      <input type="color" id="base-color">
-      <input type="text" id="base-color-code" placeholder="#RRGGBB">
-      <button data-color="base">Reset</button>
-    </div>
-
-    <div class="color-input">
-      <span>Secondary:</span>
-      <input type="color" id="secondary-color">
-      <input type="text" id="secondary-color-code" placeholder="#RRGGBB">
-      <button data-color="secondary">Reset</button>
-    </div>
-
-    <div class="color-input">
-      <span>Text:</span>
-      <input type="color" id="text-color">
-      <input type="text" id="text-color-code" placeholder="#RRGGBB">
-      <button data-color="text">Reset</button>
-    </div>
-
-    <div class="color-input">
-      <span>Third (Middle):</span>
-      <input type="color" id="third-color">
-      <input type="text" id="third-color-code" placeholder="#RRGGBB">
-      <button data-color="third">Reset</button>
-    </div>
-    <label><input type="checkbox" id="auto-third" checked> Automatic Third Color</label>
-    <br>
-    <label style="margin-top: 40px;">Font</label>
-    <select id="font-selector">
-      <option value="Pixel">Pixel</option>
-      <option value="Arial">Arial</option>
-      <option value="Verdana">Verdana</option>
-      <option value="Tahoma">Tahoma</option>
-      <option value="Courier New">Courier New</option>
-      <option value="Times New Roman">Times New Roman</option>
-      <option value="Custom">Custom (system)</option>
-    </select>
- <br>
-    <label>Border Radius (px):</label>
-    <br>
-    <input type="range" id="border-radius" min="0" max="25" step="0.2" style="width: 200px;">
-    <span class="slider-value" id="border-radius-value"></span>
-    <h4>Predefined Themes:</h4>
-    <div class="theme-list" id="theme-list"></div>
-  </div>
-
-  <!-- === Advanced Section === -->
-  <div class="section settings-scrolly" id="advanced" style="display: none;">
-    <h3>Advanced</h3>
-
-    <label>RAM for Instances (MB)</label>
-    <br><br>
-    <div id="ram-instances-slider" style="margin-right: 40%;"></div>
-    <br>
-    <div class="slider-value" id="ram-instances-value"></div>
-    <br><br><br><br>
-    <label>RAM for Servers (MB)</label>
-    <br><br>
-    <div id="ram-servers-slider" style="margin-right: 40%;"></div>
-    <br>
-    <div class="slider-value" id="ram-servers-value"></div>
-  </div>
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.js"></script>
-<script>
-const { ipcRenderer } = require('electron');
-
-const defaultSettings = {
-  ramInstancesMin: 2048,
-  ramInstancesMax: 4096,
-  ramServersMin: 2048,
-  ramServersMax: 4096,
-  baseColor: "#b30c0c",
-  secondaryColor: "#ff4d4d",
-  thirdColor: "#d92d2d", // null by default, only stored if autoThird = false
-  textColor: "#ffffff",
-  font: "Pixel",
-  borderRadius: 0,
-  autoUpdates: true,
-  discordPresence: true,
-  autoThird: true // new toggle
-};
+    const defaultSettings = {
+      ramInstancesMin: 2048,
+      ramInstancesMax: 4096,
+      ramServersMin: 2048,
+      ramServersMax: 4096,
+      baseColor: "#b30c0c",
+      secondaryColor: "#ff4d4d",
+      thirdColor: "#d92d2d", // null by default, only stored if autoThird = false
+      textColor: "#ffffff",
+      font: "Pixel",
+      borderRadius: 0,
+      autoUpdates: true,
+      discordPresence: true,
+      autoUpdates: true,
+      discordPresence: true,
+      autoThird: true, // new toggle
+      gridView: false
+    };
 
 
-async function init() {
-  const totalRAM = await ipcRenderer.invoke('get-system-ram');
-  const settings = await ipcRenderer.invoke('get-settings');
+    async function init() {
+      const totalRAM = await ipcRenderer.invoke('get-system-ram');
+      const settings = await ipcRenderer.invoke('get-settings');
 
-  function getSetting(key) {
-    return settings[key] ?? defaultSettings[key];
-  }
+      function getSetting(key) {
+        return settings[key] ?? defaultSettings[key];
+      }
 
-  // === Section switching ===
-// Correct section switching
-document.querySelectorAll('.section-switcher button').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.section').forEach(sec=>sec.style.display='none');
-    const target = btn.dataset.section;
-    const section = document.getElementById(target);
-    if(section) section.style.display='block';
-  });
-});
-
-
-  // === RAM Sliders ===
-  const ramSliders = [
-    ['ram-instances-slider','ram-instances-value','ramInstancesMin','ramInstancesMax'],
-    ['ram-servers-slider','ram-servers-value','ramServersMin','ramServersMax']
-  ];
-
-  ramSliders.forEach(([sliderId,valId,keyMin,keyMax])=>{
-    const slider = document.getElementById(sliderId);
-    const valueLabel = document.getElementById(valId);
-    const startMin = getSetting(keyMin);
-    const startMax = getSetting(keyMax);
-
-    noUiSlider.create(slider,{
-      start:[startMin,startMax],
-      connect:true,
-      step:256,
-      range:{min:512,max:totalRAM},
-      tooltips:false
-    });
-
-    slider.noUiSlider.on('update', values => {
-      valueLabel.innerText = `Min: ${parseInt(values[0])} | Max: ${parseInt(values[1])}`;
-    });
-
-    slider.noUiSlider.on('change', values=>{
-      const update = {};
-      update[keyMin] = parseInt(values[0]);
-      update[keyMax] = parseInt(values[1]);
-      ipcRenderer.send('save-settings', update);
-    });
-  });
-
-  // === Color Inputs & Live CSS ===
-  const colorSettings = [
-    ['base-color','base-color-code','baseColor',defaultSettings.baseColor],
-    ['secondary-color','secondary-color-code','secondaryColor',defaultSettings.secondaryColor],
-    ['third-color','third-color-code','thirdColor',defaultSettings.thirdColor],
-    ['text-color','text-color-code','textColor',defaultSettings.textColor]
-  ];
-  function hexToRgb(hex) {
-  hex = hex.replace(/^#/, '');
-  return [
-    parseInt(hex.substring(0, 2), 16),
-    parseInt(hex.substring(2, 4), 16),
-    parseInt(hex.substring(4, 6), 16)
-  ];
-}
-
-function rgbToHex(r, g, b) {
-  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
-}
-  function rgbAverage(hex1, hex2) {
-  const rgb1 = hexToRgb(hex1);
-  const rgb2 = hexToRgb(hex2);
-  const middle = rgb1.map((c, i) => Math.round((c + rgb2[i]) / 2));
-  return rgbToHex(middle[0], middle[1], middle[2]);
-}
-
-function updateThirdColor(force = false) {
-  const base = document.getElementById('base-color').value;
-  const secondary = document.getElementById('secondary-color').value;
-  const thirdInput = document.getElementById('third-color');
-  const thirdCode = document.getElementById('third-color-code');
-  const autoThird = document.getElementById('auto-third').checked;
-
-  let third;
-
-  if (autoThird || force) {
-    third = rgbAverage(base, secondary);
-  } else {
-    // respect saved manual color
-    third = getSetting('thirdColor') || rgbAverage(base, secondary);
-  }
-
-  thirdInput.value = third;
-  thirdCode.value = third;
-  document.documentElement.style.setProperty('--third-color', third);
-}
-
-// === Third color manual editing ===
-const thirdColor = document.getElementById('third-color');
-const thirdCode = document.getElementById('third-color-code');
-const autoThirdCheckbox = document.getElementById('auto-third');
-
-thirdColor.addEventListener('input', () => {
-  if (!autoThirdCheckbox.checked) {
-    thirdCode.value = thirdColor.value;
-    document.documentElement.style.setProperty('--third-color', thirdColor.value);
-    ipcRenderer.send('save-settings', { thirdColor: thirdColor.value });
-  }
-});
-thirdCode.addEventListener('change', () => {
-  if (!autoThirdCheckbox.checked && /^#([0-9A-Fa-f]{6})$/.test(thirdCode.value)) {
-    thirdColor.value = thirdCode.value;
-    document.documentElement.style.setProperty('--third-color', thirdCode.value);
-    ipcRenderer.send('save-settings', { thirdColor: thirdCode.value });
-  }
-});
-
-// === Toggle auto third ===
-autoThirdCheckbox.checked = getSetting('autoThird');
-autoThirdCheckbox.addEventListener('change', () => {
-  ipcRenderer.send('save-settings', { autoThird: autoThirdCheckbox.checked });
-  if (autoThirdCheckbox.checked) {
-    ipcRenderer.send('save-settings', { thirdColor: null }); // clear manual
-    updateThirdColor(true);
-  } else {
-    // restore manual color or fallback
-    updateThirdColor();
-  }
-});
-
-  colorSettings.forEach(([colorId,codeId,key,def])=>{
-  const color = document.getElementById(colorId);
-  const code = document.getElementById(codeId);
-
-  color.value = getSetting(key);
-  code.value = getSetting(key);
-
-  function saveColor() {
-    // make sure we apply CSS instantly
-    document.documentElement.style.setProperty('--' + key.replace("Color","-color").toLowerCase(), color.value);
-
-    // save setting
-    ipcRenderer.send('save-settings',{[key]:color.value});
-
-    // re-calc third if auto is on
-    if (document.getElementById('auto-third').checked) {
-      updateThirdColor(true);
-    }
-  }
-
-  color.addEventListener('input', ()=>{ 
-    code.value=color.value; 
-    saveColor(); 
-  });
-
-  code.addEventListener('change', ()=>{
-    if(/^#([0-9A-Fa-f]{6})$/.test(code.value)){ 
-      color.value=code.value; 
-      saveColor(); 
-    }
-  });
-
-  // Reset button
-  const btn = color.parentElement.querySelector('button');
-  btn.addEventListener('click', ()=>{
-    color.value = def;
-    code.value = def;
-    saveColor();
-  });
-});
+      // === Section switching ===
+      // Correct section switching
+      document.querySelectorAll('.section-switcher button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.section').forEach(sec => sec.style.display = 'none');
+          const target = btn.dataset.section;
+          const section = document.getElementById(target);
+          if (section) section.style.display = 'block';
+        });
+      });
 
 
-  updateThirdColor();
+      // === RAM Sliders ===
+      const ramSliders = [
+        ['ram-instances-slider', 'ram-instances-value', 'ramInstancesMin', 'ramInstancesMax'],
+        ['ram-servers-slider', 'ram-servers-value', 'ramServersMin', 'ramServersMax']
+      ];
 
-  // === Predefined themes ===
-  // === Predefined themes ===
-// === Predefined themes ===
-const themes = {
-    redstone:   { name: "Redstone",   baseColor: '#b30c0c', secondaryColor: '#ff4d4d', textColor: '#ffffff' },
-    diamond:    { name: "Diamond",    baseColor: '#0a74da', secondaryColor: '#5ad6ff', textColor: '#ffffff' },
-    emerald:    { name: "Emerald",    baseColor: '#2b580c', secondaryColor: '#97bc62', textColor: '#ffffff' },
-    gold:       { name: "Gold",       baseColor: '#ffcc00', secondaryColor: '#fff275', textColor: '#ffffff' },
-    iron:       { name: "Iron",       baseColor: '#aaaaaa', secondaryColor: '#dddddd', textColor: '#ffffff' },
-    coal:       { name: "Coal",       baseColor: '#333333', secondaryColor: '#555555', textColor: '#ffffff' },
-    lapis:      { name: "Lapis",      baseColor: '#1a3f8f', secondaryColor: '#5c90ff', textColor: '#ffffff' },
-    netherite:  { name: "Netherite",  baseColor: '#3c3c3c', secondaryColor: '#6e6e6e', textColor: '#ffffff' },
-    quartz:     { name: "Quartz",     baseColor: '#f2f2f2', secondaryColor: '#e6e6e6', textColor: '#000000' },
-    copper:     { name: "Copper",     baseColor: '#b87333', secondaryColor: '#d99058', textColor: '#ffffff' }
-};
+      ramSliders.forEach(([sliderId, valId, keyMin, keyMax]) => {
+        const slider = document.getElementById(sliderId);
+        const valueLabel = document.getElementById(valId);
+        const startMin = getSetting(keyMin);
+        const startMax = getSetting(keyMax);
+
+        noUiSlider.create(slider, {
+          start: [startMin, startMax],
+          connect: true,
+          step: 256,
+          range: { min: 512, max: totalRAM },
+          tooltips: false
+        });
+
+        slider.noUiSlider.on('update', values => {
+          valueLabel.innerText = `Min: ${parseInt(values[0])} | Max: ${parseInt(values[1])}`;
+        });
+
+        slider.noUiSlider.on('change', values => {
+          const update = {};
+          update[keyMin] = parseInt(values[0]);
+          update[keyMax] = parseInt(values[1]);
+          ipcRenderer.send('save-settings', update);
+        });
+      });
+
+      // === Color Inputs & Live CSS ===
+      const colorSettings = [
+        ['base-color', 'base-color-code', 'baseColor', defaultSettings.baseColor],
+        ['secondary-color', 'secondary-color-code', 'secondaryColor', defaultSettings.secondaryColor],
+        ['third-color', 'third-color-code', 'thirdColor', defaultSettings.thirdColor],
+        ['text-color', 'text-color-code', 'textColor', defaultSettings.textColor]
+      ];
+      function hexToRgb(hex) {
+        hex = hex.replace(/^#/, '');
+        return [
+          parseInt(hex.substring(0, 2), 16),
+          parseInt(hex.substring(2, 4), 16),
+          parseInt(hex.substring(4, 6), 16)
+        ];
+      }
+
+      function rgbToHex(r, g, b) {
+        return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+      }
+      function rgbAverage(hex1, hex2) {
+        const rgb1 = hexToRgb(hex1);
+        const rgb2 = hexToRgb(hex2);
+        const middle = rgb1.map((c, i) => Math.round((c + rgb2[i]) / 2));
+        return rgbToHex(middle[0], middle[1], middle[2]);
+      }
+
+      function updateThirdColor(force = false) {
+        const base = document.getElementById('base-color').value;
+        const secondary = document.getElementById('secondary-color').value;
+        const thirdInput = document.getElementById('third-color');
+        const thirdCode = document.getElementById('third-color-code');
+        const autoThird = document.getElementById('auto-third').checked;
+
+        let third;
+
+        if (autoThird || force) {
+          third = rgbAverage(base, secondary);
+        } else {
+          // respect saved manual color
+          third = getSetting('thirdColor') || rgbAverage(base, secondary);
+        }
+
+        thirdInput.value = third;
+        thirdCode.value = third;
+        document.documentElement.style.setProperty('--third-color', third);
+      }
+
+      // === Third color manual editing ===
+      const thirdColor = document.getElementById('third-color');
+      const thirdCode = document.getElementById('third-color-code');
+      const autoThirdCheckbox = document.getElementById('auto-third');
+
+      thirdColor.addEventListener('input', () => {
+        if (!autoThirdCheckbox.checked) {
+          thirdCode.value = thirdColor.value;
+          document.documentElement.style.setProperty('--third-color', thirdColor.value);
+          ipcRenderer.send('save-settings', { thirdColor: thirdColor.value });
+        }
+      });
+      thirdCode.addEventListener('change', () => {
+        if (!autoThirdCheckbox.checked && /^#([0-9A-Fa-f]{6})$/.test(thirdCode.value)) {
+          thirdColor.value = thirdCode.value;
+          document.documentElement.style.setProperty('--third-color', thirdCode.value);
+          ipcRenderer.send('save-settings', { thirdColor: thirdCode.value });
+        }
+      });
+
+      // === Toggle auto third ===
+      autoThirdCheckbox.checked = getSetting('autoThird');
+      autoThirdCheckbox.addEventListener('change', () => {
+        ipcRenderer.send('save-settings', { autoThird: autoThirdCheckbox.checked });
+        if (autoThirdCheckbox.checked) {
+          ipcRenderer.send('save-settings', { thirdColor: null }); // clear manual
+          updateThirdColor(true);
+        } else {
+          // restore manual color or fallback
+          updateThirdColor();
+        }
+      });
+
+      colorSettings.forEach(([colorId, codeId, key, def]) => {
+        const color = document.getElementById(colorId);
+        const code = document.getElementById(codeId);
+
+        color.value = getSetting(key);
+        code.value = getSetting(key);
+
+        function saveColor() {
+          // make sure we apply CSS instantly
+          document.documentElement.style.setProperty('--' + key.replace("Color", "-color").toLowerCase(), color.value);
+
+          // save setting
+          ipcRenderer.send('save-settings', { [key]: color.value });
+
+          // re-calc third if auto is on
+          if (document.getElementById('auto-third').checked) {
+            updateThirdColor(true);
+          }
+        }
+
+        color.addEventListener('input', () => {
+          code.value = color.value;
+          saveColor();
+        });
+
+        code.addEventListener('change', () => {
+          if (/^#([0-9A-Fa-f]{6})$/.test(code.value)) {
+            color.value = code.value;
+            saveColor();
+          }
+        });
+
+        // Reset button
+        const btn = color.parentElement.querySelector('button');
+        btn.addEventListener('click', () => {
+          color.value = def;
+          code.value = def;
+          saveColor();
+        });
+      });
 
 
-// mapping from settings key -> element IDs
-const colorInputs = {
-  baseColor: ['base-color','base-color-code'],
-  secondaryColor: ['secondary-color','secondary-color-code'],
-  textColor: ['text-color','text-color-code']
-};
+      updateThirdColor();
 
-const themeList = document.getElementById('theme-list');
-if (themeList) {
-  Object.entries(themes).forEach(([key, theme]) => {
-    const btn = document.createElement('div');
-    btn.className = 'theme-btn';
-    btn.innerHTML = `
+      // === Predefined themes ===
+      // === Predefined themes ===
+      // === Predefined themes ===
+      const themes = {
+        redstone: { name: "Redstone", baseColor: '#b30c0c', secondaryColor: '#ff4d4d', textColor: '#ffffff' },
+        diamond: { name: "Diamond", baseColor: '#0a74da', secondaryColor: '#5ad6ff', textColor: '#ffffff' },
+        emerald: { name: "Emerald", baseColor: '#2b580c', secondaryColor: '#97bc62', textColor: '#ffffff' },
+        gold: { name: "Gold", baseColor: '#ffcc00', secondaryColor: '#fff275', textColor: '#ffffff' },
+        iron: { name: "Iron", baseColor: '#aaaaaa', secondaryColor: '#dddddd', textColor: '#ffffff' },
+        coal: { name: "Coal", baseColor: '#333333', secondaryColor: '#555555', textColor: '#ffffff' },
+        lapis: { name: "Lapis", baseColor: '#1a3f8f', secondaryColor: '#5c90ff', textColor: '#ffffff' },
+        netherite: { name: "Netherite", baseColor: '#3c3c3c', secondaryColor: '#6e6e6e', textColor: '#ffffff' },
+        quartz: { name: "Quartz", baseColor: '#f2f2f2', secondaryColor: '#e6e6e6', textColor: '#000000' },
+        copper: { name: "Copper", baseColor: '#b87333', secondaryColor: '#d99058', textColor: '#ffffff' }
+      };
+
+
+      // mapping from settings key -> element IDs
+      const colorInputs = {
+        baseColor: ['base-color', 'base-color-code'],
+        secondaryColor: ['secondary-color', 'secondary-color-code'],
+        textColor: ['text-color', 'text-color-code']
+      };
+
+      const themeList = document.getElementById('theme-list');
+      if (themeList) {
+        Object.entries(themes).forEach(([key, theme]) => {
+          const btn = document.createElement('div');
+          btn.className = 'theme-btn';
+          btn.innerHTML = `
       <span>${theme.name}</span>
       <div class="theme-colors">
         <div class="theme-swatch" style="background:${theme.baseColor}"></div>
@@ -481,56 +505,61 @@ if (themeList) {
       </div>
     `;
 
-    btn.addEventListener('click', () => {
-      Object.entries(colorInputs).forEach(([key2,[colorId,codeId]]) => {
-        const val = theme[key2];
-        const colorEl = document.getElementById(colorId);
-        const codeEl = document.getElementById(codeId);
-        if (colorEl && codeEl) {
-          colorEl.value = val;
-          codeEl.value = val;
-          document.documentElement.style.setProperty('--'+key2.replace("Color","-color").toLowerCase(), val);
-          ipcRenderer.send('save-settings',{[key2]:val});
-        }
+          btn.addEventListener('click', () => {
+            Object.entries(colorInputs).forEach(([key2, [colorId, codeId]]) => {
+              const val = theme[key2];
+              const colorEl = document.getElementById(colorId);
+              const codeEl = document.getElementById(codeId);
+              if (colorEl && codeEl) {
+                colorEl.value = val;
+                codeEl.value = val;
+                document.documentElement.style.setProperty('--' + key2.replace("Color", "-color").toLowerCase(), val);
+                ipcRenderer.send('save-settings', { [key2]: val });
+              }
+            });
+            updateThirdColor(true);
+          });
+
+          themeList.appendChild(btn);
+        });
+      }
+
+
+
+      // === Other Settings ===
+      const fontSelect = document.getElementById('font-selector');
+      fontSelect.value = getSetting('font');
+      fontSelect.addEventListener('change', () => ipcRenderer.send('save-settings', { font: fontSelect.value }));
+
+      const borderRadius = document.getElementById('border-radius');
+      const borderValue = document.getElementById('border-radius-value');
+      borderRadius.value = getSetting('borderRadius');
+      borderValue.innerText = borderRadius.value;
+      borderRadius.addEventListener('input', () => {
+        borderValue.innerText = borderRadius.value;
+        document.documentElement.style.setProperty('--border-radius', borderRadius.value + 'px');
+        ipcRenderer.send('save-settings', { borderRadius: parseFloat(borderRadius.value) });
       });
-      updateThirdColor(true);
-    });
 
-    themeList.appendChild(btn);
-  });
-}
+      const autoUpdates = document.getElementById('auto-updates');
+      autoUpdates.checked = getSetting('autoUpdates');
+      autoUpdates.addEventListener('change', () => ipcRenderer.send('save-settings', { autoUpdates: autoUpdates.checked }));
 
+      const discordPresence = document.getElementById('discord-presence');
+      discordPresence.checked = getSetting('discordPresence');
+      discordPresence.addEventListener('change', () => ipcRenderer.send('save-settings', { discordPresence: discordPresence.checked }));
 
+      const gridView = document.getElementById('grid-view');
+      gridView.checked = getSetting('gridView');
+      gridView.addEventListener('change', () => ipcRenderer.send('save-settings', { gridView: gridView.checked }));
+    }
 
-  // === Other Settings ===
-  const fontSelect = document.getElementById('font-selector');
-  fontSelect.value = getSetting('font');
-  fontSelect.addEventListener('change', ()=>ipcRenderer.send('save-settings',{font:fontSelect.value}));
+    init();
+    ipcRenderer.send('update-discord-presence', { details: "In Settings", state: "Idle" });
 
-  const borderRadius = document.getElementById('border-radius');
-  const borderValue = document.getElementById('border-radius-value');
-  borderRadius.value = getSetting('borderRadius');
-  borderValue.innerText = borderRadius.value;
-  borderRadius.addEventListener('input', ()=>{
-    borderValue.innerText = borderRadius.value;
-    document.documentElement.style.setProperty('--border-radius',borderRadius.value+'px');
-    ipcRenderer.send('save-settings',{borderRadius:parseFloat(borderRadius.value)});
-  });
-
-  const autoUpdates = document.getElementById('auto-updates');
-  autoUpdates.checked = getSetting('autoUpdates');
-  autoUpdates.addEventListener('change', ()=>ipcRenderer.send('save-settings',{autoUpdates:autoUpdates.checked}));
-
-  const discordPresence = document.getElementById('discord-presence');
-  discordPresence.checked = getSetting('discordPresence');
-  discordPresence.addEventListener('change', ()=>ipcRenderer.send('save-settings',{discordPresence:discordPresence.checked}));
-}
-
-init();
-ipcRenderer.send('update-discord-presence', { details: "In Settings", state: "Idle" });
-
-function closeApp(){ ipcRenderer.send('close-app'); }
-</script>
-<script src="sidebar.js"></script>
+    function closeApp() { ipcRenderer.send('close-app'); }
+  </script>
+  <script src="sidebar.js"></script>
 </body>
+
 </html>
