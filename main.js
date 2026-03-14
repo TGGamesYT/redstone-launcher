@@ -90,9 +90,73 @@ function computeSHA1(filePath) {
   return crypto.createHash("sha1").update(fileBuffer).digest("hex");
 }
 
+function checkJavaVersion(javaPath, requiredVersion) {
+  try {
+    const output = execSync(`"${javaPath}" -version 2>&1`).toString();
+    const match = output.match(/(?:java|openjdk) version "(?<v>\d+)\.?/);
+    if (match && match.groups.v) {
+      const sysVer = parseInt(match.groups.v, 10);
+      // Minecraft is generally happy with major version matches
+      return sysVer === requiredVersion;
+    }
+  } catch (e) {
+    return false;
+  }
+  return false;
+}
+
+function findSystemJava(requiredVersion) {
+  const candidates = new Set();
+
+  // 1. Check JAVA_HOME
+  if (process.env.JAVA_HOME) {
+    const bin = path.join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+    candidates.add(bin);
+  }
+
+  // 2. Check PATH
+  candidates.add('java');
+
+  // 3. Common paths
+  if (process.platform === 'win32') {
+    const progFiles = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']];
+    for (const p of progFiles) {
+      if (!p) continue;
+      const javaDir = path.join(p, 'Java');
+      if (fs.existsSync(javaDir)) {
+        try {
+          fs.readdirSync(javaDir).forEach(v => {
+            candidates.add(path.join(javaDir, v, 'bin', 'java.exe'));
+          });
+        } catch (e) {}
+      }
+    }
+  } else if (process.platform === 'linux') {
+    const linuxPaths = ['/usr/bin/java', '/usr/lib/jvm'];
+    linuxPaths.forEach(p => {
+      if (fs.existsSync(p)) {
+        if (fs.statSync(p).isDirectory()) {
+          try {
+            fs.readdirSync(p).forEach(v => {
+              candidates.add(path.join(p, v, 'bin', 'java'));
+            });
+          } catch (e) {}
+        } else {
+          candidates.add(p);
+        }
+      }
+    });
+  }
+
+  for (const c of candidates) {
+    if (checkJavaVersion(c, requiredVersion)) return c;
+  }
+  return null;
+}
 
 // ========== INSTANCE TRACKING SYSTEM ==========
 const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, startTime }
+const launchingProfiles = new Set(); // track profiles currently in the launch process
 
 function startInstance(id, pid) {
   const now = Date.now();
@@ -313,11 +377,19 @@ if (!gotTheLock) {
   });
 }
 
-function devtoolsLog(text) {
+function devtoolsLog(...args) {
+  const text = args.map(arg => {
+    if (arg instanceof Error) return arg.stack || arg.message;
+    if (typeof arg === 'object') {
+      try { return JSON.stringify(arg); } catch(e) { return String(arg); }
+    }
+    return String(arg);
+  }).join(' ');
+
   if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send("devtools-log", String(text));
-    console.log(text)
+    mainWindow.webContents.send("devtools-log", text);
   }
+  console.log(...args);
 }
 
 export function alert(message) {
@@ -730,12 +802,21 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
       },
       quickplay
     }
-    launcher.launch(opts);
+    const childProcess = await launcher.launch(opts);
 
-    launcher.on('debug', (msg) => event.reply('launcher-log', msg));
-    launcher.on('error', (err) => event.reply('launcher-log', "ERROR: " + err.message));
+    launcher.on('data', msg => event.reply('launcher-log', msg));
+    launcher.on('debug', msg => event.reply('launcher-log', msg));
+    launcher.on('error', err => event.reply('launcher-log', "ERROR: " + err.message));
+    const pid = childProcess.pid;
+    devtoolsLog("PID: " + pid);
+    startInstance(profileId, pid);
+    event.reply('launcher-log', `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
 
-    return { success: true, profile_main };
+    // Handle process exit
+    childProcess.on('exit', (code) => {
+      stopInstance(profileId, pid);
+      event.reply('launcher-log', `[INFO] Instance "${profileId}" exited with code ${code}`);
+    });
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -1010,25 +1091,24 @@ async function getJavaForMinecraft(mcVersion) {
   const javaVersion = versionData.javaVersion?.majorVersion;
   if (!javaVersion) throw new Error(`Java version info not found for Minecraft ${mcVersion}`);
 
-  // 5️⃣ Check system Java
-  try {
-    const output = execSync("java -version 2>&1").toString();
-    // Match "java version "23.0.2""
-    const match = output.match(/version "(?<v>\d+)\.?/);
-    if (match && match.groups.v) {
-      const sysVer = parseInt(match.groups.v, 10);
-
-      // Accept exact match only
-      if (sysVer === javaVersion) return "java";
-
-      // Optional: allow minor compatible versions (like Java 17–18)
-      // if (javaVersion >= 17 && sysVer >= 17 && sysVer <= 18) return "java";
+  // 5️⃣ Check custom Java path from settings
+  const customJava = settings.get('customJavaPath');
+  if (customJava && fs.existsSync(customJava)) {
+    if (checkJavaVersion(customJava, javaVersion)) {
+      return customJava;
+    } else {
+      devtoolsLog(`[Java] Custom Java path ${customJava} is not compatible with version ${javaVersion}`);
     }
-  } catch (_) {
-    // system Java not found
   }
 
-  // 6️⃣ Detect OS & Arch
+  // 6️⃣ Check system Java
+  const systemJava = findSystemJava(javaVersion);
+  if (systemJava) {
+    devtoolsLog(`[Java] Found compatible system Java: ${systemJava}`);
+    return systemJava;
+  }
+
+  // 7️⃣ Detect OS & Arch for download
   const platform = process.platform;
   let osName;
   if (platform === "win32") osName = "windows";
@@ -1039,15 +1119,20 @@ async function getJavaForMinecraft(mcVersion) {
   const arch = os.arch() === "x64" ? "x64" : os.arch() === "arm64" ? "aarch64" : null;
   if (!arch) throw new Error(`Unsupported architecture: ${os.arch()}`);
 
-  // 7️⃣ Check if we already have extracted Java
+  // 8️⃣ Check if we already have extracted Java in our runtimes folder
   const installPath = path.join(JAVA_DIR, `${javaVersion}_${osName}_${arch}`);
   const javaBin = path.join(installPath, platform === "win32" ? "bin/javaw.exe" : "bin/java");
   if (fs.existsSync(javaBin)) {
-    devtoolsLog(`Found existing Java ${javaVersion} at ${javaBin}`);
+    devtoolsLog(`[Java] Found existing bundled Java ${javaVersion} at ${javaBin}`);
     return javaBin;
   }
 
-  // 8️⃣ Fetch Adoptium API JSON
+  // 9️⃣ If no Java found and auto-download is disabled, stop
+  if (settings.get('autoDownloadJava', true) === false) {
+    throw new Error(`No compatible Java ${javaVersion} found on your system, and auto-download is disabled in settings.`);
+  }
+
+  // 🔟 Fetch Adoptium API JSON
   const apiUrl = `https://api.adoptium.net/v3/assets/latest/${javaVersion}/hotspot?architecture=${arch}&os=${osName}&image_type=jre&release_type=ga`;
   const apiData = await new Promise((resolve, reject) => {
     https.get(apiUrl, (res) => {
@@ -1067,29 +1152,32 @@ async function getJavaForMinecraft(mcVersion) {
   const downloadUrl = apiData[0].binary.package.link;
   const tmpZip = path.join(os.tmpdir(), `java${javaVersion}.zip`);
 
-  // 9️⃣ Download
+  // 10️⃣ Download
   devtoolsLog(`Downloading Java ${javaVersion} for ${mcVersion} from Adoptium...`);
   await downloadFile(downloadUrl, tmpZip);
 
-  // 10️⃣ Extract
+  // 11️⃣ Extract
   devtoolsLog("Extracting Java...");
-  await fs.createReadStream(tmpZip)
-    .pipe(unzipper.Parse())
-    .on("entry", (entry) => {
-      const entryPathParts = entry.path.split(/[/\\]/); // split path into parts
-      entryPathParts.shift(); // remove the top-level folder
-      const relativePath = entryPathParts.join(path.sep);
-      const destPath = path.join(installPath, relativePath);
+  const directory = await unzipper.Open.file(tmpZip);
+  for (const entry of directory.files) {
+    const entryPathParts = entry.path.split(/[/\\]/);
+    entryPathParts.shift();
+    const relativePath = entryPathParts.join(path.sep);
+    if (!relativePath) continue;
+    const destPath = path.join(installPath, relativePath);
 
-      if (entry.type === "Directory") {
-        fs.mkdirSync(destPath, { recursive: true });
-        entry.autodrain();
-      } else {
-        fs.mkdirSync(path.dirname(destPath), { recursive: true });
-        entry.pipe(fs.createWriteStream(destPath));
-      }
-    })
-    .promise();
+    if (entry.type === 'Directory') {
+      fs.mkdirSync(destPath, { recursive: true });
+    } else {
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      await new Promise((resolve, reject) => {
+        entry.stream()
+          .pipe(fs.createWriteStream(destPath))
+          .on('finish', resolve)
+          .on('error', reject);
+      });
+    }
+  }
 
   fs.unlinkSync(tmpZip);
 
@@ -1098,89 +1186,113 @@ async function getJavaForMinecraft(mcVersion) {
 
 // Launch profile
 ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
-  event.reply('launcher-log', "Launching, please wait.");
-  const minRam = `${settings.get('ramInstancesMin', 1024)}m`;
-  const maxRam = `${settings.get('ramInstancesMax', 4096)}m`;
-  const profiles = await loadProfiles();
-  const players = loadPlayers();
+  if (launchingProfiles.has(profileId)) {
+    return event.reply('launcher-log', "[WARN] This profile is already launching. Please wait.");
+  }
 
-  const profile = profiles.find(p => p.id === profileId);
-  if (!profile) return event.reply('launch-error', "Profile not found");
-  if (profile) {
+  // Check if already running
+  const isRunning = Array.from(runningInstances.values()).some(i => i.id === profileId);
+  if (isRunning) {
+    return event.reply('launcher-log', "[WARN] This profile is already running.");
+  }
+
+  launchingProfiles.add(profileId);
+
+  try {
+    event.reply('launcher-log', "Launching, please wait.");
+    const minRam = `${settings.get('ramInstancesMin', 1024)}m`;
+    const maxRam = `${settings.get('ramInstancesMax', 4096)}m`;
+    const profiles = await loadProfiles();
+    const players = loadPlayers();
+
+    const profile = profiles.find(p => p.id === profileId);
+    if (!profile) {
+      launchingProfiles.delete(profileId);
+      return event.reply('launch-error', "Profile not found");
+    }
     profile.lastUsed = Date.now();
     saveProfiles(profiles);
-  }
-  const player = players.find(p => p.id === playerId);
-  if (!player) return event.reply('launch-error', "Player not found");
 
-  let auth;
-  if (player.type === "cracked") {
-    auth = { name: player.username, uuid: "0", access_token: "0" };
-  } else {
-    try {
-      await refreshPlayer(player);
-      auth = player.auth
-    } catch (err) {
-      auth = player.auth
-      event.reply('launch-error', "Failed to refresh Microsoft token: " + err.message);
+    const player = players.find(p => p.id === playerId);
+    if (!player) {
+      launchingProfiles.delete(profileId);
+      return event.reply('launch-error', "Player not found");
     }
-  }
-  let quickplay = null;
-  if (quickplaybool) {
-    quickplay = {
-      "type": 'legacy',
-      "identifier": quickplayip
+
+    let auth;
+    if (player.type === "cracked") {
+      auth = { name: player.username, uuid: "0", access_token: "0" };
+    } else {
+      try {
+        await refreshPlayer(player);
+        auth = player.auth
+      } catch (err) {
+        auth = player.auth
+        event.reply('launch-error', "Failed to refresh Microsoft token: " + err.message);
+      }
     }
+    let quickplay = null;
+    if (quickplaybool) {
+      quickplay = {
+        "type": 'legacy',
+        "identifier": quickplayip
+      }
+    }
+
+    const rootDir = path.join(dataDir, 'client', String(profile.id));
+    fs.mkdirSync(rootDir, { recursive: true });
+    const javaPath = await getJavaForMinecraft(profile.version);
+    devtoolsLog("Java ready at:", javaPath);
+
+    const launcher = new Client();
+    let loaderer;
+    if (profile.loader == "fabric") {
+      loaderer = fabric
+    } else if (profile.loader == "quilt") {
+      loaderer = quilt
+    } else if (profile.loader == "forge") {
+      loaderer = forge
+    } else if (profile.loader == "neoforge") {
+      loaderer = neoforge
+    } else {
+      loaderer = vanilla
+    }
+    const launcherConfig = await loaderer.getMCLCLaunchConfig({
+      gameVersion: profile.version,
+      rootPath: rootDir
+    });
+    let opts = {
+      ...launcherConfig,
+      authorization: auth,
+      memory: { max: maxRam, min: minRam },
+      javaPath,
+      overrides: {
+        assetRoot: path.join(dataDir, 'assets'),
+        detached: false
+      },
+      quickplay: quickplay
+    }
+    const childProcess = await launcher.launch(opts);
+
+    launchingProfiles.delete(profileId);
+
+    launcher.on('data', msg => event.reply('launcher-log', msg));
+    launcher.on('debug', msg => event.reply('launcher-log', msg));
+    launcher.on('error', err => event.reply('launcher-log', "ERROR: " + err.message));
+    const pid = childProcess.pid;
+    devtoolsLog("PID: " + pid);
+    startInstance(profileId, pid);
+    event.reply('launcher-log', `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
+
+    // Handle process exit
+    childProcess.on('exit', (code) => {
+      stopInstance(profileId, pid);
+      event.reply('launcher-log', `[INFO] Instance "${profileId}" exited with code ${code}`);
+    });
+  } catch (err) {
+    launchingProfiles.delete(profileId);
+    event.reply('launch-error', err.message);
   }
-
-  const rootDir = path.join(dataDir, 'client', String(profile.id));
-  fs.mkdirSync(rootDir, { recursive: true });
-  const javaPath = await getJavaForMinecraft(profile.version);
-  devtoolsLog("Java ready at:", javaPath);
-
-  const launcher = new Client();
-  let loaderer;
-  if (profile.loader == "fabric") {
-    loaderer = fabric
-  } else if (profile.loader == "quilt") {
-    loaderer = quilt
-  } else if (profile.loader == "forge") {
-    loaderer = forge
-  } else if (profile.loader == "neoforge") {
-    loaderer = neoforge
-  } else {
-    loaderer = vanilla
-  }
-  const launcherConfig = await loaderer.getMCLCLaunchConfig({
-    gameVersion: profile.version,
-    rootPath: rootDir
-  });
-  let opts = {
-    ...launcherConfig,
-    authorization: auth,
-    memory: { max: maxRam, min: minRam },
-    javaPath,
-    overrides: {
-      assetRoot: path.join(dataDir, 'assets'),
-      detached: false
-    },
-    quickplay: quickplay
-  }
-  const childProcess = await launcher.launch(opts);
-
-  launcher.on('data', msg => event.reply('launcher-log', msg));
-  launcher.on('debug', msg => event.reply('launcher-log', msg));
-  launcher.on('error', err => event.reply('launcher-log', "ERROR: " + err.message));
-  const pid = childProcess.pid;
-  devtoolsLog("PID: " + pid);
-  startInstance(profileId, pid);
-  event.reply('launcher-log', `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
-
-  // Handle process exit
-  childProcess.on('exit', (code) => {
-    stopInstance(profileId, pid);
-    event.reply('launcher-log', `[INFO] Instance "${profileId}" exited with code ${code}`);
-  });
 });
 
 //shi
@@ -1391,9 +1503,8 @@ function downloadFile(url, dest) {
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      const file = fs.createWriteStream(dest);
-
-      const request = https.get(url, (res) => {
+      const client = url.startsWith("https") ? https : http;
+      const request = client.get(url, (res) => {
 
         // Handle redirects
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -1409,6 +1520,7 @@ function downloadFile(url, dest) {
           return;
         }
 
+        const file = fs.createWriteStream(dest);
         res.pipe(file);
 
         file.on("finish", () => {
@@ -1418,10 +1530,15 @@ function downloadFile(url, dest) {
           });
         });
 
+        file.on("error", (err) => {
+          fs.unlink(dest, () => {});
+          taskReject(err);
+          reject(err);
+        });
+
       });
 
       request.on("error", (err) => {
-        fs.unlink(dest, () => {});
         reject(err);
         taskReject(err);
       });
