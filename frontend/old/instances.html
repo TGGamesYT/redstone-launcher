@@ -344,8 +344,15 @@ async function renderListOrDetail() {
     logsEl.textContent = `Showing logs for ${profile.name}...\n`;
     // attach log listeners etc (ensure you don't attach duplicates)
     ipcRenderer.removeAllListeners('launcher-log');
-    ipcRenderer.on('launcher-log', (event, msg) => {
-      logsEl.textContent += msg + "\n";
+    ipcRenderer.on('launcher-log', (event, data) => {
+      if (data.profileId === profile.id) {
+        logsEl.textContent += data.msg + "\n";
+        logsEl.scrollTop = logsEl.scrollHeight;
+      }
+    });
+    // Load history
+    ipcRenderer.invoke('get-instance-logs', profile.id).then(history => {
+      logsEl.textContent = history.join("\n") + "\n";
       logsEl.scrollTop = logsEl.scrollHeight;
     });
     ipcRenderer.removeAllListeners('launch-error');

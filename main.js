@@ -1,36 +1,30 @@
+process.noDeprecation = true;
 let ALLOW_CRACKED_TESTING = false;
-
 
 import path from 'path';
 import https from 'https';
 import http from 'http';
-import readline from "readline";
 import tar from "tar-fs";
 import zlib from "zlib";
 import fs from 'fs';
 const fsp = fs.promises;
 import { ssim } from "ssim.js";
 import sharp from "sharp";
-import fetch from 'node-fetch';
 import { shell, app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
 import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
 import serverManager from './serverManager.js';
-import FormData from 'form-data';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
 import { exec, execSync, spawn } from "child_process";
 import crypto from "crypto";
 import nbt from "prismarine-nbt";
-import base64url from "base64url";
-import fernet from 'fernet';
 import RPC from "discord-rpc";
 import os from 'os';
 import xml2js from "xml2js";
-import { parseStringPromise } from "xml2js";
 import unzipper from "unzipper";
-import { getSkinHistory } from "namemc-skinhistory";
+
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
 let ACCESS_TOKEN = "";
@@ -42,8 +36,6 @@ const CLASS_ID_FOLDERS = {
   6552: "shaderpacks",
   17: "saves"
 };
-
-
 
 const _WHITESPACE_BYTES = new Set([
   9, 10, 13, 32 // \t, \n, \r, space  <-- match the Python set exactly
@@ -98,9 +90,87 @@ function computeSHA1(filePath) {
   return crypto.createHash("sha1").update(fileBuffer).digest("hex");
 }
 
+function checkJavaVersion(javaPath, requiredVersion) {
+  try {
+    const output = execSync(`"${javaPath}" -version 2>&1`).toString();
+    const match = output.match(/(?:java|openjdk) version "(?<v>\d+)\.?/);
+    if (match && match.groups.v) {
+      const sysVer = parseInt(match.groups.v, 10);
+      // Minecraft is generally happy with major version matches
+      return sysVer === requiredVersion;
+    }
+  } catch (e) {
+    return false;
+  }
+  return false;
+}
+
+function findSystemJava(requiredVersion) {
+  const candidates = new Set();
+
+  // 1. Check JAVA_HOME
+  if (process.env.JAVA_HOME) {
+    const bin = path.join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+    candidates.add(bin);
+  }
+
+  // 2. Check PATH
+  candidates.add('java');
+
+  // 3. Common paths
+  if (process.platform === 'win32') {
+    const progFiles = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']];
+    for (const p of progFiles) {
+      if (!p) continue;
+      const javaDir = path.join(p, 'Java');
+      if (fs.existsSync(javaDir)) {
+        try {
+          fs.readdirSync(javaDir).forEach(v => {
+            candidates.add(path.join(javaDir, v, 'bin', 'java.exe'));
+          });
+        } catch (e) {}
+      }
+    }
+  } else if (process.platform === 'linux') {
+    const linuxPaths = ['/usr/bin/java', '/usr/lib/jvm'];
+    linuxPaths.forEach(p => {
+      if (fs.existsSync(p)) {
+        if (fs.statSync(p).isDirectory()) {
+          try {
+            fs.readdirSync(p).forEach(v => {
+              candidates.add(path.join(p, v, 'bin', 'java'));
+            });
+          } catch (e) {}
+        } else {
+          candidates.add(p);
+        }
+      }
+    });
+  }
+
+  for (const c of candidates) {
+    if (checkJavaVersion(c, requiredVersion)) return c;
+  }
+  return null;
+}
 
 // ========== INSTANCE TRACKING SYSTEM ==========
 const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, startTime }
+const launchingProfiles = new Set(); // track profiles currently in the launch process
+const instanceLogs = new Map(); // profileId -> string[]
+
+function broadcastLog(profileId, msg) {
+  if (!instanceLogs.has(profileId)) {
+    instanceLogs.set(profileId, []);
+  }
+  const logs = instanceLogs.get(profileId);
+  logs.push(msg);
+  if (logs.length > 2000) logs.shift(); // Keep last 2000 lines
+
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('launcher-log', { profileId, msg });
+  }
+}
 
 function startInstance(id, pid) {
   const now = Date.now();
@@ -115,6 +185,9 @@ function stopInstance(id, pid = null) {
     if (runningInstances.has(key)) {
       runningInstances.delete(key);
       devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${pid})`);
+      if (!isInstanceRunning(id)) {
+        instanceLogs.delete(id); // Clean up logs when fully stopped
+      }
     }
   } else {
     // Stop all with same ID
@@ -124,6 +197,7 @@ function stopInstance(id, pid = null) {
         devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${data.pid})`);
       }
     }
+    instanceLogs.delete(id);
   }
 }
 
@@ -137,6 +211,10 @@ function isInstanceRunning(id) {
 function getRunningInstances() {
   return Array.from(runningInstances.values());
 }
+
+ipcMain.handle('get-instance-logs', (event, profileId) => {
+  return instanceLogs.get(profileId) || [];
+});
 
 function stopByPid(pid) {
   for (const [key, data] of runningInstances.entries()) {
@@ -169,6 +247,10 @@ let frpcProcess = null;
 const profilesPath = path.join(dataDir, 'profiles.json');
 const playersPath = path.join(dataDir, 'players.json');
 const JAVA_DIR = path.join(dataDir, "java_runtimes")
+
+// Global profile cache to prevent 429 Too Many Requests
+let profileCache = new Map(); // playerID -> { data, timestamp }
+const PROFILE_CACHE_TTL = 1000 * 60 * 5; // 5 minutes
 
 const clientId = '1413838664185679892';
 let rpc = null; // will hold the Discord RPC client
@@ -253,11 +335,11 @@ async function applySort(profiles, mode, order) {
   }
 }
 
-
 function loadPlayers() {
   ensureFile(playersPath);
   return JSON.parse(fs.readFileSync(playersPath));
 }
+
 function savePlayers(p) { fs.writeFileSync(playersPath, JSON.stringify(p, null, 2)); }
 let mainWindow;
 const iconPath = path.join(process.resourcesPath, 'frontend', 'icon.png');
@@ -321,11 +403,19 @@ if (!gotTheLock) {
   });
 }
 
-function devtoolsLog(text) {
+function devtoolsLog(...args) {
+  const text = args.map(arg => {
+    if (arg instanceof Error) return arg.stack || arg.message;
+    if (typeof arg === 'object') {
+      try { return JSON.stringify(arg); } catch(e) { return String(arg); }
+    }
+    return String(arg);
+  }).join(' ');
+
   if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send("devtools-log", String(text));
-    console.log(text)
+    mainWindow.webContents.send("devtools-log", text);
   }
+  console.log(...args);
 }
 
 export function alert(message) {
@@ -334,9 +424,7 @@ export function alert(message) {
   }
 }
 
-
 /* ─────────────── back/forth system ─────────────── */
-
 ipcMain.on('go-back', () => {
   if (mainWindow.webContents.navigationHistory.canGoBack()) {
     mainWindow.webContents.navigationHistory.goBack();
@@ -349,9 +437,7 @@ ipcMain.on('go-forward', () => {
   }
 });
 
-
 /* ─────────────── Storing ─────────────── */
-
 ipcMain.handle("get-selected-player", () => storage.get("selectedPlayerId", null));
 ipcMain.on("set-selected-player", (event, id) => {
   storage.set("selectedPlayerId", id);
@@ -384,13 +470,11 @@ ipcMain.handle('get-system-ram', () => {
   return totalRAMMB;
 });
 
-
 /* ─────────────── Player Profiles ─────────────── */
-
 async function refreshPlayer(player) {
   try {
     // Create an Auth instance
-    const authManager = new Auth();
+    const authManager = new Auth("login"); // Pass "login" to avoid warning
 
     // Call refresh with either:
     // - The saved msToken object
@@ -564,8 +648,6 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
     });
 });
 
-
-
 ipcMain.on("delete-profile", async (event, profileId) => {
   const profiles = await loadProfiles();
   const id = profileId
@@ -658,7 +740,6 @@ ipcMain.handle("get-sort-mode", () => {
   return sortStore.get("sortMode", "created-desc");
 });
 
-
 // Import .mrpack
 ipcMain.handle("import-mrpack", async () => {
   try {
@@ -699,10 +780,16 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     const players = loadPlayers();
 
     const profile = profiles.find(p => p.id === profileId);
-    if (!profile) return event.reply('launch-error', "Profile not found");
+    if (!profile) {
+      broadcastLog(profileId, "[ERROR] Profile not found");
+      return;
+    }
 
     const player = players.find(p => p.id === playerId);
-    if (!player) return event.reply('launch-error', "Player not found");
+    if (!player) {
+      broadcastLog(profileId, "[ERROR] Player not found");
+      return;
+    }
 
     let auth;
     if (player.type === "cracked") {
@@ -747,12 +834,23 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
       },
       quickplay
     }
-    launcher.launch(opts);
+    const childProcess = await launcher.launch(opts);
 
-    launcher.on('debug', (msg) => event.reply('launcher-log', msg));
-    launcher.on('error', (err) => event.reply('launcher-log', "ERROR: " + err.message));
+    launchingProfiles.delete(profileId);
 
-    return { success: true, profile_main };
+    launcher.on('data', msg => broadcastLog(profileId, msg));
+    launcher.on('debug', msg => broadcastLog(profileId, msg));
+    launcher.on('error', err => broadcastLog(profileId, "ERROR: " + err.message));
+    const pid = childProcess.pid;
+    devtoolsLog("PID: " + pid);
+    startInstance(profileId, pid);
+    broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
+
+    // Handle process exit
+    childProcess.on('exit', (code) => {
+      stopInstance(profileId, pid);
+      broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
+    });
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -1027,25 +1125,24 @@ async function getJavaForMinecraft(mcVersion) {
   const javaVersion = versionData.javaVersion?.majorVersion;
   if (!javaVersion) throw new Error(`Java version info not found for Minecraft ${mcVersion}`);
 
-  // 5️⃣ Check system Java
-  try {
-    const output = execSync("java -version 2>&1").toString();
-    // Match "java version "23.0.2""
-    const match = output.match(/version "(?<v>\d+)\.?/);
-    if (match && match.groups.v) {
-      const sysVer = parseInt(match.groups.v, 10);
-
-      // Accept exact match only
-      if (sysVer === javaVersion) return "java";
-
-      // Optional: allow minor compatible versions (like Java 17–18)
-      // if (javaVersion >= 17 && sysVer >= 17 && sysVer <= 18) return "java";
+  // 5️⃣ Check custom Java path from settings
+  const customJava = settings.get('customJavaPath');
+  if (customJava && fs.existsSync(customJava)) {
+    if (checkJavaVersion(customJava, javaVersion)) {
+      return customJava;
+    } else {
+      devtoolsLog(`[Java] Custom Java path ${customJava} is not compatible with version ${javaVersion}`);
     }
-  } catch (_) {
-    // system Java not found
   }
 
-  // 6️⃣ Detect OS & Arch
+  // 6️⃣ Check system Java
+  const systemJava = findSystemJava(javaVersion);
+  if (systemJava) {
+    devtoolsLog(`[Java] Found compatible system Java: ${systemJava}`);
+    return systemJava;
+  }
+
+  // 7️⃣ Detect OS & Arch for download
   const platform = process.platform;
   let osName;
   if (platform === "win32") osName = "windows";
@@ -1056,15 +1153,20 @@ async function getJavaForMinecraft(mcVersion) {
   const arch = os.arch() === "x64" ? "x64" : os.arch() === "arm64" ? "aarch64" : null;
   if (!arch) throw new Error(`Unsupported architecture: ${os.arch()}`);
 
-  // 7️⃣ Check if we already have extracted Java
+  // 8️⃣ Check if we already have extracted Java in our runtimes folder
   const installPath = path.join(JAVA_DIR, `${javaVersion}_${osName}_${arch}`);
   const javaBin = path.join(installPath, platform === "win32" ? "bin/javaw.exe" : "bin/java");
   if (fs.existsSync(javaBin)) {
-    devtoolsLog(`Found existing Java ${javaVersion} at ${javaBin}`);
+    devtoolsLog(`[Java] Found existing bundled Java ${javaVersion} at ${javaBin}`);
     return javaBin;
   }
 
-  // 8️⃣ Fetch Adoptium API JSON
+  // 9️⃣ If no Java found and auto-download is disabled, stop
+  if (settings.get('autoDownloadJava', true) === false) {
+    throw new Error(`No compatible Java ${javaVersion} found on your system, and auto-download is disabled in settings.`);
+  }
+
+  // 🔟 Fetch Adoptium API JSON
   const apiUrl = `https://api.adoptium.net/v3/assets/latest/${javaVersion}/hotspot?architecture=${arch}&os=${osName}&image_type=jre&release_type=ga`;
   const apiData = await new Promise((resolve, reject) => {
     https.get(apiUrl, (res) => {
@@ -1084,122 +1186,151 @@ async function getJavaForMinecraft(mcVersion) {
   const downloadUrl = apiData[0].binary.package.link;
   const tmpZip = path.join(os.tmpdir(), `java${javaVersion}.zip`);
 
-  // 9️⃣ Download
+  // 10️⃣ Download
   devtoolsLog(`Downloading Java ${javaVersion} for ${mcVersion} from Adoptium...`);
   await downloadFile(downloadUrl, tmpZip);
 
-  // 10️⃣ Extract
+  // 11️⃣ Extract
   devtoolsLog("Extracting Java...");
-  await fs.createReadStream(tmpZip)
-    .pipe(unzipper.Parse())
-    .on("entry", (entry) => {
-      const entryPathParts = entry.path.split(/[/\\]/); // split path into parts
-      entryPathParts.shift(); // remove the top-level folder
-      const relativePath = entryPathParts.join(path.sep);
-      const destPath = path.join(installPath, relativePath);
+  const directory = await unzipper.Open.file(tmpZip);
+  for (const entry of directory.files) {
+    const entryPathParts = entry.path.split(/[/\\]/);
+    entryPathParts.shift();
+    const relativePath = entryPathParts.join(path.sep);
+    if (!relativePath) continue;
+    const destPath = path.join(installPath, relativePath);
 
-      if (entry.type === "Directory") {
-        fs.mkdirSync(destPath, { recursive: true });
-        entry.autodrain();
-      } else {
-        fs.mkdirSync(path.dirname(destPath), { recursive: true });
-        entry.pipe(fs.createWriteStream(destPath));
-      }
-    })
-    .promise();
+    if (entry.type === 'Directory') {
+      fs.mkdirSync(destPath, { recursive: true });
+    } else {
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      await new Promise((resolve, reject) => {
+        entry.stream()
+          .pipe(fs.createWriteStream(destPath))
+          .on('finish', resolve)
+          .on('error', reject);
+      });
+    }
+  }
 
   fs.unlinkSync(tmpZip);
 
   return javaBin;
 }
 
-
-
 // Launch profile
 ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
-  event.reply('launcher-log', "Launching, please wait.");
-  const minRam = `${settings.get('ramInstancesMin', 1024)}m`;
-  const maxRam = `${settings.get('ramInstancesMax', 4096)}m`;
-  const profiles = await loadProfiles();
-  const players = loadPlayers();
+  if (launchingProfiles.has(profileId)) {
+    broadcastLog(profileId, "[WARN] This profile is already launching. Please wait.");
+    return;
+  }
 
-  const profile = profiles.find(p => p.id === profileId);
-  if (!profile) return event.reply('launch-error', "Profile not found");
-  if (profile) {
+  // Check if already running
+  const isRunning = Array.from(runningInstances.values()).some(i => i.id === profileId);
+  if (isRunning) {
+    broadcastLog(profileId, "[WARN] This profile is already running.");
+    return;
+  }
+
+  launchingProfiles.add(profileId);
+
+  try {
+    broadcastLog(profileId, "Launching, please wait.");
+    const minRam = `${settings.get('ramInstancesMin', 1024)}m`;
+    const maxRam = `${settings.get('ramInstancesMax', 4096)}m`;
+    const profiles = await loadProfiles();
+    const players = loadPlayers();
+
+    const profile = profiles.find(p => p.id === profileId);
+    if (!profile) {
+      launchingProfiles.delete(profileId);
+      broadcastLog(profileId, "[ERROR] Profile not found");
+      return;
+    }
     profile.lastUsed = Date.now();
     saveProfiles(profiles);
-  }
-  const player = players.find(p => p.id === playerId);
-  if (!player) return event.reply('launch-error', "Player not found");
 
-  let auth;
-  if (player.type === "cracked") {
-    auth = { name: player.username, uuid: "0", access_token: "0" };
-  } else {
-    try {
-      await refreshPlayer(player);
-      auth = player.auth
-    } catch (err) {
-      auth = player.auth
-      event.reply('launch-error', "Failed to refresh Microsoft token: " + err.message);
+    const player = players.find(p => p.id === playerId);
+    if (!player) {
+      launchingProfiles.delete(profileId);
+      broadcastLog(profileId, "[ERROR] Player not found");
+      return;
     }
-  }
-  let quickplay = null;
-  if (quickplaybool) {
-    quickplay = {
-      "type": 'legacy',
-      "identifier": quickplayip
+
+    let auth;
+    if (player.type === "cracked") {
+      auth = { name: player.username, uuid: "0", access_token: "0" };
+    } else {
+      try {
+        await refreshPlayer(player);
+        auth = player.auth
+      } catch (err) {
+        auth = player.auth
+        broadcastLog(profileId, "[ERROR] Failed to refresh Microsoft token: " + err.message);
+      }
     }
+    let quickplay = null;
+    if (quickplaybool) {
+      quickplay = {
+        "type": 'legacy',
+        "identifier": quickplayip
+      }
+    }
+
+    const rootDir = path.join(dataDir, 'client', String(profile.id));
+    fs.mkdirSync(rootDir, { recursive: true });
+    const javaPath = await getJavaForMinecraft(profile.version);
+    devtoolsLog("Java ready at:", javaPath);
+
+    const launcher = new Client();
+    let loaderer;
+    if (profile.loader == "fabric") {
+      loaderer = fabric
+    } else if (profile.loader == "quilt") {
+      loaderer = quilt
+    } else if (profile.loader == "forge") {
+      loaderer = forge
+    } else if (profile.loader == "neoforge") {
+      loaderer = neoforge
+    } else {
+      loaderer = vanilla
+    }
+    const launcherConfig = await loaderer.getMCLCLaunchConfig({
+      gameVersion: profile.version,
+      rootPath: rootDir
+    });
+    let opts = {
+      ...launcherConfig,
+      authorization: auth,
+      memory: { max: maxRam, min: minRam },
+      javaPath,
+      overrides: {
+        assetRoot: path.join(dataDir, 'assets'),
+        detached: false
+      },
+      quickplay: quickplay
+    }
+    const childProcess = await launcher.launch(opts);
+
+    launchingProfiles.delete(profileId);
+
+    launcher.on('data', msg => broadcastLog(profileId, msg));
+    launcher.on('debug', msg => broadcastLog(profileId, msg));
+    launcher.on('error', err => broadcastLog(profileId, "ERROR: " + err.message));
+    const pid = childProcess.pid;
+    devtoolsLog("PID: " + pid);
+    startInstance(profileId, pid);
+    broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
+
+    // Handle process exit
+    childProcess.on('exit', (code) => {
+      stopInstance(profileId, pid);
+      broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
+    });
+  } catch (err) {
+    launchingProfiles.delete(profileId);
+    broadcastLog(profileId, "[ERROR] " + err.message);
   }
-
-  const rootDir = path.join(dataDir, 'client', String(profile.id));
-  fs.mkdirSync(rootDir, { recursive: true });
-  const javaPath = await getJavaForMinecraft(profile.version);
-  devtoolsLog("Java ready at:", javaPath);
-
-  const launcher = new Client();
-  let loaderer;
-  if (profile.loader == "fabric") {
-    loaderer = fabric
-  } else if (profile.loader == "quilt") {
-    loaderer = quilt
-  } else if (profile.loader == "forge") {
-    loaderer = forge
-  } else if (profile.loader == "neoforge") {
-    loaderer = neoforge
-  } else {
-    loaderer = vanilla
-  }
-  const launcherConfig = await loaderer.getMCLCLaunchConfig({
-    gameVersion: profile.version,
-    rootPath: rootDir
-  });
-  let opts = {
-    ...launcherConfig,
-    authorization: auth,
-    memory: { max: maxRam, min: minRam },
-    javaPath,
-    overrides: {
-      assetRoot: path.join(dataDir, 'assets'),
-      detached: false
-    },
-    quickplay: quickplay
-  }
-  const childProcess = await launcher.launch(opts);
-
-  launcher.on('data', msg => event.reply('launcher-log', msg));
-  launcher.on('debug', msg => event.reply('launcher-log', msg));
-  launcher.on('error', err => event.reply('launcher-log', "ERROR: " + err.message));
-  const pid = childProcess.pid;
-  devtoolsLog("PID: " + pid);
-  startInstance(profileId, pid);
-  event.reply('launcher-log', `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
-
-  // Handle process exit
-  childProcess.on('exit', (code) => {
-    stopInstance(profileId, pid);
-    event.reply('launcher-log', `[INFO] Instance "${profileId}" exited with code ${code}`);
-  });
 });
 
 //shi
@@ -1274,7 +1405,6 @@ ipcMain.handle("download-file", async (event, { type, id, relativePath, fileUrl 
   });
 });
 
-
 ipcMain.on("open-modrinth-browser", () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
@@ -1301,7 +1431,6 @@ ipcMain.on("open-modrinth-browser", () => {
   // Load the actual Modrinth site inside the main window
   mainWindow.loadURL("https://modrinth.com");
 });
-
 
 function getTypeFolder(type) {
   switch (type) {
@@ -1384,25 +1513,22 @@ ipcMain.handle('set-player-skin', async (event, { playerId, skinPath, model }) =
   const token = player.auth.access_token;
 
   const skinBuffer = fs.readFileSync(skinPath);
-  const fileName = require('path').basename(skinPath);
+  const fileName = path.basename(skinPath);
 
   const form = new FormData();
   form.append('model', model);
-  form.append('file', skinBuffer, { filename: fileName });
+  form.append('file', new Blob([skinBuffer], { type: 'image/png' }), fileName);
 
   const res = await fetch('https://api.minecraftservices.com/minecraft/profile/skins', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${token}`,
-      ...form.getHeaders()
+      'Authorization': `Bearer ${token}`
     },
     body: form
   });
 
   if (!res.ok) throw new Error(`Failed to upload skin: ${res.statusText}`);
 });
-
-
 
 /* ─────────────── Helpers ─────────────── */
 function downloadFile(url, dest) {
@@ -1415,9 +1541,8 @@ function downloadFile(url, dest) {
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      const file = fs.createWriteStream(dest);
-
-      const request = https.get(url, (res) => {
+      const client = url.startsWith("https") ? https : http;
+      const request = client.get(url, (res) => {
 
         // Handle redirects
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -1433,6 +1558,7 @@ function downloadFile(url, dest) {
           return;
         }
 
+        const file = fs.createWriteStream(dest);
         res.pipe(file);
 
         file.on("finish", () => {
@@ -1442,10 +1568,15 @@ function downloadFile(url, dest) {
           });
         });
 
+        file.on("error", (err) => {
+          fs.unlink(dest, () => {});
+          taskReject(err);
+          reject(err);
+        });
+
       });
 
       request.on("error", (err) => {
-        fs.unlink(dest, () => {});
         reject(err);
         taskReject(err);
       });
@@ -1493,7 +1624,16 @@ async function fetchJSON(url) {
 }
 
 /* ---------- Check for updates ---------- */
-async function checkForUpdate() {
+let cachedUpdate = null;
+let lastUpdateCheck = 0;
+const UPDATE_CHECK_INTERVAL = 1000 * 60 * 60; // 1 hour
+
+async function checkForUpdate(force = false) {
+  const now = Date.now();
+  if (!force && cachedUpdate && (now - lastUpdateCheck < UPDATE_CHECK_INTERVAL)) {
+    return cachedUpdate;
+  }
+
   const apiURL = `https://api.github.com/repos/tggamesyt/redstone-launcher/releases/latest`;
 
   let latest;
@@ -1508,7 +1648,10 @@ async function checkForUpdate() {
   const latestVersion = (latest.tag_name || "").replace(/^v/i, "");
   devtoolsLog("current: " + currentVersion + ", latest: " + latestVersion)
   if (!latestVersion || !isVersionNewer(latestVersion, currentVersion)) {
-    return { updateAvailable: false };
+    const result = { updateAvailable: false };
+    cachedUpdate = result;
+    lastUpdateCheck = Date.now();
+    return result;
   }
 
 
@@ -1519,15 +1662,22 @@ async function checkForUpdate() {
 
   if (!asset) {
     console.error("No matching asset found for this platform");
-    return { updateAvailable: false, error: "No asset for this platform" };
+    const result = { updateAvailable: false, error: "No asset for this platform" };
+    cachedUpdate = result;
+    lastUpdateCheck = Date.now();
+    return result;
   }
 
-  return {
+  const result = {
     updateAvailable: true,
     version: latestVersion,
     assetURL: asset.browser_download_url,
     assetName
   };
+
+  cachedUpdate = result;
+  lastUpdateCheck = Date.now();
+  return result;
 }
 
 /* ---------- Download the update ---------- */
@@ -1562,7 +1712,6 @@ async function downloadUpdate(assetURL, assetName) {
   });
 }
 
-
 /* ---------- Install downloaded update ---------- */
 async function installUpdate(downloadPath) {
   switch (os.platform()) {
@@ -1588,9 +1737,12 @@ async function installUpdate(downloadPath) {
 }
 
 /* ---------- IPC handlers ---------- */
-
 ipcMain.handle("check-for-updates", async () => {
   return await checkForUpdate();
+});
+
+ipcMain.handle("force-check-for-updates", async () => {
+  return await checkForUpdate(true);
 });
 
 ipcMain.handle("download-and-install", async (event, assetURL, assetName) => {
@@ -1616,9 +1768,6 @@ function isVersionNewer(latest, current) {
   }
   return false; // equal
 }
-
-
-
 
 /* ─────────────── mrpack export ─────────────── */
 
@@ -1907,7 +2056,7 @@ async function getNeoForgeLatestVersion() {
     "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
   );
   const xml = await res.text();
-  const parsed = await parseStringPromise(xml);
+  const parsed = await xml2js.parseStringPromise(xml);
 
   const versions = parsed.metadata.versioning[0].versions[0].version;
   const latest = versions.reduce((max, v) =>
@@ -1979,8 +2128,6 @@ ipcMain.on("open-folder-path", async (event, { pather }) => {
     console.error("Error opening folder:", err);
   }
 });
-
-
 
 // check tab
 ipcMain.handle("check-instance-tab", async (event, { profileId, tab }) => {
@@ -2156,9 +2303,6 @@ ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, fil
   };
 });
 
-
-
-
 // servers tab
 ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
   const filePath = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
@@ -2197,7 +2341,6 @@ ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
     folder: path.join(dataDir, 'client', profileId.toString())
   }));
 });
-
 
 // add server
 ipcMain.handle("add-instance-server", async (event, { profileId, name, ip, icon }) => {
@@ -2890,11 +3033,46 @@ async function ssimCompare(file1, file2) {
 }
 
 ipcMain.handle("mc:getProfile", async () => {
-  // 1️⃣ Get selected player
+  const now = Date.now();
   const id = storage.get("selectedPlayerId", null);
+  
+  if (profileCache.has(id)) {
+    const entry = profileCache.get(id);
+    if (now - entry.timestamp < PROFILE_CACHE_TTL) {
+      return entry.data;
+    }
+  }
+
+  // 1️⃣ Get selected player
   const players = await loadPlayers();
   let obj1 = players.find(item => item.id === id);
-  obj1 = await refreshPlayer(obj1);
+  if (!obj1) return { skins: [], capes: [] };
+  
+  if (obj1.type === "microsoft") {
+    // Only refresh if token is actually close to expiring (check internal msmc logic or assume TTL)
+    // We already have a 5-minute profile cache, but let's be even more careful with the session.
+    try {
+      // Check if we need a refresh based on a simple heuristic to avoid 429
+      const lastRefresh = obj1.lastRefresh || 0;
+      if (Date.now() - lastRefresh > 1000 * 60 * 30) { // Only refresh every 30 mins
+        obj1 = await refreshPlayer(obj1);
+        obj1.lastRefresh = Date.now();
+        // Save the updated lastRefresh back to players.json
+        const allPlayers = await loadPlayers();
+        const pIdx = allPlayers.findIndex(p => p.id === obj1.id);
+        if (pIdx !== -1) {
+          allPlayers[pIdx] = obj1;
+          savePlayers(allPlayers);
+        }
+      }
+    } catch (e) {
+      if (e.response?.status === 429) {
+        console.warn("Too many requests during player refresh, using existing token");
+      } else {
+        throw e;
+      }
+    }
+  }
 
   const accessToken = obj1?.auth?.access_token || null;
   const skinsDir = path.join(dataDir, "textures");
@@ -2903,87 +3081,88 @@ ipcMain.handle("mc:getProfile", async () => {
   // 2️⃣ Create folder if missing
   await fsp.mkdir(skinsDir, { recursive: true });
 
-  // 3️⃣ Fetch Mojang profile
-  const response = await fetch("https://api.minecraftservices.com/minecraft/profile", {
-    method: "GET",
-    headers: { "Authorization": `Bearer ${accessToken}` }
-  });
+  let data = { skins: [], capes: [] };
 
-  if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
-  const data = await response.json();
+  if (accessToken) {
+    // 3️⃣ Fetch Mojang profile
+    try {
+      const response = await fetch("https://api.minecraftservices.com/minecraft/profile", {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${accessToken}` }
+      });
+
+      if (response.ok) {
+        data = await response.json();
+      }
+    } catch (e) {
+      devtoolsLog("Failed to fetch Mojang profile:", e);
+    }
+  }
 
   // Ensure arrays exist
   data.skins ??= [];
   data.capes ??= [];
 
-  // 4️⃣ Download Mojang skins locally
+  // 4️⃣ Download Mojang skins locally and convert to base64
   for (const skin of data.skins) {
-    const filePath = path.join(skinsDir, `${skin.textureKey || skin.hash || skin.id}.png`);
-    try { await fsp.access(filePath); } catch {
+    const hash = skin.textureKey || skin.id;
+    const filePath = path.join(skinsDir, `${hash}.png`);
+    try {
+      await fsp.access(filePath);
+    } catch {
       const img = await fetch(skin.url);
-      const buffer = Buffer.from(await img.arrayBuffer());
-      await fsp.writeFile(filePath, buffer);
-    }
-    skin.localFile = filePath;
-    if (!skin.hash) skin.hash = await hashImage(skin.url); // opcionális
-  }
-
-  // 5️⃣ Fetch NameMC skins
-  const nmSkins = await getSkinHistory(obj1.username);
-  const savedSkins = [];
-
-  for (const url of nmSkins) {
-    const hash = await hashImage(url); // opcionális, fájl névhez
-    const filePath = path.join(skinsDir, `${hash}_nm.png`);
-
-    // Download
-    try { await fsp.access(filePath); } catch {
-      try {
-        const img = await fetch(url);
+      if (img.ok) {
         const buffer = Buffer.from(await img.arrayBuffer());
         await fsp.writeFile(filePath, buffer);
-      } catch (err) { console.error("Failed to download NM skin:", err); continue; }
-    }
-
-    // SSIM alapú duplikáció ellenőrzés
-    let isDuplicate = false;
-    for (const mSkin of data.skins) {
-      if (!mSkin.localFile) continue;
-      const similarity = await ssimCompare(filePath, mSkin.localFile);
-      if (similarity > 0.99) {
-        isDuplicate = true;
-        break;
       }
     }
-
-    if (!isDuplicate) {
-      const newSkin = { id: url, url, hash, localFile: filePath };
-      data.skins.push(newSkin);
-      savedSkins.push(newSkin);
-    }
+    try {
+      const buffer = await fsp.readFile(filePath);
+      skin.base64 = buffer.toString('base64');
+    } catch (e) {}
+    skin.localFile = filePath;
   }
 
-  // 6️⃣ Save JSON of NM skins
-  await fsp.writeFile(skinsJsonPath, JSON.stringify(savedSkins, null, 2));
+  // Capes base64
+  for (const cape of data.capes) {
+    const filePath = path.join(skinsDir, `cape_${cape.id}.png`);
+    try {
+      await fsp.access(filePath);
+    } catch {
+      const img = await fetch(cape.url);
+      if (img.ok) {
+        const buffer = Buffer.from(await img.arrayBuffer());
+        await fsp.writeFile(filePath, buffer);
+      }
+    }
+    try {
+      const buffer = await fsp.readFile(filePath);
+      cape.base64 = buffer.toString('base64');
+    } catch (e) {}
+  }
 
-  // 7️⃣ Return final structure
-  return {
+  // 5️⃣ Return final structure
+  const result = {
     id: data.id,
     name: data.name,
-    skins: data.skins,     // Mojang + NM
-    capes: data.capes,     // csak Mojang capek
+    skins: data.skins,
+    capes: data.capes,
     profileActions: data.profileActions || {}
   };
+
+  profileCache.set(id, { data: result, timestamp: now });
+  return result;
 });
 
-
-
 async function hashImage(url) {
-  const buffer = await fetch(url).then(r => r.arrayBuffer());
-  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("");
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    return crypto.createHash("sha256").update(Buffer.from(buffer)).digest("hex");
+  } catch (e) {
+    return null;
+  }
 }
 
 // ---- APPLY SKIN ----
@@ -2996,7 +3175,8 @@ async function downloadSkin(url) {
       headers: { 'User-Agent': 'RedstoneLauncher-SkinDownloader' }
     };
 
-    https.get(url, options, res => {
+    const client = url.startsWith("https") ? https : http;
+    client.get(url, options, res => {
       if (res.statusCode !== 200) {
         return reject(new Error(`Failed to download skin, status code ${res.statusCode}`));
       }
@@ -3007,31 +3187,29 @@ async function downloadSkin(url) {
   });
 }
 
-
 ipcMain.handle("mc:applySkin", async (event, skin) => {
-  const headers = await authHeaders(); // includes Authorization: Bearer <token>
+  const headers = await authHeaders(); 
+  // IMPORTANT: Remove Content-Type header so fetch can set it automatically with the correct FormData boundary
+  delete headers["Content-Type"];
 
   // Download remote PNG first
   const skinPath = await downloadSkin(skin.url);
+  const skinBuffer = await fs.promises.readFile(skinPath);
 
   const form = new FormData();
+  // Mojang expects 'variant' and 'file'. Variant can be 'classic' or 'slim'.
   form.append('variant', (skin.variant || 'classic').toLowerCase());
-  form.append('file', fs.createReadStream(skinPath), {
-    contentType: 'image/png',
-    filename: 'skin.png'
-  });
+  form.append('file', new Blob([skinBuffer], { type: 'image/png' }), 'skin.png');
 
   const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
     method: 'POST',
-    headers: { ...headers, ...form.getHeaders() },
+    headers: headers,
     body: form
   });
 
   if (!res.ok) throw new Error(await res.text());
   return true;
 });
-
-
 
 // ---- APPLY CAPE ----
 ipcMain.handle("mc:applyCape", async (event, capeId) => {
@@ -3049,4 +3227,4 @@ ipcMain.handle("mc:applyCape", async (event, capeId) => {
   return true;
 });
 
-updateDiscordPresenceToggle()
+updateDiscordPresenceToggle();
