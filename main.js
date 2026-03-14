@@ -1407,24 +1407,53 @@ ipcMain.handle('set-player-skin', async (event, { playerId, skinPath, model }) =
 /* ─────────────── Helpers ─────────────── */
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
-    const dir = path.dirname(dest);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true }); // create folder if missing
-    }
 
-    const file = fs.createWriteStream(dest);
-    https.get(url, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        // redirect
-        downloadFile(res.headers.location, dest).then(resolve).catch(reject);
-        return;
+    const task = () => new Promise((taskResolve, taskReject) => {
+
+      const dir = path.dirname(dest);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
       }
-      res.pipe(file);
-      file.on("finish", () => file.close(resolve));
-    }).on("error", (err) => {
-      fs.unlink(dest, () => { }); // delete partial file
-      reject(err);
+
+      const file = fs.createWriteStream(dest);
+
+      const request = https.get(url, (res) => {
+
+        // Handle redirects
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          downloadFile(res.headers.location, dest)
+            .then(resolve)
+            .catch(reject);
+          taskResolve();
+          return;
+        }
+
+        if (res.statusCode !== 200) {
+          taskReject(new Error(`Download failed: ${res.statusCode}`));
+          return;
+        }
+
+        res.pipe(file);
+
+        file.on("finish", () => {
+          file.close(() => {
+            resolve();
+            taskResolve();
+          });
+        });
+
+      });
+
+      request.on("error", (err) => {
+        fs.unlink(dest, () => {});
+        reject(err);
+        taskReject(err);
+      });
+
     });
+
+    downloadQueue.push(task);
+    runNextDownload();
   });
 }
 
@@ -2734,6 +2763,26 @@ async function loadJSON(filePath) {
 // Helper: save JSON
 async function saveJSON(filePath, data) {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+}
+
+// Helper: Limit simultaneous file operations to prevent EMFILE error
+const MAX_CONCURRENT_DOWNLOADS = 10;
+let activeDownloads = 0;
+const downloadQueue = [];
+
+function runNextDownload() {
+  if (downloadQueue.length === 0) return;
+  if (activeDownloads >= MAX_CONCURRENT_DOWNLOADS) return;
+
+  const job = downloadQueue.shift();
+  activeDownloads++;
+
+  job()
+    .catch(() => {})
+    .finally(() => {
+      activeDownloads--;
+      runNextDownload();
+    });
 }
 
 // ------------------------
