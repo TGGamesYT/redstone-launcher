@@ -1620,7 +1620,16 @@ async function fetchJSON(url) {
 }
 
 /* ---------- Check for updates ---------- */
-async function checkForUpdate() {
+let cachedUpdate = null;
+let lastUpdateCheck = 0;
+const UPDATE_CHECK_INTERVAL = 1000 * 60 * 60; // 1 hour
+
+async function checkForUpdate(force = false) {
+  const now = Date.now();
+  if (!force && cachedUpdate && (now - lastUpdateCheck < UPDATE_CHECK_INTERVAL)) {
+    return cachedUpdate;
+  }
+
   const apiURL = `https://api.github.com/repos/tggamesyt/redstone-launcher/releases/latest`;
 
   let latest;
@@ -1635,7 +1644,10 @@ async function checkForUpdate() {
   const latestVersion = (latest.tag_name || "").replace(/^v/i, "");
   devtoolsLog("current: " + currentVersion + ", latest: " + latestVersion)
   if (!latestVersion || !isVersionNewer(latestVersion, currentVersion)) {
-    return { updateAvailable: false };
+    const result = { updateAvailable: false };
+    cachedUpdate = result;
+    lastUpdateCheck = Date.now();
+    return result;
   }
 
 
@@ -1646,15 +1658,22 @@ async function checkForUpdate() {
 
   if (!asset) {
     console.error("No matching asset found for this platform");
-    return { updateAvailable: false, error: "No asset for this platform" };
+    const result = { updateAvailable: false, error: "No asset for this platform" };
+    cachedUpdate = result;
+    lastUpdateCheck = Date.now();
+    return result;
   }
 
-  return {
+  const result = {
     updateAvailable: true,
     version: latestVersion,
     assetURL: asset.browser_download_url,
     assetName
   };
+
+  cachedUpdate = result;
+  lastUpdateCheck = Date.now();
+  return result;
 }
 
 /* ---------- Download the update ---------- */
@@ -1716,6 +1735,10 @@ async function installUpdate(downloadPath) {
 /* ---------- IPC handlers ---------- */
 ipcMain.handle("check-for-updates", async () => {
   return await checkForUpdate();
+});
+
+ipcMain.handle("force-check-for-updates", async () => {
+  return await checkForUpdate(true);
 });
 
 ipcMain.handle("download-and-install", async (event, assetURL, assetName) => {
