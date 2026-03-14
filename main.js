@@ -1,36 +1,30 @@
+process.noDeprecation = true;
 let ALLOW_CRACKED_TESTING = false;
-
 
 import path from 'path';
 import https from 'https';
 import http from 'http';
-import readline from "readline";
 import tar from "tar-fs";
 import zlib from "zlib";
 import fs from 'fs';
 const fsp = fs.promises;
 import { ssim } from "ssim.js";
 import sharp from "sharp";
-import fetch from 'node-fetch';
 import { shell, app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
 import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
 import serverManager from './serverManager.js';
-import FormData from 'form-data';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
 import { exec, execSync, spawn } from "child_process";
 import crypto from "crypto";
 import nbt from "prismarine-nbt";
-import base64url from "base64url";
-import fernet from 'fernet';
 import RPC from "discord-rpc";
 import os from 'os';
 import xml2js from "xml2js";
-import { parseStringPromise } from "xml2js";
 import unzipper from "unzipper";
-import { getSkinHistory } from "namemc-skinhistory";
+
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
 let ACCESS_TOKEN = "";
@@ -42,8 +36,6 @@ const CLASS_ID_FOLDERS = {
   6552: "shaderpacks",
   17: "saves"
 };
-
-
 
 const _WHITESPACE_BYTES = new Set([
   9, 10, 13, 32 // \t, \n, \r, space  <-- match the Python set exactly
@@ -253,11 +245,11 @@ async function applySort(profiles, mode, order) {
   }
 }
 
-
 function loadPlayers() {
   ensureFile(playersPath);
   return JSON.parse(fs.readFileSync(playersPath));
 }
+
 function savePlayers(p) { fs.writeFileSync(playersPath, JSON.stringify(p, null, 2)); }
 let mainWindow;
 const iconPath = path.join(process.resourcesPath, 'frontend', 'icon.png');
@@ -334,9 +326,7 @@ export function alert(message) {
   }
 }
 
-
 /* ─────────────── back/forth system ─────────────── */
-
 ipcMain.on('go-back', () => {
   if (mainWindow.webContents.navigationHistory.canGoBack()) {
     mainWindow.webContents.navigationHistory.goBack();
@@ -349,9 +339,7 @@ ipcMain.on('go-forward', () => {
   }
 });
 
-
 /* ─────────────── Storing ─────────────── */
-
 ipcMain.handle("get-selected-player", () => storage.get("selectedPlayerId", null));
 ipcMain.on("set-selected-player", (event, id) => {
   storage.set("selectedPlayerId", id);
@@ -384,9 +372,7 @@ ipcMain.handle('get-system-ram', () => {
   return totalRAMMB;
 });
 
-
 /* ─────────────── Player Profiles ─────────────── */
-
 async function refreshPlayer(player) {
   try {
     // Create an Auth instance
@@ -564,8 +550,6 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
     });
 });
 
-
-
 ipcMain.on("delete-profile", async (event, profileId) => {
   const profiles = await loadProfiles();
   const id = profileId
@@ -657,7 +641,6 @@ ipcMain.handle("sort-instances", async (event, { mode, order }) => {
 ipcMain.handle("get-sort-mode", () => {
   return sortStore.get("sortMode", "created-desc");
 });
-
 
 // Import .mrpack
 ipcMain.handle("import-mrpack", async () => {
@@ -1113,8 +1096,6 @@ async function getJavaForMinecraft(mcVersion) {
   return javaBin;
 }
 
-
-
 // Launch profile
 ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
   event.reply('launcher-log', "Launching, please wait.");
@@ -1274,7 +1255,6 @@ ipcMain.handle("download-file", async (event, { type, id, relativePath, fileUrl 
   });
 });
 
-
 ipcMain.on("open-modrinth-browser", () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
@@ -1301,7 +1281,6 @@ ipcMain.on("open-modrinth-browser", () => {
   // Load the actual Modrinth site inside the main window
   mainWindow.loadURL("https://modrinth.com");
 });
-
 
 function getTypeFolder(type) {
   switch (type) {
@@ -1384,25 +1363,22 @@ ipcMain.handle('set-player-skin', async (event, { playerId, skinPath, model }) =
   const token = player.auth.access_token;
 
   const skinBuffer = fs.readFileSync(skinPath);
-  const fileName = require('path').basename(skinPath);
+  const fileName = path.basename(skinPath);
 
   const form = new FormData();
   form.append('model', model);
-  form.append('file', skinBuffer, { filename: fileName });
+  form.append('file', new Blob([skinBuffer], { type: 'image/png' }), fileName);
 
   const res = await fetch('https://api.minecraftservices.com/minecraft/profile/skins', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${token}`,
-      ...form.getHeaders()
+      'Authorization': `Bearer ${token}`
     },
     body: form
   });
 
   if (!res.ok) throw new Error(`Failed to upload skin: ${res.statusText}`);
 });
-
-
 
 /* ─────────────── Helpers ─────────────── */
 function downloadFile(url, dest) {
@@ -1562,7 +1538,6 @@ async function downloadUpdate(assetURL, assetName) {
   });
 }
 
-
 /* ---------- Install downloaded update ---------- */
 async function installUpdate(downloadPath) {
   switch (os.platform()) {
@@ -1588,7 +1563,6 @@ async function installUpdate(downloadPath) {
 }
 
 /* ---------- IPC handlers ---------- */
-
 ipcMain.handle("check-for-updates", async () => {
   return await checkForUpdate();
 });
@@ -1616,9 +1590,6 @@ function isVersionNewer(latest, current) {
   }
   return false; // equal
 }
-
-
-
 
 /* ─────────────── mrpack export ─────────────── */
 
@@ -1907,7 +1878,7 @@ async function getNeoForgeLatestVersion() {
     "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
   );
   const xml = await res.text();
-  const parsed = await parseStringPromise(xml);
+  const parsed = await xml2js.parseStringPromise(xml);
 
   const versions = parsed.metadata.versioning[0].versions[0].version;
   const latest = versions.reduce((max, v) =>
@@ -1979,8 +1950,6 @@ ipcMain.on("open-folder-path", async (event, { pather }) => {
     console.error("Error opening folder:", err);
   }
 });
-
-
 
 // check tab
 ipcMain.handle("check-instance-tab", async (event, { profileId, tab }) => {
@@ -2156,9 +2125,6 @@ ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, fil
   };
 });
 
-
-
-
 // servers tab
 ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
   const filePath = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
@@ -2197,7 +2163,6 @@ ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
     folder: path.join(dataDir, 'client', profileId.toString())
   }));
 });
-
 
 // add server
 ipcMain.handle("add-instance-server", async (event, { profileId, name, ip, icon }) => {
@@ -2929,39 +2894,42 @@ ipcMain.handle("mc:getProfile", async () => {
   }
 
   // 5️⃣ Fetch NameMC skins
-  const nmSkins = await getSkinHistory(obj1.username);
   const savedSkins = [];
+  try {
+    const res = await fetch(`https://api.ashcon.app/mojang/v2/user/${obj1.username}`);
+    if (res.ok) {
+      const ashconData = await res.json();
+      const skinUrl = ashconData?.textures?.skin?.url;
+      if (skinUrl) {
+        const hash = await hashImage(skinUrl);
+        const filePath = path.join(skinsDir, `${hash}_nm.png`);
+        
+        try { await fsp.access(filePath); } catch {
+          try {
+            const img = await fetch(skinUrl);
+            const buffer = Buffer.from(await img.arrayBuffer());
+            await fsp.writeFile(filePath, buffer);
+          } catch (err) { console.error("Failed to download fallback skin:", err); }
+        }
 
-  for (const url of nmSkins) {
-    const hash = await hashImage(url); // opcionális, fájl névhez
-    const filePath = path.join(skinsDir, `${hash}_nm.png`);
+        let isDuplicate = false;
+        for (const mSkin of data.skins) {
+          if (!mSkin.localFile) continue;
+          const similarity = await ssimCompare(filePath, mSkin.localFile);
+          if (similarity > 0.99) {
+            isDuplicate = true;
+            break;
+          }
+        }
 
-    // Download
-    try { await fsp.access(filePath); } catch {
-      try {
-        const img = await fetch(url);
-        const buffer = Buffer.from(await img.arrayBuffer());
-        await fsp.writeFile(filePath, buffer);
-      } catch (err) { console.error("Failed to download NM skin:", err); continue; }
-    }
-
-    // SSIM alapú duplikáció ellenőrzés
-    let isDuplicate = false;
-    for (const mSkin of data.skins) {
-      if (!mSkin.localFile) continue;
-      const similarity = await ssimCompare(filePath, mSkin.localFile);
-      if (similarity > 0.99) {
-        isDuplicate = true;
-        break;
+        if (!isDuplicate) {
+          const newSkin = { id: skinUrl, url: skinUrl, hash, localFile: filePath };
+          data.skins.push(newSkin);
+          savedSkins.push(newSkin);
+        }
       }
     }
-
-    if (!isDuplicate) {
-      const newSkin = { id: url, url, hash, localFile: filePath };
-      data.skins.push(newSkin);
-      savedSkins.push(newSkin);
-    }
-  }
+  } catch(e) { console.error("Failed to fetch from Ashcon API:", e); }
 
   // 6️⃣ Save JSON of NM skins
   await fsp.writeFile(skinsJsonPath, JSON.stringify(savedSkins, null, 2));
@@ -2975,8 +2943,6 @@ ipcMain.handle("mc:getProfile", async () => {
     profileActions: data.profileActions || {}
   };
 });
-
-
 
 async function hashImage(url) {
   const buffer = await fetch(url).then(r => r.arrayBuffer());
@@ -3007,31 +2973,26 @@ async function downloadSkin(url) {
   });
 }
 
-
 ipcMain.handle("mc:applySkin", async (event, skin) => {
   const headers = await authHeaders(); // includes Authorization: Bearer <token>
 
   // Download remote PNG first
   const skinPath = await downloadSkin(skin.url);
+  const skinBuffer = await fs.promises.readFile(skinPath);
 
   const form = new FormData();
   form.append('variant', (skin.variant || 'classic').toLowerCase());
-  form.append('file', fs.createReadStream(skinPath), {
-    contentType: 'image/png',
-    filename: 'skin.png'
-  });
+  form.append('file', new Blob([skinBuffer], { type: 'image/png' }), 'skin.png');
 
   const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
     method: 'POST',
-    headers: { ...headers, ...form.getHeaders() },
+    headers: headers,
     body: form
   });
 
   if (!res.ok) throw new Error(await res.text());
   return true;
 });
-
-
 
 // ---- APPLY CAPE ----
 ipcMain.handle("mc:applyCape", async (event, capeId) => {
@@ -3049,4 +3010,4 @@ ipcMain.handle("mc:applyCape", async (event, capeId) => {
   return true;
 });
 
-updateDiscordPresenceToggle()
+updateDiscordPresenceToggle();

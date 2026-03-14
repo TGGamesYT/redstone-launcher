@@ -1,8 +1,8 @@
-const fs = require("fs");
-const path = require("path");
-const https = require("https");
-const { spawn } = require("child_process");
-const { app } = require('electron');
+import fs from "fs";
+import path from "path";
+import https from "https";
+import { spawn } from "child_process";
+import { app } from 'electron';
 
 const servers = new Map(); // name → { proc, config, logs }
 const dataDir = path.join(app.getPath('userData'));
@@ -193,7 +193,7 @@ function getConsole(name) {
   return server ? server.logs : [];
 }
 
-module.exports = {
+export default {
   makeServer,
   startServer,
   stopServer,
