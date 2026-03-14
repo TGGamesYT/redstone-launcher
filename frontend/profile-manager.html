@@ -123,6 +123,119 @@
 </div>
 <script src="skinview3d.bundle.js"></script>
 <script>
+  function createSkinCanvas(skin) {
+    const canvas = document.createElement("canvas");
+    // Draw at 2x scale for clarity
+    canvas.width = 32;
+    canvas.height = 64;
+    canvas.style.width = "100%";
+    canvas.style.imageRendering = "pixelated";
+    canvas.className = "card-image";
+    
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    
+    // Only use anonymous for remote URLs to avoid CORS issues
+    if (!skin.base64) img.crossOrigin = "anonymous";
+    img.src = skin.base64 ? ("data:image/png;base64," + skin.base64) : skin.url;
+
+    img.onerror = () => {
+      ctx.fillStyle = "#333";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    };
+
+    img.onload = () => {
+      const isOldFormat = img.height === 32;
+      const isSlim = skin.variant === "SLIM";
+      const armWidth = isSlim ? 3 : 4;
+      
+      // Clear and set pixelated mode
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.imageSmoothingEnabled = false;
+      
+      // Helper to draw at 2x scale
+      const draw = (sx, sy, sw, sh, dx, dy) => {
+        ctx.drawImage(img, sx, sy, sw, sh, dx * 2, dy * 2, sw * 2, sh * 2);
+      };
+
+      // --- BASE LAYER ---
+      // Head
+      draw(8, 8, 8, 8, 4, 0);
+      // Torso
+      draw(20, 20, 8, 12, 4, 8);
+      // Right Leg
+      draw(4, 20, 4, 12, 4, 20);
+      // Right Arm
+      draw(44, 20, armWidth, 12, isSlim ? 1 : 0, 8);
+
+      if (isOldFormat) {
+        // Mirror for legacy skins
+        ctx.save(); ctx.scale(-1, 1);
+        ctx.drawImage(img, 4, 20, 4, 12, -12 * 2, 20 * 2, 4 * 2, 12 * 2); // Left Leg
+        ctx.drawImage(img, 44, 20, 4, 12, -16 * 2, 8 * 2, 4 * 2, 12 * 2);  // Left Arm
+        ctx.restore();
+      } else {
+        // Left Leg
+        draw(20, 52, 4, 12, 8, 20);
+        // Left Arm
+        draw(36, 52, armWidth, 12, 12, 8);
+      }
+
+      // --- OVERLAY LAYER ---
+      // Hat
+      draw(40, 8, 8, 8, 4, 0);
+      
+      if (!isOldFormat) {
+        // Jacket
+        draw(20, 36, 8, 12, 4, 8);
+        // Right Pants
+        draw(4, 36, 4, 12, 4, 20);
+        // Left Pants
+        draw(4, 52, 4, 12, 8, 20);
+        // Right Sleeve
+        draw(44, 36, armWidth, 12, isSlim ? 1 : 0, 8);
+        // Left Sleeve
+        draw(52, 52, armWidth, 12, 12, 8);
+      }
+    };
+    return canvas;
+  }
+
+  function createCapeCanvas(cape) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 10;
+    canvas.height = 16;
+    canvas.style.width = "100%";
+    canvas.style.imageRendering = "pixelated";
+    canvas.className = "card-image";
+    
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.src = cape.base64 ? ("data:image/png;base64," + cape.base64) : cape.url;
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      ctx.drawImage(img, 1, 1, 10, 16, 0, 0, 10, 16);
+    };
+    return canvas;
+  }
+
+  function createCard(title, onClick, previewElement) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.onclick = onClick;
+    
+    if (previewElement) {
+      card.appendChild(previewElement);
+    }
+    
+    const label = document.createElement("div");
+    label.className = "card-label";
+    label.textContent = title;
+    card.appendChild(label);
+    
+    return card;
+  }
+
 players = [];
       const { ipcRenderer } = require('electron');
       async function getSelectedPlayer() {return await ipcRenderer.invoke('get-selected-player')}
@@ -131,117 +244,116 @@ players = [];
   async function updateSKin() {
     selectedplayer = await getSelectedPlayer();
     let player = players.find(p => p.id === selectedplayer);
+    if (!player) return;
     let name;
     if (!player.auth || !player.auth.name) {
       name = player.username;
     } else {
       name = player.auth.name;
     }
-    if (skinview3d === null) {
+
+    let profile = { skins: [], capes: [] };
+    if (player.type != "cracked") {
+      profile = await ipcRenderer.invoke("mc:getProfile");
+    }
+
+    // Update 3D viewer
+    if (typeof skinview3d !== 'undefined' && skinview3d !== null) {
+      if (window.skinViewer) {
+        window.skinViewer.dispose();
+      }
+      window.skinViewer = new skinview3d.SkinViewer({
+        canvas: document.getElementById("skin_container"),
+        width: 600,
+        height: 800
+      });
+      
+      // Load current active skin or fall back to name
+      const activeSkin = profile.skins.find(s => s.state === "ACTIVE") || profile.skins[0];
+      if (activeSkin) {
+        const skinUrl = activeSkin.base64 ? ("data:image/png;base64," + activeSkin.base64) : activeSkin.url;
+        window.skinViewer.loadSkin(skinUrl, { model: activeSkin.variant === "SLIM" ? "slim" : "default" });
+      } else {
+        window.skinViewer.loadSkin(`https://mc-heads.net/skin/${name}`);
+      }
+
+      fetch(`https://api.capes.dev/load/${encodeURIComponent(name)}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.minecraft && data.minecraft.imageUrl) {
+            window.skinViewer.loadCape(data.minecraft.imageUrl);
+          }
+        }).catch(err => console.warn("Cape load failed", err));
+    } else {
       let canvas = document.getElementById('skin_container');
       const ctx = canvas.getContext('2d');
-
       const img = new Image();
-      img.src = `https://starlightskins.lunareclipse.studio/render/ultimate/${name}/full`;
-
+      img.src = `https://mc-heads.net/body/${name}/300`;
       img.onload = function() {
-        // Once the image is loaded, set the canvas size to the image size:
         canvas.width = img.naturalWidth;
         canvas.height = img.naturalHeight;
-
-        // Draw the image on the canvas:
         ctx.drawImage(img, 0, 0);
       };
-      return;
-    } else {
-    skinViewer = new skinview3d.SkinViewer({
-      canvas: document.getElementById("skin_container"),
-      skin: `https://minotar.net/skin/${name}`,
-      width: 600,
-      height: 800
-    });
-    const res = await fetch(`https://api.capes.dev/load/${encodeURIComponent(name)}`);
-    if (!res.ok) {
-      throw new Error(`API error: ${res.status}`);
     }
-  
-    const data = await res.json();
-    
-    skinViewer.loadCape(data?.minecraft?.imageUrl || null);
+
+    // Load Skins/Capes list
+    if (player.type != "cracked") {
+      const skinsDiv = document.getElementById("skins");
+      const capesDiv = document.getElementById("capes");
+      skinsDiv.innerHTML = "";
+      capesDiv.innerHTML = "";
+
+      // ---- Current skins ----
+      profile.skins.forEach(skin => {
+        const displayName = skin.alias || "Skin";
+        const preview = createSkinCanvas(skin);
+
+        const card = createCard(
+          displayName,
+          () => ipcRenderer.invoke("mc:applySkin", skin)
+              .then(() => {
+                if (window.skinViewer) {
+                  const skinUrl = skin.base64 ? ("data:image/png;base64," + skin.base64) : skin.url;
+                  window.skinViewer.loadSkin(skinUrl, { model: skin.variant === "SLIM" ? "slim" : "default" });
+                }
+              })
+              .catch(err => console.error("skin fail:", err)),
+          preview
+        );
+        skinsDiv.appendChild(card);
+      });
+
+      // ---- Current capes ----
+      profile.capes.forEach(cape => {
+        const displayName = cape.alias || "Cape";
+        const preview = createCapeCanvas(cape);
+
+        const card = createCard(
+          displayName,
+          () => ipcRenderer.invoke("mc:applyCape", cape.id)
+              .then(() => {
+                if (window.skinViewer) {
+                  const capeUrl = cape.base64 ? ("data:image/png;base64," + cape.base64) : cape.url;
+                  window.skinViewer.loadCape(capeUrl);
+                }
+              })
+              .catch(err => console.error("cape fail:", err)),
+          preview
+        );
+        capesDiv.appendChild(card);
+      });
+    } else {
+      document.getElementById('cards-column').style.display = "none";
+      document.getElementById("content-wrapper").append("Skin Changing isnt available for cracked players");
+    }
   }
-  return;
-  }
-    ipcRenderer.send("get-players");
+
+  ipcRenderer.send("get-players");
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateSKin(); });
   ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; updateSKin(); });
 function updatePresence(details, state = "Idle") {
   ipcRenderer.send('update-discord-presence', { details, state });
 }
-
-(async () => {
-  let player = players.find(p => p.id === selectedplayer);
-  if (player?.type != "cracked") {
-  const profile = await ipcRenderer.invoke("mc:getProfile");
-  const skinsDiv = document.getElementById("skins");
-  const capesDiv = document.getElementById("capes");
-
-  // A tiny helper to create a card
-  function createCard(imgUrl, label, onClick) {
-    const card = document.createElement("div");
-    card.className = "card";
-
-    const img = document.createElement("img");
-    img.src = imgUrl;
-    img.className = "card-image";
-
-    card.appendChild(img);
-
-    card.onclick = onClick;
-    return card;
-  }
-
-  // ---- Current skins ----
-  profile.skins.forEach(skin => {
-    const displayName = skin.alias || skin.id;
-
-    const imgUrl =
-      `https://starlightskins.lunareclipse.studio/render/ultimate/notch/bust?skinUrl=${encodeURIComponent(skin.url)}`;
-
-    const card = createCard(
-      imgUrl,
-      `Skin: ${displayName}`,
-      () => ipcRenderer.invoke("mc:applySkin", skin)
-          .catch(err => console.error("skin fail:", err))
-    );
-
-    skinsDiv.appendChild(card);
-  });
-
-  // ---- Current capes ----
-  profile.capes.forEach(cape => {
-    const displayName = cape.alias || cape.id;
-    let player = players.find(p => p.id === selectedplayer);
-    const imgUrl =
-      `https://starlightskins.lunareclipse.studio/render/ultimate/${player.username}/bust` +
-      `?cameraPosition=%7B"x"%3A"0"%2C"y"%3A"20"%2C"z"%3A"35"%7D&cameraFocalPoint=%20%7B"x"%3A"0"%2C"y"%3A"10"%2C"z"%3A"0"%7D&dirLightPos=%7B"x"%3A"10"%2C"y"%3A"10"%2C"z"%3A"10"%7D&cameraWidth=250&cameraHeight=600&cameraFOV=50` +
-      `&capeTexture=${encodeURIComponent(cape.url)}`;
-
-    const card = createCard(
-      imgUrl,
-      `Cape: ${displayName}`,
-      () => ipcRenderer.invoke("mc:applyCape", cape.id)
-          .catch(err => console.error("cape fail:", err))
-    );
-
-    capesDiv.appendChild(card);
-  });
-} else {
-  document.getElementById('cards-column').style.display = "none";
-  document.getElementById("content-wrapper").append("Skin Changing isnt available for cracked players");
-}
-})();
-
-
 
 updatePresence("Managing skins")
 </script>

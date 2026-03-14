@@ -248,6 +248,10 @@ const profilesPath = path.join(dataDir, 'profiles.json');
 const playersPath = path.join(dataDir, 'players.json');
 const JAVA_DIR = path.join(dataDir, "java_runtimes")
 
+// Global profile cache to prevent 429 Too Many Requests
+let profileCache = new Map(); // playerID -> { data, timestamp }
+const PROFILE_CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+
 const clientId = '1413838664185679892';
 let rpc = null; // will hold the Discord RPC client
 let rpcConnected = false;
@@ -470,7 +474,7 @@ ipcMain.handle('get-system-ram', () => {
 async function refreshPlayer(player) {
   try {
     // Create an Auth instance
-    const authManager = new Auth();
+    const authManager = new Auth("login"); // Pass "login" to avoid warning
 
     // Call refresh with either:
     // - The saved msToken object
@@ -3029,11 +3033,46 @@ async function ssimCompare(file1, file2) {
 }
 
 ipcMain.handle("mc:getProfile", async () => {
-  // 1️⃣ Get selected player
+  const now = Date.now();
   const id = storage.get("selectedPlayerId", null);
+  
+  if (profileCache.has(id)) {
+    const entry = profileCache.get(id);
+    if (now - entry.timestamp < PROFILE_CACHE_TTL) {
+      return entry.data;
+    }
+  }
+
+  // 1️⃣ Get selected player
   const players = await loadPlayers();
   let obj1 = players.find(item => item.id === id);
-  obj1 = await refreshPlayer(obj1);
+  if (!obj1) return { skins: [], capes: [] };
+  
+  if (obj1.type === "microsoft") {
+    // Only refresh if token is actually close to expiring (check internal msmc logic or assume TTL)
+    // We already have a 5-minute profile cache, but let's be even more careful with the session.
+    try {
+      // Check if we need a refresh based on a simple heuristic to avoid 429
+      const lastRefresh = obj1.lastRefresh || 0;
+      if (Date.now() - lastRefresh > 1000 * 60 * 30) { // Only refresh every 30 mins
+        obj1 = await refreshPlayer(obj1);
+        obj1.lastRefresh = Date.now();
+        // Save the updated lastRefresh back to players.json
+        const allPlayers = await loadPlayers();
+        const pIdx = allPlayers.findIndex(p => p.id === obj1.id);
+        if (pIdx !== -1) {
+          allPlayers[pIdx] = obj1;
+          savePlayers(allPlayers);
+        }
+      }
+    } catch (e) {
+      if (e.response?.status === 429) {
+        console.warn("Too many requests during player refresh, using existing token");
+      } else {
+        throw e;
+      }
+    }
+  }
 
   const accessToken = obj1?.auth?.access_token || null;
   const skinsDir = path.join(dataDir, "textures");
@@ -3042,88 +3081,88 @@ ipcMain.handle("mc:getProfile", async () => {
   // 2️⃣ Create folder if missing
   await fsp.mkdir(skinsDir, { recursive: true });
 
-  // 3️⃣ Fetch Mojang profile
-  const response = await fetch("https://api.minecraftservices.com/minecraft/profile", {
-    method: "GET",
-    headers: { "Authorization": `Bearer ${accessToken}` }
-  });
+  let data = { skins: [], capes: [] };
 
-  if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
-  const data = await response.json();
+  if (accessToken) {
+    // 3️⃣ Fetch Mojang profile
+    try {
+      const response = await fetch("https://api.minecraftservices.com/minecraft/profile", {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${accessToken}` }
+      });
+
+      if (response.ok) {
+        data = await response.json();
+      }
+    } catch (e) {
+      devtoolsLog("Failed to fetch Mojang profile:", e);
+    }
+  }
 
   // Ensure arrays exist
   data.skins ??= [];
   data.capes ??= [];
 
-  // 4️⃣ Download Mojang skins locally
+  // 4️⃣ Download Mojang skins locally and convert to base64
   for (const skin of data.skins) {
-    const filePath = path.join(skinsDir, `${skin.textureKey || skin.hash || skin.id}.png`);
-    try { await fsp.access(filePath); } catch {
+    const hash = skin.textureKey || skin.id;
+    const filePath = path.join(skinsDir, `${hash}.png`);
+    try {
+      await fsp.access(filePath);
+    } catch {
       const img = await fetch(skin.url);
-      const buffer = Buffer.from(await img.arrayBuffer());
-      await fsp.writeFile(filePath, buffer);
-    }
-    skin.localFile = filePath;
-    if (!skin.hash) skin.hash = await hashImage(skin.url); // opcionális
-  }
-
-  // 5️⃣ Fetch NameMC skins
-  const savedSkins = [];
-  try {
-    const res = await fetch(`https://api.ashcon.app/mojang/v2/user/${obj1.username}`);
-    if (res.ok) {
-      const ashconData = await res.json();
-      const skinUrl = ashconData?.textures?.skin?.url;
-      if (skinUrl) {
-        const hash = await hashImage(skinUrl);
-        const filePath = path.join(skinsDir, `${hash}_nm.png`);
-        
-        try { await fsp.access(filePath); } catch {
-          try {
-            const img = await fetch(skinUrl);
-            const buffer = Buffer.from(await img.arrayBuffer());
-            await fsp.writeFile(filePath, buffer);
-          } catch (err) { console.error("Failed to download fallback skin:", err); }
-        }
-
-        let isDuplicate = false;
-        for (const mSkin of data.skins) {
-          if (!mSkin.localFile) continue;
-          const similarity = await ssimCompare(filePath, mSkin.localFile);
-          if (similarity > 0.99) {
-            isDuplicate = true;
-            break;
-          }
-        }
-
-        if (!isDuplicate) {
-          const newSkin = { id: skinUrl, url: skinUrl, hash, localFile: filePath };
-          data.skins.push(newSkin);
-          savedSkins.push(newSkin);
-        }
+      if (img.ok) {
+        const buffer = Buffer.from(await img.arrayBuffer());
+        await fsp.writeFile(filePath, buffer);
       }
     }
-  } catch(e) { console.error("Failed to fetch from Ashcon API:", e); }
+    try {
+      const buffer = await fsp.readFile(filePath);
+      skin.base64 = buffer.toString('base64');
+    } catch (e) {}
+    skin.localFile = filePath;
+  }
 
-  // 6️⃣ Save JSON of NM skins
-  await fsp.writeFile(skinsJsonPath, JSON.stringify(savedSkins, null, 2));
+  // Capes base64
+  for (const cape of data.capes) {
+    const filePath = path.join(skinsDir, `cape_${cape.id}.png`);
+    try {
+      await fsp.access(filePath);
+    } catch {
+      const img = await fetch(cape.url);
+      if (img.ok) {
+        const buffer = Buffer.from(await img.arrayBuffer());
+        await fsp.writeFile(filePath, buffer);
+      }
+    }
+    try {
+      const buffer = await fsp.readFile(filePath);
+      cape.base64 = buffer.toString('base64');
+    } catch (e) {}
+  }
 
-  // 7️⃣ Return final structure
-  return {
+  // 5️⃣ Return final structure
+  const result = {
     id: data.id,
     name: data.name,
-    skins: data.skins,     // Mojang + NM
-    capes: data.capes,     // csak Mojang capek
+    skins: data.skins,
+    capes: data.capes,
     profileActions: data.profileActions || {}
   };
+
+  profileCache.set(id, { data: result, timestamp: now });
+  return result;
 });
 
 async function hashImage(url) {
-  const buffer = await fetch(url).then(r => r.arrayBuffer());
-  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("");
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    return crypto.createHash("sha256").update(Buffer.from(buffer)).digest("hex");
+  } catch (e) {
+    return null;
+  }
 }
 
 // ---- APPLY SKIN ----
@@ -3136,7 +3175,8 @@ async function downloadSkin(url) {
       headers: { 'User-Agent': 'RedstoneLauncher-SkinDownloader' }
     };
 
-    https.get(url, options, res => {
+    const client = url.startsWith("https") ? https : http;
+    client.get(url, options, res => {
       if (res.statusCode !== 200) {
         return reject(new Error(`Failed to download skin, status code ${res.statusCode}`));
       }
@@ -3148,13 +3188,16 @@ async function downloadSkin(url) {
 }
 
 ipcMain.handle("mc:applySkin", async (event, skin) => {
-  const headers = await authHeaders(); // includes Authorization: Bearer <token>
+  const headers = await authHeaders(); 
+  // IMPORTANT: Remove Content-Type header so fetch can set it automatically with the correct FormData boundary
+  delete headers["Content-Type"];
 
   // Download remote PNG first
   const skinPath = await downloadSkin(skin.url);
   const skinBuffer = await fs.promises.readFile(skinPath);
 
   const form = new FormData();
+  // Mojang expects 'variant' and 'file'. Variant can be 'classic' or 'slim'.
   form.append('variant', (skin.variant || 'classic').toLowerCase());
   form.append('file', new Blob([skinBuffer], { type: 'image/png' }), 'skin.png');
 
