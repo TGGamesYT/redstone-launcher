@@ -673,11 +673,23 @@
               tabContent.innerHTML = "";
               tabContent.appendChild(logsEl);
 
-              ipcRenderer.removeAllListeners('launcher-log');
-              ipcRenderer.on('launcher-log', (event, msg) => {
+              logsEl.textContent = "Loading history...\n";
+
+              // Load history
+              ipcRenderer.invoke('get-instance-logs', profile.id).then(history => {
                 if (!ensureStillActive()) return;
-                logsEl.textContent += msg + "\n";
+                logsEl.textContent = history.join("\n") + "\n";
                 logsEl.scrollTop = logsEl.scrollHeight;
+              });
+
+              ipcRenderer.removeAllListeners('launcher-log');
+              ipcRenderer.on('launcher-log', (event, data) => {
+                if (!ensureStillActive()) return;
+                // Only show logs for the currently viewed profile
+                if (data.profileId === profile.id) {
+                  logsEl.textContent += data.msg + "\n";
+                  logsEl.scrollTop = logsEl.scrollHeight;
+                }
               });
               ipcRenderer.removeAllListeners('launch-error');
               ipcRenderer.on('launch-error', (event, msg) => {

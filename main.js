@@ -157,6 +157,20 @@ function findSystemJava(requiredVersion) {
 // ========== INSTANCE TRACKING SYSTEM ==========
 const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, startTime }
 const launchingProfiles = new Set(); // track profiles currently in the launch process
+const instanceLogs = new Map(); // profileId -> string[]
+
+function broadcastLog(profileId, msg) {
+  if (!instanceLogs.has(profileId)) {
+    instanceLogs.set(profileId, []);
+  }
+  const logs = instanceLogs.get(profileId);
+  logs.push(msg);
+  if (logs.length > 2000) logs.shift(); // Keep last 2000 lines
+
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('launcher-log', { profileId, msg });
+  }
+}
 
 function startInstance(id, pid) {
   const now = Date.now();
@@ -171,6 +185,9 @@ function stopInstance(id, pid = null) {
     if (runningInstances.has(key)) {
       runningInstances.delete(key);
       devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${pid})`);
+      if (!isInstanceRunning(id)) {
+        instanceLogs.delete(id); // Clean up logs when fully stopped
+      }
     }
   } else {
     // Stop all with same ID
@@ -180,6 +197,7 @@ function stopInstance(id, pid = null) {
         devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${data.pid})`);
       }
     }
+    instanceLogs.delete(id);
   }
 }
 
@@ -193,6 +211,10 @@ function isInstanceRunning(id) {
 function getRunningInstances() {
   return Array.from(runningInstances.values());
 }
+
+ipcMain.handle('get-instance-logs', (event, profileId) => {
+  return instanceLogs.get(profileId) || [];
+});
 
 function stopByPid(pid) {
   for (const [key, data] of runningInstances.entries()) {
@@ -754,10 +776,16 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     const players = loadPlayers();
 
     const profile = profiles.find(p => p.id === profileId);
-    if (!profile) return event.reply('launch-error', "Profile not found");
+    if (!profile) {
+      broadcastLog(profileId, "[ERROR] Profile not found");
+      return;
+    }
 
     const player = players.find(p => p.id === playerId);
-    if (!player) return event.reply('launch-error', "Player not found");
+    if (!player) {
+      broadcastLog(profileId, "[ERROR] Player not found");
+      return;
+    }
 
     let auth;
     if (player.type === "cracked") {
@@ -804,18 +832,20 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     }
     const childProcess = await launcher.launch(opts);
 
-    launcher.on('data', msg => event.reply('launcher-log', msg));
-    launcher.on('debug', msg => event.reply('launcher-log', msg));
-    launcher.on('error', err => event.reply('launcher-log', "ERROR: " + err.message));
+    launchingProfiles.delete(profileId);
+
+    launcher.on('data', msg => broadcastLog(profileId, msg));
+    launcher.on('debug', msg => broadcastLog(profileId, msg));
+    launcher.on('error', err => broadcastLog(profileId, "ERROR: " + err.message));
     const pid = childProcess.pid;
     devtoolsLog("PID: " + pid);
     startInstance(profileId, pid);
-    event.reply('launcher-log', `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
+    broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
 
     // Handle process exit
     childProcess.on('exit', (code) => {
       stopInstance(profileId, pid);
-      event.reply('launcher-log', `[INFO] Instance "${profileId}" exited with code ${code}`);
+      broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
     });
   } catch (err) {
     return { success: false, error: err.message };
@@ -1187,19 +1217,21 @@ async function getJavaForMinecraft(mcVersion) {
 // Launch profile
 ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
   if (launchingProfiles.has(profileId)) {
-    return event.reply('launcher-log', "[WARN] This profile is already launching. Please wait.");
+    broadcastLog(profileId, "[WARN] This profile is already launching. Please wait.");
+    return;
   }
 
   // Check if already running
   const isRunning = Array.from(runningInstances.values()).some(i => i.id === profileId);
   if (isRunning) {
-    return event.reply('launcher-log', "[WARN] This profile is already running.");
+    broadcastLog(profileId, "[WARN] This profile is already running.");
+    return;
   }
 
   launchingProfiles.add(profileId);
 
   try {
-    event.reply('launcher-log', "Launching, please wait.");
+    broadcastLog(profileId, "Launching, please wait.");
     const minRam = `${settings.get('ramInstancesMin', 1024)}m`;
     const maxRam = `${settings.get('ramInstancesMax', 4096)}m`;
     const profiles = await loadProfiles();
@@ -1208,7 +1240,8 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) {
       launchingProfiles.delete(profileId);
-      return event.reply('launch-error', "Profile not found");
+      broadcastLog(profileId, "[ERROR] Profile not found");
+      return;
     }
     profile.lastUsed = Date.now();
     saveProfiles(profiles);
@@ -1216,7 +1249,8 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     const player = players.find(p => p.id === playerId);
     if (!player) {
       launchingProfiles.delete(profileId);
-      return event.reply('launch-error', "Player not found");
+      broadcastLog(profileId, "[ERROR] Player not found");
+      return;
     }
 
     let auth;
@@ -1228,7 +1262,7 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
         auth = player.auth
       } catch (err) {
         auth = player.auth
-        event.reply('launch-error', "Failed to refresh Microsoft token: " + err.message);
+        broadcastLog(profileId, "[ERROR] Failed to refresh Microsoft token: " + err.message);
       }
     }
     let quickplay = null;
@@ -1276,22 +1310,22 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
 
     launchingProfiles.delete(profileId);
 
-    launcher.on('data', msg => event.reply('launcher-log', msg));
-    launcher.on('debug', msg => event.reply('launcher-log', msg));
-    launcher.on('error', err => event.reply('launcher-log', "ERROR: " + err.message));
+    launcher.on('data', msg => broadcastLog(profileId, msg));
+    launcher.on('debug', msg => broadcastLog(profileId, msg));
+    launcher.on('error', err => broadcastLog(profileId, "ERROR: " + err.message));
     const pid = childProcess.pid;
     devtoolsLog("PID: " + pid);
     startInstance(profileId, pid);
-    event.reply('launcher-log', `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
+    broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
 
     // Handle process exit
     childProcess.on('exit', (code) => {
       stopInstance(profileId, pid);
-      event.reply('launcher-log', `[INFO] Instance "${profileId}" exited with code ${code}`);
+      broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
     });
   } catch (err) {
     launchingProfiles.delete(profileId);
-    event.reply('launch-error', err.message);
+    broadcastLog(profileId, "[ERROR] " + err.message);
   }
 });
 
