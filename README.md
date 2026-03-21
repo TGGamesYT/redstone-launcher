@@ -28,6 +28,10 @@ npm run buildWin
 ```bash
 npm run buildLinux
 ```
+### Linux .deb
+```bash
+redstone-launcher --no-sandbox
+```
 
 ### macOS
 ```bash
