@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Redstone Launcher</title>
+  <style>
+    body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    iframe { width: 100%; height: 100%; border: none; }
+    #player-container { position: fixed; bottom: 10px; right: 10px; z-index: 999; }
+  </style>
+</head>
+<body>
+  <iframe src="index.html" id="main-frame"></iframe>
+  <div id="player-container" style="background:rgba(0,0,0,0.5); padding:10px; color:white;">
+    April Fools Mode: Active
+    <audio id="april-audio" src="April_Fools.mp3" loop></audio>
+  </div>
+  <script>
+    window.onload = () => {
+      setTimeout(() => {
+        const audio = document.getElementById('april-audio');
+        audio.play().catch(() => {});
+      }, 15000);
+    };
+  </script>
+</body>
+</html>

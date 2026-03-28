@@ -4,13 +4,20 @@
 <head>
   <meta charset="UTF-8">
   <title>Dirtstone Launcher (April Fools 🌿)</title>
-  <link rel="stylesheet" href="server.css">
-  <link rel="stylesheet" href="aprilfools.css">
+  <link rel="stylesheet" href="server.css" <link rel="stylesheet" href="aprilfools.css" />
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-  <style></style>
 </head>
 
 <body>
+  <audio id="bg-music" src="April_Fools.mp3"></audio>
+
+  <nav>
+    <button onclick="loadPage('index')">Home</button>
+    <button onclick="loadPage('settings')">Settings</button>
+  </nav>
+
+  <div id="content-area">
+  </div>
   <div id="toolbar">
     <div class="toolbar-buttons-left">
       <button id="backBtn">⬅</button>
@@ -33,7 +40,7 @@
         <li><i class="material-icons">play_arrow</i><span>Instances</span></li>
       </a>
       <a href="modrinth.html" class="modrinth">
-        <li><span>Modrinth</span></li>
+        <li><span>Modrinth</span></li>
       </a>
       <a href="server.html">
         <li><i class="material-icons">storage</i><span>Server Manager</span></li>
@@ -53,12 +60,13 @@
   </div>
   <div id="content">
     <div id="main">
-      <h1>Welcome back !</h1>
+      <h1>Welcome back! (april fools btw)</h1>
       <div class="main-scrolly">
         <section id="continue-playing">
-          <h3 id="continue-title">Continue Playing</h3>
-          <ul id="profiles-list"></ul>
+          <h3 id="continue-title">Continue Playing</h2>
+            <ul id="profiles-list"></ul>
         </section>
+
         <section id="discover">
           <h2>Discover</h2>
           <div id="discover-content">
@@ -75,23 +83,18 @@
       </div>
     </div>
   </div>
-  <button id="showCredits" class="play-button" style="width: auto; padding: 10px 20px;">
-    View Credits
-  </button>
 
-  <script src="credits.js"></script>
   <script>
     const { ipcRenderer, shell } = require('electron');
     let selectedPlayerId = null;
 
+    // ------------------ CONTINUE PLAYING ------------------
     ipcRenderer.send('get-profiles-latest');
-
     ipcRenderer.on('profiles-list', (e, profiles) => {
-      doshit(profiles);
+      doshit(profiles)
     });
-
     ipcRenderer.on('profiles-updates', (e, profiles) => {
-      doshit(profiles);
+      doshit(profiles)
     });
 
     function doshit(profiles) {
@@ -100,70 +103,78 @@
       const title = document.getElementById("continue-title");
       profilesList.innerHTML = "";
       title.textContent = "Continue Playing";
-
       if (list.length == 0) {
         title.textContent = "Start Playing";
         const li = document.createElement("li");
         li.className = "profile-item";
+
         const img = document.createElement("img");
         img.src = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
         li.appendChild(img);
+
         const info = document.createElement("div");
         info.className = "profile-info";
+
         const name = document.createElement("div");
         name.className = "profile-name";
         name.textContent = "Create An instance";
         info.appendChild(name);
+
         li.appendChild(info);
+
         const launchBtn = document.createElement("button");
-        launchBtn.innerHTML = "+";
+        launchBtn.innerHTML = `+`;
         li.onclick = () => {
           window.location.href = "instances.html?i=NEWINSTANCE";
         };
         li.appendChild(launchBtn);
+
         profilesList.appendChild(li);
       }
 
       list.forEach(p => {
         const li = document.createElement("li");
         li.className = "profile-item";
+
         const img = document.createElement("img");
         img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
         li.appendChild(img);
+
         const info = document.createElement("div");
         info.className = "profile-info";
+
         const name = document.createElement("div");
         name.className = "profile-name";
         name.textContent = p.name;
         info.appendChild(name);
+
         const details = document.createElement("div");
         details.className = "profile-details";
         details.textContent = `v${p.version} • ${p.loader}`;
         info.appendChild(details);
+
         li.appendChild(info);
 
         const launchBtn = document.createElement("button");
         launchBtn.className = "play-button";
-        launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`;
+        launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`; // placeholder icon
         launchBtn.onclick = (e) => {
           e.stopPropagation();
           if (!selectedPlayerId) return alert("Select a player first!");
-          ipcRenderer.send("launch-profile", {
-            profileId: p.id,
-            playerId: selectedPlayerId
-          });
+          ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
           window.location.href = `instances.html?i=${p.id}`;
         };
         li.appendChild(launchBtn);
-
         li.onclick = () => {
           window.location.href = `instances.html?i=${p.id}`;
         };
-        profilesList.appendChild(li);
-      });
-    }
 
+        profilesList.appendChild(li);
+
+      });
+    };
     function seededRandom(seed) {
+      // Simple LCG PRNG for deterministic randomness
       let s = seed % 2147483647;
       return () => (s = (s * 16807) % 2147483647) / 2147483647;
     }
@@ -191,9 +202,7 @@
     async function fetchModrinthProjects(type, limit) {
       const url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=${limit}`;
       const res = await fetch(url, {
-        headers: {
-          "User-Agent": "RedstoneLauncher/1.0 (contact@tggamesyt.dev)"
-        }
+        headers: { "User-Agent": "RedstoneLauncher/1.0 (contact@tggamesyt.dev)" },
       });
       if (!res.ok) throw new Error("Failed to fetch Modrinth projects");
       const data = await res.json();
@@ -203,20 +212,26 @@
     function createDiscoverCard(p, type) {
       const li = document.createElement("li");
       li.className = "profile-item";
+
       const img = document.createElement("img");
       img.src = p.icon_url || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
       li.appendChild(img);
+
       const info = document.createElement("div");
       info.className = "profile-info";
+
       const name = document.createElement("div");
       name.className = "profile-name";
       name.textContent = p.title;
       info.appendChild(name);
+
       const details = document.createElement("div");
       details.className = "profile-details";
       const author = p.author || (p.authors?.[0]?.name ?? "Unknown");
-      details.textContent = `by ${author} • ${formatNumber(p.downloads ?? 0)} downloads`;
+      const downloads = formatNumber(p.downloads ?? "0");
+      details.textContent = `by ${author} • ${formatNumber(downloads)} downloads`;
       info.appendChild(details);
+
       li.appendChild(info);
 
       const btn = document.createElement("button");
@@ -235,21 +250,30 @@
         localStorage.setItem("selectedProjectType", type);
         window.location.href = "modrinth_project.html";
       };
+
       return li;
     }
 
     async function renderDiscoverSection() {
       const modpacksListEl = document.querySelector("#discover-modpacks ul.profile-list");
       const modsListEl = document.querySelector("#discover-mods ul.profile-list");
+
       const seed = todaySeed();
       const rand = seededRandom(seed);
+
+      // === MODPACKS ===
       const modpacks = await fetchModrinthProjects("modpack", 30);
       const shuffledModpacks = seededShuffle(modpacks, rand);
-      const picksModpacks = seededShuffle(shuffledModpacks.slice(0, 10), rand).slice(0, 3);
+      const randomModpacks = shuffledModpacks.slice(0, 10); // pick 10 random from top 30
+      const picksModpacks = seededShuffle(randomModpacks, rand).slice(0, 3);
       picksModpacks.forEach((p) => modpacksListEl.appendChild(createDiscoverCard(p, "modpack")));
+
+      // === MODS ===
       const mods = await fetchModrinthProjects("mod", 55);
-      const shuffledMods = seededShuffle(mods.slice(5), rand);
-      const picksMods = seededShuffle(shuffledMods.slice(0, 40), rand).slice(0, 3);
+      const modsTrimmed = mods.slice(5); // skip top 5
+      const shuffledMods = seededShuffle(modsTrimmed, rand);
+      const randomMods = shuffledMods.slice(0, 40); // pick 40 random from 50
+      const picksMods = seededShuffle(randomMods, rand).slice(0, 3);
       picksMods.forEach((p) => modsListEl.appendChild(createDiscoverCard(p, "mod")));
     }
 
@@ -257,47 +281,34 @@
       renderDiscoverSection().catch((err) => console.error("Discover load error:", err));
     });
 
+
+    // ------------------ DISCORD PRESENCE ------------------
     function updatePresence(details, state = "Idle") {
       ipcRenderer.send('update-discord-presence', { details, state });
     }
-    updatePresence("In Launcher");
+    updatePresence("In Launcher")
   </script>
   <script src="sidebar.js"></script>
   <script>
-    const _welcomes = ['Welcome back!', 'Greetings, minecrafter', 'oh, you again', 'hewwo :3', 'WHO ARE YOU', 'good morning!!', 'you opened the launcher again?', 'back already?'];
-    document.querySelector('h1').textContent = _welcomes[Math.floor(Math.random() * _welcomes.length)];
-    const _dTTitles = ['Featured Modpacks 🌿', 'Modpacks (totally not rigged)', 'Top Picks (by a dirt block)', 'modpacks (curated by herobrine)'];
-    const _mTitles = ['Featured Mods 🌿', 'Essential Mods (trust me bro)', 'Mods we found on the floor', 'mods (warning: may contain grass)'];
-    document.querySelector('#discover-modpacks h3').textContent = _dTTitles[Math.floor(Math.random() * _dTTitles.length)];
-    document.querySelector('#discover-mods h3').textContent = _mTitles[Math.floor(Math.random() * _mTitles.length)];
-
-    document.querySelector('h1').addEventListener('click', (function () {
-      let n = 0, t;
-      return function () {
-        n++;
-        clearTimeout(t);
-        t = setTimeout(() => n = 0, 1000);
-        if (n >= 3) {
-          if (typeof _toast === 'function') _toast('stop clicking the title 💀');
-          n = 0;
-          if (typeof _gravity === 'function') _gravity();
-        }
-      }
-    })());
-
-    setTimeout(() => {
-      const o = document.createElement('div');
-      o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;';
-      const b = document.createElement('div');
-      b.style.cssText = 'background:#004400;border:3px solid #ffff00;padding:28px 32px;max-width:420px;font-family:Comic Neue,Comic Sans MS,cursive;color:#ffff00;text-align:center;box-shadow:4px 4px 0 #002200;';
-      b.innerHTML = '<div style="font-size:40px;margin-bottom:8px">🌿</div><h2 style="color:#00ff00;margin:0 0 10px;font-family:inherit;text-shadow:2px 2px 0 #002200">Introducing: Dirtstone Launcher</h2><p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#ccffcc">We heard you liked redstone, so we replaced it with dirt.<br>Everything is now green. Including this popup.<br><br>Hotkeys: F6 jumpscare • F7 crack • F8 gravity • F9 bsod</p><p style="margin:0 0 18px;font-size:11px;color:#88ff88">(no minecraft instances were harmed)</p><button id="_af_idx_dismiss" style="background:#006600;border:2px solid #00ff00;color:#ffff00;font-family:inherit;font-size:14px;padding:8px 20px;cursor:pointer;text-transform:uppercase;letter-spacing:1px">ok fine whatever</button>';
-      o.appendChild(b);
-      document.body.appendChild(o);
-      document.getElementById('_af_idx_dismiss').onclick = () => o.remove();
-      o.onclick = e => { if (e.target === o) o.remove(); };
-    }, 700);
+    window.addEventListener('DOMContentLoaded', () => {
+      setTimeout(() => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:99999;display:flex;align-items:center;justify-content:center;';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#004400;border:3px solid #ffff00;padding:28px 32px;max-width:400px;font-family:Comic Neue,Comic Sans MS,cursive;color:#ffff00;text-align:center;box-shadow:4px 4px 0 #002200;';
+        box.innerHTML = '<div style="font-size:40px;margin-bottom:8px;">🌿</div>'
+          + '<h2 style="color:#00ff00;margin:0 0 10px;font-family:inherit;text-shadow:2px 2px 0 #002200;">Introducing: Dirtstone Launcher</h2>'
+          + '<p style="margin:0 0 8px;font-size:14px;line-height:1.5;color:#ccffcc;">We heard you liked redstone, so we replaced it with dirt.<br>Everything is now green. Including this popup.</p>'
+          + '<p style="margin:0 0 18px;font-size:12px;color:#88ff88;">(no minecraft instances were harmed in the making of this update)</p>'
+          + '<button id="af-dismiss" style="background:#006600;border:2px solid #00ff00;color:#ffff00;font-family:inherit;font-size:14px;padding:8px 20px;cursor:pointer;box-shadow:2px 2px 0 #002200;text-transform:uppercase;letter-spacing:1px;">ok fine whatever</button>';
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        document.getElementById('af-dismiss').onclick = () => overlay.remove();
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+      }, 600);
+    });
   </script>
-  <script src="aprilfools.js"></script>
+  <script src="audio_player.js" defer></script>
 </body>
 
 </html>

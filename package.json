@@ -1,14 +1,19 @@
 {
-  "name": "redstone-launcher",
-  "productName": "Redstone Launcher",
-  "version": "1.13.7",
-  "description": "A Minecraft launcher",
-  "author": "Redstone Launcher Team",
+  "name": "dirtstone-launcher",
+  "productName": "Dirtstone Launcher",
+  "version": "2026.04.1",
+  "description": "A Redstone Launcher April fools version! OFFICIAL",
+  "author": {
+    "name": "Redstone Launcher Team",
+    "email": "contact@redstone-launcher.com"
+  },
+  "homepage": "https://redstone-launcher.com",
   "main": "main.js",
   "scripts": {
     "app": "electron .",
     "buildWin": "electron-builder --win --publish=never",
     "buildLinux": "electron-builder --linux AppImage --publish=never",
+    "buildDeb": "electron-builder --linux deb --publish=never",
     "buildMac": "electron-builder --mac --publish=never"
   },
   "keywords": [],
@@ -36,7 +41,7 @@
   },
   "build": {
     "appId": "com.redstone-launcher.app",
-    "productName": "Redstone Launcher",
+    "productName": "Dirtstone Launcher",
     "directories": {
       "output": "dist"
     },
@@ -48,7 +53,11 @@
       "icon": "frontend/icon.ico"
     },
     "linux": {
-      "target": "AppImage",
+      "maintainer": "Redstone Launcher Team <contact@redstone-launcher.com>",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "frontend/icon.png"
     },
     "mac": {

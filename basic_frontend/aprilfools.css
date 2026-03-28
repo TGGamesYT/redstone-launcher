@@ -1,0 +1,323 @@
+
+
+@import url('https://fonts.googleapis.com/css2?family=Comic+Neue:wght@400;700&display=swap');
+
+:root {
+  --base-color: #00aa00 !important;
+  --secondary-color: #00cc00 !important;
+  --third-color: #33ff33 !important;
+  --text-color: #ffff00 !important;
+  --text-font: 'Comic Neue', 'Comic Sans MS', cursive !important;
+  --border-radius: 0 !important;
+  --toolbar-bg: #00bb00 !important;
+  --sidebar-bg: linear-gradient(180deg, #009900 0%, #004400 100%) !important;
+  --sidebar-border: #005500 !important;
+  --menu-bg: #006600 !important;
+  --very-dark: #002200 !important;
+  --menu-hover-bg: #00ff00 !important;
+  --menu-hover-border: #ffbf00 !important;
+  --accent: #ff00ff !important;
+  --border-dark: #007700 !important;
+  --margin: 50px !important;
+}
+
+
+*, body, button, input, select, textarea, h1, h2, h3, h4, h5, span, div, li, a, p {
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+}
+
+
+#toolbar {
+  background: repeating-linear-gradient(
+    90deg,
+    #00cc00 0px, #00cc00 4px,
+    #00aa00 4px, #00aa00 8px
+  ) !important;
+  border-bottom: 3px solid #ffff00 !important;
+  image-rendering: pixelated;
+}
+
+#toolbar .drag-region {
+  color: #ffff00 !important;
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+  letter-spacing: 2px;
+  text-shadow: 2px 2px 0 #005500, -1px -1px 0 #003300;
+}
+
+#toolbar .drag-region::before {
+  content: "🎉 ";
+}
+
+#toolbar .drag-region::after {
+  content: " 🎉";
+}
+
+
+.drag-region-text-override::before {
+  content: "Dirtstone Launcher (april fools lol)";
+}
+
+
+.sidebar {
+  background: linear-gradient(180deg, #009900 0%, #003300 100%) !important;
+  border-right: 3px solid #00ff00 !important;
+}
+
+.sidebar .menu li {
+  background: #005500 !important;
+  border: 2px solid #00ff00 !important;
+  color: #ffff00 !important;
+}
+
+.sidebar .menu li:hover {
+  background: #00ff00 !important;
+  border-color: #ffff00 !important;
+  transform: rotate(-5deg) scale(1.1) !important;
+  box-shadow: 3px 3px 0 #ffff00 !important;
+}
+
+.sidebar .menu li i {
+  color: #ffff00 !important;
+  filter: none !important;
+}
+
+.sidebar .menu li:hover i {
+  color: #005500 !important;
+  filter: none !important;
+}
+
+.sidebar .menu li span {
+  background: #ffff00 !important;
+  color: #005500 !important;
+  border: 2px solid #00cc00 !important;
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+  font-weight: 700 !important;
+}
+
+
+body {
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px, transparent 7px,
+    rgba(0,0,0,0.08) 7px, rgba(0,0,0,0.08) 8px
+  ),
+  repeating-linear-gradient(
+    90deg,
+    transparent 0px, transparent 11px,
+    rgba(0,0,0,0.06) 11px, rgba(0,0,0,0.06) 12px
+  ),
+  #002200 !important;
+  color: #ffff00 !important;
+}
+
+html {
+  background: #001100 !important;
+}
+
+
+h1 {
+  color: #ffff00 !important;
+  text-shadow: 3px 3px 0 #004400, -1px -1px 0 #003300 !important;
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+}
+
+h1::after {
+  content: " lol";
+  font-size: 0.6em;
+  color: #00ff00;
+  vertical-align: super;
+}
+
+h2, h3 {
+  color: #00ff00 !important;
+  text-shadow: 2px 2px 0 #003300 !important;
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+}
+
+
+.profile-item {
+  background: #004400 !important;
+  border: 2px solid #00ff00 !important;
+  transition: none !important;
+}
+
+.profile-item:hover {
+  background: #006600 !important;
+  transform: skewX(-2deg) !important;
+  border-color: #ffff00 !important;
+  transition: none !important;
+}
+
+
+button:not(#toolbar .toolbar-buttons button):not(#toolbar .toolbar-buttons-left button),
+.btn {
+  background: #005500 !important;
+  border: 2px solid #00ff00 !important;
+  color: #ffff00 !important;
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+  box-shadow: 2px 2px 0 #003300 !important;
+}
+
+button:not(#toolbar .toolbar-buttons button):not(#toolbar .toolbar-buttons-left button):hover,
+.btn:hover {
+  background: #00aa00 !important;
+  border-color: #ffff00 !important;
+  transform: scale(1.05) rotate(1deg) !important;
+  transition: none !important;
+}
+
+.play-button {
+  background: #00aa00 !important;
+  border: 2px solid #ffff00 !important;
+}
+
+.play-button:hover {
+  background: #00ff00 !important;
+  border-color: #ffffff !important;
+}
+
+
+input, select, textarea {
+  background: #004400 !important;
+  border: 2px solid #00cc00 !important;
+  color: #ffff00 !important;
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+}
+
+input:focus, select:focus {
+  border-color: #ffff00 !important;
+  background: #005500 !important;
+}
+
+
+::-webkit-scrollbar-track {
+  background: #003300 !important;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #00aa00 !important;
+  border: 2px solid #003300 !important;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00ff00 !important;
+}
+
+
+a {
+  color: #00ff00 !important;
+}
+
+a:hover {
+  color: #ffff00 !important;
+}
+
+
+.profile-details {
+  color: #88ff88 !important;
+}
+
+
+#main > h1 {
+  position: relative;
+}
+
+
+#content::before {
+  content: "🌿 APRIL FOOLS EDITION 🌿 — We turned everything green. You're welcome.";
+  display: block;
+  position: fixed;
+  top: 38px;
+  left: 70px;
+  right: 0;
+  background: #ffff00;
+  color: #005500;
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+  padding: 4px 0;
+  z-index: 999;
+  border-bottom: 2px solid #00aa00;
+  letter-spacing: 1px;
+}
+
+
+body {
+  margin-top: 56px !important;
+}
+
+
+.error-popup {
+  background: linear-gradient(135deg, #00aa00, #004400) !important;
+  border: 2px solid #ffff00 !important;
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+}
+
+
+#discover h2::before {
+  content: "🔍 ";
+}
+
+#discover-modpacks h3::before {
+  content: "📦 ";
+}
+
+#discover-mods h3::before {
+  content: "🧩 ";
+}
+
+
+#continue-title::before {
+  content: "▶ ";
+}
+
+
+.sidebar .modrinth li {
+  background: #004400 !important;
+}
+
+
+#instance-processes {
+  color: #ffff00 !important;
+}
+
+
+#close-btn:hover {
+  background: #cc0000 !important;
+  border-color: #ff4444 !important;
+  transform: none !important;
+}
+
+#min-btn:hover, #max-btn:hover {
+  background: #005500 !important;
+  border-color: #00ff00 !important;
+  transform: none !important;
+}
+
+
+#update {
+  background: #004400 !important;
+  border: 2px solid #ffff00 !important;
+  animation: flashborder 1.5s steps(2) infinite;
+}
+
+@keyframes flashborder {
+  0%   { border-color: #ffff00; }
+  50%  { border-color: #00ff00; }
+  100% { border-color: #ffbf00; }
+}
+
+
+body::after {
+  content: "april fools 2025";
+  position: fixed;
+  bottom: 8px;
+  right: 12px;
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive !important;
+  font-size: 10px;
+  color: #004400;
+  pointer-events: none;
+  z-index: 9999;
+  letter-spacing: 1px;
+}
