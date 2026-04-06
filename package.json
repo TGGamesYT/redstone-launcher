@@ -3,7 +3,7 @@
   "productName": "Redstone Launcher",
   "version": "1.13.7",
   "description": "A Minecraft launcher",
-  "author": "Redstone Launcher Team",
+  "author": "Redstone Launcher Team <contact@redstone-launcher.com>",
   "main": "main.js",
   "scripts": {
     "app": "electron .",
