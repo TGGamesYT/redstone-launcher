@@ -485,6 +485,14 @@ h5 {
   border-color: var(--third-color);
 }
 
+#update {
+  display: none;
+}
+
+#update.show-update {
+  display: flex;
+}
+
 main,
 .content {
   margin-top: 38px;

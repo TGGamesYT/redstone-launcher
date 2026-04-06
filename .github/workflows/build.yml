@@ -62,6 +62,7 @@ jobs:
       - name: Rename output
         run: |
           mv dist/*.AppImage dist/Redstone-Launcher.AppImage || true
+          mv dist/redstone-launcher_*.deb dist/Redstone-Launcher.deb || true
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4

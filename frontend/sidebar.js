@@ -216,16 +216,15 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
     // Ask backend if update exists
     const result = await ipcRenderer.invoke("check-for-updates");
   
-    // No update → hide list item
+    // No update → keep hidden
     if (!result || !result.updateAvailable) {
-      updateEl.style.display = "none";
       return;
     }
     const settings = await ipcRenderer.invoke('get-settings');
     const autoUpdates = settings.autoUpdates ?? true;
     if (!autoUpdates) {
-    // Show update button
-    updateEl.style.display = "flex"; // looks better than block for <li>
+    // Show update button via CSS class
+    updateEl.classList.add("show-update");
     updateText.textContent = `Update to ${result.version}`;
   
     // Handle click
