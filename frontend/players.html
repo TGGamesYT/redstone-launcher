@@ -3,6 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <title>Redstone Launcher - Players</title>
+<script>
+const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+if (cached.baseColor) {
+  document.documentElement.style.setProperty('--base-color', cached.baseColor);
+  document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
+  document.documentElement.style.setProperty('--third-color', cached.thirdColor);
+  document.documentElement.style.setProperty('--text-color', cached.textColor);
+  document.documentElement.style.setProperty('--text-font', cached.font);
+  if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
+}
+</script>
 <style>
   body { font-family: sans-serif; padding: 20px; }
   h1 { margin-bottom: 20px; }
@@ -255,5 +266,6 @@ function updatePresence(details, state = "Idle") {
 updatePresence("Looking at players")
 </script>
 <script src="sidebar.js"></script>
+<script src="notifications.js"></script>
 </body>
 </html>

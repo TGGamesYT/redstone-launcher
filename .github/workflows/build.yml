@@ -67,7 +67,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: redstone-launcher-linux
-          path: dist/*.AppImage
+          path: |
+            dist/*.AppImage
+            dist/*.deb
 
   build-mac:
     name: Build macOS

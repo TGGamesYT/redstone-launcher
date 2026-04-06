@@ -65,9 +65,14 @@ function applyTheme(settings) {
   document.documentElement.style.setProperty('--border-radius', `${settings.borderRadius}px`);
 }
 
-// Example after loading settings
+const cachedTheme = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+if (Object.keys(cachedTheme).length > 0) {
+  applyTheme(cachedTheme);
+}
+
 ipcRenderer.invoke('get-settings').then(settings => {
   applyTheme(settings);
+  localStorage.setItem('launcherTheme', JSON.stringify(settings));
 });
 
 

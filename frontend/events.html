@@ -3,8 +3,17 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>Redstone Launcher - Events</title>
-  <link rel="stylesheet" href="server.css">
+  <title>Redstone Launcher - Events</title><script>
+const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+if (cached.baseColor) {
+  document.documentElement.style.setProperty('--base-color', cached.baseColor);
+  document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
+  document.documentElement.style.setProperty('--third-color', cached.thirdColor);
+  document.documentElement.style.setProperty('--text-color', cached.textColor);
+  document.documentElement.style.setProperty('--text-font', cached.font);
+  if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
+}
+</script>  <link rel="stylesheet" href="server.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 
 </head>
@@ -172,6 +181,8 @@
     }
     updatePresence("Looking at events")
   </script>
+  <script src="sidebar.js"></script>
+  <script src="notifications.js"></script>
   </div>
 </body>
 

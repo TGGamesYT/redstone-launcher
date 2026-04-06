@@ -246,7 +246,98 @@ const frpcConfigPath = path.join(localdirname, "frpc.ini");
 let frpcProcess = null;
 const profilesPath = path.join(dataDir, 'profiles.json');
 const playersPath = path.join(dataDir, 'players.json');
-const JAVA_DIR = path.join(dataDir, "java_runtimes")
+const JAVA_DIR = path.join(dataDir, "java_runtimes");
+const notificationsPath = path.join(dataDir, 'notifications.json');
+const dismissalsPath = path.join(dataDir, 'notification-dismissals.json');
+
+function initNotifications() {
+  if (!fs.existsSync(notificationsPath)) {
+    fs.writeFileSync(notificationsPath, JSON.stringify([], null, 2));
+  }
+  if (!fs.existsSync(dismissalsPath)) {
+    fs.writeFileSync(dismissalsPath, JSON.stringify({}, null, 2));
+  }
+}
+
+function getMachineId() {
+  if (!settings.has('machineId')) {
+    settings.set('machineId', crypto.randomUUID());
+  }
+  return settings.get('machineId');
+}
+
+function loadNotifications() {
+  try {
+    if (fs.existsSync(notificationsPath)) {
+      return JSON.parse(fs.readFileSync(notificationsPath, 'utf8'));
+    }
+  } catch (e) {
+    console.error('Error loading notifications:', e);
+  }
+  return [];
+}
+
+function saveNotifications(notifications) {
+  fs.writeFileSync(notificationsPath, JSON.stringify(notifications, null, 2));
+}
+
+function loadDismissals() {
+  try {
+    if (fs.existsSync(dismissalsPath)) {
+      return JSON.parse(fs.readFileSync(dismissalsPath, 'utf8'));
+    }
+  } catch (e) {
+    console.error('Error loading dismissals:', e);
+  }
+  return {};
+}
+
+function saveDismissals(dismissals) {
+  fs.writeFileSync(dismissalsPath, JSON.stringify(dismissals, null, 2));
+}
+
+function dismissNotification(notificationId) {
+  const machineId = getMachineId();
+  const dismissals = loadDismissals();
+  if (!dismissals[notificationId]) {
+    dismissals[notificationId] = [];
+  }
+  if (!dismissals[notificationId].includes(machineId)) {
+    dismissals[notificationId].push(machineId);
+    saveDismissals(dismissals);
+  }
+}
+
+function getUnreadNotifications() {
+  const machineId = getMachineId();
+  const notifications = loadNotifications();
+  const dismissals = loadDismissals();
+  const now = Date.now();
+  
+  return notifications.filter(n => {
+    const dismissed = dismissals[n.id] && dismissals[n.id].includes(machineId);
+    const expired = (now - n.createdAt) > (7 * 24 * 60 * 60 * 1000);
+    return !dismissed && !expired;
+  });
+}
+
+function getNotificationStats() {
+  const notifications = loadNotifications();
+  const dismissals = loadDismissals();
+  
+  return {
+    totalNotifications: notifications.length,
+    dismissalStats: notifications.map(n => ({
+      id: n.id,
+      title: n.title,
+      totalDismissals: dismissals[n.id] ? dismissals[n.id].length : 0,
+      createdAt: n.createdAt
+    }))
+  };
+}
+
+initNotifications();
+getMachineId();
 
 // Global profile cache to prevent 429 Too Many Requests
 let profileCache = new Map(); // playerID -> { data, timestamp }
@@ -344,6 +435,22 @@ function savePlayers(p) { fs.writeFileSync(playersPath, JSON.stringify(p, null, 
 let mainWindow;
 const iconPath = path.join(process.resourcesPath, 'frontend', 'icon.png');
 const color = settings.get('baseColor', "#FF0000");
+
+function createAdminWindow() {
+  const win = new BrowserWindow({
+    width: 1000,
+    height: 700,
+    icon: path.join(iconPath),
+    frame: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+  win.loadFile('frontend/admin.html');
+  return win;
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1300,
@@ -370,15 +477,28 @@ function createWindow() {
   mainWindow = win
 }
 
-// --- Prevent multiple instances ---
+const ADMIN_PASSWORD = 'redstone2026@admin';
+let adminMode = false;
+
+const args = process.argv.slice(1);
+if (args.includes('admin')) {
+  const adminIndex = args.indexOf('admin');
+  const providedPassword = args[adminIndex + 1];
+  if (providedPassword === ADMIN_PASSWORD) {
+    adminMode = true;
+  } else {
+    console.error('Invalid admin password');
+    process.exit(1);
+  }
+}
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
   app.quit();
-  process.exit(0); // ✅ Ensures the process really stops here
+  process.exit(0);
 } else {
   app.on('second-instance', () => {
-    // Focus existing window instead of opening new
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -386,13 +506,20 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(() => {
-    if (!mainWindow) createWindow(); // ✅ Only create once
+    if (adminMode) {
+      createAdminWindow();
+    } else {
+      if (!mainWindow) createWindow();
+    }
   });
 
   app.on('activate', () => {
-    // On macOS: only recreate if there are no open windows
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      if (adminMode) {
+        createAdminWindow();
+      } else {
+        createWindow();
+      }
     }
   });
 
@@ -468,6 +595,44 @@ ipcMain.on('save-settings', (event, newsettings) => {
 
 ipcMain.handle('get-system-ram', () => {
   return totalRAMMB;
+});
+
+ipcMain.handle('get-unread-notifications', () => {
+  return getUnreadNotifications();
+});
+
+ipcMain.handle('get-notification-stats', () => {
+  return getNotificationStats();
+});
+
+ipcMain.on('dismiss-notification', (event, notificationId) => {
+  dismissNotification(notificationId);
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('notification-dismissed', notificationId);
+  }
+});
+
+ipcMain.handle('get-all-notifications', () => {
+  return loadNotifications();
+});
+
+ipcMain.on('create-notification', (event, notification) => {
+  const notifications = loadNotifications();
+  const newNotif = {
+    id: crypto.randomUUID(),
+    title: notification.title,
+    message: notification.message,
+    moreInfoUrl: notification.moreInfoUrl || null,
+    createdAt: Date.now()
+  };
+  notifications.push(newNotif);
+  saveNotifications(notifications);
+});
+
+ipcMain.on('delete-notification', (event, notificationId) => {
+  const notifications = loadNotifications();
+  const filtered = notifications.filter(n => n.id !== notificationId);
+  saveNotifications(filtered);
 });
 
 /* ─────────────── Player Profiles ─────────────── */

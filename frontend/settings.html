@@ -4,6 +4,17 @@
 <head>
   <meta charset="UTF-8">
   <title>Redstone Launcher — Settings</title>
+  <script>
+const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+if (cached.baseColor) {
+  document.documentElement.style.setProperty('--base-color', cached.baseColor);
+  document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
+  document.documentElement.style.setProperty('--third-color', cached.thirdColor);
+  document.documentElement.style.setProperty('--text-color', cached.textColor);
+  document.documentElement.style.setProperty('--text-font', cached.font);
+  if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
+}
+</script>
   <link href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css" rel="stylesheet">
   <link rel="stylesheet" href="server.css" />
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
@@ -399,26 +410,34 @@
         if (!autoThirdCheckbox.checked) {
           thirdCode.value = thirdColor.value;
           document.documentElement.style.setProperty('--third-color', thirdColor.value);
-          ipcRenderer.send('save-settings', { thirdColor: thirdColor.value });
+          const updateObj = { thirdColor: thirdColor.value };
+          ipcRenderer.send('save-settings', updateObj);
+          const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+          localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
         }
       });
       thirdCode.addEventListener('change', () => {
         if (!autoThirdCheckbox.checked && /^#([0-9A-Fa-f]{6})$/.test(thirdCode.value)) {
           thirdColor.value = thirdCode.value;
           document.documentElement.style.setProperty('--third-color', thirdCode.value);
-          ipcRenderer.send('save-settings', { thirdColor: thirdCode.value });
+          const updateObj = { thirdColor: thirdCode.value };
+          ipcRenderer.send('save-settings', updateObj);
+          const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+          localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
         }
       });
 
       // === Toggle auto third ===
       autoThirdCheckbox.checked = getSetting('autoThird');
       autoThirdCheckbox.addEventListener('change', () => {
-        ipcRenderer.send('save-settings', { autoThird: autoThirdCheckbox.checked });
+        const updateObj = { autoThird: autoThirdCheckbox.checked };
+        ipcRenderer.send('save-settings', updateObj);
+        const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+        localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
         if (autoThirdCheckbox.checked) {
-          ipcRenderer.send('save-settings', { thirdColor: null }); // clear manual
+          ipcRenderer.send('save-settings', { thirdColor: null });
           updateThirdColor(true);
         } else {
-          // restore manual color or fallback
           updateThirdColor();
         }
       });
@@ -431,11 +450,12 @@
         code.value = getSetting(key);
 
         function saveColor() {
-          // make sure we apply CSS instantly
           document.documentElement.style.setProperty('--' + key.replace("Color", "-color").toLowerCase(), color.value);
 
-          // save setting
-          ipcRenderer.send('save-settings', { [key]: color.value });
+          const updateObj = { [key]: color.value };
+          ipcRenderer.send('save-settings', updateObj);
+          const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+          localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
 
           // re-calc third if auto is on
           if (document.getElementById('auto-third').checked) {
@@ -506,6 +526,7 @@
     `;
 
           btn.addEventListener('click', () => {
+            const themeUpdate = {};
             Object.entries(colorInputs).forEach(([key2, [colorId, codeId]]) => {
               const val = theme[key2];
               const colorEl = document.getElementById(colorId);
@@ -514,9 +535,12 @@
                 colorEl.value = val;
                 codeEl.value = val;
                 document.documentElement.style.setProperty('--' + key2.replace("Color", "-color").toLowerCase(), val);
-                ipcRenderer.send('save-settings', { [key2]: val });
+                themeUpdate[key2] = val;
               }
             });
+            ipcRenderer.send('save-settings', themeUpdate);
+            const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+            localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...themeUpdate }));
             updateThirdColor(true);
           });
 
@@ -529,7 +553,12 @@
       // === Other Settings ===
       const fontSelect = document.getElementById('font-selector');
       fontSelect.value = getSetting('font');
-      fontSelect.addEventListener('change', () => ipcRenderer.send('save-settings', { font: fontSelect.value }));
+      fontSelect.addEventListener('change', () => {
+        const updateObj = { font: fontSelect.value };
+        ipcRenderer.send('save-settings', updateObj);
+        const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+        localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
+      });
 
       const borderRadius = document.getElementById('border-radius');
       const borderValue = document.getElementById('border-radius-value');
@@ -538,7 +567,10 @@
       borderRadius.addEventListener('input', () => {
         borderValue.innerText = borderRadius.value;
         document.documentElement.style.setProperty('--border-radius', borderRadius.value + 'px');
-        ipcRenderer.send('save-settings', { borderRadius: parseFloat(borderRadius.value) });
+        const updateObj = { borderRadius: parseFloat(borderRadius.value) };
+        ipcRenderer.send('save-settings', updateObj);
+        const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+        localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
       });
 
       const autoUpdates = document.getElementById('auto-updates');
@@ -560,6 +592,7 @@
     function closeApp() { ipcRenderer.send('close-app'); }
   </script>
   <script src="sidebar.js"></script>
+  <script src="notifications.js"></script>
 </body>
 
 </html>

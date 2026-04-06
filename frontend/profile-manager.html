@@ -1,316 +1,340 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <meta charset="UTF-8">
   <title>Redstone Launcher - Player Manager</title>
   <link rel="stylesheet" href="server.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <script>
+    const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+    if (cached.baseColor) {
+      document.documentElement.style.setProperty('--base-color', cached.baseColor);
+      document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
+      document.documentElement.style.setProperty('--third-color', cached.thirdColor);
+      document.documentElement.style.setProperty('--text-color', cached.textColor);
+      document.documentElement.style.setProperty('--text-font', cached.font);
+      if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
+    }
+  </script>
   <style>
     /* Container around canvas + card panels */
-#content-wrapper {
-  display: flex;
-  flex-direction: row;
-  margin-top: 20px;
-}
+    #content-wrapper {
+      display: flex;
+      flex-direction: row;
+      margin-top: 20px;
+    }
 
-/* Canvas on the left */
-#skin_container {
-  flex: 0 0 auto;
-  margin-right: 20px;
-  border-radius: var(--border-radius);
-}
+    /* Canvas on the left */
+    #skin_container {
+      flex: 0 0 auto;
+      margin-right: 20px;
+      border-radius: var(--border-radius);
+    }
 
-/* Cards column on the right */
-#cards-column {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  max-height: calc(100vh - 38px);
-  overflow-y: auto;
-}
+    /* Cards column on the right */
+    #cards-column {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      max-height: calc(100vh - 38px);
+      overflow-y: auto;
+    }
 
-/* Group label (Skins / Capes headers) */
-.cards-header {
-  color: var(--text-color);
-  font-size: 20px;
-  margin-bottom: 6px;
-}
+    /* Group label (Skins / Capes headers) */
+    .cards-header {
+      color: var(--text-color);
+      font-size: 20px;
+      margin-bottom: 6px;
+    }
 
-/* Holder for skins and capes */
-#skins, #capes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
+    /* Holder for skins and capes */
+    #skins,
+    #capes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
     .card {
-  width: 160px;
-  background: var(--base-color);
-  border-radius: var(--border-radius);
-  margin: 10px;
-  padding: 8px;
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  display: inline-block;
-  text-align: center;
-}
+      width: 160px;
+      background: var(--base-color);
+      border-radius: var(--border-radius);
+      margin: 10px;
+      padding: 8px;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      display: inline-block;
+      text-align: center;
+    }
 
-.card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-}
+    .card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+    }
 
-.card-image {
-  width: 100%;
-  border-radius: var(--border-radius);
-}
+    .card-image {
+      width: 100%;
+      border-radius: var(--border-radius);
+    }
 
-.card-label {
-  color: var(--text-color);
-  margin-top: 6px;
-  font-size: 14px;
-}
-
+    .card-label {
+      color: var(--text-color);
+      margin-top: 6px;
+      font-size: 14px;
+    }
   </style>
 </head>
+
 <body>
-<div id="toolbar">
-  <div class="toolbar-buttons-left">
+  <div id="toolbar">
+    <div class="toolbar-buttons-left">
       <button id="backBtn">⬅</button>
       <button id="forwardBtn">➡</button>
-  </div>
-<div class="drag-region">Redstone Launcher</div>
-<div class="toolbar-buttons">
-    <div id="instance-processes"></div>
-    <button id="min-btn">—</button>
-    <button id="max-btn">◻</button>
-    <button id="close-btn">✕</button>
-</div>
-</div>
-<div class="sidebar">
-  <ul class="menu top">
-    <a href="index.html"><li><i class="material-icons">home</i><span>Home</span></li></a>
-    <a href="instances.html"><li><i class="material-icons">play_arrow</i><span>Instances</span></li></a>
-    <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
-    <a href="server.html"><li><i class="material-icons">storage</i><span>Server Manager</span></li></a>
-  </ul>
-  <ul class="menu middle" id="instances">
-    <li><i class="material-icons">add</i><span>Add an instance</span></li>
-  </ul>
-  <ul class="menu bottom">
-    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
-    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
-    <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
-    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-  </ul>
-</div>
-<div id="content-wrapper">
-
-  <canvas id="skin_container"></canvas>
-  <img id="myImage" style="display: none;" />
-  <div id="cards-column">
-    <div>
-      <div class="cards-header">Skins</div>
-      <div id="skins"></div>
     </div>
-
-    <div>
-      <div class="cards-header">Capes</div>
-      <div id="capes"></div>
+    <div class="drag-region">Redstone Launcher</div>
+    <div class="toolbar-buttons">
+      <div id="instance-processes"></div>
+      <button id="min-btn">—</button>
+      <button id="max-btn">◻</button>
+      <button id="close-btn">✕</button>
     </div>
   </div>
+  <div class="sidebar">
+    <ul class="menu top">
+      <a href="index.html">
+        <li><i class="material-icons">home</i><span>Home</span></li>
+      </a>
+      <a href="instances.html">
+        <li><i class="material-icons">play_arrow</i><span>Instances</span></li>
+      </a>
+      <a href="modrinth.html" class="modrinth">
+        <li><span>Modrinth</span></li>
+      </a>
+      <a href="server.html">
+        <li><i class="material-icons">storage</i><span>Server Manager</span></li>
+      </a>
+    </ul>
+    <ul class="menu middle" id="instances">
+      <li><i class="material-icons">add</i><span>Add an instance</span></li>
+    </ul>
+    <ul class="menu bottom">
+      <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+      <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
+      <a href="players.html">
+        <li id="players-login"><i class="material-icons">login</i><span>Login</span></li>
+      </a>
+      <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+    </ul>
+  </div>
+  <div id="content-wrapper">
 
-</div>
-<script src="skinview3d.bundle.js"></script>
-<script>
-  function createSkinCanvas(skin) {
-    const canvas = document.createElement("canvas");
-    // Draw at 2x scale for clarity
-    canvas.width = 32;
-    canvas.height = 64;
-    canvas.style.width = "100%";
-    canvas.style.imageRendering = "pixelated";
-    canvas.className = "card-image";
-    
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
-    
-    // Only use anonymous for remote URLs to avoid CORS issues
-    if (!skin.base64) img.crossOrigin = "anonymous";
-    img.src = skin.base64 ? ("data:image/png;base64," + skin.base64) : skin.url;
+    <canvas id="skin_container"></canvas>
+    <img id="myImage" style="display: none;" />
+    <div id="cards-column">
+      <div>
+        <div class="cards-header">Skins</div>
+        <div id="skins"></div>
+      </div>
 
-    img.onerror = () => {
-      ctx.fillStyle = "#333";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    };
+      <div>
+        <div class="cards-header">Capes</div>
+        <div id="capes"></div>
+      </div>
+    </div>
 
-    img.onload = () => {
-      const isOldFormat = img.height === 32;
-      const isSlim = skin.variant === "SLIM";
-      const armWidth = isSlim ? 3 : 4;
-      
-      // Clear and set pixelated mode
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.imageSmoothingEnabled = false;
-      
-      // Helper to draw at 2x scale
-      const draw = (sx, sy, sw, sh, dx, dy) => {
-        ctx.drawImage(img, sx, sy, sw, sh, dx * 2, dy * 2, sw * 2, sh * 2);
-      };
+  </div>
+  <script src="skinview3d.bundle.js"></script>
+  <script>
+    function createSkinCanvas(skin) {
+      const canvas = document.createElement("canvas");
+      // Draw at 2x scale for clarity
+      canvas.width = 32;
+      canvas.height = 64;
+      canvas.style.width = "100%";
+      canvas.style.imageRendering = "pixelated";
+      canvas.className = "card-image";
 
-      // --- BASE LAYER ---
-      // Head
-      draw(8, 8, 8, 8, 4, 0);
-      // Torso
-      draw(20, 20, 8, 12, 4, 8);
-      // Right Leg
-      draw(4, 20, 4, 12, 4, 20);
-      // Right Arm
-      draw(44, 20, armWidth, 12, isSlim ? 1 : 0, 8);
-
-      if (isOldFormat) {
-        // Mirror for legacy skins
-        ctx.save(); ctx.scale(-1, 1);
-        ctx.drawImage(img, 4, 20, 4, 12, -12 * 2, 20 * 2, 4 * 2, 12 * 2); // Left Leg
-        ctx.drawImage(img, 44, 20, 4, 12, -16 * 2, 8 * 2, 4 * 2, 12 * 2);  // Left Arm
-        ctx.restore();
-      } else {
-        // Left Leg
-        draw(20, 52, 4, 12, 8, 20);
-        // Left Arm
-        draw(36, 52, armWidth, 12, 12, 8);
-      }
-
-      // --- OVERLAY LAYER ---
-      // Hat
-      draw(40, 8, 8, 8, 4, 0);
-      
-      if (!isOldFormat) {
-        // Jacket
-        draw(20, 36, 8, 12, 4, 8);
-        // Right Pants
-        draw(4, 36, 4, 12, 4, 20);
-        // Left Pants
-        draw(4, 52, 4, 12, 8, 20);
-        // Right Sleeve
-        draw(44, 36, armWidth, 12, isSlim ? 1 : 0, 8);
-        // Left Sleeve
-        draw(52, 52, armWidth, 12, 12, 8);
-      }
-    };
-    return canvas;
-  }
-
-  function createCapeCanvas(cape) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 10;
-    canvas.height = 16;
-    canvas.style.width = "100%";
-    canvas.style.imageRendering = "pixelated";
-    canvas.className = "card-image";
-    
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
-    img.src = cape.base64 ? ("data:image/png;base64," + cape.base64) : cape.url;
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      ctx.drawImage(img, 1, 1, 10, 16, 0, 0, 10, 16);
-    };
-    return canvas;
-  }
-
-  function createCard(title, onClick, previewElement) {
-    const card = document.createElement("div");
-    card.className = "card";
-    card.onclick = onClick;
-    
-    if (previewElement) {
-      card.appendChild(previewElement);
-    }
-    
-    const label = document.createElement("div");
-    label.className = "card-label";
-    label.textContent = title;
-    card.appendChild(label);
-    
-    return card;
-  }
-
-players = [];
-      const { ipcRenderer } = require('electron');
-      async function getSelectedPlayer() {return await ipcRenderer.invoke('get-selected-player')}
-      let selectedplayer;
-
-  async function updateSKin() {
-    selectedplayer = await getSelectedPlayer();
-    let player = players.find(p => p.id === selectedplayer);
-    if (!player) return;
-    let name;
-    if (!player.auth || !player.auth.name) {
-      name = player.username;
-    } else {
-      name = player.auth.name;
-    }
-
-    let profile = { skins: [], capes: [] };
-    if (player.type != "cracked") {
-      profile = await ipcRenderer.invoke("mc:getProfile");
-    }
-
-    // Update 3D viewer
-    if (typeof skinview3d !== 'undefined' && skinview3d !== null) {
-      if (window.skinViewer) {
-        window.skinViewer.dispose();
-      }
-      window.skinViewer = new skinview3d.SkinViewer({
-        canvas: document.getElementById("skin_container"),
-        width: 600,
-        height: 800
-      });
-      
-      // Load current active skin or fall back to name
-      const activeSkin = profile.skins.find(s => s.state === "ACTIVE") || profile.skins[0];
-      if (activeSkin) {
-        const skinUrl = activeSkin.base64 ? ("data:image/png;base64," + activeSkin.base64) : activeSkin.url;
-        window.skinViewer.loadSkin(skinUrl, { model: activeSkin.variant === "SLIM" ? "slim" : "default" });
-      } else {
-        window.skinViewer.loadSkin(`https://mc-heads.net/skin/${name}`);
-      }
-
-      fetch(`https://api.capes.dev/load/${encodeURIComponent(name)}`)
-        .then(res => res.ok ? res.json() : null)
-        .then(data => {
-          if (data && data.minecraft && data.minecraft.imageUrl) {
-            window.skinViewer.loadCape(data.minecraft.imageUrl);
-          }
-        }).catch(err => console.warn("Cape load failed", err));
-    } else {
-      let canvas = document.getElementById('skin_container');
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext("2d");
       const img = new Image();
-      img.src = `https://mc-heads.net/body/${name}/300`;
-      img.onload = function() {
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        ctx.drawImage(img, 0, 0);
+
+      // Only use anonymous for remote URLs to avoid CORS issues
+      if (!skin.base64) img.crossOrigin = "anonymous";
+      img.src = skin.base64 ? ("data:image/png;base64," + skin.base64) : skin.url;
+
+      img.onerror = () => {
+        ctx.fillStyle = "#333";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
       };
+
+      img.onload = () => {
+        const isOldFormat = img.height === 32;
+        const isSlim = skin.variant === "SLIM";
+        const armWidth = isSlim ? 3 : 4;
+
+        // Clear and set pixelated mode
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = false;
+
+        // Helper to draw at 2x scale
+        const draw = (sx, sy, sw, sh, dx, dy) => {
+          ctx.drawImage(img, sx, sy, sw, sh, dx * 2, dy * 2, sw * 2, sh * 2);
+        };
+
+        // --- BASE LAYER ---
+        // Head
+        draw(8, 8, 8, 8, 4, 0);
+        // Torso
+        draw(20, 20, 8, 12, 4, 8);
+        // Right Leg
+        draw(4, 20, 4, 12, 4, 20);
+        // Right Arm
+        draw(44, 20, armWidth, 12, isSlim ? 1 : 0, 8);
+
+        if (isOldFormat) {
+          // Mirror for legacy skins
+          ctx.save(); ctx.scale(-1, 1);
+          ctx.drawImage(img, 4, 20, 4, 12, -12 * 2, 20 * 2, 4 * 2, 12 * 2); // Left Leg
+          ctx.drawImage(img, 44, 20, 4, 12, -16 * 2, 8 * 2, 4 * 2, 12 * 2);  // Left Arm
+          ctx.restore();
+        } else {
+          // Left Leg
+          draw(20, 52, 4, 12, 8, 20);
+          // Left Arm
+          draw(36, 52, armWidth, 12, 12, 8);
+        }
+
+        // --- OVERLAY LAYER ---
+        // Hat
+        draw(40, 8, 8, 8, 4, 0);
+
+        if (!isOldFormat) {
+          // Jacket
+          draw(20, 36, 8, 12, 4, 8);
+          // Right Pants
+          draw(4, 36, 4, 12, 4, 20);
+          // Left Pants
+          draw(4, 52, 4, 12, 8, 20);
+          // Right Sleeve
+          draw(44, 36, armWidth, 12, isSlim ? 1 : 0, 8);
+          // Left Sleeve
+          draw(52, 52, armWidth, 12, 12, 8);
+        }
+      };
+      return canvas;
     }
 
-    // Load Skins/Capes list
-    if (player.type != "cracked") {
-      const skinsDiv = document.getElementById("skins");
-      const capesDiv = document.getElementById("capes");
-      skinsDiv.innerHTML = "";
-      capesDiv.innerHTML = "";
+    function createCapeCanvas(cape) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 10;
+      canvas.height = 16;
+      canvas.style.width = "100%";
+      canvas.style.imageRendering = "pixelated";
+      canvas.className = "card-image";
 
-      // ---- Current skins ----
-      profile.skins.forEach(skin => {
-        const displayName = skin.alias || "Skin";
-        const preview = createSkinCanvas(skin);
+      const ctx = canvas.getContext("2d");
+      const img = new Image();
+      img.src = cape.base64 ? ("data:image/png;base64," + cape.base64) : cape.url;
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        ctx.drawImage(img, 1, 1, 10, 16, 0, 0, 10, 16);
+      };
+      return canvas;
+    }
 
-        const card = createCard(
-          displayName,
-          () => ipcRenderer.invoke("mc:applySkin", skin)
+    function createCard(title, onClick, previewElement) {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.onclick = onClick;
+
+      if (previewElement) {
+        card.appendChild(previewElement);
+      }
+
+      const label = document.createElement("div");
+      label.className = "card-label";
+      label.textContent = title;
+      card.appendChild(label);
+
+      return card;
+    }
+
+    players = [];
+    const { ipcRenderer } = require('electron');
+    async function getSelectedPlayer() { return await ipcRenderer.invoke('get-selected-player') }
+    let selectedplayer;
+
+    async function updateSKin() {
+      selectedplayer = await getSelectedPlayer();
+      let player = players.find(p => p.id === selectedplayer);
+      if (!player) return;
+      let name;
+      if (!player.auth || !player.auth.name) {
+        name = player.username;
+      } else {
+        name = player.auth.name;
+      }
+
+      let profile = { skins: [], capes: [] };
+      if (player.type != "cracked") {
+        profile = await ipcRenderer.invoke("mc:getProfile");
+      }
+
+      // Update 3D viewer
+      if (typeof skinview3d !== 'undefined' && skinview3d !== null) {
+        if (window.skinViewer) {
+          window.skinViewer.dispose();
+        }
+        window.skinViewer = new skinview3d.SkinViewer({
+          canvas: document.getElementById("skin_container"),
+          width: 600,
+          height: 800
+        });
+
+        // Load current active skin or fall back to name
+        const activeSkin = profile.skins.find(s => s.state === "ACTIVE") || profile.skins[0];
+        if (activeSkin) {
+          const skinUrl = activeSkin.base64 ? ("data:image/png;base64," + activeSkin.base64) : activeSkin.url;
+          window.skinViewer.loadSkin(skinUrl, { model: activeSkin.variant === "SLIM" ? "slim" : "default" });
+        } else {
+          window.skinViewer.loadSkin(`https://mc-heads.net/skin/${name}`);
+        }
+
+        fetch(`https://api.capes.dev/load/${encodeURIComponent(name)}`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data && data.minecraft && data.minecraft.imageUrl) {
+              window.skinViewer.loadCape(data.minecraft.imageUrl);
+            }
+          }).catch(err => console.warn("Cape load failed", err));
+      } else {
+        let canvas = document.getElementById('skin_container');
+        const ctx = canvas.getContext('2d');
+        const img = new Image();
+        img.src = `https://mc-heads.net/body/${name}/300`;
+        img.onload = function () {
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          ctx.drawImage(img, 0, 0);
+        };
+      }
+
+      // Load Skins/Capes list
+      if (player.type != "cracked") {
+        const skinsDiv = document.getElementById("skins");
+        const capesDiv = document.getElementById("capes");
+        skinsDiv.innerHTML = "";
+        capesDiv.innerHTML = "";
+
+        // ---- Current skins ----
+        profile.skins.forEach(skin => {
+          const displayName = skin.alias || "Skin";
+          const preview = createSkinCanvas(skin);
+
+          const card = createCard(
+            displayName,
+            () => ipcRenderer.invoke("mc:applySkin", skin)
               .then(() => {
                 if (window.skinViewer) {
                   const skinUrl = skin.base64 ? ("data:image/png;base64," + skin.base64) : skin.url;
@@ -318,19 +342,19 @@ players = [];
                 }
               })
               .catch(err => console.error("skin fail:", err)),
-          preview
-        );
-        skinsDiv.appendChild(card);
-      });
+            preview
+          );
+          skinsDiv.appendChild(card);
+        });
 
-      // ---- Current capes ----
-      profile.capes.forEach(cape => {
-        const displayName = cape.alias || "Cape";
-        const preview = createCapeCanvas(cape);
+        // ---- Current capes ----
+        profile.capes.forEach(cape => {
+          const displayName = cape.alias || "Cape";
+          const preview = createCapeCanvas(cape);
 
-        const card = createCard(
-          displayName,
-          () => ipcRenderer.invoke("mc:applyCape", cape.id)
+          const card = createCard(
+            displayName,
+            () => ipcRenderer.invoke("mc:applyCape", cape.id)
               .then(() => {
                 if (window.skinViewer) {
                   const capeUrl = cape.base64 ? ("data:image/png;base64," + cape.base64) : cape.url;
@@ -338,26 +362,28 @@ players = [];
                 }
               })
               .catch(err => console.error("cape fail:", err)),
-          preview
-        );
-        capesDiv.appendChild(card);
-      });
-    } else {
-      document.getElementById('cards-column').style.display = "none";
-      document.getElementById("content-wrapper").append("Skin Changing isnt available for cracked players");
+            preview
+          );
+          capesDiv.appendChild(card);
+        });
+      } else {
+        document.getElementById('cards-column').style.display = "none";
+        document.getElementById("content-wrapper").append("Skin Changing isnt available for cracked players");
+      }
     }
-  }
 
-  ipcRenderer.send("get-players");
-  ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateSKin(); });
-  ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; updateSKin(); });
-function updatePresence(details, state = "Idle") {
-  ipcRenderer.send('update-discord-presence', { details, state });
-}
+    ipcRenderer.send("get-players");
+    ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateSKin(); });
+    ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; updateSKin(); });
+    function updatePresence(details, state = "Idle") {
+      ipcRenderer.send('update-discord-presence', { details, state });
+    }
 
-updatePresence("Managing skins")
-</script>
+    updatePresence("Managing skins")
+  </script>
   <script src="sidebar.js"></script>
+  <script src="notifications.js"></script>
   </div>
 </body>
+
 </html>

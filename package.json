@@ -8,7 +8,7 @@
   "scripts": {
     "app": "electron .",
     "buildWin": "electron-builder --win --publish=never",
-    "buildLinux": "electron-builder --linux AppImage --publish=never",
+    "buildLinux": "electron-builder --linux AppImage deb --publish=never",
     "buildMac": "electron-builder --mac --publish=never"
   },
   "keywords": [],
