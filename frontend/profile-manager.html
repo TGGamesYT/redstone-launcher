@@ -16,6 +16,11 @@
       document.documentElement.style.setProperty('--text-font', cached.font);
       if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
     }
+    if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+      const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
+      document.documentElement.style.setProperty('--app-gradient', gradientStr);
+      document.documentElement.classList.add('gradient-enabled');
+    }
   </script>
   <style>
     /* Container around canvas + card panels */

@@ -14,6 +14,11 @@ if (cached.baseColor) {
   document.documentElement.style.setProperty('--text-font', cached.font);
   if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
 }
+if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+  const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
+  document.documentElement.style.setProperty('--app-gradient', gradientStr);
+  document.documentElement.classList.add('gradient-enabled');
+}
 </script>
   <link rel="stylesheet" href="server.css">
   <link rel="stylesheet" href="instanceview.css">
@@ -121,6 +126,11 @@ if (cached.baseColor) {
       </select>
       <button id="editOrderBtn" style="display:none;">Edit Order</button>
     </div>
+  </div>
+  <div id="emptyInstanceState" style="text-align: center; padding: 100px 20px; opacity: 0.7;">
+    <i class="material-icons" style="font-size: 64px; display: block; margin-bottom: 20px;">play_arrow</i>
+    <h3 style="margin: 0 0 10px 0; font-size: 18px;">No Instances</h3>
+    <p style="margin: 0 0 20px 0; font-size: 14px;">Create your first instance to get started</p>
   </div>
   <ul id="profiles-list" style="max-height: calc(100vh - ( 38px + 112px )); overflow-y: auto; overflow-x: hidden;"></ul>
   <!-- Add Instance Modal -->
@@ -799,10 +809,19 @@ if (cached.baseColor) {
 
       // LIST VIEW
       searchsort.style.display = "block";
-      profilesList.style.display = "block";
       instanceDetail.style.display = "none";
 
       profilesList.innerHTML = "";
+      
+      const emptyState = document.getElementById('emptyInstanceState');
+      if (!list || list.length === 0) {
+        emptyState.style.display = 'block';
+        profilesList.style.display = 'none';
+        return;
+      }
+      
+      emptyState.style.display = 'none';
+      profilesList.style.display = 'block';
 
       list.forEach(p => {
         const li = document.createElement("li");

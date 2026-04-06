@@ -63,6 +63,19 @@ function applyTheme(settings) {
   document.documentElement.style.setProperty('--text-color', textColor);
   document.documentElement.style.setProperty('--text-font', textFont);
   document.documentElement.style.setProperty('--border-radius', `${settings.borderRadius}px`);
+  document.documentElement.style.setProperty('--gradient-angle', `${settings.gradientAngle ?? 180}deg`);
+  
+  // Apply app gradient if enabled
+  if (settings.gradientEnabled && settings.gradientColors && settings.gradientColors.length > 0) {
+    const gradientStr = `linear-gradient(${settings.gradientAngle ?? 180}deg, ${settings.gradientColors.join(', ')})`;
+    document.documentElement.style.setProperty('--app-gradient', gradientStr);
+    document.documentElement.classList.add('gradient-enabled');
+    document.body.classList.add('gradient-enabled');
+  } else {
+    document.documentElement.style.setProperty('--app-gradient', 'none');
+    document.documentElement.classList.remove('gradient-enabled');
+    document.body.classList.remove('gradient-enabled');
+  }
 }
 
 const cachedTheme = JSON.parse(localStorage.getItem('launcherTheme') || '{}');

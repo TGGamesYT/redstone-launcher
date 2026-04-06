@@ -19,8 +19,10 @@
   --text-color: #ffffff;
   --text-font: Pixel;
   --border-radius: 0;
+  --gradient-angle: 180deg;
+  --app-gradient: none;
   --toolbar-bg: var(--secondary-color);
-  --sidebar-bg: linear-gradient(180deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
+  --sidebar-bg: linear-gradient(var(--gradient-angle), var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
   --sidebar-border: color-mix(in srgb, var(--secondary-color) 50%, black);
   --menu-bg: color-mix(in srgb, var(--secondary-color) 50%, black);
   --very-dark: color-mix(in srgb, var(--secondary-color) 30%, black);
@@ -249,11 +251,16 @@ html {
       var(--very-dark) 100%);
 }
 
+html.gradient-enabled {
+  background: var(--app-gradient);
+  background-attachment: fixed;
+}
+
 body {
   margin: 0;
   padding: 0;
   font-family: var(--text-font);
-  background: var(--very-dark);
+  background: transparent;
   color: var(--text-color);
   overflow: hidden;
   margin-left: 70px;
@@ -262,6 +269,10 @@ body {
   border-top: 3px var(--toolbar-bg);
   border-left: 3px var(--toolbar-bg);
   border-top-left-radius: var(--border-radius);
+}
+
+body:not(.gradient-enabled) {
+  background: var(--very-dark);
 }
 
 h1,
@@ -394,6 +405,9 @@ h5 {
 
 #toolbar .logo-icon {
   display: none;
+}
+html:not(.gradient-enabled) .sidebar {
+  background: linear-gradient(180deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
 }
 
 .sidebar {

@@ -14,6 +14,11 @@ if (cached.baseColor) {
   document.documentElement.style.setProperty('--text-font', cached.font);
   if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
 }
+if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+  const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
+  document.documentElement.style.setProperty('--app-gradient', gradientStr);
+  document.documentElement.classList.add('gradient-enabled');
+}
 </script>
   <link href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css" rel="stylesheet">
   <link rel="stylesheet" href="server.css" />
@@ -256,6 +261,28 @@ if (cached.baseColor) {
       <br>
       <input type="range" id="border-radius" min="0" max="25" step="0.2" style="width: 200px;">
       <span class="slider-value" id="border-radius-value"></span>
+
+      <h4 style="margin-top: 40px;">Gradient Settings: <span style="background: #ff9800; color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; margin-left: 10px;">BETA</span></h4>
+      <label><input type="checkbox" id="gradient-enabled"> Enable Global Gradient</label>
+      <br><br>
+
+      <div id="gradient-controls" style="display: none; border: 1px solid var(--border-dark); padding: 15px; border-radius: 5px; background: color-mix(in srgb, var(--secondary-color) 50%, black);">
+        <label>Gradient Angle (deg):</label>
+        <br>
+        <input type="range" id="gradient-angle" min="0" max="360" step="1" style="width: 200px;" value="180">
+        <span class="slider-value" id="gradient-angle-value">180°</span>
+        <br><br>
+
+        <label>Gradient Colors:</label>
+        <br>
+        <div id="gradient-colors-list" style="margin-top: 10px;">
+          <!-- Colors will be added here dynamically -->
+        </div>
+        <button id="add-gradient-color" style="margin-top: 10px; padding: 6px 12px; background: var(--base-color); color: var(--text-color); border: none; border-radius: 3px; cursor: pointer;">+ Add Color</button>
+
+        <div id="gradient-preview" style="margin-top: 15px; height: 60px; border-radius: 5px; border: 1px solid var(--border-dark); background: linear-gradient(180deg, #ff4d4d, #b30c0c);"></div>
+      </div>
+
       <h4>Predefined Themes:</h4>
       <div class="theme-list" id="theme-list"></div>
     </div>
@@ -295,10 +322,11 @@ if (cached.baseColor) {
       borderRadius: 0,
       autoUpdates: true,
       discordPresence: true,
-      autoUpdates: true,
-      discordPresence: true,
-      autoThird: true, // new toggle
-      gridView: false
+      autoThird: true,
+      gridView: false,
+      gradientEnabled: false,
+      gradientColors: ['#ff4d4d', '#b30c0c'],
+      gradientAngle: 180
     };
 
 
@@ -306,8 +334,8 @@ if (cached.baseColor) {
       const totalRAM = await ipcRenderer.invoke('get-system-ram');
       const settings = await ipcRenderer.invoke('get-settings');
 
-      function getSetting(key) {
-        return settings[key] ?? defaultSettings[key];
+      function getSetting(key, defaultValue) {
+        return settings[key] ?? defaultSettings[key] ?? defaultValue;
       }
 
       // === Section switching ===
@@ -571,6 +599,118 @@ if (cached.baseColor) {
         ipcRenderer.send('save-settings', updateObj);
         const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
         localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
+      });
+
+      // === Gradient Settings ===
+      const gradientEnabled = document.getElementById('gradient-enabled');
+      const gradientControls = document.getElementById('gradient-controls');
+      const gradientAngle = document.getElementById('gradient-angle');
+      const gradientValue = document.getElementById('gradient-angle-value');
+      const addColorBtn = document.getElementById('add-gradient-color');
+      const gradientColorsList = document.getElementById('gradient-colors-list');
+      const gradientPreview = document.getElementById('gradient-preview');
+
+      let currentGradientColors = getSetting('gradientColors') || ['#ff4d4d', '#b30c0c'];
+      let gradientEnabledState = getSetting('gradientEnabled') || false;
+
+      function renderGradientColors() {
+        gradientColorsList.innerHTML = '';
+        if (!currentGradientColors || !Array.isArray(currentGradientColors)) {
+          currentGradientColors = ['#ff4d4d', '#b30c0c'];
+        }
+        currentGradientColors.forEach((color, index) => {
+          const colorDiv = document.createElement('div');
+          colorDiv.style.display = 'flex';
+          colorDiv.style.alignItems = 'center';
+          colorDiv.style.marginBottom = '8px';
+          colorDiv.style.gap = '10px';
+
+          const colorInput = document.createElement('input');
+          colorInput.type = 'color';
+          colorInput.value = color;
+          colorInput.style.cursor = 'pointer';
+          colorInput.addEventListener('input', (e) => {
+            currentGradientColors[index] = e.target.value;
+            updateGradientPreview();
+            saveGradientSettings();
+          });
+
+          const removeBtn = document.createElement('button');
+          removeBtn.innerText = 'Remove';
+          removeBtn.style.padding = '4px 8px';
+          removeBtn.style.background = 'var(--third-color)';
+          removeBtn.style.color = 'var(--text-color)';
+          removeBtn.style.border = 'none';
+          removeBtn.style.borderRadius = '3px';
+          removeBtn.style.cursor = 'pointer';
+          removeBtn.style.fontSize = '0.85rem';
+          removeBtn.disabled = currentGradientColors.length <= 2;
+          removeBtn.addEventListener('click', () => {
+            if (currentGradientColors.length > 2) {
+              currentGradientColors.splice(index, 1);
+              renderGradientColors();
+              updateGradientPreview();
+              saveGradientSettings();
+            }
+          });
+
+          colorDiv.appendChild(colorInput);
+          colorDiv.appendChild(removeBtn);
+          gradientColorsList.appendChild(colorDiv);
+        });
+      }
+
+      function updateGradientPreview() {
+        const gradientString = `linear-gradient(${gradientAngle.value}deg, ${currentGradientColors.join(', ')})`;
+        gradientPreview.style.background = gradientString;
+        if (gradientEnabledState) {
+          document.documentElement.style.setProperty('--app-gradient', gradientString);
+        }
+      }
+
+      function saveGradientSettings() {
+        const updateObj = {
+          gradientEnabled: gradientEnabledState,
+          gradientColors: currentGradientColors,
+          gradientAngle: parseInt(gradientAngle.value)
+        };
+        ipcRenderer.send('save-settings', updateObj);
+        const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+        localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
+      }
+
+      gradientEnabled.checked = gradientEnabledState;
+      gradientControls.style.display = gradientEnabledState ? 'block' : 'none';
+      gradientAngle.value = getSetting('gradientAngle', 180);
+      gradientValue.innerText = gradientAngle.value + '°';
+      renderGradientColors();
+      updateGradientPreview();
+
+      gradientEnabled.addEventListener('change', () => {
+        gradientEnabledState = gradientEnabled.checked;
+        gradientControls.style.display = gradientEnabledState ? 'block' : 'none';
+        if (gradientEnabledState) {
+          updateGradientPreview();
+        } else {
+          document.documentElement.style.setProperty('--app-gradient', 'none');
+        }
+        saveGradientSettings();
+      });
+
+      gradientAngle.addEventListener('input', () => {
+        gradientValue.innerText = gradientAngle.value + '°';
+        updateGradientPreview();
+        saveGradientSettings();
+      });
+
+      addColorBtn.addEventListener('click', () => {
+        if (currentGradientColors.length < 6) {
+          const lastColor = currentGradientColors[currentGradientColors.length - 1];
+          currentGradientColors.push(lastColor);
+          renderGradientColors();
+          updateGradientPreview();
+          saveGradientSettings();
+        }
       });
 
       const autoUpdates = document.getElementById('auto-updates');

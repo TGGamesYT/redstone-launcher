@@ -13,6 +13,11 @@ if (cached.baseColor) {
   document.documentElement.style.setProperty('--text-font', cached.font);
   if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
 }
+if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+  const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
+  document.documentElement.style.setProperty('--app-gradient', gradientStr);
+  document.documentElement.classList.add('gradient-enabled');
+}
 </script>
 <style>
   body { font-family: sans-serif; padding: 20px; }
@@ -63,6 +68,12 @@ if (cached.baseColor) {
     <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
   </ul>
+</div>
+<div id="emptyPlayerState" style="text-align: center; padding: 100px 20px; opacity: 0.7;">
+  <i class="material-icons" style="font-size: 64px; display: block; margin-bottom: 20px;">group</i>
+  <h3 style="margin: 0 0 10px 0; font-size: 18px;">No Players</h3>
+  <p style="margin: 0 0 20px 0; font-size: 14px;">Add your first player account to get started</p>
+  <button onclick="(async()=>{ await updatePlayerModal(); document.getElementById('playerModal').style.display='flex'; document.getElementById('premInfo').style.display='block'; })()" style="background: var(--secondary-color); color: var(--text-color); border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;">➕ Add New Player</button>
 </div>
 <ul id="players-list">
   <span id="addPlayerLine" onclick="(async()=>{ await updatePlayerModal(); document.getElementById('playerModal').style.display='flex'; document.getElementById('premInfo').style.display='block'; })()">➕ Add New Player</span>
@@ -161,6 +172,16 @@ function renderPlayers() {
   selectedPlayerId = getSelectedPlayer().id;
   updateSideBar();
   playersList.innerHTML = "";
+  
+  const emptyState = document.getElementById('emptyPlayerState');
+  if (!players || players.length === 0) {
+    emptyState.style.display = 'block';
+    playersList.style.display = 'none';
+    return;
+  }
+  
+  emptyState.style.display = 'none';
+  playersList.style.display = 'block';
 
   players.forEach(p => {
     const li = document.createElement("li");
