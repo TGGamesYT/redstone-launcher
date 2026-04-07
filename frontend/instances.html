@@ -5,21 +5,21 @@
   <meta charset="UTF-8">
   <title>Redstone Launcher - Instances</title>
   <script>
-const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
-if (cached.baseColor) {
-  document.documentElement.style.setProperty('--base-color', cached.baseColor);
-  document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
-  document.documentElement.style.setProperty('--third-color', cached.thirdColor);
-  document.documentElement.style.setProperty('--text-color', cached.textColor);
-  document.documentElement.style.setProperty('--text-font', cached.font);
-  if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
-}
-if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
-  const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
-  document.documentElement.style.setProperty('--app-gradient', gradientStr);
-  document.documentElement.classList.add('gradient-enabled');
-}
-</script>
+    const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+    if (cached.baseColor) {
+      document.documentElement.style.setProperty('--base-color', cached.baseColor);
+      document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
+      document.documentElement.style.setProperty('--third-color', cached.thirdColor);
+      document.documentElement.style.setProperty('--text-color', cached.textColor);
+      document.documentElement.style.setProperty('--text-font', cached.font);
+      if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
+    }
+    if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+      const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
+      document.documentElement.style.setProperty('--app-gradient', gradientStr);
+      document.documentElement.classList.add('gradient-enabled');
+    }
+  </script>
   <link rel="stylesheet" href="server.css">
   <link rel="stylesheet" href="instanceview.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
@@ -94,7 +94,8 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
     </ul>
   </div>
   <br>
-  <div id="search-sort">
+  <h1>Instances</h1>
+  <div id="search-sort" style="scale: 1.3; transform-origin: left; padding: 0 20px; display: flex; flex-direction: column; gap: 10px; margin-top: 100px;">
     <div style="margin-bottom: 10px;">
       <input id="searchInput" type="text" placeholder="Search instances..." style="padding:5px; width:200px;" />
 
@@ -812,14 +813,14 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       instanceDetail.style.display = "none";
 
       profilesList.innerHTML = "";
-      
+
       const emptyState = document.getElementById('emptyInstanceState');
       if (!list || list.length === 0) {
         emptyState.style.display = 'block';
         profilesList.style.display = 'none';
         return;
       }
-      
+
       emptyState.style.display = 'none';
       profilesList.style.display = 'block';
 
