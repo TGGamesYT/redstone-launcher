@@ -1,0 +1,104 @@
+name: Auto Blog Post on Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-blog:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout redstone-launcher-web
+        uses: actions/checkout@v4
+        with:
+          repository: TGGamesYT/redstone-launcher-web
+          token: ${{ secrets.WEB_REPO_TOKEN }}
+          path: web
+
+      - name: Inject blog card into blog.html
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, re
+
+          tag  = os.environ["RELEASE_TAG"]
+          name = os.environ.get("RELEASE_NAME", "").strip() or "Launch Notes"
+          body = os.environ.get("RELEASE_BODY", "").strip()
+
+          lines = body.splitlines()
+          desc  = lines[0].strip() if lines else tag
+          more_lines = [l for l in lines[1:] if l.strip()]
+
+          def lines_to_html(lines):
+              out = []
+              for line in lines:
+                  line = line.strip()
+                  if not line:
+                      continue
+                  # Markdown bullet → <li>
+                  if re.match(r'^[-*] ', line):
+                      out.append(f"<li>{line[2:]}</li>")
+                  else:
+                      out.append(f"<p>{line}</p>")
+              return "\n                      ".join(out) if out else ""
+
+          more_html = lines_to_html(more_lines)
+
+          safe_id = re.sub(r"[^a-z0-9]+", "-", tag.lower()).strip("-")
+
+          if more_html:
+              expand_section = f"""
+                  <button class="expand-btn" aria-expanded="false" aria-controls="more-{safe_id}" data-target="more-{safe_id}">
+                      <span>Show more</span>
+                      <span class="arrow" aria-hidden="true">▼</span>
+                  </button>
+
+                  <div class="blog-card-more" id="more-{safe_id}" role="region" aria-hidden="true">
+                      {more_html}
+                  </div>"""
+          else:
+              expand_section = ""
+
+          new_card = f"""    <div class="blog-container" style="margin-top: 50px;" data-version="{tag}">
+              <div class="blog-card" id="post-{safe_id}">
+                  <div class="blog-card-title">{name}</div>
+                  <div class="blog-card-version">{tag}</div>
+                  <div class="blog-card-desc">{desc}</div>
+          {expand_section}
+                  <div class="blog-card-buttons" style="margin-top:12px;">
+                      <a href="https://redstone-launcher.com" class="blog-btn">Website</a>
+                      <a href="https://discord.gg/S9H2Z6SuEA" target="_blank" class="blog-btn">Discord</a>
+                  </div>
+              </div>
+          </div>
+          """
+
+          blog_path = "web/blog.html"
+          with open(blog_path, "r", encoding="utf-8") as f:
+              html = f.read()
+
+          marker = '<div class="blog-container"'
+          idx = html.find(marker)
+          if idx == -1:
+              raise RuntimeError("Could not find insertion point — is 'blog-container' still in blog.html?")
+
+          html = html[:idx] + new_card + html[idx:]
+
+          with open(blog_path, "w", encoding="utf-8") as f:
+              f.write(html)
+
+          print(f"Injected blog card for {tag}")
+          PYEOF
+
+      - name: Commit and push to redstone-launcher-web
+        working-directory: web
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add blog.html
+          git commit -m "chore: add blog post for release ${{ github.event.release.tag_name }}"
+          git push
