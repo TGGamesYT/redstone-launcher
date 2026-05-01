@@ -37,7 +37,7 @@
   font-family: Modrinth;
 }
 
-/* Basic layout */
+
 
 #content {
   display: flex;
@@ -63,7 +63,7 @@
   background-color: color-mix(in srgb, var(--base-color) 80%, black);
 }
 
-/* Continue Playing list */
+
 #content ul {
   list-style: none;
   padding: 0;
@@ -99,7 +99,7 @@
   background-color: var(--base-color);
 }
 
-/* News section */
+
 #news {
   flex: 2;
   padding: 1px;
@@ -124,7 +124,7 @@
   margin: 0;
 }
 
-/* Project of the week */
+
 #potw {
   flex: 1;
   padding: 10px;
@@ -140,7 +140,7 @@
   object-fit: cover;
 }
 
-/* Modal overlay styling */
+
 #news-modal {
   position: fixed;
   top: 0;
@@ -179,7 +179,7 @@
   cursor: pointer;
 }
 
-/* News dots under the carousel */
+
 #news-dots {
   display: flex;
   justify-content: center;
@@ -245,9 +245,9 @@ html {
   background: linear-gradient(to bottom,
       var(--toolbar-bg) 0%,
       var(--toolbar-bg) 10%,
-      /* end of top color */
+      
       var(--very-dark) 10%,
-      /* start of bottom color */
+      
       var(--very-dark) 100%);
 }
 
@@ -282,7 +282,7 @@ h4,
 h5 {
   color: var(--text-color);
   font-weight: 900;
-  /* try 700, 800, 900 */
+  
 }
 
 #toolbar {
@@ -305,7 +305,7 @@ h5 {
   font-size: 14px;
   letter-spacing: 1px;
   font-weight: 900;
-  /* try 700, 800, 900 */
+  
   width: 100%;
   text-align: center;
   pointer-events: none;
@@ -323,25 +323,25 @@ h5 {
   width: 36px;
   background: none;
   border: 2px solid transparent;
-  /* reserve space for hover */
+  
   color: var(--text-color);
   box-shadow: none;
   font-size: 14px;
 
   display: flex;
   justify-content: center;
-  /* horizontal centering */
+  
   align-items: center;
-  /* vertical centering */
+  
 
   line-height: 1;
-  /* reset line height */
+  
   padding: 0;
-  /* remove extra padding */
+  
 
   cursor: pointer;
   box-sizing: border-box;
-  /* include border in size */
+  
 }
 
 
@@ -366,25 +366,25 @@ h5 {
   width: 36px;
   background: none;
   border: 2px solid transparent;
-  /* reserve space for hover */
+  
   color: var(--text-color);
   box-shadow: none;
   font-size: 14px;
 
   display: flex;
   justify-content: center;
-  /* horizontal centering */
+  
   align-items: center;
-  /* vertical centering */
+  
 
   line-height: 1;
-  /* reset line height */
+  
   padding: 0;
-  /* remove extra padding */
+  
 
   cursor: pointer;
   box-sizing: border-box;
-  /* include border in size */
+  
 }
 
 
@@ -657,7 +657,7 @@ a:hover {
 }
 
 
-/* Base styles for list view (default) */
+
 .profile-item {
   display: flex;
   align-items: center;
@@ -672,7 +672,7 @@ a:hover {
   max-width: 60vw;
 }
 
-/* Grid View Styles */
+
 #profiles-list.grid-mode {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -691,13 +691,13 @@ a:hover {
   text-align: center;
   width: 100%;
   max-width: unset;
-  /* Remove the 60vw limit */
+  
   margin: 0;
-  /* Remove centering margin, let grid gap handle it */
+  
   aspect-ratio: 1 / 1.2;
   justify-content: center;
   background: var(--menu-bg);
-  /* Enforce background consistency */
+  
 }
 
 #profiles-list.grid-mode .profile-item img {
@@ -705,7 +705,7 @@ a:hover {
   height: 96px;
   margin-bottom: 15px;
   margin-left: 0;
-  /* Reset list view margin if any */
+  
   border-radius: 12px;
 }
 
@@ -724,11 +724,11 @@ a:hover {
 }
 
 #profiles-list.grid-mode .profile-item button {
-  /* Fix for buttons if they appear in grid view */
+  
   margin-top: 10px;
 }
 
-/* If the screen width is smaller than 300px */
+
 @media (max-width: 1200px) {
   .profile-item {
     max-width: 95%;
@@ -747,7 +747,7 @@ a:hover {
   transform: scale(1.02);
 }
 
-/* Icon thumbnail */
+
 .profile-item img {
   width: 48px;
   height: 48px;
@@ -755,7 +755,7 @@ a:hover {
   object-fit: cover;
 }
 
-/* Info area */
+
 .profile-info {
   flex: 1;
   display: flex;

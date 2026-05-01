@@ -1,138 +1,227 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-<meta charset="UTF-8">
-<title>Redstone Launcher</title>
-<script>
-const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
-if (cached.baseColor) {
-  document.documentElement.style.setProperty('--base-color', cached.baseColor);
-  document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
-  document.documentElement.style.setProperty('--third-color', cached.thirdColor);
-  document.documentElement.style.setProperty('--text-color', cached.textColor);
-  document.documentElement.style.setProperty('--text-font', cached.font);
-  if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
-}
-if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
-  const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
-  document.documentElement.style.setProperty('--app-gradient', gradientStr);
-  document.documentElement.classList.add('gradient-enabled');
-}
-</script>
- <link rel="stylesheet" href="server.css" />
- <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <meta charset="UTF-8">
+  <title>Redstone Launcher</title>
+  <script>
+    const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+    if (cached.baseColor) {
+      document.documentElement.style.setProperty('--base-color', cached.baseColor);
+      document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
+      document.documentElement.style.setProperty('--third-color', cached.thirdColor);
+      document.documentElement.style.setProperty('--text-color', cached.textColor);
+      document.documentElement.style.setProperty('--text-font', cached.font);
+      if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
+    }
+    if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+      const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
+      document.documentElement.style.setProperty('--app-gradient', gradientStr);
+      document.documentElement.classList.add('gradient-enabled');
+    }
+  </script>
+  <link rel="stylesheet" href="server.css" />
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
+
 <body>
-<div id="toolbar">
-  <div class="toolbar-buttons-left">
+  <div id="toolbar">
+    <div class="toolbar-buttons-left">
       <button id="backBtn">⬅</button>
       <button id="forwardBtn">➡</button>
-  </div>
-<div class="drag-region">Redstone Launcher</div>
-<div class="toolbar-buttons">
-    <div id="instance-processes"></div>
-    <button id="min-btn">—</button>
-    <button id="max-btn">◻</button>
-    <button id="close-btn">✕</button>
-</div>
-</div>
-<div class="sidebar">
-  <ul class="menu top">
-    <a href="index.html"><li><i class="material-icons">home</i><span>Home</span></li></a>
-    <a href="instances.html"><li><i class="material-icons">play_arrow</i><span>Instances</span></li></a>
-    <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
-    <a href="server.html"><li><i class="material-icons">storage</i><span>Server Manager</span></li></a>
-  </ul>
-  <ul class="menu middle" id="instances">
-    <li><i class="material-icons">add</i><span>Add an instance</span></li>
-  </ul>
-  <ul class="menu bottom">
-    <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
-    <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
-    <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
-    <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
-  </ul>
-</div>
-<div id="content">
-  <div id="main">
-    <h1>Welcome back!</h1>
-    <div class="main-scrolly">
-    <section id="continue-playing">
-      <h3 id="continue-title">Continue Playing</h2>
-      <ul id="profiles-list"></ul>
-    </section>
-
-    <section id="discover">
-      <h2>Discover</h2>
-      <div id="discover-content">
-        <div class="discover-section" id="discover-modpacks">
-          <h3>Featured Modpacks</h3>
-          <ul class="profile-list"></ul>
-        </div>
-        <div class="discover-section" id="discover-mods">
-          <h3>Featured Mods</h3>
-          <ul class="profile-list"></ul>
-        </div>
-      </div>
-    </section>
+    </div>
+    <div class="drag-region">Redstone Launcher</div>
+    <div class="toolbar-buttons">
+      <div id="instance-processes"></div>
+      <button id="min-btn">—</button>
+      <button id="max-btn">◻</button>
+      <button id="close-btn">✕</button>
     </div>
   </div>
-</div>
+  <div class="sidebar">
+    <ul class="menu top">
+      <a href="index.html">
+        <li><i class="material-icons">home</i><span>Home</span></li>
+      </a>
+      <a href="instances.html">
+        <li><i class="material-icons">play_arrow</i><span>Instances</span></li>
+      </a>
+      <a href="modrinth.html" class="modrinth">
+        <li><span>Modrinth</span></li>
+      </a>
+      <a href="server.html">
+        <li><i class="material-icons">storage</i><span>Server Manager</span></li>
+      </a>
+    </ul>
+    <ul class="menu middle" id="instances">
+      <li><i class="material-icons">add</i><span>Add an instance</span></li>
+    </ul>
+    <ul class="menu bottom">
+      <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+      <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
+      <a href="players.html">
+        <li id="players-login"><i class="material-icons">login</i><span>Login</span></li>
+      </a>
+      <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+    </ul>
+  </div>
+  <div id="content">
+    <div id="main">
+      <h1 id="random-message">Welcome back!</h1>
+      <div class="main-scrolly">
+        <section id="continue-playing">
+          <h3 id="continue-title">Continue Playing</h2>
+            <ul id="profiles-list"></ul>
+        </section>
 
-<script>
-const { ipcRenderer, shell } = require('electron');
-let selectedPlayerId = null;
+        <section id="discover">
+          <h2>Discover</h2>
+          <div id="discover-content">
+            <div class="discover-section" id="discover-modpacks">
+              <h3>Featured Modpacks</h3>
+              <ul class="profile-list"></ul>
+            </div>
+            <div class="discover-section" id="discover-mods">
+              <h3>Featured Mods</h3>
+              <ul class="profile-list"></ul>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
 
-// ------------------ CONTINUE PLAYING ------------------
-ipcRenderer.send('get-profiles-latest');
-ipcRenderer.on('profiles-list', (e, profiles) => {
-  doshit(profiles)
-});
-ipcRenderer.on('profiles-updates', (e, profiles) => {
-  doshit(profiles)
-});
+  <script>
+    const { ipcRenderer, shell } = require('electron');
+    let selectedPlayerId = null;
 
-function doshit(profiles){
-  const list = Array.isArray(profiles) ? profiles.slice(0,3) : [];
-  const profilesList = document.getElementById("profiles-list");
-  const title = document.getElementById("continue-title");
-  profilesList.innerHTML = "";
-  title.textContent = "Continue Playing";
-  if (list.length == 0) {
-    title.textContent = "Start Playing";
-    const li = document.createElement("li");
-    li.className = "profile-item";
+    // ------------------ CONTINUE PLAYING ------------------
+    ipcRenderer.send('get-profiles-latest');
+    ipcRenderer.on('profiles-list', (e, profiles) => {
+      doshit(profiles)
+    });
+    ipcRenderer.on('profiles-updates', (e, profiles) => {
+      doshit(profiles)
+    });
 
-    const img = document.createElement("img");
-    img.src = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-    li.appendChild(img);
+    function doshit(profiles) {
+      const list = Array.isArray(profiles) ? profiles.slice(0, 3) : [];
+      const profilesList = document.getElementById("profiles-list");
+      const title = document.getElementById("continue-title");
+      profilesList.innerHTML = "";
+      title.textContent = "Continue Playing";
+      if (list.length == 0) {
+        title.textContent = "Start Playing";
+        const li = document.createElement("li");
+        li.className = "profile-item";
 
-    const info = document.createElement("div");
-    info.className = "profile-info";
+        const img = document.createElement("img");
+        img.src = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+        li.appendChild(img);
 
-    const name = document.createElement("div");
-    name.className = "profile-name";
-    name.textContent = "Create An instance";
-    info.appendChild(name);
+        const info = document.createElement("div");
+        info.className = "profile-info";
 
-    li.appendChild(info);
+        const name = document.createElement("div");
+        name.className = "profile-name";
+        name.textContent = "Create An instance";
+        info.appendChild(name);
 
-    const launchBtn = document.createElement("button");
-    launchBtn.innerHTML = `+`;
-    li.onclick = () => {
-      window.location.href = "instances.html?i=NEWINSTANCE";
+        li.appendChild(info);
+
+        const launchBtn = document.createElement("button");
+        launchBtn.innerHTML = `+`;
+        li.onclick = () => {
+          window.location.href = "instances.html?i=NEWINSTANCE";
+        };
+        li.appendChild(launchBtn);
+
+        profilesList.appendChild(li);
+      }
+
+      list.forEach(p => {
+        const li = document.createElement("li");
+        li.className = "profile-item";
+
+        const img = document.createElement("img");
+        img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+        li.appendChild(img);
+
+        const info = document.createElement("div");
+        info.className = "profile-info";
+
+        const name = document.createElement("div");
+        name.className = "profile-name";
+        name.textContent = p.name;
+        info.appendChild(name);
+
+        const details = document.createElement("div");
+        details.className = "profile-details";
+        details.textContent = `v${p.version} • ${p.loader}`;
+        info.appendChild(details);
+
+        li.appendChild(info);
+
+        const launchBtn = document.createElement("button");
+        launchBtn.className = "play-button";
+        launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`; // placeholder icon
+        launchBtn.onclick = (e) => {
+          e.stopPropagation();
+          if (!selectedPlayerId) return alert("Select a player first!");
+          ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
+          window.location.href = `instances.html?i=${p.id}`;
+        };
+        li.appendChild(launchBtn);
+        li.onclick = () => {
+          window.location.href = `instances.html?i=${p.id}`;
+        };
+
+        profilesList.appendChild(li);
+
+      });
     };
-    li.appendChild(launchBtn);
+    function seededRandom(seed) {
+      // Simple LCG PRNG for deterministic randomness
+      let s = seed % 2147483647;
+      return () => (s = (s * 16807) % 2147483647) / 2147483647;
+    }
 
-    profilesList.appendChild(li);
-  }
+    function formatNumber(num) {
+      if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + " M";
+      if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, "") + " K";
+      return num.toString();
+    }
 
-  list.forEach(p => {
+    function todaySeed() {
+      const d = new Date();
+      return parseInt(`${d.getFullYear()}${(d.getMonth() + 1).toString().padStart(2, "0")}${d.getDate().toString().padStart(2, "0")}`);
+    }
+
+    function seededShuffle(array, rand) {
+      const arr = array.slice();
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+
+    async function fetchModrinthProjects(type, limit) {
+      const url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=${limit}`;
+      const res = await fetch(url, {
+        headers: { "User-Agent": "RedstoneLauncher/1.0 (contact@tggamesyt.dev)" },
+      });
+      if (!res.ok) throw new Error("Failed to fetch Modrinth projects");
+      const data = await res.json();
+      return data.hits;
+    }
+
+    function createDiscoverCard(p, type) {
       const li = document.createElement("li");
       li.className = "profile-item";
 
       const img = document.createElement("img");
-      img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      img.src = p.icon_url || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
       li.appendChild(img);
 
       const info = document.createElement("div");
@@ -140,150 +229,91 @@ function doshit(profiles){
 
       const name = document.createElement("div");
       name.className = "profile-name";
-      name.textContent = p.name;
+      name.textContent = p.title;
       info.appendChild(name);
 
       const details = document.createElement("div");
       details.className = "profile-details";
-      details.textContent = `v${p.version} • ${p.loader}`;
+      const author = p.author || (p.authors?.[0]?.name ?? "Unknown");
+      const downloads = formatNumber(p.downloads ?? "0");
+      details.textContent = `by ${author} • ${formatNumber(downloads)} downloads`;
       info.appendChild(details);
 
       li.appendChild(info);
 
-      const launchBtn = document.createElement("button");
-      launchBtn.className = "play-button";
-      launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`; // placeholder icon
-      launchBtn.onclick = (e) => {
+      const btn = document.createElement("button");
+      btn.className = "play-button";
+      btn.innerHTML = `<i class="material-icons">play_arrow</i>`;
+      btn.onclick = (e) => {
         e.stopPropagation();
-        if (!selectedPlayerId) return alert("Select a player first!");
-        ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
-        window.location.href = `instances.html?i=${p.id}`;
+        localStorage.setItem("selectedModrinthProject", JSON.stringify(p));
+        localStorage.setItem("selectedProjectType", type);
+        window.location.href = "modrinth_project.html";
       };
-      li.appendChild(launchBtn);
+      li.appendChild(btn);
+
       li.onclick = () => {
-        window.location.href = `instances.html?i=${p.id}`;
+        localStorage.setItem("selectedModrinthProject", JSON.stringify(p));
+        localStorage.setItem("selectedProjectType", type);
+        window.location.href = "modrinth_project.html";
       };
 
-      profilesList.appendChild(li);
+      return li;
+    }
 
-  });
-};
-function seededRandom(seed) {
-  // Simple LCG PRNG for deterministic randomness
-  let s = seed % 2147483647;
-  return () => (s = (s * 16807) % 2147483647) / 2147483647;
-}
+    async function renderDiscoverSection() {
+      const modpacksListEl = document.querySelector("#discover-modpacks ul.profile-list");
+      const modsListEl = document.querySelector("#discover-mods ul.profile-list");
 
-function formatNumber(num) {
-  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + " M";
-  if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, "") + " K";
-  return num.toString();
-}
+      const seed = todaySeed();
+      const rand = seededRandom(seed);
 
-function todaySeed() {
-  const d = new Date();
-  return parseInt(`${d.getFullYear()}${(d.getMonth()+1).toString().padStart(2,"0")}${d.getDate().toString().padStart(2,"0")}`);
-}
+      // === MODPACKS ===
+      const modpacks = await fetchModrinthProjects("modpack", 30);
+      const shuffledModpacks = seededShuffle(modpacks, rand);
+      const randomModpacks = shuffledModpacks.slice(0, 10); // pick 10 random from top 30
+      const picksModpacks = seededShuffle(randomModpacks, rand).slice(0, 3);
+      picksModpacks.forEach((p) => modpacksListEl.appendChild(createDiscoverCard(p, "modpack")));
 
-function seededShuffle(array, rand) {
-  const arr = array.slice();
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
+      // === MODS ===
+      const mods = await fetchModrinthProjects("mod", 55);
+      const modsTrimmed = mods.slice(5); // skip top 5
+      const shuffledMods = seededShuffle(modsTrimmed, rand);
+      const randomMods = shuffledMods.slice(0, 40); // pick 40 random from 50
+      const picksMods = seededShuffle(randomMods, rand).slice(0, 3);
+      picksMods.forEach((p) => modsListEl.appendChild(createDiscoverCard(p, "mod")));
+    }
 
-async function fetchModrinthProjects(type, limit) {
-  const url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=${limit}`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "RedstoneLauncher/1.0 (contact@tggamesyt.dev)" },
-  });
-  if (!res.ok) throw new Error("Failed to fetch Modrinth projects");
-  const data = await res.json();
-  return data.hits;
-}
-
-function createDiscoverCard(p, type) {
-  const li = document.createElement("li");
-  li.className = "profile-item";
-
-  const img = document.createElement("img");
-  img.src = p.icon_url || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-  li.appendChild(img);
-
-  const info = document.createElement("div");
-  info.className = "profile-info";
-
-  const name = document.createElement("div");
-  name.className = "profile-name";
-  name.textContent = p.title;
-  info.appendChild(name);
-
-  const details = document.createElement("div");
-  details.className = "profile-details";
-  const author = p.author || (p.authors?.[0]?.name ?? "Unknown");
-  const downloads = formatNumber(p.downloads ?? "0");
-  details.textContent = `by ${author} • ${formatNumber(downloads)} downloads`;
-  info.appendChild(details);
-
-  li.appendChild(info);
-
-  const btn = document.createElement("button");
-  btn.className = "play-button";
-  btn.innerHTML = `<i class="material-icons">play_arrow</i>`;
-  btn.onclick = (e) => {
-    e.stopPropagation();
-    localStorage.setItem("selectedModrinthProject", JSON.stringify(p));
-    localStorage.setItem("selectedProjectType", type);
-    window.location.href = "modrinth_project.html";
-  };
-  li.appendChild(btn);
-
-  li.onclick = () => {
-    localStorage.setItem("selectedModrinthProject", JSON.stringify(p));
-    localStorage.setItem("selectedProjectType", type);
-    window.location.href = "modrinth_project.html";
-  };
-
-  return li;
-}
-
-async function renderDiscoverSection() {
-  const modpacksListEl = document.querySelector("#discover-modpacks ul.profile-list");
-  const modsListEl = document.querySelector("#discover-mods ul.profile-list");
-
-  const seed = todaySeed();
-  const rand = seededRandom(seed);
-
-  // === MODPACKS ===
-  const modpacks = await fetchModrinthProjects("modpack", 30);
-  const shuffledModpacks = seededShuffle(modpacks, rand);
-  const randomModpacks = shuffledModpacks.slice(0, 10); // pick 10 random from top 30
-  const picksModpacks = seededShuffle(randomModpacks, rand).slice(0, 3);
-  picksModpacks.forEach((p) => modpacksListEl.appendChild(createDiscoverCard(p, "modpack")));
-
-  // === MODS ===
-  const mods = await fetchModrinthProjects("mod", 55);
-  const modsTrimmed = mods.slice(5); // skip top 5
-  const shuffledMods = seededShuffle(modsTrimmed, rand);
-  const randomMods = shuffledMods.slice(0, 40); // pick 40 random from 50
-  const picksMods = seededShuffle(randomMods, rand).slice(0, 3);
-  picksMods.forEach((p) => modsListEl.appendChild(createDiscoverCard(p, "mod")));
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  renderDiscoverSection().catch((err) => console.error("Discover load error:", err));
-});
+    document.addEventListener("DOMContentLoaded", () => {
+      renderDiscoverSection().catch((err) => console.error("Discover load error:", err));
+    });
 
 
-// ------------------ DISCORD PRESENCE ------------------
-  function updatePresence(details, state = "Idle") {
-  ipcRenderer.send('update-discord-presence', { details, state });
-}
-  updatePresence("In Launcher")
-</script>
-<script src="sidebar.js"></script>
-<script src="notifications.js"></script>
+    // ------------------ DISCORD PRESENCE ------------------
+    function updatePresence(details, state = "Idle") {
+      ipcRenderer.send('update-discord-presence', { details, state });
+    }
+    updatePresence("In Launcher")
+  </script>
+  <script src="sidebar.js"></script>
+  <script src="notifications.js"></script>
+  <script>
+    const greetings = [
+      "Hello there!",
+      "Greetings, human.",
+      "Back for more? Are ya ready?",
+      "Systems online.",
+      "Ready for action?",
+      "What's on the menu today?",
+      "Did you bring snacks?",
+      "Let's get rolling!",
+      "Welcome back, commander!",
+      "The redstone awaits your command!",
+    ];
+
+    const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)];
+    document.getElementById("random-message").textContent = randomGreeting;
+  </script>
 </body>
+
 </html>
