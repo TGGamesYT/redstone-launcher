@@ -1,6 +1,6 @@
 function error(text, duration = 3000) {
   console.error(text)
-  // Create container if needed
+  
   let container = document.getElementById("error-container");
   if (!container) {
     container = document.createElement("div");
@@ -8,7 +8,7 @@ function error(text, duration = 3000) {
     document.body.appendChild(container);
   }
 
-  // Create the popup
+  
   const popup = document.createElement("div");
   popup.className = "error-popup";
   popup.innerHTML = `
@@ -17,15 +17,15 @@ function error(text, duration = 3000) {
     <div class="error-timer"><div class="error-timer-fill"></div></div>
   `;
 
-  // Timer bar animation
+  
   popup.querySelector(".error-timer-fill").style.animationDuration = duration + "ms";
 
   container.appendChild(popup);
 
-  // Close on "X"
+  
   popup.querySelector(".close-btn").onclick = () => popup.remove();
 
-  // Auto-remove
+  
   setTimeout(() => {
     popup.remove();
   }, duration);
@@ -65,7 +65,7 @@ function applyTheme(settings) {
   document.documentElement.style.setProperty('--border-radius', `${settings.borderRadius}px`);
   document.documentElement.style.setProperty('--gradient-angle', `${settings.gradientAngle ?? 180}deg`);
   
-  // Apply app gradient if enabled
+  
   if (settings.gradientEnabled && settings.gradientColors && settings.gradientColors.length > 0) {
     const gradientStr = `linear-gradient(${settings.gradientAngle ?? 180}deg, ${settings.gradientColors.join(', ')})`;
     document.documentElement.style.setProperty('--app-gradient', gradientStr);
@@ -104,15 +104,29 @@ async function getSelectedPlayer() {return await ipcRenderer.invoke('get-selecte
 async function updateLoginIcon() {
   selectedPlayerId = await getSelectedPlayer()
   const li = document.getElementById('players-login');
-  li.innerHTML = ''; // clear existing content
-
+  
   const player = players.find(p => p.id === selectedPlayerId);
+  
+  
+  const existingImg = li.querySelector('img#playerIconSiderbar');
+  const existingSpan = li.querySelector('span#playerIconTextSidebar');
+  const existingIcon = li.querySelector('i.material-icons');
 
   if (player) {
     const username = player.type === 'microsoft' ? (player.auth?.name ?? 'MS Account') : (player.username ?? 'Cracked');
+    const imgUrl = `https://minotar.net/helm/${encodeURIComponent(username)}/24`;
 
+    
+    if (existingImg && existingSpan) {
+      existingImg.src = imgUrl;
+      existingSpan.textContent = username;
+      return;
+    }
+
+    li.innerHTML = '';
+    
     const img = document.createElement('img');
-    img.src = `https://minotar.net/helm/${encodeURIComponent(username)}/24`;
+    img.src = imgUrl;
     img.onerror = () => { img.src = 'https://tggamesyt.dev/assets/stevehead.png'; };
     img.style.width = '24px';
     img.style.height = '24px';
@@ -127,7 +141,14 @@ async function updateLoginIcon() {
     li.appendChild(span);
 
   } else {
-    // fallback: show login icon and text
+    
+    if (existingIcon && !existingImg) {
+      return;
+    }
+
+    
+    li.innerHTML = '';
+    
     const a = document.createElement('a');
     a.href = 'players.html';
     const icon = document.createElement('i');
@@ -144,15 +165,15 @@ async function updateLoginIcon() {
 
 function renderInstances(instances) {
   const ul = document.getElementById("instances");
-  ul.innerHTML = ""; // clear placeholder items
+  ul.innerHTML = ""; 
   num = 0;
 
-  // Add each instance
+  
   instances.forEach(instance => {
     if (num < 3) {
       const li = document.createElement("li");
 
-      // clickable icon + link
+      
       const a = document.createElement("a");
       a.href = `instances.html?i=${instance.id}`;
       const img = document.createElement("img");
@@ -171,7 +192,7 @@ function renderInstances(instances) {
     }
   });
 
-  // "Add an instance" option
+  
   const liAdd = document.createElement("li");
   const iAdd = document.createElement("i");
   iAdd.className = "material-icons";
@@ -188,7 +209,7 @@ function renderInstances(instances) {
   ul.appendChild(liAdd);
 }
 
-// Ask backend for profiles/instances
+
 function updateSideBar() {
   updateLoginIcon()
   ipcRenderer.send("get-profiles");
@@ -211,7 +232,7 @@ function updateMaxIcon(isMaximized) {
   }
 }
 
-// Listen for maximize/unmaximize events from main
+
 ipcRenderer.on("window-maximized", () => updateMaxIcon(true));
 ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
 
@@ -226,21 +247,21 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
   
     if (!updateEl || !updateText) return;
   
-    // Ask backend if update exists
+    
     const result = await ipcRenderer.invoke("check-for-updates");
   
-    // No update → keep hidden
+    
     if (!result || !result.updateAvailable) {
       return;
     }
     const settings = await ipcRenderer.invoke('get-settings');
     const autoUpdates = settings.autoUpdates ?? true;
     if (!autoUpdates) {
-    // Show update button via CSS class
+    
     updateEl.classList.add("show-update");
     updateText.textContent = `Update to ${result.version}`;
   
-    // Handle click
+    
     updateEl.onclick = async () => {
   
       updateText.textContent = "Downloading...";
@@ -274,14 +295,14 @@ updateSideBar()
 
 const currentFile = "frontend/" + window.location.pathname.split(/[/\\]/).pop();
 
-// Track visible .page elements, or the whole HTML if no pages
+
 const pages = document.querySelectorAll('.page');
 
 if (pages.length === 0) {
-  // No sub-pages; track the whole HTML as one page
+  
   ipcRenderer.send('track-page', { file: currentFile, pageId: null });
 } else {
-  // MutationObserver tracks .page visibility
+  
   let historySent = false;
 
   const observer = new MutationObserver(mutations => {
@@ -299,9 +320,9 @@ if (pages.length === 0) {
   pages.forEach(p => observer.observe(p, { attributes: true, attributeFilter: ['style'] }));
 }
 
-// Listen for main telling us to show a page
+
 ipcRenderer.on('show-page', (event, pageId) => {
-  if (!pageId) return; // nothing to do, whole HTML is shown
+  if (!pageId) return; 
   pages.forEach(p => p.style.display = p.id === pageId ? 'flex' : 'none');
 });
 
@@ -320,7 +341,7 @@ ipcRenderer.on("alert-message", (event, message) => {
   alert(message);
 });
 
-// Instance process list bar
+
 async function createInstanceInfoBar(container) {
     const wrapper = document.createElement("div");
     wrapper.style.display = "flex";
@@ -364,10 +385,10 @@ async function createInstanceInfoBar(container) {
         if (previousInstances !== null && areInstancesEqual(instances, previousInstances)) return;
         previousInstances = Array.isArray(instances) ? instances.slice() : [];
 
-        // Clear previous instance elements
+        
         wrapper.querySelectorAll(".instance-element").forEach(el => el.remove());
 
-        // Reset stop button visibility and handler
+        
         stopBtn.style.display = "none";
         if (currentStopHandler) {
             stopBtn.removeEventListener("click", currentStopHandler);
@@ -392,7 +413,7 @@ async function createInstanceInfoBar(container) {
 
         stopBtn.style.display = "inline-block";
 
-        // Count how many processes per ID
+        
         const countPerId = {};
         for (const inst of instances) {
             countPerId[inst.id] = (countPerId[inst.id] || 0) + 1;
@@ -402,7 +423,7 @@ async function createInstanceInfoBar(container) {
             instances.length > 1 || Object.values(countPerId).some(c => c > 1);
 
         if (!multipleProcesses) {
-            // Single instance display
+            
             const inst = instances[0];
             const profile = await ipcRenderer.invoke("get-profile-by-id", inst.id);
             const label = document.createElement("span");
@@ -420,17 +441,17 @@ async function createInstanceInfoBar(container) {
                 (window.location.href = `instances.html?i=${encodeURIComponent(inst.id)}`);
             wrapper.insertBefore(label, stopBtn);
 
-            // Stop button handler for single instance
+            
             currentStopHandler = async () => {
                 await ipcRenderer.invoke("stop-instance-by-pid", inst.pid);
                 await refreshInstances();
             };
             stopBtn.addEventListener("click", currentStopHandler);
         } else {
-            // Multiple instances — dropdown
+            
             const select = document.createElement("select");
             select.className = "instance-element";
-            // Base style
+            
             Object.assign(select.style, {
                 marginTop: "15px",
                 display: "flex",
@@ -455,7 +476,7 @@ async function createInstanceInfoBar(container) {
 
             setArrow(true);
 
-            // Arrow
+            
             select.style.backgroundImage =
                 "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"6\"><path fill=\"white\" d=\"M0 0l5 6 5-6z\"/></svg>')";
             select.style.backgroundRepeat = "no-repeat";
@@ -477,7 +498,7 @@ async function createInstanceInfoBar(container) {
             select.addEventListener("mousedown", e => {
             const rect = select.getBoundingClientRect();
 
-            // If clicked in text area (not arrow), open instance page instead
+            
             if (e.clientX < rect.right - 20) {
                 e.preventDefault();
                 const selectedVal = select.value;
@@ -488,17 +509,17 @@ async function createInstanceInfoBar(container) {
                 return;
             }
 
-            // Otherwise toggle arrow state
+            
             dropdownOpen = !dropdownOpen;
             setArrow(!dropdownOpen);
             });
 
-            // Reset arrow when focus leaves dropdown
+            
             select.addEventListener("blur", () => {
                 dropdownOpen = false;
                 setArrow(true);
             });
-            // Stop handler for dropdown
+            
             currentStopHandler = async () => {
                 const selectedVal = select.value;
                 if (!selectedVal) return;
@@ -512,7 +533,7 @@ async function createInstanceInfoBar(container) {
         }
     }
 
-    // Initial + periodic updates
+    
     await refreshInstances();
     setInterval(refreshInstances, 3000);
 }
@@ -526,7 +547,7 @@ async function allowCracked(newValue, password) {
   }
 }
 
-const title = document.querySelector('div.drag-region'); // only matches <div class="drag-region">
+const title = document.querySelector('div.drag-region'); 
 
 if (title && Math.random() < 0.1) {
   title.style.cursor = 'help';
@@ -546,3 +567,29 @@ function getSetting(key) {
 }
 
 createInstanceInfoBar(document.getElementById("instance-processes"));
+
+
+
+if (typeof ipcRenderer !== 'undefined') {
+  ipcRenderer.on('launcher-log', (event, data) => {
+    if (data.msg && typeof loadingScreen !== 'undefined') {
+      
+      if (!loadingScreen.isVisible) {
+        loadingScreen.show('Launching Minecraft...', 'Starting up game');
+      }
+    }
+  });
+
+  ipcRenderer.on('launcher-stopped', (event, { profileId, code }) => {
+    if (typeof loadingScreen !== 'undefined') {
+      loadingScreen.hide();
+    }
+  });
+
+  ipcRenderer.on('launch-error', (event, error) => {
+    if (typeof loadingScreen !== 'undefined') {
+      loadingScreen.hide();
+    }
+    error(error, 5000);
+  });
+}

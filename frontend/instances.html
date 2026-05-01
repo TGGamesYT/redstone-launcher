@@ -21,7 +21,6 @@
     }
   </script>
   <link rel="stylesheet" href="server.css">
-  <link rel="stylesheet" href="instanceview.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
     .modal-overlay {
@@ -136,54 +135,50 @@
   </div>
   <ul id="profiles-list" style="max-height: calc(100vh - ( 38px + 112px )); overflow-y: auto; overflow-x: hidden;"></ul>
   <!-- Add Instance Modal -->
-  <div id="addInstanceModal"
-    style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center;">
-    <div style="background:var(--third-color); padding:20px; border-radius:8px; width:300px;">
+  <div id="addInstanceModal" class="modal-overlay">
+    <div class="modal" style="width: 450px;">
       <h3>Create Instance</h3>
-      <label>Name: <input id="instanceName" placeholder="Never gonna.." /></label>
-      <br>
-      <label>Version: <select id="instanceVersion"></select><input type="checkbox" id="showAllVersions"
-          style="transform: scale(1.5); transform-origin: center;" /></label>
-      <br>
-      <label>Modloader:
-        <select id="instanceLoader">
-          <option value="vanilla">Vanilla</option>
-          <option value="fabric">Fabric</option>
-          <option value="quilt">Quilt</option>
-          <option value="forge">Forge</option>
-          <option value="neoforge">NeoForge</option>
-        </select>
-      </label>
-      <br>
-      <label>Icon: <input type="file" id="instanceIcon" accept="image/*" /></label>
-      <br>
-      <button onclick="document.getElementById('importModal').style.display='flex'">Import</button>
-      <div style="margin-top:10px;">
-        <button id="modalCreateBtn">Create</button>
-        <button id="modalCancelBtn">Cancel</button>
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <label>Name: <input id="instanceName" placeholder="e.g. Fabric 1.20.1 Modpack" /></label>
+        <label>Version: <select id="instanceVersion"></select><input type="checkbox" id="showAllVersions" style="transform: scale(1.2); margin-left: 8px;" title="Show all versions including snapshots" /></label>
+        <label>Modloader:
+          <select id="instanceLoader">
+            <option value="vanilla">Vanilla</option>
+            <option value="fabric">Fabric</option>
+            <option value="quilt">Quilt</option>
+            <option value="forge">Forge</option>
+            <option value="neoforge">NeoForge</option>
+          </select>
+        </label>
+        <label>Icon: <input type="file" id="instanceIcon" accept="image/*" /></label>
+        <button onclick="document.getElementById('importModal').classList.add('show')" class="secondary">Import Instance</button>
+        <div style="display: flex; gap: 8px; margin-top: 8px;">
+          <button id="modalCreateBtn" class="primary" style="flex: 1;">Create</button>
+          <button id="modalCancelBtn" class="secondary" style="flex: 1;">Cancel</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Import Modal -->
-  <div id="importModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; 
-  background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:2000;">
-    <div style="background:var(--third-color); padding:20px; border-radius:8px; width:300px;">
+  <!-- Import Modal 
+  <div id="importModal" class="modal-overlay">
+    <div class="modal" style="width: 420px;">
       <h3>Import Instance</h3>
-      <p>Select source:</p>
-      <div id="otherimports">
-        <button id="importMrpackBtn">From Modrinth (.mrpack)</button>
-        <button id="importFromZipBtn">From CurseForge (.zip)</button>
-      </div>
-      <button id="importFromCodeBtn">From CurseForge Share Code</button>
-      <label id="cursecodeholder" style="display: none;">Enter Code: <input id="cursecode"
-          placeholder="Never gonna.." /></label>
-      <div style="margin-top:10px;">
-        <button id="importCancelBtn">Cancel</button>
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <p style="color: rgba(255, 255, 255, 0.7);">Select source:</p>
+        <div id="otherimports" style="display: flex; flex-direction: column; gap: 8px;">
+          <button id="importMrpackBtn" class="secondary">📦 From Modrinth (.mrpack)</button>
+          <button id="importFromZipBtn" class="secondary">📁 From CurseForge (.zip)</button>
+        </div>
+        <button id="importFromCodeBtn" class="secondary">🔗 From CurseForge Share Code</button>
+        <label id="cursecodeholder" style="display: none; flex-direction: column; gap: 6px;">
+          Enter Code: <input id="cursecode" placeholder="e.g. ShareCodeXXXXXX" />
+        </label>
+        <button id="importCancelBtn" class="secondary" style="margin-top: 8px;">Cancel</button>
       </div>
     </div>
   </div>
-
+-->
   <div id="instance-detail" style="display:none;">
     <div id="instance-toolbar-container"></div>
     <div id="instance-tab-content" class="tab-content"></div>
@@ -252,18 +247,22 @@
         reader.readAsDataURL(file);
       });
     }
-    const sidebarAddBtn = document.querySelector('.sidebar .menu.middle li');
+    // Fix for create instance modal - use correct selector
+    const sidebarAddBtn = document.getElementById('sidebar-add-instance') || document.querySelector('.sidebar .menu.medium li:last-of-type');
     if (sidebarAddBtn) {
-      sidebarAddBtn.onclick = () => {
+      sidebarAddBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         const url = new URL(window.location);
         if (url.searchParams.has('i')) {
           window.location.href = 'instances.html?i=NEWINSTANCE';
         } else {
           instanceName.value = "";
           instanceLoader.value = "vanilla";
-          addInstanceModal.style.display = "flex";
+          instanceIcon.value = "";
+          addInstanceModal.classList.add('show');
         }
-      };
+      });
     }
     sortSelect.addEventListener("change", async () => {
       const sortValue = sortSelect.value;
@@ -414,8 +413,27 @@
 
         profilesList.style.display = "none";
         instanceDetail.style.display = "block";
+        instanceDetail.className = "instance-detail";
         instanceDetail.innerHTML = ""; // clear previous content
 
+        // Use the enhanced builder if available
+        if (typeof InstanceDetailEnhancer !== 'undefined') {
+          // Build modern header
+          const header = InstanceDetailEnhancer.buildInstanceHeader(profile, selectedPlayerId);
+          instanceDetail.appendChild(header);
+
+          // Build stats section
+          const stats = InstanceDetailEnhancer.buildStatsSection(profile);
+          instanceDetail.appendChild(stats);
+
+          // Build tabs
+          const { tabsContainer } = InstanceDetailEnhancer.buildTabsSection();
+          instanceDetail.appendChild(tabsContainer);
+
+          return; // Enhanced mode - rest of logic handled by tabs
+        }
+
+        // FALLBACK: Old rendering style
         // TOP ROW: ICON + INFO + BUTTONS
         const topRow = document.createElement("div");
         topRow.className = "instance-top-row";
@@ -479,7 +497,7 @@
           instanceIcon.value = "";
           modalCreateBtn.dataset.editingId = profile.id;
           modalCreateBtn._originalProfile = profile;
-          addInstanceModal.style.display = "flex";
+          addInstanceModal.classList.add('show');
         };
         right.appendChild(editBtn);
 
@@ -899,13 +917,14 @@
       liAdd.style.cursor = "pointer";
       liAdd.onclick = () => {
         instanceLoader.value = "vanilla";
-        addInstanceModal.style.display = "flex";
+        addInstanceModal.classList.add('show');
       };
       profilesList.appendChild(liAdd);
 
       // ✅ Auto-open the modal if NEWINSTANCE
       if (instanceId === 'NEWINSTANCE') {
-        liAdd.click();
+        instanceLoader.value = "vanilla";
+        addInstanceModal.classList.add('show');
         const url = new URL(window.location);
         url.searchParams.delete('i');
         window.history.replaceState({}, '', url);
@@ -914,7 +933,7 @@
 
     // Modal buttons
     modalCancelBtn.onclick = () => {
-      addInstanceModal.style.display = "none";
+      addInstanceModal.classList.remove('show');
       delete modalCreateBtn.dataset.editingId;
       delete modalCreateBtn._originalProfile;
     };
@@ -922,15 +941,16 @@
       try {
         const result = await ipcRenderer.invoke("import-mrpack");
         if (result?.success) {
-          importMrpackBtn.textContent = `Imported: ${result.profile.name}`;
+          importMrpackBtn.textContent = `✓ Imported: ${result.profile.name}`;
           ipcRenderer.send("get-profiles");
-          importModal.style.display = "none";
-          addInstanceModal.style.display = "none";
+          importModal.classList.remove('show');
+          addInstanceModal.classList.remove('show');
+          setTimeout(() => { importMrpackBtn.textContent = '📦 From Modrinth (.mrpack)'; }, 2000);
         } else {
-          importMrpackBtn.textContent = "Failed: " + (result?.error || "Unknown");
+          importMrpackBtn.textContent = "❌ Failed: " + (result?.error || "Unknown");
         }
       } catch (err) {
-        importMrpackBtn.textContent = "Error importing .mrpack: " + err.message;
+        importMrpackBtn.textContent = "❌ Error: " + err.message;
       }
     };
 
@@ -938,15 +958,16 @@
       try {
         const result = await ipcRenderer.invoke("import-curseforge-zip");
         if (result?.success) {
-          importFromZipBtn.textContent = `Imported: ${result.profile.name}`;
+          importFromZipBtn.textContent = `✓ Imported: ${result.profile.name}`;
           ipcRenderer.send("get-profiles");
-          importModal.style.display = "none";
-          addInstanceModal.style.display = "none";
+          importModal.classList.remove('show');
+          addInstanceModal.classList.remove('show');
+          setTimeout(() => { importFromZipBtn.textContent = '📁 From CurseForge (.zip)'; }, 2000);
         } else {
-          importFromZipBtn.textContent = "Failed: " + (result?.error || "Unknown");
+          importFromZipBtn.textContent = "❌ Failed: " + (result?.error || "Unknown");
         }
       } catch (err) {
-        importFromZipBtn.textContent = "Error importing .zip: " + err.message;
+        importFromZipBtn.textContent = "❌ Error: " + err.message;
       }
     };
     let codedisplay = false;
@@ -956,30 +977,31 @@
           let code = document.getElementById('cursecode')
           codedisplay = false;
           document.getElementById('cursecodeholder').style.display = "none";
-          document.getElementById('otherimports').style.display = "block"
-          importFromCodeBtn.textContent = "From CurseForge Share Code";
+          document.getElementById('otherimports').style.display = "flex"
+          importFromCodeBtn.textContent = "🔗 From CurseForge Share Code";
           const result = await ipcRenderer.invoke("import-curseforge-code", code.value);
           if (result?.success) {
-            importFromCodeBtn.textContent = `Imported: ${result.profile.name}`;
+            importFromCodeBtn.textContent = `✓ Imported: ${result.profile.name}`;
             ipcRenderer.send("get-profiles");
-            importModal.style.display = "none";
-            addInstanceModal.style.display = "none";
+            importModal.classList.remove('show');
+            addInstanceModal.classList.remove('show');
+            setTimeout(() => { importFromCodeBtn.textContent = '🔗 From CurseForge Share Code'; }, 2000);
           } else {
-            importFromCodeBtn.textContent = "Failed: " + (result?.error || "Unknown");
+            importFromCodeBtn.textContent = "❌ Failed: " + (result?.error || "Unknown");
           }
         } catch (err) {
-          importFromCodeBtn.textContent = "Error importing .zip: " + err.message;
+          importFromCodeBtn.textContent = "❌ Error: " + err.message;
         }
       } else {
-        importFromCodeBtn.textContent = "Import!";
+        importFromCodeBtn.textContent = "✓ Import!";
         document.getElementById('otherimports').style.display = "none"
-        document.getElementById('cursecodeholder').style.display = "block";
+        document.getElementById('cursecodeholder').style.display = "flex";
         codedisplay = true;
       }
     };
 
     importCancelBtn.onclick = () => {
-      importModal.style.display = "none";
+      importModal.classList.remove('show');
     };
 
     modalCreateBtn.onclick = async () => {
@@ -1005,7 +1027,7 @@
 
         // If no changes, just close
         if (Object.keys(updatedProfile).length === 1) {
-          addInstanceModal.style.display = "none";
+          addInstanceModal.classList.remove('show');
           delete modalCreateBtn.dataset.editingId;
           delete modalCreateBtn._originalProfile;
           return;
@@ -1039,7 +1061,7 @@
         ipcRenderer.send("create-profile", newProfile);
       }
 
-      addInstanceModal.style.display = "none";
+      addInstanceModal.classList.remove('show');
     };
 
     function updatePresence(details, state = "Idle") {
@@ -1092,6 +1114,10 @@
   </script>
 
   <script src="sidebar.js"></script>
+  <script src="modern.js"></script>
+  <script src="instance-renderer.js"></script>
+  <script src="launch-experience.js"></script>
+  <script src="polish.js"></script>
   <script src="notifications.js"></script>
 </body>
 

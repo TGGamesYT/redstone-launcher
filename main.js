@@ -1428,10 +1428,19 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     } else {
       try {
         await refreshPlayer(player);
-        auth = player.auth
+        auth = player.auth;
+        
+        // Validate auth has required fields
+        if (!auth || !auth.access_token) {
+          launchingProfiles.delete(profileId);
+          broadcastLog(profileId, "[ERROR] Microsoft account authentication failed. Please re-login.");
+          return;
+        }
       } catch (err) {
-        auth = player.auth
+        launchingProfiles.delete(profileId);
         broadcastLog(profileId, "[ERROR] Failed to refresh Microsoft token: " + err.message);
+        broadcastLog(profileId, "[INFO] Please re-login with your Microsoft account in the launcher.");
+        return;
       }
     }
     let quickplay = null;
