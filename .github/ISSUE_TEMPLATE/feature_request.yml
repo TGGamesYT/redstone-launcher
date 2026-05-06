@@ -1,0 +1,26 @@
+name: Suggestion
+description: Suggest a new feature or change for Redstone Launcher
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: "### Got a cool idea?"
+  - type: textarea
+    id: feature_description
+    attributes:
+      label: What is your suggestion?
+      description: Describe the feature you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: why_needed
+    attributes:
+      label: Why is this needed?
+      description: How would this improve the user experience?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or features you've thought of?
