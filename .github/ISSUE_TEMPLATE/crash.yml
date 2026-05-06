@@ -1,0 +1,19 @@
+name: Crash Report
+description: Report a crash that prevents the launcher or game from running
+labels: ["crash", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "### The launcher crashed!"
+  - type: textarea
+    id: crash_log
+    attributes:
+      label: Crash Log / Error Message
+      description: This is the most important part for us to fix it.
+    validations:
+      required: true
+  - type: input
+    id: context
+    attributes:
+      label: What were you doing when it crashed?
+      placeholder: "e.g. Clicking the 'Launch' button, changing settings..."
