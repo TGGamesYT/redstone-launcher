@@ -114,7 +114,7 @@
     <div style="margin-bottom: 10px;">
       <input id="searchInput" type="text" placeholder="Search instances..." style="padding:5px; width:200px;" />
 
-      <select id="filterLoader">
+      <select id="filterLoader" style="width: 20%;">
         <option value="">All Loaders</option>
         <option value="vanilla">Vanilla</option>
         <option value="fabric">Fabric</option>
@@ -127,7 +127,7 @@
     </div>
     <div style="margin-bottom: 10px;">
       <label for="sortSelect">Sort by: </label>
-      <select id="sortSelect">
+      <select id="sortSelect" style="width: 40%;">
         <option value="custom">Custom</option>
         <option value="name-asc">By Name (ascending)</option>
         <option value="name-desc">By Name (descending)</option>
@@ -191,7 +191,8 @@
 
       <div class="modal-actions">
         <button type="button" id="modalCreateBtn">Create Instance</button>
-        <button type="button" id="modalCancelBtn" onclick="document.getElementById('addInstanceModal').classList.remove('active');">Cancel</button>
+        <a href="instances.html">
+        <button type="button" id="modalCancelBtn" onclick="document.getElementById('addInstanceModal').classList.remove('active'); renderListOrDetail();">Cancel</button></a>
       </div>
     </div>
   </div>

@@ -110,6 +110,8 @@
 
     function renderAccountsSidebar() {
       const container = document.getElementById('accounts-container');
+      if (!container) return; // Element doesn't exist on this page
+      
       container.innerHTML = '';
       
       ipcRenderer.invoke('get-players').then(players => {
@@ -150,9 +152,7 @@
       });
     }
 
-    document.getElementById('add-account-btn').onclick = () => {
-      window.location.href = 'players.html';
-    };
+    
 
     renderAccountsSidebar();
     ipcRenderer.on('players-updated', () => {
@@ -331,23 +331,36 @@
       const modpacksListEl = document.querySelector("#discover-modpacks ul.profile-list");
       const modsListEl = document.querySelector("#discover-mods ul.profile-list");
 
+      if (!modpacksListEl || !modsListEl) {
+        console.warn("Discover section elements not found");
+        return;
+      }
+
       const seed = todaySeed();
       const rand = seededRandom(seed);
 
-      // === MODPACKS ===
-      const modpacks = await fetchModrinthProjects("modpack", 30);
-      const shuffledModpacks = seededShuffle(modpacks, rand);
-      const randomModpacks = shuffledModpacks.slice(0, 10); // pick 10 random from top 30
-      const picksModpacks = seededShuffle(randomModpacks, rand).slice(0, 3);
-      picksModpacks.forEach((p) => modpacksListEl.appendChild(createDiscoverCard(p, "modpack")));
+      try {
+        // === MODPACKS ===
+        const modpacks = await fetchModrinthProjects("modpack", 30);
+        if (modpacks && modpacks.length > 0) {
+          const shuffledModpacks = seededShuffle(modpacks, rand);
+          const randomModpacks = shuffledModpacks.slice(0, 10); // pick 10 random from top 30
+          const picksModpacks = seededShuffle(randomModpacks, rand).slice(0, 3);
+          picksModpacks.forEach((p) => modpacksListEl.appendChild(createDiscoverCard(p, "modpack")));
+        }
 
-      // === MODS ===
-      const mods = await fetchModrinthProjects("mod", 55);
-      const modsTrimmed = mods.slice(5); // skip top 5
-      const shuffledMods = seededShuffle(modsTrimmed, rand);
-      const randomMods = shuffledMods.slice(0, 40); // pick 40 random from 50
-      const picksMods = seededShuffle(randomMods, rand).slice(0, 3);
-      picksMods.forEach((p) => modsListEl.appendChild(createDiscoverCard(p, "mod")));
+        // === MODS ===
+        const mods = await fetchModrinthProjects("mod", 55);
+        if (mods && mods.length > 0) {
+          const modsTrimmed = mods.slice(5); // skip top 5
+          const shuffledMods = seededShuffle(modsTrimmed, rand);
+          const randomMods = shuffledMods.slice(0, 40); // pick 40 random from 50
+          const picksMods = seededShuffle(randomMods, rand).slice(0, 3);
+          picksMods.forEach((p) => modsListEl.appendChild(createDiscoverCard(p, "mod")));
+        }
+      } catch (err) {
+        console.error("Error rendering discover section:", err);
+      }
     }
 
     document.addEventListener("DOMContentLoaded", () => {
