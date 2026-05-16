@@ -1,0 +1,61 @@
+name: Bug Report
+description: Report a bug to help us improve Redstone Launcher
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "### Help us squash some bugs!"
+  - type: input
+    id: version
+    attributes:
+      label: Launcher Version
+      placeholder: "e.g. v1.13.9"
+    validations:
+      required: true
+  - type: dropdown
+    id: java_version
+    attributes:
+      label: Java Version
+      options:
+        - Java 8
+        - Java 11
+        - Java 17
+        - Java 21
+        - Other (please specify in description)
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows 10
+        - Windows 11
+        - Linux (Ubuntu/Debian)
+        - Linux (Arch/Fedora)
+        - macOS
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log Files / Crash Reports
+      description: Please paste your logs here or drag and drop the .log file into this box
+      placeholder: "Paste logs here if you can..."
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: "I have checked that this issue hasn't been reported yet."
+          required: true
+        - label: "I am using the latest version of the launcher."
+          required: false
