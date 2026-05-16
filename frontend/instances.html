@@ -14,7 +14,7 @@
       document.documentElement.style.setProperty('--text-font', cached.font);
       if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
     }
-    if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+    if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColors && cached.gradientColors.length > 0) {
       const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
       document.documentElement.style.setProperty('--app-gradient', gradientStr);
       document.documentElement.classList.add('gradient-enabled');
@@ -28,10 +28,16 @@
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.5);
-      display: flex;
+      display: none;
       justify-content: center;
       align-items: center;
       z-index: 9999;
+      pointer-events: none;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+      pointer-events: auto;
     }
 
     .modal {
@@ -53,6 +59,14 @@
 </head>
 
 <body>
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-container">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Redstone Launcher</div>
+      <div class="loading-subtext">Loading instances...</div>
+    </div>
+  </div>
+
   <div id="toolbar">
     <div class="toolbar-buttons-left">
       <button id="backBtn">⬅</button>
@@ -135,17 +149,32 @@
     <p style="margin: 0 0 20px 0; font-size: 14px;">Create your first instance to get started</p>
   </div>
   <ul id="profiles-list" style="max-height: calc(100vh - ( 38px + 112px )); overflow-y: auto; overflow-x: hidden;"></ul>
-  <!-- Add Instance Modal -->
-  <div id="addInstanceModal"
-    style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center;">
-    <div style="background:var(--third-color); padding:20px; border-radius:8px; width:300px;">
-      <h3>Create Instance</h3>
-      <label>Name: <input id="instanceName" placeholder="Never gonna.." /></label>
-      <br>
-      <label>Version: <select id="instanceVersion"></select><input type="checkbox" id="showAllVersions"
-          style="transform: scale(1.5); transform-origin: center;" /></label>
-      <br>
-      <label>Modloader:
+
+  <div id="addInstanceModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Create Instance</h2>
+        <button type="button" class="modal-close" id="closeAddInstanceBtn" onclick="document.getElementById('addInstanceModal').classList.remove('active');">✕</button>
+      </div>
+      
+      <div class="modal-section">
+        <label>Instance Name</label>
+        <input id="instanceName" type="text" placeholder="My Awesome Instance" />
+      </div>
+
+      <div class="form-row">
+        <div class="modal-section">
+          <label>Game Version</label>
+          <select id="instanceVersion"></select>
+        </div>
+        <div class="modal-section">
+          <label>Show All</label>
+          <input type="checkbox" id="showAllVersions" />
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <label>Mod Loader</label>
         <select id="instanceLoader">
           <option value="vanilla">Vanilla</option>
           <option value="fabric">Fabric</option>
@@ -153,36 +182,39 @@
           <option value="forge">Forge</option>
           <option value="neoforge">NeoForge</option>
         </select>
-      </label>
-      <br>
-      <label>Icon: <input type="file" id="instanceIcon" accept="image/*" /></label>
-      <br>
-      <button onclick="document.getElementById('importModal').style.display='flex'">Import</button>
-      <div style="margin-top:10px;">
-        <button id="modalCreateBtn">Create</button>
-        <button id="modalCancelBtn">Cancel</button>
+      </div>
+
+      <div class="modal-section">
+        <label>Instance Icon</label>
+        <input type="file" id="instanceIcon" accept="image/*" />
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" id="modalCreateBtn">Create Instance</button>
+        <button type="button" id="modalCancelBtn" onclick="document.getElementById('addInstanceModal').classList.remove('active');">Cancel</button>
       </div>
     </div>
   </div>
 
-  <!-- Import Modal -->
-  <div id="importModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; 
-  background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:2000;">
-    <div style="background:var(--third-color); padding:20px; border-radius:8px; width:300px;">
-      <h3>Import Instance</h3>
-      <p>Select source:</p>
-      <div id="otherimports">
-        <button id="importMrpackBtn">From Modrinth (.mrpack)</button>
-        <button id="importFromZipBtn">From CurseForge (.zip)</button>
+  <!-- #region <div id="importModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Import Instance</h2>
+        <button class="modal-close" onclick="document.getElementById('importModal').classList.remove('active')">✕</button>
       </div>
-      <button id="importFromCodeBtn">From CurseForge Share Code</button>
-      <label id="cursecodeholder" style="display: none;">Enter Code: <input id="cursecode"
-          placeholder="Never gonna.." /></label>
-      <div style="margin-top:10px;">
-        <button id="importCancelBtn">Cancel</button>
+
+      
+
+      <div id="cursecodeholder" style="display: none;" class="modal-section">
+        <label>Share Code</label>
+        <input id="cursecode" type="text" placeholder="Enter share code" />
+      </div>
+
+      <div class="modal-actions">
+        <button onclick="document.getElementById('importModal').classList.remove('active')">Close</button>
       </div>
     </div>
-  </div>
+  </div> -->
 
   <div id="instance-detail" style="display:none;">
     <div id="instance-toolbar-container"></div>
@@ -195,10 +227,18 @@
     const { ipcRenderer } = require('electron');
     let profiles = [];
 
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+          overlay.classList.add('fade-out');
+          setTimeout(() => overlay.style.display = 'none', 500);
+        }
+      }, 800);
+    });
+
     const profilesList = document.getElementById("profiles-list");
     const instanceDetail = document.getElementById("instance-detail");
-    const nameEl = document.getElementById("instance-name");
-    const infoEl = document.getElementById("instance-info");
     const logsEl = document.getElementById("logs");
     const searchInput = document.getElementById("searchInput");
     const filterLoader = document.getElementById("filterLoader");
@@ -206,11 +246,11 @@
     const addInstanceModal = document.getElementById("addInstanceModal");
     const modalCreateBtn = document.getElementById("modalCreateBtn");
     const modalCancelBtn = document.getElementById("modalCancelBtn");
+    const closeAddInstanceBtn = document.getElementById("closeAddInstanceBtn");
     const instanceName = document.getElementById("instanceName");
     const instanceVersion = document.getElementById("instanceVersion");
     const instanceLoader = document.getElementById("instanceLoader");
     const instanceIcon = document.getElementById("instanceIcon");
-    const importMrpackBtn = document.getElementById("importMrpackBtn");
     const sortSelect = document.getElementById("sortSelect");
     const editOrderBtn = document.getElementById("editOrderBtn");
     const searchsort = document.getElementById("search-sort");
@@ -252,16 +292,22 @@
         reader.readAsDataURL(file);
       });
     }
-    const sidebarAddBtn = document.querySelector('.sidebar .menu.middle li');
+    const sidebarAddBtn = document.querySelector('.sidebar .menu.medium li#sidebar-add-instance');
     if (sidebarAddBtn) {
-      sidebarAddBtn.onclick = () => {
+      sidebarAddBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         const url = new URL(window.location);
-        if (url.searchParams.has('i')) {
+        const instanceId = url.searchParams.get('i');
+        if (instanceId && instanceId !== 'NEWINSTANCE') {
           window.location.href = 'instances.html?i=NEWINSTANCE';
         } else {
           instanceName.value = "";
           instanceLoader.value = "vanilla";
-          addInstanceModal.style.display = "flex";
+          instanceIcon.value = "";
+          delete modalCreateBtn.dataset.editingId;
+          delete modalCreateBtn._originalProfile;
+          addInstanceModal.classList.add('active');
         }
       };
     }
@@ -288,21 +334,24 @@
       }
     });
 
-    [searchInput, filterLoader, filterVersion].forEach(el => {
-      el.addEventListener("input", renderListOrDetail);
-    });
+    // Add event listeners only if elements exist
+    if (searchInput) searchInput.addEventListener("input", renderListOrDetail);
+    if (filterLoader) filterLoader.addEventListener("input", renderListOrDetail);
+    if (filterVersion) filterVersion.addEventListener("input", renderListOrDetail);
 
     // Toggle editing order
-    editOrderBtn.addEventListener("click", () => {
-      editingOrder = !editingOrder;
-      editOrderBtn.textContent = editingOrder ? "Save Order" : "Edit Order";
+    if (editOrderBtn) {
+      editOrderBtn.addEventListener("click", () => {
+        editingOrder = !editingOrder;
+        editOrderBtn.textContent = editingOrder ? "Save Order" : "Edit Order";
 
-      if (editingOrder) {
-        enableDragAndDrop();
-      } else {
-        saveCustomOrder();
-      }
-    });
+        if (editingOrder) {
+          enableDragAndDrop();
+        } else {
+          saveCustomOrder();
+        }
+      });
+    }
 
     // Enable drag-and-drop reordering
     function enableDragAndDrop() {
@@ -407,11 +456,13 @@
 
       const selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
 
-      if (instanceId && instanceId !== 'NEWINSTANCE') {
+      if (instanceId) {
         searchsort.style.display = "none";
         const profile = list.find(p => String(p.id) === String(instanceId));
         if (!profile) return;
 
+        const emptyState = document.getElementById('emptyInstanceState');
+        emptyState.style.display = "none";
         profilesList.style.display = "none";
         instanceDetail.style.display = "block";
         instanceDetail.innerHTML = ""; // clear previous content
@@ -462,9 +513,28 @@
         const playBtn = document.createElement("button");
         playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
         playBtn.title = "Launch Profile";
+        let isLaunching = false;
         playBtn.onclick = () => {
           if (!selectedPlayerId) return (playBtn.innerHTML = "Select a player first!");
+          if (isLaunching) {
+            playBtn.innerHTML = "Launching...";
+            return;
+          }
+          isLaunching = true;
+          playBtn.disabled = true;
+          playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Launching...`;
+          playBtn.style.opacity = "0.6";
+          playBtn.style.cursor = "not-allowed";
           ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId });
+          
+          // Re-enable button after 30 seconds timeout (in case something goes wrong)
+          setTimeout(() => {
+            isLaunching = false;
+            playBtn.disabled = false;
+            playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
+            playBtn.style.opacity = "1";
+            playBtn.style.cursor = "pointer";
+          }, 30000);
         };
         right.appendChild(playBtn);
 
@@ -479,7 +549,7 @@
           instanceIcon.value = "";
           modalCreateBtn.dataset.editingId = profile.id;
           modalCreateBtn._originalProfile = profile;
-          addInstanceModal.style.display = "flex";
+          addInstanceModal.classList.add('active');
         };
         right.appendChild(editBtn);
 
@@ -871,11 +941,32 @@
         const launchBtn = document.createElement("button");
         launchBtn.className = "play-button";
         launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`;
+        let isLaunching = false;
         launchBtn.onclick = (e) => {
           e.stopPropagation();
-          if (!selectedPlayerId) return launchBtn.innerHTML = "Select a player first!";
-          window.location.href = `instances.html?i=${p.id}`;
+          if (!selectedPlayerId) {
+            launchBtn.innerHTML = `<i class="material-icons">login</i>`;
+            launchBtn.title = "Select a player first!";
+            setTimeout(() => {
+              launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`;
+              launchBtn.title = "Play";
+            }, 2000);
+            return;
+          }
+          if (isLaunching) return;
+          isLaunching = true;
+          launchBtn.disabled = true;
+          launchBtn.style.opacity = "0.6";
+          launchBtn.style.cursor = "not-allowed";
           ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
+          
+          // Re-enable after timeout
+          setTimeout(() => {
+            isLaunching = false;
+            launchBtn.disabled = false;
+            launchBtn.style.opacity = "1";
+            launchBtn.style.cursor = "pointer";
+          }, 30000);
         };
         li.appendChild(launchBtn);
         li.onclick = () => {
@@ -899,148 +990,113 @@
       liAdd.style.cursor = "pointer";
       liAdd.onclick = () => {
         instanceLoader.value = "vanilla";
-        addInstanceModal.style.display = "flex";
+        addInstanceModal.classList.add('active');
       };
       profilesList.appendChild(liAdd);
+    }
 
-      // ✅ Auto-open the modal if NEWINSTANCE
+    if (modalCancelBtn) {
+      modalCancelBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        addInstanceModal.classList.remove('active');
+      };
+    }
+
+    if (closeAddInstanceBtn) {
+      closeAddInstanceBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        addInstanceModal.classList.remove('active');
+      };
+    }
+
+    // Close modal when clicking outside of modal content
+    addInstanceModal.addEventListener('click', (e) => {
+      if (e.target === addInstanceModal) {
+        addInstanceModal.classList.remove('active');
+      }
+    });
+
+    // Simple Create button handler
+    if (modalCreateBtn) {
+      modalCreateBtn.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const editingId = modalCreateBtn.dataset.editingId;
+
+        try {
+          if (editingId) {
+            const original = modalCreateBtn._originalProfile;
+            const updatedProfile = { id: editingId };
+
+            if (instanceName.value.trim() !== original.name) {
+              updatedProfile.name = instanceName.value.trim();
+            }
+            if (instanceVersion.value.trim() !== original.version) {
+              updatedProfile.version = instanceVersion.value.trim();
+            }
+            if (instanceLoader.value !== original.loader) {
+              updatedProfile.loader = instanceLoader.value;
+            }
+            if (instanceIcon.files.length > 0) {
+              updatedProfile.icon = await fileToBase64(instanceIcon.files[0]);
+            }
+
+            if (Object.keys(updatedProfile).length > 1) {
+              ipcRenderer.send("edit-profile", updatedProfile);
+            }
+
+            delete modalCreateBtn.dataset.editingId;
+            delete modalCreateBtn._originalProfile;
+          } else {
+            if (!instanceName.value.trim() || !instanceVersion.value) {
+              const originalText = modalCreateBtn.textContent;
+              modalCreateBtn.textContent = "Fill name and version";
+              setTimeout(() => { modalCreateBtn.textContent = originalText; }, 2000);
+              return;
+            }
+
+            const newProfile = {
+              name: instanceName.value.trim(),
+              version: instanceVersion.value,
+              loader: instanceLoader.value,
+              icon: null
+            };
+
+            if (instanceIcon.files.length > 0) {
+              newProfile.icon = await fileToBase64(instanceIcon.files[0]);
+            }
+
+            ipcRenderer.send("create-profile", newProfile);
+          }
+        } catch (err) {
+          console.error("Error in create/edit:", err);
+        }
+
+        addInstanceModal.classList.remove('active');
+      };
+    }
+
+    // Handle NEWINSTANCE loading on page load
+    window.addEventListener('load', () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const instanceId = urlParams.get('i');
       if (instanceId === 'NEWINSTANCE') {
-        liAdd.click();
+        // Reset and open the modal
+        instanceName.value = "";
+        instanceVersion.value = "";
+        instanceLoader.value = "vanilla";
+        instanceIcon.value = "";
+        delete modalCreateBtn.dataset.editingId;
+        delete modalCreateBtn._originalProfile;
+        addInstanceModal.classList.add('active');
+        // Remove NEWINSTANCE from URL
         const url = new URL(window.location);
         url.searchParams.delete('i');
         window.history.replaceState({}, '', url);
       }
-    }
-
-    // Modal buttons
-    modalCancelBtn.onclick = () => {
-      addInstanceModal.style.display = "none";
-      delete modalCreateBtn.dataset.editingId;
-      delete modalCreateBtn._originalProfile;
-    };
-    importMrpackBtn.onclick = async () => {
-      try {
-        const result = await ipcRenderer.invoke("import-mrpack");
-        if (result?.success) {
-          importMrpackBtn.textContent = `Imported: ${result.profile.name}`;
-          ipcRenderer.send("get-profiles");
-          importModal.style.display = "none";
-          addInstanceModal.style.display = "none";
-        } else {
-          importMrpackBtn.textContent = "Failed: " + (result?.error || "Unknown");
-        }
-      } catch (err) {
-        importMrpackBtn.textContent = "Error importing .mrpack: " + err.message;
-      }
-    };
-
-    importFromZipBtn.onclick = async () => {
-      try {
-        const result = await ipcRenderer.invoke("import-curseforge-zip");
-        if (result?.success) {
-          importFromZipBtn.textContent = `Imported: ${result.profile.name}`;
-          ipcRenderer.send("get-profiles");
-          importModal.style.display = "none";
-          addInstanceModal.style.display = "none";
-        } else {
-          importFromZipBtn.textContent = "Failed: " + (result?.error || "Unknown");
-        }
-      } catch (err) {
-        importFromZipBtn.textContent = "Error importing .zip: " + err.message;
-      }
-    };
-    let codedisplay = false;
-    importFromCodeBtn.onclick = async () => {
-      if (codedisplay) {
-        try {
-          let code = document.getElementById('cursecode')
-          codedisplay = false;
-          document.getElementById('cursecodeholder').style.display = "none";
-          document.getElementById('otherimports').style.display = "block"
-          importFromCodeBtn.textContent = "From CurseForge Share Code";
-          const result = await ipcRenderer.invoke("import-curseforge-code", code.value);
-          if (result?.success) {
-            importFromCodeBtn.textContent = `Imported: ${result.profile.name}`;
-            ipcRenderer.send("get-profiles");
-            importModal.style.display = "none";
-            addInstanceModal.style.display = "none";
-          } else {
-            importFromCodeBtn.textContent = "Failed: " + (result?.error || "Unknown");
-          }
-        } catch (err) {
-          importFromCodeBtn.textContent = "Error importing .zip: " + err.message;
-        }
-      } else {
-        importFromCodeBtn.textContent = "Import!";
-        document.getElementById('otherimports').style.display = "none"
-        document.getElementById('cursecodeholder').style.display = "block";
-        codedisplay = true;
-      }
-    };
-
-    importCancelBtn.onclick = () => {
-      importModal.style.display = "none";
-    };
-
-    modalCreateBtn.onclick = async () => {
-      const editingId = modalCreateBtn.dataset.editingId;
-
-      if (editingId) {
-        const original = modalCreateBtn._originalProfile;
-        const updatedProfile = { id: editingId };
-
-        // Only include changed fields
-        if (instanceName.value.trim() !== original.name) {
-          updatedProfile.name = instanceName.value.trim();
-        }
-        if (instanceVersion.value.trim() !== original.version) {
-          updatedProfile.version = instanceVersion.value.trim();
-        }
-        if (instanceLoader.value !== original.loader) {
-          updatedProfile.loader = instanceLoader.value;
-        }
-        if (instanceIcon.files.length > 0) {
-          updatedProfile.icon = await fileToBase64(instanceIcon.files[0]);
-        }
-
-        // If no changes, just close
-        if (Object.keys(updatedProfile).length === 1) {
-          addInstanceModal.style.display = "none";
-          delete modalCreateBtn.dataset.editingId;
-          delete modalCreateBtn._originalProfile;
-          return;
-        }
-
-        ipcRenderer.send("edit-profile", updatedProfile);
-        delete modalCreateBtn.dataset.editingId;
-        delete modalCreateBtn._originalProfile;
-      } else {
-        // Create mode
-        if (instanceName.value == null) {
-          let string = `${instanceVersion.value}`;
-          if (instanceLoader.value != "vanilla" && instanceLoader.value != null) {
-            string = `${instanceLoader.value} ${instanceVersion.value}`
-            string = string.replace(/\b\w/g, c => c.toUpperCase());
-          }
-          instanceName.value = `${instanceVersion.value}`;
-        }
-        const newProfile = {
-          name: instanceName.value.trim(),
-          version: instanceVersion.value,
-          loader: instanceLoader.value,
-          icon: null
-        };
-        if (!newProfile.name || !newProfile.version) {
-          return modalCreateBtn.textContent = "Fill name and version";
-        }
-        if (instanceIcon.files.length > 0) {
-          newProfile.icon = await fileToBase64(instanceIcon.files[0]);
-        }
-        ipcRenderer.send("create-profile", newProfile);
-      }
-
-      addInstanceModal.style.display = "none";
-    };
+    }, { once: true });
 
     function updatePresence(details, state = "Idle") {
       ipcRenderer.send('update-discord-presence', { details, state });

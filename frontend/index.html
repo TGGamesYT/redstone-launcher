@@ -14,7 +14,7 @@
       document.documentElement.style.setProperty('--text-font', cached.font);
       if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
     }
-    if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+    if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColors && cached.gradientColors.length > 0) {
       const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
       document.documentElement.style.setProperty('--app-gradient', gradientStr);
       document.documentElement.classList.add('gradient-enabled');
@@ -63,8 +63,10 @@
         <li id="players-login"><i class="material-icons">login</i><span>Login</span></li>
       </a>
       <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+      
     </ul>
   </div>
+  
   <div id="content">
     <div id="main">
       <h1 id="random-message">Welcome back!</h1>
@@ -89,13 +91,73 @@
         </section>
       </div>
     </div>
-  </div>
+
+    
 
   <script>
     const { ipcRenderer, shell } = require('electron');
     let selectedPlayerId = null;
 
-    // ------------------ CONTINUE PLAYING ------------------
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+          overlay.classList.add('fade-out');
+          setTimeout(() => overlay.style.display = 'none', 500);
+        }
+      }, 1000);
+    });
+
+    function renderAccountsSidebar() {
+      const container = document.getElementById('accounts-container');
+      container.innerHTML = '';
+      
+      ipcRenderer.invoke('get-players').then(players => {
+        if (!players || players.length === 0) {
+          container.innerHTML = '<p style="opacity: 0.6; font-size: 12px;">No accounts added</p>';
+          return;
+        }
+        
+        players.forEach(player => {
+          const item = document.createElement('div');
+          item.className = 'account-item';
+          item.innerHTML = `
+            <img src="https://minotar.net/avatar/${player.id || 'Steve'}" alt="${player.name}">
+            <div class="account-item-info">
+              <div class="account-name">${player.name}</div>
+              <div class="account-type">${player.type === 'microsoft' ? 'Microsoft' : 'Offline'}</div>
+            </div>
+            <button class="remove-btn" title="Remove account">✕</button>
+          `;
+          
+          item.querySelector('.remove-btn').onclick = (e) => {
+            e.stopPropagation();
+            if (confirm(`Remove ${player.name}?`)) {
+              ipcRenderer.send('remove-player', player.id);
+              renderAccountsSidebar();
+            }
+          };
+          
+          item.onclick = () => {
+            selectedPlayerId = player.id;
+            document.querySelectorAll('.account-item').forEach(el => {
+              el.style.borderColor = el === item ? 'var(--accent)' : 'var(--border-dark)';
+            });
+          };
+          
+          container.appendChild(item);
+        });
+      });
+    }
+
+    document.getElementById('add-account-btn').onclick = () => {
+      window.location.href = 'players.html';
+    };
+
+    renderAccountsSidebar();
+    ipcRenderer.on('players-updated', () => {
+      renderAccountsSidebar();
+    });
     ipcRenderer.send('get-profiles-latest');
     ipcRenderer.on('profiles-list', (e, profiles) => {
       doshit(profiles)
@@ -207,13 +269,17 @@
     }
 
     async function fetchModrinthProjects(type, limit) {
-      const url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=${limit}`;
-      const res = await fetch(url, {
-        headers: { "User-Agent": "RedstoneLauncher/1.0 (contact@tggamesyt.dev)" },
-      });
-      if (!res.ok) throw new Error("Failed to fetch Modrinth projects");
-      const data = await res.json();
-      return data.hits;
+      try {
+        const facets = encodeURIComponent(JSON.stringify([["project_type:" + type]]));
+        const url = `https://api.modrinth.com/v2/search?facets=${facets}&limit=${limit}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        const data = await res.json();
+        return data.hits || [];
+      } catch (err) {
+        console.error(`Modrinth API error for ${type}:`, err);
+        return [];
+      }
     }
 
     function createDiscoverCard(p, type) {

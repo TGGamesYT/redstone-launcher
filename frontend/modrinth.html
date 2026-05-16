@@ -13,7 +13,7 @@ if (cached.baseColor) {
   document.documentElement.style.setProperty('--text-font', cached.font);
   if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
 }
-if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColors && cached.gradientColors.length > 0) {
   const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
   document.documentElement.style.setProperty('--app-gradient', gradientStr);
   document.documentElement.classList.add('gradient-enabled');
@@ -118,7 +118,8 @@ async function fetchProjects(type, page = 1, search = "") {
   try {
     if (api === "modrinth") {
       const offset = (page - 1) * projectsPerPage;
-      let url = `https://api.modrinth.com/v2/search?facets=[["project_type:${type}"]]&limit=${projectsPerPage}&offset=${offset}`;
+      const facets = encodeURIComponent(JSON.stringify([["project_type:" + type]]));
+      let url = `https://api.modrinth.com/v2/search?facets=${facets}&limit=${projectsPerPage}&offset=${offset}`;
       if (search) url += `&query=${encodeURIComponent(search)}`;
       const res = await fetch(url);
       const data = await res.json();

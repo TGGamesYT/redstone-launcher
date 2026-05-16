@@ -13,7 +13,7 @@ if (cached.baseColor) {
   document.documentElement.style.setProperty('--text-font', cached.font);
   if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
 }
-if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColors && cached.gradientColors.length > 0) {
   const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
   document.documentElement.style.setProperty('--app-gradient', gradientStr);
   document.documentElement.classList.add('gradient-enabled');
@@ -39,6 +39,14 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
 <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
+<div id="loading-overlay" class="loading-overlay">
+  <div class="loading-container">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Redstone Launcher</div>
+    <div class="loading-subtext">Loading accounts...</div>
+  </div>
+</div>
+
 <div id="toolbar">
   <div class="toolbar-buttons-left">
       <button id="backBtn">⬅</button>
@@ -112,6 +120,16 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
 
 <script>
 const { ipcRenderer } = require('electron');
+
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+      overlay.classList.add('fade-out');
+      setTimeout(() => overlay.style.display = 'none', 500);
+    }
+  }, 800);
+});
 
 playerToBeDeleted = null;
 let players = [];

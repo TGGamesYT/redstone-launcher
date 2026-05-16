@@ -14,7 +14,7 @@ if (cached.baseColor) {
   document.documentElement.style.setProperty('--text-font', cached.font);
   if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
 }
-if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
+if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColors && cached.gradientColors.length > 0) {
   const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
   document.documentElement.style.setProperty('--app-gradient', gradientStr);
   document.documentElement.classList.add('gradient-enabled');
@@ -28,7 +28,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       margin-right: 20px;
     }
 
-    /* === TAB BAR === */
     .section-switcher {
       display: flex;
       justify-content: flex-start;
@@ -65,7 +64,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       font-weight: bold;
     }
 
-    /* === SECTION AREA === */
     .section {
       display: none;
       background: color-mix(in srgb, var(--secondary-color) 70%, black);
@@ -81,7 +79,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       display: block;
     }
 
-    /* === ANIMATION === */
     @keyframes fadeIn {
       from {
         opacity: 0;
@@ -94,7 +91,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       }
     }
 
-    /* === SECTION HEADINGS === */
     .section h3 {
       border-bottom: 2px solid var(--third-color);
       padding-bottom: 5px;
@@ -155,6 +151,14 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
 </head>
 
 <body>
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-container">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Redstone Launcher</div>
+      <div class="loading-subtext">Loading settings...</div>
+    </div>
+  </div>
+
   <div id="toolbar">
     <div class="toolbar-buttons-left">
       <button id="backBtn">⬅</button>
@@ -264,6 +268,8 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
 
       <h4 style="margin-top: 40px;">Gradient Settings: <span style="background: #ff9800; color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; margin-left: 10px;">BETA</span></h4>
       <label><input type="checkbox" id="gradient-enabled"> Enable Global Gradient</label>
+      <br>
+      <label style="margin-top: 10px;"><input type="checkbox" id="predefined-theme-sync"> Predefined Theme Sync</label>
       <br><br>
 
       <div id="gradient-controls" style="display: none; border: 1px solid var(--border-dark); padding: 15px; border-radius: 5px; background: color-mix(in srgb, var(--secondary-color) 50%, black);">
@@ -276,7 +282,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
         <label>Gradient Colors:</label>
         <br>
         <div id="gradient-colors-list" style="margin-top: 10px;">
-          <!-- Colors will be added here dynamically -->
         </div>
         <button id="add-gradient-color" style="margin-top: 10px; padding: 6px 12px; background: var(--base-color); color: var(--text-color); border: none; border-radius: 3px; cursor: pointer;">+ Add Color</button>
 
@@ -287,7 +292,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       <div class="theme-list" id="theme-list"></div>
     </div>
 
-    <!-- === Advanced Section === -->
     <div class="section settings-scrolly" id="advanced" style="display: none;">
       <h3>Advanced</h3>
 
@@ -309,6 +313,16 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
   <script>
     const { ipcRenderer } = require('electron');
 
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+          overlay.classList.add('fade-out');
+          setTimeout(() => overlay.style.display = 'none', 500);
+        }
+      }, 800);
+    });
+
     const defaultSettings = {
       ramInstancesMin: 2048,
       ramInstancesMax: 4096,
@@ -316,7 +330,7 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       ramServersMax: 4096,
       baseColor: "#b30c0c",
       secondaryColor: "#ff4d4d",
-      thirdColor: "#d92d2d", // null by default, only stored if autoThird = false
+      thirdColor: "#d92d2d", 
       textColor: "#ffffff",
       font: "Pixel",
       borderRadius: 0,
@@ -326,7 +340,21 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       gridView: false,
       gradientEnabled: false,
       gradientColors: ['#ff4d4d', '#b30c0c'],
-      gradientAngle: 180
+      gradientAngle: 180,
+      predefinedThemeSync: false
+    };
+
+    const themeGradients = {
+      redstone: ['#ff4d4d', '#b30c0c'],
+      diamond: ['#5ad6ff', '#0a74da'],
+      emerald: ['#97bc62', '#2b580c'],
+      gold: ['#fff275', '#ffcc00'],
+      iron: ['#dddddd', '#aaaaaa'],
+      coal: ['#555555', '#333333'],
+      lapis: ['#5c90ff', '#1a3f8f'],
+      netherite: ['#6e6e6e', '#3c3c3c'],
+      quartz: ['#e6e6e6', '#f2f2f2'],
+      copper: ['#d99058', '#b87333']
     };
 
 
@@ -338,8 +366,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
         return settings[key] ?? defaultSettings[key] ?? defaultValue;
       }
 
-      // === Section switching ===
-      // Correct section switching
       document.querySelectorAll('.section-switcher button').forEach(btn => {
         btn.addEventListener('click', () => {
           document.querySelectorAll('.section').forEach(sec => sec.style.display = 'none');
@@ -350,7 +376,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       });
 
 
-      // === RAM Sliders ===
       const ramSliders = [
         ['ram-instances-slider', 'ram-instances-value', 'ramInstancesMin', 'ramInstancesMax'],
         ['ram-servers-slider', 'ram-servers-value', 'ramServersMin', 'ramServersMax']
@@ -382,7 +407,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
         });
       });
 
-      // === Color Inputs & Live CSS ===
       const colorSettings = [
         ['base-color', 'base-color-code', 'baseColor', defaultSettings.baseColor],
         ['secondary-color', 'secondary-color-code', 'secondaryColor', defaultSettings.secondaryColor],
@@ -420,7 +444,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
         if (autoThird || force) {
           third = rgbAverage(base, secondary);
         } else {
-          // respect saved manual color
           third = getSetting('thirdColor') || rgbAverage(base, secondary);
         }
 
@@ -429,7 +452,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
         document.documentElement.style.setProperty('--third-color', third);
       }
 
-      // === Third color manual editing ===
       const thirdColor = document.getElementById('third-color');
       const thirdCode = document.getElementById('third-color-code');
       const autoThirdCheckbox = document.getElementById('auto-third');
@@ -455,7 +477,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
         }
       });
 
-      // === Toggle auto third ===
       autoThirdCheckbox.checked = getSetting('autoThird');
       autoThirdCheckbox.addEventListener('change', () => {
         const updateObj = { autoThird: autoThirdCheckbox.checked };
@@ -485,7 +506,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
           const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
           localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
 
-          // re-calc third if auto is on
           if (document.getElementById('auto-third').checked) {
             updateThirdColor(true);
           }
@@ -503,7 +523,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
           }
         });
 
-        // Reset button
         const btn = color.parentElement.querySelector('button');
         btn.addEventListener('click', () => {
           color.value = def;
@@ -515,9 +534,6 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
 
       updateThirdColor();
 
-      // === Predefined themes ===
-      // === Predefined themes ===
-      // === Predefined themes ===
       const themes = {
         redstone: { name: "Redstone", baseColor: '#b30c0c', secondaryColor: '#ff4d4d', textColor: '#ffffff' },
         diamond: { name: "Diamond", baseColor: '#0a74da', secondaryColor: '#5ad6ff', textColor: '#ffffff' },
@@ -566,6 +582,28 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
                 themeUpdate[key2] = val;
               }
             });
+
+            const predefinedThemeSyncCheckbox = document.getElementById('predefined-theme-sync');
+            if (predefinedThemeSyncCheckbox && predefinedThemeSyncCheckbox.checked) {
+              const gradientColors = themeGradients[key];
+              if (gradientColors) {
+                currentGradientColors = gradientColors;
+                gradientEnabledState = true;
+                gradientEnabled.checked = true;
+                gradientControls.style.display = 'block';
+                renderGradientColors();
+                updateGradientPreview();
+                themeUpdate.gradientEnabled = true;
+                themeUpdate.gradientColors = gradientColors;
+              }
+            } else {
+              gradientEnabledState = false;
+              gradientEnabled.checked = false;
+              gradientControls.style.display = 'none';
+              document.documentElement.style.setProperty('--app-gradient', 'none');
+              themeUpdate.gradientEnabled = false;
+            }
+
             ipcRenderer.send('save-settings', themeUpdate);
             const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
             localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...themeUpdate }));
@@ -724,6 +762,22 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       const gridView = document.getElementById('grid-view');
       gridView.checked = getSetting('gridView');
       gridView.addEventListener('change', () => ipcRenderer.send('save-settings', { gridView: gridView.checked }));
+
+      const predefinedThemeSync = document.getElementById('predefined-theme-sync');
+      predefinedThemeSync.checked = getSetting('predefinedThemeSync');
+      predefinedThemeSync.addEventListener('change', () => {
+        const updateObj = { predefinedThemeSync: predefinedThemeSync.checked };
+        ipcRenderer.send('save-settings', updateObj);
+        const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+        localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
+        if (!predefinedThemeSync.checked) {
+          gradientEnabledState = false;
+          gradientEnabled.checked = false;
+          gradientControls.style.display = 'none';
+          document.documentElement.style.setProperty('--app-gradient', 'none');
+          ipcRenderer.send('save-settings', { gradientEnabled: false });
+        }
+      });
     }
 
     init();

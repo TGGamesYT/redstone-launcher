@@ -156,7 +156,7 @@ function findSystemJava(requiredVersion) {
 
 // ========== INSTANCE TRACKING SYSTEM ==========
 const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, startTime }
-const launchingProfiles = new Set(); // track profiles currently in the launch process
+const launchingProfiles = new Map(); // track profiles currently in the launch process - key: profileId, value: timestamp
 const instanceLogs = new Map(); // profileId -> string[]
 
 function broadcastLog(profileId, msg) {
@@ -638,23 +638,21 @@ ipcMain.on('delete-notification', (event, notificationId) => {
 /* ─────────────── Player Profiles ─────────────── */
 async function refreshPlayer(player) {
   try {
-    // Create an Auth instance
-    const authManager = new Auth("login"); // Pass "login" to avoid warning
+    const authManager = new Auth("login");
 
-    // Call refresh with either:
-    // - The saved msToken object
-    // - Or just the refresh_token string
     const xboxManager = await authManager.refresh(player.refresh)
 
-    // Get a new Minecraft token
     const token = await xboxManager.getMinecraft()
 
-    // Convert for launcher-core
     const launcherAuth = token.mclc();
 
-    // Update your stored player
     player.auth = launcherAuth;
-    player.refresh = token.parent.msToken;
+    
+    if (token.parent && token.parent.msToken) {
+      player.refresh = token.parent.msToken;
+    } else if (player.refresh) {
+      player.refresh = player.refresh;
+    }
 
     return player;
   } catch (err) {
@@ -737,22 +735,23 @@ ipcMain.on('delete-player', (event, playerToBeDeleted) => {
 // Start Microsoft login flow
 ipcMain.on("login-microsoft", async (event) => {
   try {
-    const authManager = new Auth("select_account"); // use desired prompt
-    const xboxManager = await authManager.launch("electron"); // launch Electron login window
-    const token = await xboxManager.getMinecraft(); // retrieves session token
+    const authManager = new Auth("select_account");
+    const xboxManager = await authManager.launch("electron");
+    const token = await xboxManager.getMinecraft();
 
-    // Convert token to launcher-compatible auth
     const launcherAuth = token.mclc();
 
-    // Save player in players.json
     const players = loadPlayers();
     let id = Date.now();
+    
+    let msToken = token.parent?.msToken || token.refresh_token || "";
+    
     players.push({
       id,
       type: "microsoft",
       username: launcherAuth.name,
       auth: launcherAuth,
-      refresh: token.parent.msToken
+      refresh: msToken
     });
     savePlayers(players);
     event.reply("players-updated", players);
@@ -1385,6 +1384,15 @@ async function getJavaForMinecraft(mcVersion) {
 
 // Launch profile
 ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
+  const now = Date.now();
+  const lastLaunch = launchingProfiles.get(profileId);
+  
+  // Check if already launching (within last 500ms)
+  if (lastLaunch && (now - lastLaunch) < 500) {
+    // Silently ignore - prevent spam
+    return;
+  }
+  
   if (launchingProfiles.has(profileId)) {
     broadcastLog(profileId, "[WARN] This profile is already launching. Please wait.");
     return;
@@ -1393,11 +1401,11 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
   // Check if already running
   const isRunning = Array.from(runningInstances.values()).some(i => i.id === profileId);
   if (isRunning) {
-    broadcastLog(profileId, "[WARN] This profile is already running.");
+    broadcastLog(profileId, "[WARN] This profile is already running. Please close it first.");
     return;
   }
 
-  launchingProfiles.add(profileId);
+  launchingProfiles.set(profileId, now);
 
   try {
     broadcastLog(profileId, "Launching, please wait.");

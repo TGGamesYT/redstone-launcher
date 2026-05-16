@@ -101,10 +101,22 @@ document.getElementById("close-btn").addEventListener("click", () => {
 
 function setSelectedPlayer(id) {ipcRenderer.send('set-selected-player', id)}
 async function getSelectedPlayer() {return await ipcRenderer.invoke('get-selected-player')}
+
+let cachedSelectedPlayerId = null;
+
 async function updateLoginIcon() {
-  selectedPlayerId = await getSelectedPlayer()
+  const newSelectedPlayerId = await getSelectedPlayer();
+  
+  if (newSelectedPlayerId === cachedSelectedPlayerId && cachedSelectedPlayerId !== null) {
+    return;
+  }
+  
+  cachedSelectedPlayerId = newSelectedPlayerId;
+  selectedPlayerId = newSelectedPlayerId;
   const li = document.getElementById('players-login');
-  li.innerHTML = ''; // clear existing content
+  if (!li) return;
+  
+  li.innerHTML = '';
 
   const player = players.find(p => p.id === selectedPlayerId);
 
@@ -127,7 +139,6 @@ async function updateLoginIcon() {
     li.appendChild(span);
 
   } else {
-    // fallback: show login icon and text
     const a = document.createElement('a');
     a.href = 'players.html';
     const icon = document.createElement('i');
