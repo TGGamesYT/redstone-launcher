@@ -49,6 +49,11 @@ docker run --rm -ti -v "${PWD}:/project" -v "${PWD}/dist:/project/dist" electron
   <hr>
   <br>
   
+  # Redstone Launcher debian updating:
+  
+```bash
+sudo apt update redstone-launcher
+```
 # Redstone Launcher - Linux Installation Guide (.deb)
 
 Follow these instructions to install and run the launcher on Debian-based systems (Ubuntu, Debian, Kali) **without errors**.
