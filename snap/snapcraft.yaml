@@ -3,7 +3,8 @@ base: core22
 version: '1.14.0'
 summary: Redstone Launcher for Linux
 description: |
-  An Unofficial Minecraft Launcher.
+  Unofficial Minecraft Launcher.
+
 grade: stable
 confinement: strict
 
@@ -12,12 +13,17 @@ parts:
     plugin: nil
     source: .
     override-build: |
+      # Force the build to use the node version we just installed
+      export PATH=$PATH:/snap/bin
       npm install
       npm run buildLinux
       cp -av dist/linux-unpacked/* $SNAPCRAFT_PART_INSTALL/
     build-packages:
       - nodejs
       - npm
+    # THIS IS THE KEY Fix It installs Node 20 specifically for the build (NE ERJ HOZZA)
+    build-snaps:
+      - node/20/stable
     stage-packages:
       - libnss3
       - libnspr4
@@ -27,4 +33,9 @@ apps:
   redstone-launcher:
     command: redstone-launcher --no-sandbox
     extensions: [gnome]
-    plugs: [network, network-bind, opengl, x11, browser-support]
+    plugs:
+      - network
+      - network-bind
+      - opengl
+      - x11
+      - browser-support
