@@ -27,6 +27,8 @@ parts:
       - libnss3
       - libnspr4
       - libasound2
+      - libvips42
+      - libvips-cpp42
 
 apps:
   redstone-launcher:
