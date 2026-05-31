@@ -1,1 +1,30 @@
+name: redstone-launcher
+base: core22
+version: '1.14.0'
+summary: Redstone Launcher for Linux
+description: |
+  An Unofficial Minecraft Launcher.
+grade: stable
+confinement: strict
 
+parts:
+  redstone:
+    plugin: nil
+    source: .
+    override-build: |
+      npm install
+      npm run buildLinux
+      cp -av dist/linux-unpacked/* $SNAPCRAFT_PART_INSTALL/
+    build-packages:
+      - nodejs
+      - npm
+    stage-packages:
+      - libnss3
+      - libnspr4
+      - libasound2
+
+apps:
+  redstone-launcher:
+    command: redstone-launcher --no-sandbox
+    extensions: [gnome]
+    plugs: [network, network-bind, opengl, x11, browser-support]
