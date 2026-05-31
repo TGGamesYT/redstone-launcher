@@ -43,19 +43,33 @@
     "files": [
       "**/*"
     ],
+    "asar": true,
+    "linux": {
+      "target": [
+        "snap",
+        "deb",
+        "AppImage"
+      ],
+      "category": "Utility",
+      "maintainer": "muaves <muaves@protonmail.com>",
+      "icon": "frontend/icon.png"
+    },
+    "deb": {
+      "priority": "optional",
+      "depends": [
+        "libnss3",
+        "libnspr4",
+        "libasound2"
+      ]
+    },
     "win": {
       "target": "nsis",
       "icon": "frontend/icon.ico"
     },
-    "linux": {
-      "target": "AppImage",
-      "icon": "frontend/icon.png"
-    },
     "mac": {
       "target": "dmg",
       "icon": "frontend/icon.icns"
-    },
-    "asar": true
+    }
   },
   "overrides": {
     "request": "npm:@cypress/request@^3.0.10",
