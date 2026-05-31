@@ -1,5 +1,6 @@
 # Redstone Launcher
-
+[![redstone-launcher](https://snapcraft.io/redstone-launcher/badge.svg)](https://snapcraft.io/redstone-launcher)
+<br>
 This is the source code of the unofficial Minecraft launcher, **Redstone Launcher**.
 
 Redstone Launcher is an Electron-based application, meaning it runs on Node.js.
