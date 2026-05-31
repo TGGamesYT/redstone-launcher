@@ -13,15 +13,14 @@ parts:
     plugin: nil
     source: .
     override-build: |
-      # Force the build to use the node version we just installed
-      export PATH=$PATH:/snap/bin
+      # This ensures the robot uses the Node 20 we install below
+      export PATH=/snap/bin:$PATH
       npm install
       npm run buildLinux
       cp -av dist/linux-unpacked/* $SNAPCRAFT_PART_INSTALL/
     build-packages:
       - nodejs
       - npm
-    # THIS IS THE KEY Fix It installs Node 20 specifically for the build (NE ERJ HOZZA)
     build-snaps:
       - node/20/stable
     stage-packages:
