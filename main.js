@@ -582,12 +582,21 @@ if (!gotTheLock) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     if (adminMode) {
       createAdminWindow();
-    } else {
-      if (!mainWindow) createWindow();
+      return;
     }
+
+    // Apply any update staged on a previous run BEFORE opening the window, so
+    // updates never interrupt an active session.
+    const applied = await maybeApplyStagedUpdate();
+    if (applied) return; // installer launched; app is quitting
+
+    if (!mainWindow) createWindow();
+
+    // Quietly stage the next update in the background (no install this run).
+    stageUpdateInBackground();
   });
 
   app.on('activate', () => {
@@ -715,6 +724,15 @@ ipcMain.on('delete-notification', (event, notificationId) => {
 /* ─────────────── Player Profiles ─────────────── */
 async function refreshPlayer(player) {
   try {
+    // QR / device-code accounts use the login.live.com (MBI_SSL, "t=") path,
+    // which msmc can't refresh — handle them with the manual chain.
+    if (player.authKind === "live") {
+      const tok = await refreshLiveToken(player.refresh);
+      player.auth = await completeLiveLogin(tok.access_token, player.auth?.client_token);
+      player.refresh = tok.refresh_token || player.refresh;
+      return player;
+    }
+
     const authManager = new Auth("login");
 
     const xboxManager = await authManager.refresh(player.refresh)
@@ -724,7 +742,7 @@ async function refreshPlayer(player) {
     const launcherAuth = token.mclc();
 
     player.auth = launcherAuth;
-    
+
     if (token.parent && token.parent.msToken) {
       player.refresh = token.parent.msToken;
     } else if (player.refresh) {
@@ -840,48 +858,58 @@ ipcMain.on("login-microsoft", async (event) => {
 });
 
 /* ─────────────── QR / device-code login ───────────────
- * Mirrors the device-code flow used in TGGamesYT/mcdev-premlogin: request a
- * device code from Microsoft, show the user a QR code (and the short code),
- * poll until they finish signing in on their phone/browser, then hand the
- * resulting refresh token to msmc to complete the Xbox/Minecraft handshake.
- * Uses the same client id (00000000402b5328) msmc uses, so the refresh token
- * stays compatible with refreshPlayer(). */
+ * Ported from TGGamesYT/mcdev-premlogin (MinecraftOAuthManager). This uses the
+ * Microsoft Account (login.live.com) device-code flow with the public Xbox
+ * client id and the MBI_SSL scope — NOT the Azure AD flow and NOT msmc. The
+ * Azure device-code flow can't grant the Xbox Live consent on a phone ("users
+ * are not permitted to consent to first party applications"), whereas this MSA
+ * flow is the native Xbox/Minecraft device-login path with no such limit.
+ *
+ * Tokens from login.live.com are RPS tickets, so the Xbox Live exchange uses
+ * the "t=" RpsTicket prefix (the Azure/msmc path uses "d="). These accounts are
+ * tagged authKind:"live" so refreshPlayer() refreshes them the same way. */
 const MSA_CLIENT_ID = "00000000402b5328";
+const LIVE_DEVICECODE_URL = "https://login.live.com/oauth20_connect.srf";
+const LIVE_TOKEN_URL = "https://login.live.com/oauth20_token.srf";
+const LIVE_SCOPE = "service::user.auth.xboxlive.com::MBI_SSL";
 let qrLoginAbort = null;
 
 async function msDeviceCodeStart() {
-  const res = await fetch("https://login.live.com/oauth20_connect.srf", {
+  const res = await fetch(LIVE_DEVICECODE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: MSA_CLIENT_ID,
-      scope: "XboxLive.signin offline_access",
+      scope: LIVE_SCOPE,
       response_type: "device_code"
     }).toString()
   });
-  if (!res.ok) throw new Error("Device code request failed: " + res.status);
-  return await res.json(); // { user_code, device_code, verification_uri, interval, expires_in }
+  if (res.status >= 500) throw new Error("Microsoft auth servers are unreachable (HTTP " + res.status + ")");
+  const json = await res.json().catch(() => ({}));
+  if (!json.device_code) throw new Error("Device code request failed: " + JSON.stringify(json));
+  return json; // { user_code, device_code, verification_uri, verification_uri_complete?, interval, expires_in }
 }
 
 async function msDeviceCodePoll(deviceCode, interval, expiresIn, isAborted) {
   const deadline = Date.now() + (expiresIn || 900) * 1000;
-  let wait = (interval || 5) * 1000;
+  let wait = Math.max(interval || 5, 1) * 1000;
   while (Date.now() < deadline) {
     if (isAborted()) throw new Error("__aborted__");
     await new Promise(r => setTimeout(r, wait));
     if (isAborted()) throw new Error("__aborted__");
 
-    const res = await fetch("https://login.live.com/oauth20_token.srf", {
+    const res = await fetch(LIVE_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
         client_id: MSA_CLIENT_ID,
-        device_code: deviceCode,
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+        device_code: deviceCode
       }).toString()
     });
+    if (res.status >= 500) throw new Error("Microsoft auth servers are unreachable (HTTP " + res.status + ")");
     const data = await res.json().catch(() => ({}));
-    if (res.ok && data.access_token) return data; // includes refresh_token
+    if (data.access_token) return data; // includes refresh_token
     switch (data.error) {
       case "authorization_pending": continue;
       case "slow_down": wait += 5000; continue;
@@ -893,6 +921,100 @@ async function msDeviceCodePoll(deviceCode, interval, expiresIn, isAborted) {
   throw new Error("Login timed out");
 }
 
+// Exchange a Microsoft token for an Xbox Live user token. login.live.com
+// (device-code) tokens use the "t=" RpsTicket prefix; Azure tokens use "d=".
+async function xboxAuthenticate(msToken, azure) {
+  const res = await fetch("https://user.auth.xboxlive.com/user/authenticate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({
+      Properties: { AuthMethod: "RPS", SiteName: "user.auth.xboxlive.com", RpsTicket: (azure ? "d=" : "t=") + msToken },
+      RelyingParty: "http://auth.xboxlive.com",
+      TokenType: "JWT"
+    })
+  });
+  if (!res.ok) throw new Error("Xbox Live auth failed (HTTP " + res.status + ")");
+  const json = await res.json();
+  return { token: json.Token, uhs: json.DisplayClaims.xui[0].uhs };
+}
+
+async function xstsAuthorize(xblToken) {
+  const res = await fetch("https://xsts.auth.xboxlive.com/xsts/authorize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({
+      Properties: { SandboxId: "RETAIL", UserTokens: [xblToken] },
+      RelyingParty: "rp://api.minecraftservices.com/",
+      TokenType: "JWT"
+    })
+  });
+  if (!res.ok) throw new Error("XSTS authorization failed (HTTP " + res.status + ")");
+  const json = await res.json();
+  return { token: json.Token, uhs: json.DisplayClaims.xui[0].uhs };
+}
+
+async function minecraftLoginWithXbox(uhs, xstsToken) {
+  const res = await fetch("https://api.minecraftservices.com/authentication/login_with_xbox", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ identityToken: `XBL3.0 x=${uhs};${xstsToken}` })
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!json.access_token) throw new Error("Minecraft auth failed: " + JSON.stringify(json));
+  return json.access_token;
+}
+
+async function fetchMinecraftProfile(mcToken) {
+  const res = await fetch("https://api.minecraftservices.com/minecraft/profile", {
+    headers: { "Authorization": "Bearer " + mcToken }
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!json.id) throw new Error("Could not load Minecraft profile (account may not own Minecraft)");
+  return { id: json.id, name: json.name };
+}
+
+// Full Xbox -> XSTS -> Minecraft -> profile chain for a login.live.com token,
+// returning an mclc-shaped authorization object.
+async function completeLiveLogin(msAccessToken, existingClientToken) {
+  const xbl = await xboxAuthenticate(msAccessToken, false); // "t=" prefix
+  const xsts = await xstsAuthorize(xbl.token);
+  const mcToken = await minecraftLoginWithXbox(xsts.uhs, xsts.token);
+  const profile = await fetchMinecraftProfile(mcToken);
+  return {
+    access_token: mcToken,
+    client_token: existingClientToken || crypto.randomUUID().replace(/-/g, ""),
+    uuid: profile.id,
+    name: profile.name,
+    user_properties: "{}",
+    meta: { type: "msa", demo: false }
+  };
+}
+
+// Refresh a login.live.com (device-code/QR) account using its refresh token.
+async function refreshLiveToken(refreshToken) {
+  const res = await fetch(LIVE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: MSA_CLIENT_ID,
+      grant_type: "refresh_token",
+      scope: LIVE_SCOPE,
+      refresh_token: refreshToken
+    }).toString()
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!json.access_token) throw new Error("Live token refresh failed: " + JSON.stringify(json));
+  return { access_token: json.access_token, refresh_token: json.refresh_token || refreshToken };
+}
+
+// Build the URL to encode in the QR: prefer the complete URL Microsoft returns
+// (code embedded), else append ?otc=<code> so scanning pre-fills the code.
+function qrTarget(dc) {
+  if (dc.verification_uri_complete) return dc.verification_uri_complete;
+  const sep = dc.verification_uri.includes("?") ? "&" : "?";
+  return dc.verification_uri + sep + "otc=" + dc.user_code;
+}
+
 ipcMain.on("login-microsoft-qr", async (event) => {
   const myAbort = { aborted: false };
   qrLoginAbort = myAbort;
@@ -901,9 +1023,7 @@ ipcMain.on("login-microsoft-qr", async (event) => {
 
   try {
     const dc = await msDeviceCodeStart();
-    // Pre-fill the one-time code in the link so scanning the QR jumps straight
-    // to the code-entry page with the code filled in.
-    const link = `${dc.verification_uri}?otc=${encodeURIComponent(dc.user_code)}`;
+    const link = qrTarget(dc);
     const qr = await QRCode.toDataURL(link, { margin: 1, width: 240 });
     reply({
       status: "pending",
@@ -916,29 +1036,27 @@ ipcMain.on("login-microsoft-qr", async (event) => {
     const tokenData = await msDeviceCodePoll(dc.device_code, dc.interval, dc.expires_in, isAborted);
     if (isAborted()) throw new Error("__aborted__");
 
-    // Finish the handshake with msmc (Xbox Live -> XSTS -> Minecraft -> profile).
-    const authManager = new Auth("login");
-    const xboxManager = await authManager.refresh(tokenData.refresh_token);
-    const token = await xboxManager.getMinecraft();
-    const launcherAuth = token.mclc();
+    // Full manual Xbox/XSTS/Minecraft handshake (login.live.com -> "t=" prefix).
+    const auth = await completeLiveLogin(tokenData.access_token);
+    if (isAborted()) throw new Error("__aborted__");
 
     const players = loadPlayers();
-    const refresh = token.parent?.msToken || tokenData.refresh_token || "";
     // Replace an existing entry for the same account instead of duplicating.
-    const existing = players.find(p => p.type === "microsoft" && p.username === launcherAuth.name);
+    const existing = players.find(p => p.type === "microsoft" && p.username === auth.name);
     let id;
     if (existing) {
       id = existing.id;
-      existing.auth = launcherAuth;
-      existing.refresh = refresh;
+      existing.auth = auth;
+      existing.refresh = tokenData.refresh_token || existing.refresh;
+      existing.authKind = "live";
     } else {
       id = Date.now();
-      players.push({ id, type: "microsoft", username: launcherAuth.name, auth: launcherAuth, refresh });
+      players.push({ id, type: "microsoft", authKind: "live", username: auth.name, auth, refresh: tokenData.refresh_token });
     }
     savePlayers(players);
     setSelectedPlayer(id);
 
-    reply({ status: "success", username: launcherAuth.name });
+    reply({ status: "success", username: auth.name });
     event.reply("players-updated", players);
   } catch (err) {
     if (myAbort.aborted || (err && err.message === "__aborted__")) {
@@ -2059,8 +2177,9 @@ async function checkForUpdate(force = false) {
 }
 
 /* ---------- Download the update ---------- */
-async function downloadUpdate(assetURL, assetName) {
-  const downloadPath = path.join(app.getPath("temp"), assetName);
+async function downloadUpdate(assetURL, assetName, destDir = app.getPath("temp")) {
+  fs.mkdirSync(destDir, { recursive: true });
+  const downloadPath = path.join(destDir, assetName);
 
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(downloadPath);
@@ -2114,6 +2233,63 @@ async function installUpdate(downloadPath) {
   }
 }
 
+/* ---------- Staged updates ----------
+ * We never interrupt a running session to install. Instead, on each startup we
+ * (1) apply any update that was staged on a previous run, BEFORE the window
+ * opens, and (2) quietly download the newest update in the background and
+ * record it as "pending" for next launch. */
+const UPDATES_DIR = path.join(dataDir, "updates");
+
+function getPendingUpdate() {
+  return settings.get("pendingUpdate", null);
+}
+
+// Called before the window is created. If a valid, still-newer update was
+// staged previously, run its installer now and quit. Returns true if so.
+async function maybeApplyStagedUpdate() {
+  const pending = getPendingUpdate();
+  if (!pending || !pending.path) return false;
+
+  const stillNewer = pending.version && isVersionNewer(pending.version, app.getVersion());
+  if (!stillNewer || !fs.existsSync(pending.path)) {
+    // Already up to date, or the staged file vanished — clear it.
+    settings.delete("pendingUpdate");
+    try { if (pending.path && fs.existsSync(pending.path)) fs.unlinkSync(pending.path); } catch { /* ignore */ }
+    return false;
+  }
+
+  try {
+    devtoolsLog("Applying staged update " + pending.version + " before launch");
+    settings.delete("pendingUpdate"); // clear first so a failed install can't loop
+    await installUpdate(pending.path); // spawns installer + app.quit()
+    return true;
+  } catch (err) {
+    devtoolsLog("Failed to apply staged update:", err);
+    return false;
+  }
+}
+
+// Runs after the window is open. Downloads the newest update to a stable
+// location and records it as pending — without installing it.
+async function stageUpdateInBackground() {
+  try {
+    if (!settings.get("autoUpdates", true)) return;
+    const result = await checkForUpdate(true);
+    if (!result || !result.updateAvailable) return;
+
+    const pending = getPendingUpdate();
+    if (pending && pending.version === result.version && pending.path && fs.existsSync(pending.path)) {
+      return; // already staged this version
+    }
+
+    const stagedPath = await downloadUpdate(result.assetURL, result.assetName, UPDATES_DIR);
+    settings.set("pendingUpdate", { version: result.version, path: stagedPath, assetName: result.assetName });
+    devtoolsLog("Update " + result.version + " staged; it will install on next launch.");
+  } catch (err) {
+    devtoolsLog("Background update staging failed:", err);
+  }
+}
+
 /* ---------- IPC handlers ---------- */
 ipcMain.handle("check-for-updates", async () => {
   return await checkForUpdate();
@@ -2121,6 +2297,26 @@ ipcMain.handle("check-for-updates", async () => {
 
 ipcMain.handle("force-check-for-updates", async () => {
   return await checkForUpdate(true);
+});
+
+// Renderer asks whether an update is already staged for next launch.
+ipcMain.handle("get-pending-update", () => {
+  return getPendingUpdate();
+});
+
+// Manual "install now" for an already-staged update.
+ipcMain.handle("apply-staged-update", async () => {
+  const pending = getPendingUpdate();
+  if (!pending || !pending.path || !fs.existsSync(pending.path)) {
+    return { success: false, error: "No staged update available" };
+  }
+  try {
+    settings.delete("pendingUpdate");
+    await installUpdate(pending.path);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 ipcMain.handle("download-and-install", async (event, assetURL, assetName) => {

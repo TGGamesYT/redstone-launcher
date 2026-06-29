@@ -239,45 +239,50 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
   
     // Ask backend if update exists
     const result = await ipcRenderer.invoke("check-for-updates");
-  
+
     // No update → keep hidden
     if (!result || !result.updateAvailable) {
       return;
     }
-    const settings = await ipcRenderer.invoke('get-settings');
-    const autoUpdates = settings.autoUpdates ?? true;
-    if (!autoUpdates) {
-    // Show update button via CSS class
+
     updateEl.classList.add("show-update");
-    updateText.textContent = `Update to ${result.version}`;
-  
-    // Handle click
-    updateEl.onclick = async () => {
-  
-      updateText.textContent = "Downloading...";
-  
-      const res = await ipcRenderer.invoke(
-        "download-and-install",
-        result.assetURL,
-        result.assetName
-      );
-  
-      if (!res.success) {
-        updateText.textContent = "Update failed!";
-        console.error(res.error);
-        updateEl.style.pointerEvents = "auto";
-        return;
-      }
-  
-      updateText.textContent = "Installing...";
-    };
-  } else {
-    const res = await ipcRenderer.invoke(
-      "download-and-install",
-      result.assetURL,
-      result.assetName
-    );
-  }
+
+    // If autoUpdates is on, the main process quietly downloads ("stages") the
+    // update in the background and installs it on the NEXT launch — we never
+    // interrupt the current session. Reflect that state to the user.
+    const pending = await ipcRenderer.invoke("get-pending-update");
+    const staged = pending && pending.version === result.version;
+
+    if (staged) {
+      updateText.textContent = `Update ${result.version} ready — restart to apply`;
+      updateEl.onclick = async () => {
+        updateText.textContent = "Installing...";
+        const res = await ipcRenderer.invoke("apply-staged-update");
+        if (!res.success) {
+          updateText.textContent = "Update failed!";
+          console.error(res.error);
+        }
+      };
+    } else {
+      // Not staged yet (autoUpdates off, or still downloading). Offer a manual
+      // "install now" that downloads and installs immediately.
+      updateText.textContent = `Update to ${result.version}`;
+      updateEl.onclick = async () => {
+        updateText.textContent = "Downloading...";
+        const res = await ipcRenderer.invoke(
+          "download-and-install",
+          result.assetURL,
+          result.assetName
+        );
+        if (!res.success) {
+          updateText.textContent = "Update failed!";
+          console.error(res.error);
+          updateEl.style.pointerEvents = "auto";
+          return;
+        }
+        updateText.textContent = "Installing...";
+      };
+    }
   });
   
 
