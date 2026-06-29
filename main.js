@@ -24,6 +24,7 @@ import RPC from "discord-rpc";
 import os from 'os';
 import xml2js from "xml2js";
 import unzipper from "unzipper";
+import QRCode from "qrcode";
 
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
@@ -159,17 +160,93 @@ const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, 
 const launchingProfiles = new Map(); // track profiles currently in the launch process - key: profileId, value: timestamp
 const instanceLogs = new Map(); // profileId -> string[]
 
+// Renderer log delivery is throttled/batched: minecraft-launcher-core emits a
+// huge amount of debug/data lines while downloading, and sending one IPC
+// message per line was a big source of UI lag during launch.
+const pendingLogs = new Map(); // profileId -> string[] buffered for the renderer
+let logFlushTimer = null;
+
+function flushLogs() {
+  logFlushTimer = null;
+  if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed()) {
+    pendingLogs.clear();
+    return;
+  }
+  for (const [profileId, lines] of pendingLogs.entries()) {
+    if (lines.length) {
+      mainWindow.webContents.send('launcher-log', { profileId, msg: lines.join('\n') });
+    }
+  }
+  pendingLogs.clear();
+}
+
+function scheduleLogFlush() {
+  if (logFlushTimer) return;
+  logFlushTimer = setTimeout(flushLogs, 120);
+}
+
 function broadcastLog(profileId, msg) {
   if (!instanceLogs.has(profileId)) {
     instanceLogs.set(profileId, []);
   }
+  const text = typeof msg === 'string' ? msg.replace(/\r?\n$/, '') : String(msg);
   const logs = instanceLogs.get(profileId);
-  logs.push(msg);
+  logs.push(text);
   if (logs.length > 2000) logs.shift(); // Keep last 2000 lines
 
-  if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send('launcher-log', { profileId, msg });
+  if (!pendingLogs.has(profileId)) pendingLogs.set(profileId, []);
+  pendingLogs.get(profileId).push(text);
+  scheduleLogFlush();
+}
+
+// Human-readable label for minecraft-launcher-core progress phases.
+function progressLabel(type) {
+  switch (type) {
+    case 'assets': return 'Downloading assets';
+    case 'assets-copy': return 'Copying assets';
+    case 'natives': return 'Extracting natives';
+    case 'classes':
+    case 'classes-maven-custom': return 'Downloading libraries';
+    case 'forge': return 'Installing Forge';
+    default: return 'Preparing ' + (type || 'files');
   }
+}
+
+// Progress events fire extremely often (per download chunk); throttle them so
+// they don't flood the renderer, but always let terminal "done" frames through.
+const lastProgressSent = new Map(); // profileId -> timestamp
+function broadcastProgress(profileId, progress) {
+  const now = Date.now();
+  if (!progress.done) {
+    const last = lastProgressSent.get(profileId) || 0;
+    if (now - last < 100) return;
+  }
+  lastProgressSent.set(profileId, now);
+  if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('launch-progress', { profileId, ...progress });
+  }
+}
+
+// Wire up all of a launcher's events (logs + progress) before launch() is
+// called, so download progress isn't missed while the game is being prepared.
+function attachLauncherEvents(launcher, profileId) {
+  launcher.on('data', msg => broadcastLog(profileId, msg));
+  launcher.on('debug', msg => broadcastLog(profileId, msg));
+  launcher.on('error', err => broadcastLog(profileId, "ERROR: " + (err?.message || err)));
+  launcher.on('progress', (p) => broadcastProgress(profileId, {
+    stage: p.type,
+    current: p.task,
+    total: p.total,
+    label: progressLabel(p.type)
+  }));
+  launcher.on('download-status', (s) => broadcastProgress(profileId, {
+    stage: s.type,
+    fileName: s.name,
+    current: s.current,
+    total: s.total,
+    bytes: true,
+    label: 'Downloading files'
+  }));
 }
 
 function startInstance(id, pid) {
@@ -584,13 +661,13 @@ ipcMain.handle('get-setting', (event, key) => {
 });
 
 ipcMain.on('save-settings', (event, newsettings) => {
-  let oldshouldconnect = settings.get('discord-presence', true);
+  let oldshouldconnect = settings.get('discordPresence', true);
   settings.set(newsettings);
   const color = settings.get('baseColor', "#FF0000");
   if (typeof mainWindow.setAccentColor === "function") {
     mainWindow.setAccentColor(color);
   }
-  if (oldshouldconnect != settings.get('discord-presence', true)) updateDiscordPresenceToggle();
+  if (oldshouldconnect != settings.get('discordPresence', true)) updateDiscordPresenceToggle();
 });
 
 ipcMain.handle('get-system-ram', () => {
@@ -760,6 +837,123 @@ ipcMain.on("login-microsoft", async (event) => {
     devtoolsLog("MS login failed: " + err);
     event.reply("login-error", "MS login failed: " + (err?.message || JSON.stringify(err) || String(err)));
   }
+});
+
+/* ─────────────── QR / device-code login ───────────────
+ * Mirrors the device-code flow used in TGGamesYT/mcdev-premlogin: request a
+ * device code from Microsoft, show the user a QR code (and the short code),
+ * poll until they finish signing in on their phone/browser, then hand the
+ * resulting refresh token to msmc to complete the Xbox/Minecraft handshake.
+ * Uses the same client id (00000000402b5328) msmc uses, so the refresh token
+ * stays compatible with refreshPlayer(). */
+const MSA_CLIENT_ID = "00000000402b5328";
+let qrLoginAbort = null;
+
+async function msDeviceCodeStart() {
+  const res = await fetch("https://login.live.com/oauth20_connect.srf", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: MSA_CLIENT_ID,
+      scope: "XboxLive.signin offline_access",
+      response_type: "device_code"
+    }).toString()
+  });
+  if (!res.ok) throw new Error("Device code request failed: " + res.status);
+  return await res.json(); // { user_code, device_code, verification_uri, interval, expires_in }
+}
+
+async function msDeviceCodePoll(deviceCode, interval, expiresIn, isAborted) {
+  const deadline = Date.now() + (expiresIn || 900) * 1000;
+  let wait = (interval || 5) * 1000;
+  while (Date.now() < deadline) {
+    if (isAborted()) throw new Error("__aborted__");
+    await new Promise(r => setTimeout(r, wait));
+    if (isAborted()) throw new Error("__aborted__");
+
+    const res = await fetch("https://login.live.com/oauth20_token.srf", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: MSA_CLIENT_ID,
+        device_code: deviceCode,
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+      }).toString()
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.access_token) return data; // includes refresh_token
+    switch (data.error) {
+      case "authorization_pending": continue;
+      case "slow_down": wait += 5000; continue;
+      case "authorization_declined": throw new Error("Login was declined");
+      case "expired_token": throw new Error("The login code expired, please try again");
+      default: throw new Error(data.error_description || data.error || "Login failed");
+    }
+  }
+  throw new Error("Login timed out");
+}
+
+ipcMain.on("login-microsoft-qr", async (event) => {
+  const myAbort = { aborted: false };
+  qrLoginAbort = myAbort;
+  const isAborted = () => myAbort.aborted || qrLoginAbort !== myAbort;
+  const reply = (payload) => { try { event.reply("qr-login-update", payload); } catch { /* window gone */ } };
+
+  try {
+    const dc = await msDeviceCodeStart();
+    // Pre-fill the one-time code in the link so scanning the QR jumps straight
+    // to the code-entry page with the code filled in.
+    const link = `${dc.verification_uri}?otc=${encodeURIComponent(dc.user_code)}`;
+    const qr = await QRCode.toDataURL(link, { margin: 1, width: 240 });
+    reply({
+      status: "pending",
+      qr,
+      userCode: dc.user_code,
+      verificationUri: dc.verification_uri,
+      link
+    });
+
+    const tokenData = await msDeviceCodePoll(dc.device_code, dc.interval, dc.expires_in, isAborted);
+    if (isAborted()) throw new Error("__aborted__");
+
+    // Finish the handshake with msmc (Xbox Live -> XSTS -> Minecraft -> profile).
+    const authManager = new Auth("login");
+    const xboxManager = await authManager.refresh(tokenData.refresh_token);
+    const token = await xboxManager.getMinecraft();
+    const launcherAuth = token.mclc();
+
+    const players = loadPlayers();
+    const refresh = token.parent?.msToken || tokenData.refresh_token || "";
+    // Replace an existing entry for the same account instead of duplicating.
+    const existing = players.find(p => p.type === "microsoft" && p.username === launcherAuth.name);
+    let id;
+    if (existing) {
+      id = existing.id;
+      existing.auth = launcherAuth;
+      existing.refresh = refresh;
+    } else {
+      id = Date.now();
+      players.push({ id, type: "microsoft", username: launcherAuth.name, auth: launcherAuth, refresh });
+    }
+    savePlayers(players);
+    setSelectedPlayer(id);
+
+    reply({ status: "success", username: launcherAuth.name });
+    event.reply("players-updated", players);
+  } catch (err) {
+    if (myAbort.aborted || (err && err.message === "__aborted__")) {
+      reply({ status: "cancelled" });
+    } else {
+      devtoolsLog("QR login failed:", err);
+      reply({ status: "error", error: err?.message || String(err) });
+    }
+  } finally {
+    if (qrLoginAbort === myAbort) qrLoginAbort = null;
+  }
+});
+
+ipcMain.on("cancel-qr-login", () => {
+  if (qrLoginAbort) qrLoginAbort.aborted = true;
 });
 
 // Get all players
@@ -935,7 +1129,6 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     const profile_main = result.profile;
 
     // trigger launch with quickplay
-    let profileId = profile.id
     let playerId = accountId
     let quickplaybool = true
     let quickplayip = serverIp
@@ -943,6 +1136,7 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     const profiles = await loadProfiles();
     const players = loadPlayers();
 
+    let profileId = profile_main.id
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) {
       broadcastLog(profileId, "[ERROR] Profile not found");
@@ -973,6 +1167,7 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     fs.mkdirSync(rootDir, { recursive: true });
 
     const launcher = new Client();
+    attachLauncherEvents(launcher, profileId);
     let loaderer;
     if (profile.loader == "fabric") {
       loaderer = fabric
@@ -994,17 +1189,18 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
       authorization: auth,
       memory: { max: "4G", min: "1G" },
       overrides: {
-        detached: false
+        // Detached so the game keeps running if the launcher is closed.
+        detached: true
       },
       quickplay
     }
     const childProcess = await launcher.launch(opts);
 
     launchingProfiles.delete(profileId);
+    broadcastProgress(profileId, { done: true, label: 'Starting Minecraft' });
 
-    launcher.on('data', msg => broadcastLog(profileId, msg));
-    launcher.on('debug', msg => broadcastLog(profileId, msg));
-    launcher.on('error', err => broadcastLog(profileId, "ERROR: " + err.message));
+    if (childProcess && typeof childProcess.unref === 'function') childProcess.unref();
+
     const pid = childProcess.pid;
     devtoolsLog("PID: " + pid);
     startInstance(profileId, pid);
@@ -1013,6 +1209,7 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     // Handle process exit
     childProcess.on('exit', (code) => {
       stopInstance(profileId, pid);
+      broadcastProgress(profileId, { done: true });
       broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
     });
   } catch (err) {
@@ -1456,6 +1653,9 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     devtoolsLog("Java ready at:", javaPath);
 
     const launcher = new Client();
+    // Attach log + progress listeners BEFORE launch() so the loading bar
+    // reflects the (often lengthy) download/prepare phase.
+    attachLauncherEvents(launcher, profileId);
     let loaderer;
     if (profile.loader == "fabric") {
       loaderer = fabric
@@ -1479,17 +1679,21 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
       javaPath,
       overrides: {
         assetRoot: path.join(dataDir, 'assets'),
-        detached: false
+        // Detached so the game keeps running if the launcher is closed.
+        detached: true
       },
       quickplay: quickplay
     }
     const childProcess = await launcher.launch(opts);
 
     launchingProfiles.delete(profileId);
+    // Downloads are done and the JVM has been spawned.
+    broadcastProgress(profileId, { done: true, label: 'Starting Minecraft' });
 
-    launcher.on('data', msg => broadcastLog(profileId, msg));
-    launcher.on('debug', msg => broadcastLog(profileId, msg));
-    launcher.on('error', err => broadcastLog(profileId, "ERROR: " + err.message));
+    // Fully decouple the game from the launcher's event loop so quitting the
+    // launcher leaves the game running.
+    if (childProcess && typeof childProcess.unref === 'function') childProcess.unref();
+
     const pid = childProcess.pid;
     devtoolsLog("PID: " + pid);
     startInstance(profileId, pid);
@@ -1498,6 +1702,7 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     // Handle process exit
     childProcess.on('exit', (code) => {
       stopInstance(profileId, pid);
+      broadcastProgress(profileId, { done: true });
       broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
     });
   } catch (err) {
@@ -2130,51 +2335,79 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
 });
 
 /* ─────────────── dihhcord ─────────────── */
+// Keep a single launcher-start timestamp so the elapsed timer in the Discord
+// activity doesn't reset every time we update the presence text.
+const discordLauncherStart = Date.now();
+// Remember the last requested presence so it can be (re)applied the moment we
+// (re)connect, instead of resetting to the default.
+let lastActivity = { details: "In launcher", state: "Idle" };
+
 function startDiscordPresence() {
-  shouldconnect = settings.get('discord-presence', true);
-  if (rpcConnected || !shouldconnect) return; // already running or shouldnt connect
+  shouldconnect = settings.get('discordPresence', true);
+  if (!shouldconnect) return;        // user disabled it
+  if (rpc) return;                   // already connecting or connected
 
-  rpc = new RPC.Client({ transport: 'ipc' });
+  const client = new RPC.Client({ transport: 'ipc' });
+  rpc = client; // claim the slot immediately so we don't spawn duplicates
 
-  rpc.on('ready', () => {
-    devtoolsLog('[Discord RPC] Connected');
+  client.on('ready', () => {
+    // If the toggle was flipped off (or replaced) while we were connecting,
+    // tear this connection down right away.
+    if (!shouldconnect || rpc !== client) {
+      try { client.destroy(); } catch { /* ignore */ }
+      if (rpc === client) { rpc = null; rpcConnected = false; }
+      return;
+    }
     rpcConnected = true;
-    setActivity(); // initial presence
+    devtoolsLog('[Discord RPC] Connected');
+    setActivity(lastActivity.details, lastActivity.state);
   });
 
-  rpc.login({ clientId }).catch(devtoolsLog);
+  client.on('disconnected', () => {
+    if (rpc === client) { rpc = null; rpcConnected = false; }
+  });
+
+  client.login({ clientId }).catch(err => {
+    devtoolsLog('[Discord RPC] Login failed:', err);
+    if (rpc === client) { rpc = null; rpcConnected = false; }
+  });
 }
 
 // Function to stop Discord presence
 function stopDiscordPresence() {
-  if (!rpcConnected || !rpc) return;
-
+  const client = rpc;
+  // Drop our references first so any in-flight 'ready' handler bails out.
+  rpc = null;
+  rpcConnected = false;
+  if (!client) return;
+  try { client.clearActivity().catch(() => {}); } catch { /* ignore */ }
   try {
-    rpc.clearActivity(); // optional: clear presence
-    rpc.destroy();       // disconnect
+    const res = client.destroy();
+    if (res && typeof res.catch === 'function') res.catch(() => {});
   } catch (err) {
     devtoolsLog('[Discord RPC] Error stopping:', err);
-  } finally {
-    rpc = null;
-    rpcConnected = false;
-    devtoolsLog('[Discord RPC] Disconnected');
   }
+  devtoolsLog('[Discord RPC] Disconnected');
 }
+
 function setActivity(details = "In launcher", state = "Idle") {
+  lastActivity = { details, state };
   if (!rpcConnected || !rpc) return;
 
   rpc.setActivity({
     details,          // e.g., "Playing Minecraft"
     state,            // e.g., "On version 1.21"
-    startTimestamp: Date.now(),
+    startTimestamp: discordLauncherStart,
     instance: false
   }).catch(err => {
     devtoolsLog('[Discord RPC] Error setting activity:', err)
   });
 }
+
+// Idempotent: brings the RPC connection in line with the current setting.
 function updateDiscordPresenceToggle() {
-  shouldconnect = settings.get('discord-presence', true);
-  if (!rpcConnected && shouldconnect) {
+  shouldconnect = settings.get('discordPresence', true);
+  if (shouldconnect) {
     startDiscordPresence();
   } else {
     stopDiscordPresence();
@@ -2476,37 +2709,198 @@ ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, fil
   };
 });
 
+/* ─────────────── fast incremental mod detection ───────────────
+ * The old flow listed files and then made one IPC round-trip + SHA1 + network
+ * lookup PER FILE, re-hashing everything on every visit. This handler does it
+ * the way the Modrinth app feels fast:
+ *   - keep a small index keyed by filename+mtime+size and only re-hash files
+ *     that are new or changed,
+ *   - resolve all unknown hashes in a SINGLE batched Modrinth request,
+ *   - return everything in one IPC call so the tab paints immediately.
+ */
+const MOD_INDEX_FILE = ".modindex.json";
+const SKIP_TAB_FILES = new Set(["mods.json", MOD_INDEX_FILE]);
+
+ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
+  const basePath = path.join(dataDir, "client", profileId.toString(), tab);
+  if (!fs.existsSync(basePath)) return [];
+
+  const indexFile = path.join(basePath, MOD_INDEX_FILE);
+  let index = { entries: {} };
+  if (fs.existsSync(indexFile)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(indexFile, "utf-8"));
+      if (parsed && parsed.entries) index = parsed;
+    } catch { /* rebuild from scratch */ }
+  }
+
+  let dirents = [];
+  try { dirents = fs.readdirSync(basePath, { withFileTypes: true }); } catch { return []; }
+  const files = dirents.filter(d => !SKIP_TAB_FILES.has(d.name.toLowerCase()));
+
+  const results = [];
+  const needLookup = []; // { filename, sha1 }
+
+  for (const d of files) {
+    const filename = d.name;
+    const fullPath = path.join(basePath, filename);
+
+    if (d.isDirectory()) {
+      let details = "(folder)";
+      const mcmetaPath = path.join(fullPath, "pack.mcmeta");
+      if (fs.existsSync(mcmetaPath)) {
+        try {
+          const m = JSON.parse(fs.readFileSync(mcmetaPath, "utf-8"));
+          if (typeof m?.pack?.description === "string") details = m.pack.description;
+        } catch { /* ignore */ }
+      }
+      results.push({ name: filename, icon: null, path: fullPath, details, disabled: false });
+      continue;
+    }
+
+    let stat;
+    try { stat = fs.statSync(fullPath); } catch { continue; }
+
+    const disabled = filename.toLowerCase().endsWith(".disabled");
+    let entry = index.entries[filename];
+    if (!entry || entry.mtimeMs !== stat.mtimeMs || entry.size !== stat.size) {
+      // New/changed file: re-hash and invalidate any cached project match.
+      entry = { mtimeMs: stat.mtimeMs, size: stat.size, sha1: computeSHA1(fullPath), modrinth: null };
+      index.entries[filename] = entry;
+    }
+    if (!entry.modrinth) needLookup.push({ filename, sha1: entry.sha1 });
+
+    results.push({
+      _filename: filename,
+      name: entry.modrinth?.title || filename,
+      icon: entry.modrinth?.icon || null,
+      path: fullPath,
+      details: filename,
+      disabled
+    });
+  }
+
+  // Drop index entries for files that have been removed.
+  const present = new Set(files.map(f => f.name));
+  for (const k of Object.keys(index.entries)) if (!present.has(k)) delete index.entries[k];
+
+  // One batched Modrinth lookup for every still-unknown hash.
+  if (needLookup.length) {
+    try {
+      const hashes = [...new Set(needLookup.map(x => x.sha1))];
+      const res = await fetch("https://api.modrinth.com/v2/version_files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hashes, algorithm: "sha1" })
+      });
+      if (res.ok) {
+        const versionMap = await res.json(); // { sha1: versionObject }
+        const projectIds = [...new Set(Object.values(versionMap).map(v => v.project_id).filter(Boolean))];
+        const projects = {};
+        if (projectIds.length) {
+          const pr = await fetch(`https://api.modrinth.com/v2/projects?ids=${encodeURIComponent(JSON.stringify(projectIds))}`);
+          if (pr.ok) for (const p of await pr.json()) projects[p.id] = p;
+        }
+        for (const { filename, sha1 } of needLookup) {
+          const v = versionMap[sha1];
+          if (v?.project_id && index.entries[filename]) {
+            const p = projects[v.project_id];
+            index.entries[filename].modrinth = {
+              projectId: v.project_id,
+              title: p?.title || null,
+              icon: p?.icon_url || null
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Batch Modrinth lookup failed:", err);
+    }
+  }
+
+  // Fold any freshly-resolved metadata back into the results.
+  for (const r of results) {
+    if (!r._filename) continue;
+    const e = index.entries[r._filename];
+    if (e?.modrinth) {
+      if (e.modrinth.title) r.name = e.modrinth.title;
+      if (e.modrinth.icon) r.icon = e.modrinth.icon;
+    }
+    delete r._filename;
+  }
+
+  try { fs.writeFileSync(indexFile, JSON.stringify(index)); } catch { /* best effort */ }
+  return results;
+});
+
 // servers tab
-ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
-  const filePath = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
+//
+// servers.dat is an UNCOMPRESSED, big-endian (Java) NBT file with this shape:
+//   TAG_Compound("") {
+//     TAG_List("servers") of TAG_Compound {
+//       TAG_String("name"), TAG_String("ip"), TAG_String("icon")?,
+//       TAG_Byte("acceptTextures")?, TAG_Byte("hidden")?
+//     }
+//   }
+// The previous writer emitted `servers` as a raw JS array of {type:'compound'}
+// wrappers instead of a proper TAG_List, which produced a malformed file that
+// Minecraft (and re-reads) treated as corrupt. These helpers write the correct
+// structure and read it back defensively.
 
-  // if file doesn't exist, return empty
+const serversDatPath = (profileId) =>
+  path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
+
+async function readServersList(profileId) {
+  const filePath = serversDatPath(profileId);
   if (!fs.existsSync(filePath)) return [];
-
-  const data = fs.readFileSync(filePath);
-  let nbtData;
-
   try {
-    // parse using prismarine-nbt
-    nbtData = await nbt.parse(data);
+    const parsed = await nbt.parse(fs.readFileSync(filePath));
+    const simplified = nbt.simplify(parsed.parsed);
+    return Array.isArray(simplified.servers) ? simplified.servers : [];
   } catch (err) {
     devtoolsLog("Failed to parse servers.dat:", err);
     return [];
   }
+}
 
-  // simplify
-  let simplified;
-  try {
-    simplified = nbt.simplify(nbtData.parsed);
-  } catch (err) {
-    devtoolsLog("Failed to simplify servers.dat:", err);
-    return [];
-  }
+async function writeServersList(profileId, serversList) {
+  const filePath = serversDatPath(profileId);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
-  // ensure simplified is an object and has servers list
-  const serversList = Array.isArray(simplified.servers) ? simplified.servers : [];
+  const serverCompounds = serversList.map(s => {
+    const value = {};
+    value.name = { type: "string", value: String(s.name ?? "") };
+    value.ip = { type: "string", value: String(s.ip ?? "") };
+    if (s.icon != null && s.icon !== "") value.icon = { type: "string", value: String(s.icon) };
+    value.acceptTextures = { type: "byte", value: Number(s.acceptTextures ?? 1) ? 1 : 0 };
+    return value; // list elements are bare compound value-maps
+  });
 
-  return serversList.map(s => ({
+  const nbtData = {
+    type: "compound",
+    name: "",
+    value: {
+      servers: {
+        type: "list",
+        value: {
+          type: "compound",
+          value: serverCompounds
+        }
+      }
+    }
+  };
+
+  const buffer = nbt.writeUncompressed(nbtData);
+  // Write atomically so a crash mid-write can't truncate/corrupt the file.
+  const tmp = filePath + ".tmp";
+  fs.writeFileSync(tmp, buffer);
+  fs.renameSync(tmp, filePath);
+}
+
+ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
+  const serversList = await readServersList(profileId);
+  return serversList.map((s, index) => ({
+    index,
     name: s.name || "Unknown",
     ip: s.ip || "",
     icon: s.icon || null,
@@ -2517,51 +2911,35 @@ ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
 
 // add server
 ipcMain.handle("add-instance-server", async (event, { profileId, name, ip, icon }) => {
-  const serversFile = path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
-
-  let serversList = [];
-
-  if (fs.existsSync(serversFile)) {
-    const data = fs.readFileSync(serversFile);
-    try {
-      const parsed = await nbt.parse(data);
-      const simplified = nbt.simplify(parsed.parsed);
-      serversList = Array.isArray(simplified.servers) ? simplified.servers : [];
-    } catch (err) {
-      devtoolsLog("Failed to parse existing servers.dat, starting empty:", err);
-      serversList = [];
-    }
-  }
-
-  // Add new server safely
-  const newServer = {};
-  if (name != null) newServer.name = name;
-  if (ip != null) newServer.ip = ip;
-  if (icon != null) newServer.icon = icon;
-  newServer.acceptTextures = 1;
-
+  const serversList = await readServersList(profileId);
+  const newServer = { name: name ?? "", ip: ip ?? "", acceptTextures: 1 };
+  if (icon != null && icon !== "") newServer.icon = icon;
   serversList.push(newServer);
+  await writeServersList(profileId, serversList);
+  return { success: true, name, ip, icon };
+});
 
-  // Build NBT compound: servers is directly an array of compounds
-  const nbtData = {
-    type: "compound",
-    name: "",
-    value: {
-      servers: serversList.map(s => {
-        const compound = { type: "compound", value: {} };
-        if (s.name != null) compound.value.name = { type: "string", value: s.name };
-        if (s.ip != null) compound.value.ip = { type: "string", value: s.ip };
-        if (s.icon != null) compound.value.icon = { type: "string", value: s.icon };
-        compound.value.acceptTextures = { type: "byte", value: s.acceptTextures ?? 1 };
-        return compound;
-      })
-    }
-  };
+// edit server (by index)
+ipcMain.handle("edit-instance-server", async (event, { profileId, index, name, ip }) => {
+  const serversList = await readServersList(profileId);
+  if (index < 0 || index >= serversList.length) {
+    return { success: false, error: "Server not found" };
+  }
+  if (name != null) serversList[index].name = name;
+  if (ip != null) serversList[index].ip = ip;
+  await writeServersList(profileId, serversList);
+  return { success: true };
+});
 
-  const buffer = await nbt.writeUncompressed(nbtData);
-  fs.writeFileSync(serversFile, buffer);
-
-  return { name, ip, icon };
+// delete server (by index)
+ipcMain.handle("delete-instance-server", async (event, { profileId, index }) => {
+  const serversList = await readServersList(profileId);
+  if (index < 0 || index >= serversList.length) {
+    return { success: false, error: "Server not found" };
+  }
+  serversList.splice(index, 1);
+  await writeServersList(profileId, serversList);
+  return { success: true };
 });
 
 // screenshots

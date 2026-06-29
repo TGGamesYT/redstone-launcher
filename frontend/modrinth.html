@@ -124,6 +124,77 @@
       servers = await ipcRenderer.invoke('list-servers');
     }
 
+    // ── Install mode: opened from an instance tab's "Install <Tab>" button.
+    // Results are graded against the instance (loader + game version); anything
+    // incompatible is greyed out and the install button drops it straight into
+    // the instance.
+    const mrParams = new URLSearchParams(window.location.search);
+    const installMode = mrParams.get('install') === '1';
+    const installType = mrParams.get('type');          // mod | resourcepack | shader
+    const installInstance = installMode ? {
+      id: mrParams.get('instanceId'),
+      loader: mrParams.get('loader') || 'vanilla',
+      version: mrParams.get('version') || '',
+      name: mrParams.get('name') || ''
+    } : null;
+
+    function isHitCompatible(hit) {
+      if (!installInstance) return true;
+      const supportsVersion = Array.isArray(hit.versions) && hit.versions.includes(installInstance.version);
+      if (!supportsVersion) return false;
+      if (installType === 'mod') {
+        // mods must match the instance's loader
+        return Array.isArray(hit.categories) && hit.categories.includes(installInstance.loader);
+      }
+      return true; // resource packs / shaders are loader-agnostic
+    }
+
+    async function installToInstance(projectId, btn) {
+      btn.textContent = "Installing...";
+      btn.disabled = true;
+      try {
+        const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`);
+        const versions = await res.json();
+        const requireLoader = installType === 'mod';
+        const compatible = (Array.isArray(versions) ? versions : [])
+          .filter(v => v.game_versions.includes(installInstance.version) &&
+            (!requireLoader || v.loaders.includes(installInstance.loader === 'vanilla' ? 'vanilla' : installInstance.loader)))
+          .sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
+        const v = compatible[0];
+        const file = v && ((v.files || []).find(f => f.primary) || (v.files || [])[0]);
+        if (!file) { btn.textContent = "Unavailable"; return; }
+        const result = await ipcRenderer.invoke("mod-download", {
+          server: false,
+          id: installInstance.id,
+          fileUrl: file.url,
+          projectType: installType
+        });
+        btn.textContent = result && result.success === false ? "Failed" : "Installed";
+        if (result && result.success === false) btn.disabled = false;
+      } catch (e) {
+        console.error("Install failed:", e);
+        btn.textContent = "Failed";
+        btn.disabled = false;
+      }
+    }
+
+    function setupInstallModeUI() {
+      if (!installMode) return;
+      // Lock to Modrinth and to the requested content type.
+      const apiSel = document.getElementById('apiSelector');
+      if (apiSel) { apiSel.value = 'modrinth'; apiSel.style.display = 'none'; }
+
+      const tabs = document.querySelectorAll('#typeTabs .tab');
+      tabs.forEach(t => {
+        if (t.dataset.type === installType) t.classList.add('active');
+        else { t.classList.remove('active'); t.style.display = 'none'; }
+      });
+
+      const title = document.querySelector('h1');
+      if (title) title.textContent = `Install into ${installInstance.name || 'instance'} (${installInstance.loader} ${installInstance.version})`;
+    }
+    setupInstallModeUI();
+
     // Fetch top 20 projects from Modrinth
     async function fetchProjects(type, page = 1, search = "") {
       const api = apiSelector.value;
@@ -234,10 +305,27 @@
         const actions = document.createElement("div");
         actions.className = "project-actions";
         const installBtn = document.createElement("button");
+        installBtn.className = "install-here-btn";
         installBtn.textContent = "Install";
         actions.append(installBtn);
 
         card.append(left, actions);
+
+        if (installMode && api === "modrinth") {
+          if (isHitCompatible(proj)) {
+            installBtn.textContent = "Install Here";
+            installBtn.onclick = (e) => {
+              e.stopPropagation();
+              installToInstance(proj.project_id, installBtn);
+            };
+          } else {
+            card.classList.add("incompatible");
+            installBtn.textContent = "Incompatible";
+            installBtn.disabled = true;
+          }
+        }
+
+        // Clicking the card still opens the project page for reading.
         card.onclick = () => openProjectDetails(proj);
         card.style.cursor = "pointer";
         resultsList.appendChild(card);

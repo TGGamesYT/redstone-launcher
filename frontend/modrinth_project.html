@@ -302,6 +302,20 @@ if (downloadBtn.textContent == "Back") {
     });
   }
 
+  // Pick the NEWEST compatible version's primary file (the old code walked the
+  // list and kept overwriting, ending up on the oldest compatible version).
+  function newestCompatibleFile(instanceVersion, loader, requireLoader = true) {
+    const compatible = validVersions
+      .filter(v =>
+        v.game_versions.includes(instanceVersion) &&
+        (!requireLoader || v.loaders.includes(loader === "vanilla" ? "vanilla" : loader)))
+      .sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
+    const v = compatible[0];
+    if (!v) return null;
+    const file = (v.files || []).find(f => f.primary) || (v.files || [])[0];
+    return file ? file.url : null;
+  }
+
   // --- CLIENT INSTANCES ---
   if (
     projType === "shader" ||
@@ -346,28 +360,12 @@ if (downloadBtn.textContent == "Back") {
 const installBtn = document.createElement("button");
 
 (async () => {
+  // Resource packs are loader-agnostic; mods must match the loader.
+  const requireLoader = projType === "mod";
+  const fileUrl = newestCompatibleFile(p.version, p.loader, requireLoader);
   let exists = false;
-  let fileUrl = null;
-
-  // Loop through all versions
-  for (const v of validVersions) {
-    if (
-      v.game_versions.includes(p.version) &&
-      v.loaders.includes(p.loader === "vanilla" ? "vanilla" : p.loader)
-    ) {
-      // Loop through all files in this version
-      for (const f of v.files || []) {
-        fileUrl = f.url;
-        if (!fileUrl) continue;
-
-        const found = await ipcRenderer.invoke("check-file-exists", String(p.id), true, fileUrl);
-        if (found) {
-          exists = true;
-          break; // Stop checking files if any exists
-        }
-      }
-    }
-    if (exists) break; // Stop checking versions if any exists
+  if (fileUrl) {
+    exists = await ipcRenderer.invoke("check-file-exists", String(p.id), true, fileUrl);
   }
 
   if (!fileUrl) {

@@ -56,6 +56,22 @@
   transform: scale(1.01);
 }
 
+/* Incompatible projects in install mode are greyed out. */
+.project-card.incompatible {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.project-card.incompatible:hover {
+  transform: none;
+  background: var(--menu-bg);
+}
+
+.project-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .project-left {
   display: flex;
   align-items: center;

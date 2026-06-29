@@ -180,10 +180,25 @@
         </label>
       </div>
       <div id="premInfo">
-        <label>Click 'Add player' to begin the login process</label>
+        <div id="qrStartArea">
+          <label>Sign in with your Microsoft account by scanning a QR code, or use a browser window.</label>
+        </div>
+        <div id="qrContainer" style="display:none; text-align:center;">
+          <img id="qrImage" alt="Login QR code"
+            style="width:200px; height:200px; background:#fff; padding:6px; border-radius:6px; object-fit:contain;" />
+          <p style="margin:8px 0 2px;">Scan the QR code, or open
+            <a id="qrLink" href="#" style="color:var(--text-color); text-decoration:underline; cursor:pointer;"></a>
+          </p>
+          <p style="margin:2px 0;">and enter code: <strong id="qrCode"></strong></p>
+          <p id="qrStatus" style="opacity:0.8; font-size:13px; margin-top:8px;"></p>
+        </div>
+        <div style="margin-top:8px;">
+          <a id="useBrowserLogin" href="#"
+            style="color:var(--text-color); text-decoration:underline; cursor:pointer; font-size:13px;">Use a browser window instead</a>
+        </div>
       </div>
       <button id="submitPlayerBtn">Add Player</button>
-      <button id="cancelPlayerBtn" onclick="document.getElementById('playerModal').classList.remove('show')">Cancel</button>
+      <button id="cancelPlayerBtn">Cancel</button>
     </div>
   </div>
 
@@ -246,6 +261,9 @@
       // toggle cracked name container based on selection
       const crackedNameContainer = document.getElementById('crackedNameContainer');
       crackedNameContainer.style.display = allowed && document.querySelector('input[name="playerType"]:checked').value === 'cracked' ? 'block' : 'none';
+
+      // Start each modal session with a fresh QR area.
+      if (typeof resetQrUi === 'function') resetQrUi();
     }
     // Selected player
     function setSelectedPlayer(id) { ipcRenderer.send('set-selected-player', id); }
@@ -360,8 +378,72 @@
       });
     });
 
+    const { shell } = require('electron');
+    let qrLoginActive = false;
+
+    function resetQrUi() {
+      const startArea = document.getElementById('qrStartArea');
+      const container = document.getElementById('qrContainer');
+      if (startArea) startArea.style.display = 'block';
+      if (container) container.style.display = 'none';
+      const img = document.getElementById('qrImage');
+      if (img) img.src = '';
+    }
+
+    function closePlayerModal() {
+      if (qrLoginActive) {
+        qrLoginActive = false;
+        ipcRenderer.send('cancel-qr-login');
+      }
+      resetQrUi();
+      playerModal.classList.remove('show');
+      playerModal.style.display = "none";
+      crackedNameInput.value = "";
+    }
+
+    function startQrLogin() {
+      qrLoginActive = true;
+      document.getElementById('qrStartArea').style.display = 'none';
+      const container = document.getElementById('qrContainer');
+      container.style.display = 'block';
+      document.getElementById('qrImage').src = '';
+      document.getElementById('qrCode').textContent = '';
+      document.getElementById('qrStatus').textContent = 'Generating a sign-in code...';
+      ipcRenderer.send('login-microsoft-qr');
+    }
+
+    ipcRenderer.on('qr-login-update', (event, data) => {
+      if (!qrLoginActive && data.status !== 'success') return;
+      const status = document.getElementById('qrStatus');
+      if (data.status === 'pending') {
+        document.getElementById('qrImage').src = data.qr;
+        const link = document.getElementById('qrLink');
+        link.textContent = data.verificationUri;
+        link.onclick = (ev) => { ev.preventDefault(); shell.openExternal(data.link); };
+        document.getElementById('qrCode').textContent = data.userCode;
+        status.textContent = 'Waiting for you to finish signing in...';
+      } else if (data.status === 'success') {
+        qrLoginActive = false;
+        if (status) status.textContent = `Signed in as ${data.username}!`;
+        ipcRenderer.send('get-players');
+        setTimeout(() => closePlayerModal(), 900);
+      } else if (data.status === 'error') {
+        if (status) status.textContent = 'Error: ' + data.error;
+      } else if (data.status === 'cancelled') {
+        qrLoginActive = false;
+      }
+    });
+
+    // "Use a browser window instead" -> the original popup login flow.
+    document.getElementById('useBrowserLogin').onclick = (e) => {
+      e.preventDefault();
+      if (qrLoginActive) { qrLoginActive = false; ipcRenderer.send('cancel-qr-login'); }
+      ipcRenderer.send("login-microsoft");
+      closePlayerModal();
+    };
+
     // Cancel modal
-    cancelPlayerBtn.onclick = () => playerModal.style.display = "none";
+    cancelPlayerBtn.onclick = closePlayerModal;
 
     // Submit modal
     submitPlayerBtn.onclick = () => {
@@ -370,11 +452,11 @@
         const name = crackedNameInput.value.trim();
         if (!name) return alert("Enter a username");
         ipcRenderer.send("create-cracked-player", name);
+        closePlayerModal();
       } else {
-        ipcRenderer.send("login-microsoft");
+        // Premium: kick off the QR / device-code login right in the modal.
+        startQrLogin();
       }
-      playerModal.style.display = "none";
-      crackedNameInput.value = "";
     };
     function updatePresence(details, state = "Idle") {
       ipcRenderer.send('update-discord-presence', { details, state });

@@ -221,7 +221,7 @@
     <div id="instance-toolbar-container"></div>
     <div id="instance-tab-content" class="tab-content"></div>
     <pre id="logs"
-      style="height:200px; overflow:auto; border:1px solid var(--secondary-color); border-radius: var(--border-radius); padding:5px;"></pre>
+      style="overflow:auto; border:1px solid var(--secondary-color); border-radius: var(--border-radius); padding:5px; white-space:pre-wrap; word-break:break-word;"></pre>
   </div>
 
   <script>
@@ -562,6 +562,38 @@
 
         instanceDetail.appendChild(topRow);
 
+        // LAUNCH PROGRESS BAR (shows download/prepare progress while launching)
+        const progressBox = document.createElement("div");
+        progressBox.id = "launch-progress";
+        progressBox.style.display = "none";
+        progressBox.innerHTML = `
+          <div class="bar-label"></div>
+          <div class="bar-track"><div class="bar-fill"></div></div>`;
+        const progressLabel = progressBox.querySelector(".bar-label");
+        const progressFill = progressBox.querySelector(".bar-fill");
+        instanceDetail.appendChild(progressBox);
+
+        let progressHideTimer = null;
+        ipcRenderer.removeAllListeners('launch-progress');
+        ipcRenderer.on('launch-progress', (e, data) => {
+          if (!data || data.profileId !== profile.id) return;
+          if (data.done) {
+            progressLabel.textContent = data.label || "Ready";
+            progressFill.style.width = "100%";
+            clearTimeout(progressHideTimer);
+            progressHideTimer = setTimeout(() => { progressBox.style.display = "none"; }, 1500);
+            return;
+          }
+          clearTimeout(progressHideTimer);
+          progressBox.style.display = "block";
+          const pct = data.total ? Math.min(100, Math.round((data.current / data.total) * 100)) : null;
+          progressFill.style.width = pct === null ? "100%" : pct + "%";
+          let label = data.label || "Loading";
+          if (pct !== null && !data.bytes) label += ` (${data.current}/${data.total})`;
+          else if (pct !== null) label += ` ${pct}%`;
+          progressLabel.textContent = label;
+        });
+
         // CONTEXT MENU
         const menu = document.createElement("div");
         menu.className = "instance-context hidden";
@@ -735,16 +767,42 @@
           };
           return li;
         }
-        // Helper to render tab file lists (keeps scope access to tabContent)
-        function renderTabList(files) {
-          tabContent.innerHTML = "";
-          const ul = document.createElement("ul");
-          ul.className = "profile-list";
+        // map content tabs -> the modrinth project type used by the install browser
+        const installTypeForTab = { mods: "mod", resourcepacks: "resourcepack", shaderpacks: "shader" };
 
-          for (let p of files) {
-            ul.appendChild(createProfileCard(p, p.path));
+        // Helper to render tab file lists (keeps scope access to tabContent)
+        function renderTabList(files, tabName) {
+          tabContent.classList.remove("logs-active");
+          tabContent.innerHTML = "";
+
+          // "Install <Tab>" button -> opens the mod browser filtered to this
+          // instance and content type.
+          const installType = installTypeForTab[tabName];
+          if (installType) {
+            const installBtn = document.createElement("button");
+            installBtn.className = "tab-install-btn";
+            installBtn.textContent = `Install ${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`;
+            installBtn.onclick = () => {
+              const params = new URLSearchParams({
+                install: "1",
+                type: installType,
+                instanceId: profile.id,
+                loader: profile.loader || "vanilla",
+                version: profile.version || "",
+                name: profile.name || ""
+              });
+              window.location.href = `modrinth.html?${params.toString()}`;
+            };
+            tabContent.appendChild(installBtn);
           }
 
+          const ul = document.createElement("ul");
+          ul.className = "profile-list";
+          for (let p of files) {
+            const card = createProfileCard(p, p.path);
+            if (p.disabled) card.style.opacity = "0.5";
+            ul.appendChild(card);
+          }
           tabContent.appendChild(ul);
         }
 
@@ -752,8 +810,9 @@
         const tabCache = {}; // cache per profileId+tab combination
         // tabs loop
         for (let tab of tabs) {
-          // servers tab always visible
-          let alwaysVisible = tab.toLowerCase() === "logs" || tab.toLowerCase() === "servers";
+          // Logs/servers plus the installable tabs are always shown, so you can
+          // open the install browser even for an instance that has none yet.
+          let alwaysVisible = ["logs", "servers", "mods", "resourcepacks", "shaderpacks"].includes(tab.toLowerCase());
           let exists = await ipcRenderer.invoke("check-instance-tab", { profileId: profile.id, tab: tab.toLowerCase() });
           if (!exists && !alwaysVisible) continue;
 
@@ -766,15 +825,20 @@
             const cacheKey = `${profile.id}:${tabName}`;
             const ensureStillActive = () => thisSession === currentTabSession;
 
+            Object.values(tabButtons).forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+
+            tabContent.classList.remove("logs-active");
             tabContent.innerHTML = "Loading...";
             logsEl.style.display = "none";
 
-            // Check cache and show immediately if present
+            // Check cache and show immediately if present (then refresh below)
             if (tabCache[cacheKey]) {
-              renderTabList(tabCache[cacheKey].files);
+              renderTabList(tabCache[cacheKey].files, tabName);
             }
 
             if (tab.toLowerCase() === "logs") {
+              tabContent.classList.add("logs-active");
               logsEl.style.display = "block";
               tabContent.innerHTML = "";
               tabContent.appendChild(logsEl);
@@ -805,53 +869,103 @@
               });
 
             } else if (["resourcepacks", "mods", "shaderpacks", "worlds"].includes(tabName)) {
-              const files = await ipcRenderer.invoke("get-instance-tab-files", {
+              // Single fast, incremental call (only re-hashes changed files and
+              // batches the Modrinth lookups), then render in one shot.
+              const fileInfos = await ipcRenderer.invoke("get-instance-mods", {
                 profileId: profile.id,
                 tab: tabName
               });
               if (!ensureStillActive()) return;
 
-              // Start resolving details (with SHA1 + Modrinth lookup)
-              const fileInfos = [];
-              for (let f of files) {
-                if (!ensureStillActive()) return;
-                const info = await ipcRenderer.invoke("get-instance-tab-file-info", {
-                  profileId: profile.id,
-                  tab: tabName,
-                  filename: f
-                });
-                if (!ensureStillActive()) return;
-                fileInfos.push(info);
-              }
-
-              if (!ensureStillActive()) return;
-
-              // Cache and render fresh data
               tabCache[cacheKey] = { files: fileInfos, lastUpdated: Date.now() };
-              renderTabList(fileInfos);
+              renderTabList(fileInfos, tabName);
             } else if (tab.toLowerCase() === "servers") {
               logsEl.style.display = "none";
-              const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id });
-              if (!ensureStillActive()) return;
-              tabContent.innerHTML = "";
 
-              const ul = document.createElement("ul");
-              ul.className = "profile-list";
-              for (let s of servers) {
+              async function renderServers() {
+                const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id });
                 if (!ensureStillActive()) return;
-                let icon = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-                if (s.icon != null) icon = `data:image/png;base64,${s.icon}`;
-                const card = createProfileCard({ name: s.name, details: s.ip, icon }, s.folder);
-                ul.appendChild(card);
+                tabContent.innerHTML = "";
+
+                // Add-server form
+                const form = document.createElement("div");
+                form.className = "server-add-form";
+                const nameInput = document.createElement("input");
+                nameInput.type = "text"; nameInput.placeholder = "Server name";
+                const ipInput = document.createElement("input");
+                ipInput.type = "text"; ipInput.placeholder = "Server address";
+                const addBtn = document.createElement("button");
+                addBtn.textContent = "Add Server";
+                addBtn.onclick = async () => {
+                  const name = nameInput.value.trim();
+                  const ip = ipInput.value.trim();
+                  if (!name || !ip) return;
+                  addBtn.disabled = true;
+                  await ipcRenderer.invoke("add-instance-server", { profileId: profile.id, name, ip });
+                  await renderServers();
+                };
+                form.append(nameInput, ipInput, addBtn);
+                tabContent.appendChild(form);
+
+                const ul = document.createElement("ul");
+                ul.className = "profile-list";
+                servers.forEach((s) => {
+                  const li = document.createElement("li");
+                  li.className = "profile-item";
+
+                  const img = document.createElement("img");
+                  img.src = s.icon ? `data:image/png;base64,${s.icon}` : "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+                  li.appendChild(img);
+
+                  const info = document.createElement("div");
+                  info.className = "profile-info";
+                  const name = document.createElement("div");
+                  name.className = "profile-name"; name.textContent = s.name;
+                  const details = document.createElement("div");
+                  details.className = "profile-details"; details.textContent = s.ip;
+                  info.append(name, details);
+                  li.appendChild(info);
+
+                  const editBtn = document.createElement("button");
+                  editBtn.innerHTML = `<i class="material-icons">edit</i>`;
+                  editBtn.title = "Edit server";
+                  editBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    // Inline edit: swap the info block for inputs.
+                    const editWrap = document.createElement("div");
+                    editWrap.className = "server-row-edit";
+                    const en = document.createElement("input"); en.type = "text"; en.value = s.name;
+                    const ei = document.createElement("input"); ei.type = "text"; ei.value = s.ip;
+                    const save = document.createElement("button"); save.textContent = "Save";
+                    save.onclick = async (ev) => {
+                      ev.stopPropagation();
+                      await ipcRenderer.invoke("edit-instance-server", {
+                        profileId: profile.id, index: s.index,
+                        name: en.value.trim(), ip: ei.value.trim()
+                      });
+                      await renderServers();
+                    };
+                    editWrap.append(en, ei, save);
+                    li.replaceChild(editWrap, info);
+                  };
+
+                  const delBtn = document.createElement("button");
+                  delBtn.innerHTML = `<i class="material-icons">delete</i>`;
+                  delBtn.title = "Delete server";
+                  delBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    await ipcRenderer.invoke("delete-instance-server", { profileId: profile.id, index: s.index });
+                    await renderServers();
+                  };
+
+                  li.append(editBtn, delBtn);
+                  li.onclick = () => ipcRenderer.send("open-folder-path", { pather: s.folder });
+                  ul.appendChild(li);
+                });
+                tabContent.appendChild(ul);
               }
 
-              const addBtn = document.createElement("button");
-              addBtn.textContent = "Add Server";
-              addBtn.onclick = async () => {
-                // same add server modal logic…
-              };
-              tabContent.appendChild(addBtn);
-              tabContent.appendChild(ul);
+              await renderServers();
 
             } else if (tab.toLowerCase() === "screenshots") {
               logsEl.style.display = "none";

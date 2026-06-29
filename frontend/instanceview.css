@@ -81,3 +81,124 @@
 .submenu.hidden {
   display: none;
 }
+
+/* ── Instance detail fills the content area so the console can be large ── */
+#instance-detail {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 38px - 16px);
+  box-sizing: border-box;
+  padding-right: 20px;
+}
+
+.instance-top-row,
+.instance-tabs-row,
+#launch-progress {
+  flex: 0 0 auto;
+}
+
+.instance-tabs-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#instance-tab-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;          /* override .instanceView-scrolly's fixed height */
+  overflow: auto;
+  margin-top: 10px;
+}
+
+/* When the Logs tab is active, let the <pre> grow to fill all the space. */
+#instance-tab-content.logs-active {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#instance-tab-content.logs-active #logs {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.instance-tab-btn {
+  cursor: pointer;
+  border: none;
+  background: var(--toolbar-bg);
+  color: inherit;
+  padding: 6px 12px;
+  border-radius: var(--border-radius);
+  transition: background 0.2s;
+}
+
+.instance-tab-btn:hover {
+  background: var(--third-color);
+}
+
+.instance-tab-btn.active {
+  background: var(--base-color);
+}
+
+.tab-install-btn {
+  background: var(--base-color);
+  color: var(--text-color);
+  border: none;
+  padding: 8px 14px;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  margin-bottom: 10px;
+  font-family: var(--text-font);
+}
+
+.tab-install-btn:hover {
+  background: var(--third-color);
+}
+
+/* ── Launch progress bar ── */
+#launch-progress {
+  margin: 8px 0;
+}
+
+#launch-progress .bar-label {
+  font-size: 12px;
+  margin-bottom: 4px;
+  opacity: 0.85;
+}
+
+#launch-progress .bar-track {
+  background: var(--very-dark);
+  border-radius: var(--border-radius);
+  height: 14px;
+  overflow: hidden;
+}
+
+#launch-progress .bar-fill {
+  background: var(--base-color);
+  height: 100%;
+  width: 0%;
+  transition: width 0.15s linear;
+}
+
+/* ── Server list editor ── */
+.server-add-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.server-add-form input {
+  padding: 6px;
+}
+
+.server-row-edit {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
