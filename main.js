@@ -159,6 +159,7 @@ function findSystemJava(requiredVersion) {
 const runningInstances = new Map(); // key: unique key (id + pid) -> { id, pid, startTime }
 const launchingProfiles = new Map(); // track profiles currently in the launch process - key: profileId, value: timestamp
 const instanceLogs = new Map(); // profileId -> string[]
+const instanceMeta = new Map(); // profileId -> { name, version } (for Discord presence)
 
 // Renderer log delivery is throttled/batched: minecraft-launcher-core emits a
 // huge amount of debug/data lines while downloading, and sending one IPC
@@ -249,10 +250,21 @@ function attachLauncherEvents(launcher, profileId) {
   }));
 }
 
+// Running games are detached and survive launcher restarts, so we persist the
+// tracker to disk and re-detect live PIDs on startup.
+function persistRunningInstances() {
+  try { storage.set('runningInstances', Array.from(runningInstances.values())); } catch { /* ignore */ }
+}
+
+function isPidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
 function startInstance(id, pid) {
   const now = Date.now();
   const key = `${id}-${pid}`; // unique per process
   runningInstances.set(key, { id, pid, startTime: now });
+  persistRunningInstances();
   devtoolsLog(`[Tracker] Started instance ${id} (PID ${pid})`);
 }
 
@@ -276,6 +288,63 @@ function stopInstance(id, pid = null) {
     }
     instanceLogs.delete(id);
   }
+  persistRunningInstances();
+}
+
+// Called whenever an instance exits: refresh presence and, if the launcher
+// window is already closed and nothing is left running, quit.
+function onInstanceExited(profileId) {
+  updateGamePresence();
+  quitIfHeadlessAndIdle();
+}
+
+function quitIfHeadlessAndIdle() {
+  if (getRunningInstances().length === 0 && BrowserWindow.getAllWindows().length === 0) {
+    app.quit();
+  }
+}
+
+// On startup, restore tracked games that are still alive, drop the dead ones,
+// and poll periodically so games that exit while the launcher is open (or were
+// closed externally) get cleaned up and the UI refreshed.
+function restoreRunningInstances() {
+  let saved = [];
+  try { saved = storage.get('runningInstances', []) || []; } catch { saved = []; }
+  for (const inst of saved) {
+    if (inst && inst.pid && isPidAlive(inst.pid)) {
+      runningInstances.set(`${inst.id}-${inst.pid}`, inst);
+    }
+  }
+  persistRunningInstances();
+
+  // Repopulate presence metadata (name/version) for restored games.
+  loadProfiles().then(profiles => {
+    for (const inst of getRunningInstances()) {
+      const profile = profiles.find(p => String(p.id) === String(inst.id));
+      if (profile) instanceMeta.set(inst.id, { name: profile.name, version: profile.version });
+    }
+    updateGamePresence();
+  }).catch(() => {});
+
+  setInterval(() => {
+    let changed = false;
+    for (const [key, data] of runningInstances.entries()) {
+      if (!isPidAlive(data.pid)) {
+        runningInstances.delete(key);
+        if (!isInstanceRunning(data.id)) instanceLogs.delete(data.id);
+        changed = true;
+        devtoolsLog(`[Tracker] Instance ${data.id} (PID ${data.pid}) is no longer running`);
+      }
+    }
+    if (changed) {
+      persistRunningInstances();
+      updateGamePresence();
+      if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('running-instances-changed', getRunningInstances());
+      }
+      quitIfHeadlessAndIdle();
+    }
+  }, 4000);
 }
 
 function isInstanceRunning(id) {
@@ -290,7 +359,23 @@ function getRunningInstances() {
 }
 
 ipcMain.handle('get-instance-logs', (event, profileId) => {
-  return instanceLogs.get(profileId) || [];
+  const live = instanceLogs.get(profileId);
+  if (live && live.length) return live;
+
+  // No in-memory logs (game already exited, or the launcher was restarted):
+  // fall back to the game's own latest.log so the console isn't blank.
+  try {
+    const logPath = path.join(dataDir, 'client', String(profileId), 'logs', 'latest.log');
+    if (fs.existsSync(logPath)) {
+      const lines = fs.readFileSync(logPath, 'utf-8').split(/\r?\n/);
+      // keep the tail so huge logs don't bog the renderer down
+      const tail = lines.slice(-1500);
+      return ["[Loaded from latest.log]", ...tail];
+    }
+  } catch (err) {
+    devtoolsLog("Failed to read latest.log:", err);
+  }
+  return [];
 });
 
 function stopByPid(pid) {
@@ -299,6 +384,7 @@ function stopByPid(pid) {
       try {
         process.kill(pid);
         runningInstances.delete(key);
+        persistRunningInstances();
         devtoolsLog(`[Tracker] Killed instance ${data.id} (PID ${pid})`);
         return true;
       } catch (err) {
@@ -576,9 +662,13 @@ if (!gotTheLock) {
   process.exit(0);
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
+    // If the window was closed while games kept running, relaunching brings it
+    // back instead of starting a second copy.
+    if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
+    } else if (!adminMode) {
+      createWindow();
     }
   });
 
@@ -595,6 +685,9 @@ if (!gotTheLock) {
 
     if (!mainWindow) createWindow();
 
+    // Re-detect games still running from a previous launcher session.
+    restoreRunningInstances();
+
     // Quietly stage the next update in the background (no install this run).
     stageUpdateInBackground();
   });
@@ -610,6 +703,13 @@ if (!gotTheLock) {
   });
 
   app.on('window-all-closed', () => {
+    // Keep the (lightweight) main process alive while games are running so the
+    // Discord presence stays active and we keep tracking them. Once nothing is
+    // running, quit so the launcher isn't sitting in the background for nothing.
+    if (getRunningInstances().length > 0) {
+      devtoolsLog('[App] Window closed but games are running; staying alive for presence/tracking.');
+      return;
+    }
     if (process.platform !== 'darwin') {
       app.quit();
     }
@@ -852,7 +952,7 @@ ipcMain.on("login-microsoft", async (event) => {
     event.reply("players-updated", players);
     setSelectedPlayer(id)
   } catch (err) {
-    devtoolsLog("MS login failed: " + err);
+    devtoolsLog("MS login failed:", err);
     event.reply("login-error", "MS login failed: " + (err?.message || JSON.stringify(err) || String(err)));
   }
 });
@@ -872,12 +972,16 @@ const MSA_CLIENT_ID = "00000000402b5328";
 const LIVE_DEVICECODE_URL = "https://login.live.com/oauth20_connect.srf";
 const LIVE_TOKEN_URL = "https://login.live.com/oauth20_token.srf";
 const LIVE_SCOPE = "service::user.auth.xboxlive.com::MBI_SSL";
+// api.minecraftservices.com is behind Cloudflare and rejects requests with no
+// (or Node's default) User-Agent, returning a bare {"path":...} body. A normal
+// launcher-style UA is required for the Minecraft auth/profile calls to work.
+const LAUNCHER_UA = "RedstoneLauncher/1.14.0 (+https://redstone-launcher.com)";
 let qrLoginAbort = null;
 
 async function msDeviceCodeStart() {
   const res = await fetch(LIVE_DEVICECODE_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": LAUNCHER_UA },
     body: new URLSearchParams({
       client_id: MSA_CLIENT_ID,
       scope: LIVE_SCOPE,
@@ -900,7 +1004,7 @@ async function msDeviceCodePoll(deviceCode, interval, expiresIn, isAborted) {
 
     const res = await fetch(LIVE_TOKEN_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": LAUNCHER_UA },
       body: new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
         client_id: MSA_CLIENT_ID,
@@ -926,14 +1030,14 @@ async function msDeviceCodePoll(deviceCode, interval, expiresIn, isAborted) {
 async function xboxAuthenticate(msToken, azure) {
   const res = await fetch("https://user.auth.xboxlive.com/user/authenticate", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept": "application/json", "User-Agent": LAUNCHER_UA },
     body: JSON.stringify({
       Properties: { AuthMethod: "RPS", SiteName: "user.auth.xboxlive.com", RpsTicket: (azure ? "d=" : "t=") + msToken },
       RelyingParty: "http://auth.xboxlive.com",
       TokenType: "JWT"
     })
   });
-  if (!res.ok) throw new Error("Xbox Live auth failed (HTTP " + res.status + ")");
+  if (!res.ok) throw new Error("Xbox Live auth failed (HTTP " + res.status + "): " + await res.text().catch(() => ""));
   const json = await res.json();
   return { token: json.Token, uhs: json.DisplayClaims.xui[0].uhs };
 }
@@ -941,14 +1045,14 @@ async function xboxAuthenticate(msToken, azure) {
 async function xstsAuthorize(xblToken) {
   const res = await fetch("https://xsts.auth.xboxlive.com/xsts/authorize", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept": "application/json", "User-Agent": LAUNCHER_UA },
     body: JSON.stringify({
       Properties: { SandboxId: "RETAIL", UserTokens: [xblToken] },
       RelyingParty: "rp://api.minecraftservices.com/",
       TokenType: "JWT"
     })
   });
-  if (!res.ok) throw new Error("XSTS authorization failed (HTTP " + res.status + ")");
+  if (!res.ok) throw new Error("XSTS authorization failed (HTTP " + res.status + "): " + await res.text().catch(() => ""));
   const json = await res.json();
   return { token: json.Token, uhs: json.DisplayClaims.xui[0].uhs };
 }
@@ -956,20 +1060,20 @@ async function xstsAuthorize(xblToken) {
 async function minecraftLoginWithXbox(uhs, xstsToken) {
   const res = await fetch("https://api.minecraftservices.com/authentication/login_with_xbox", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept": "application/json", "User-Agent": LAUNCHER_UA },
     body: JSON.stringify({ identityToken: `XBL3.0 x=${uhs};${xstsToken}` })
   });
   const json = await res.json().catch(() => ({}));
-  if (!json.access_token) throw new Error("Minecraft auth failed: " + JSON.stringify(json));
+  if (!json.access_token) throw new Error(`Minecraft auth failed (HTTP ${res.status}): ${JSON.stringify(json)}`);
   return json.access_token;
 }
 
 async function fetchMinecraftProfile(mcToken) {
   const res = await fetch("https://api.minecraftservices.com/minecraft/profile", {
-    headers: { "Authorization": "Bearer " + mcToken }
+    headers: { "Authorization": "Bearer " + mcToken, "Accept": "application/json", "User-Agent": LAUNCHER_UA }
   });
   const json = await res.json().catch(() => ({}));
-  if (!json.id) throw new Error("Could not load Minecraft profile (account may not own Minecraft)");
+  if (!json.id) throw new Error(`Could not load Minecraft profile (HTTP ${res.status}, account may not own Minecraft): ${JSON.stringify(json)}`);
   return { id: json.id, name: json.name };
 }
 
@@ -994,7 +1098,7 @@ async function completeLiveLogin(msAccessToken, existingClientToken) {
 async function refreshLiveToken(refreshToken) {
   const res = await fetch(LIVE_TOKEN_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": LAUNCHER_UA },
     body: new URLSearchParams({
       client_id: MSA_CLIENT_ID,
       grant_type: "refresh_token",
@@ -1321,12 +1425,15 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
 
     const pid = childProcess.pid;
     devtoolsLog("PID: " + pid);
+    instanceMeta.set(profileId, { name: profile.name, version: profile.version });
     startInstance(profileId, pid);
+    updateGamePresence();
     broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
 
     // Handle process exit
     childProcess.on('exit', (code) => {
       stopInstance(profileId, pid);
+      onInstanceExited(profileId);
       broadcastProgress(profileId, { done: true });
       broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
     });
@@ -1814,12 +1921,15 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
 
     const pid = childProcess.pid;
     devtoolsLog("PID: " + pid);
+    instanceMeta.set(profileId, { name: profile.name, version: profile.version });
     startInstance(profileId, pid);
+    updateGamePresence();
     broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
 
     // Handle process exit
     childProcess.on('exit', (code) => {
       stopInstance(profileId, pid);
+      onInstanceExited(profileId);
       broadcastProgress(profileId, { done: true });
       broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
     });
@@ -2537,6 +2647,8 @@ const discordLauncherStart = Date.now();
 // Remember the last requested presence so it can be (re)applied the moment we
 // (re)connect, instead of resetting to the default.
 let lastActivity = { details: "In launcher", state: "Idle" };
+// What the UI (renderer pages) last asked for — used only when no game is running.
+let lastUiActivity = { details: "In launcher", state: "Idle" };
 
 function startDiscordPresence() {
   shouldconnect = settings.get('discordPresence', true);
@@ -2600,6 +2712,23 @@ function setActivity(details = "In launcher", state = "Idle") {
   });
 }
 
+// Reflect running games in the presence: "Playing Minecraft" + version while a
+// game is open, otherwise whatever the UI last requested.
+function updateGamePresence() {
+  const running = getRunningInstances();
+  if (running.length === 0) {
+    setActivity(lastUiActivity.details, lastUiActivity.state);
+    return;
+  }
+  const latest = running.slice().sort((a, b) => (b.startTime || 0) - (a.startTime || 0))[0];
+  const meta = instanceMeta.get(latest.id) || {};
+  const details = running.length > 1 ? `Playing Minecraft · ${running.length} instances` : "Playing Minecraft";
+  const state = meta.version
+    ? `Version ${meta.version}${meta.name ? " — " + meta.name : ""}`
+    : (meta.name || "In game");
+  setActivity(details, state);
+}
+
 // Idempotent: brings the RPC connection in line with the current setting.
 function updateDiscordPresenceToggle() {
   shouldconnect = settings.get('discordPresence', true);
@@ -2614,7 +2743,11 @@ function updateDiscordPresenceToggle() {
 global.setDiscordPresence = setActivity;
 
 ipcMain.on('update-discord-presence', (event, { details, state }) => {
-  setActivity(details, state);
+  // Remember what the UI wants, but a running game takes priority.
+  lastUiActivity = { details, state };
+  if (getRunningInstances().length === 0) {
+    setActivity(details, state);
+  }
 });
 
 async function getFabricLatestVersion() {

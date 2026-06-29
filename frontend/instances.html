@@ -107,8 +107,8 @@
       <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
     </ul>
   </div>
-  <br>
-  <h1>Instances</h1>
+  <br id="instancesTopBr">
+  <h1 id="instancesHeading">Instances</h1>
   <div id="search-sort"
     style="scale: 1.3; transform-origin: left; padding: 0 20px; display: flex; flex-direction: column; gap: 10px; margin-top: 100px;">
     <div style="margin-bottom: 10px;">
@@ -459,6 +459,12 @@
 
       if (instanceId) {
         searchsort.style.display = "none";
+        // Hide the page heading in detail view so the instance panel (which is
+        // sized to the viewport) isn't pushed down and clipped/unscrollable.
+        const heading = document.getElementById("instancesHeading");
+        const topBr = document.getElementById("instancesTopBr");
+        if (heading) heading.style.display = "none";
+        if (topBr) topBr.style.display = "none";
         const profile = list.find(p => String(p.id) === String(instanceId));
         if (!profile) return;
 
@@ -1028,6 +1034,10 @@
 
       // LIST VIEW
       searchsort.style.display = "block";
+      const heading = document.getElementById("instancesHeading");
+      const topBr = document.getElementById("instancesTopBr");
+      if (heading) heading.style.display = "";
+      if (topBr) topBr.style.display = "";
       instanceDetail.style.display = "none";
 
       profilesList.innerHTML = "";

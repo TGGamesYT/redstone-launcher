@@ -102,23 +102,23 @@ document.getElementById("close-btn").addEventListener("click", () => {
 function setSelectedPlayer(id) {ipcRenderer.send('set-selected-player', id)}
 async function getSelectedPlayer() {return await ipcRenderer.invoke('get-selected-player')}
 
-let cachedSelectedPlayerId = null;
-
 async function updateLoginIcon() {
   const newSelectedPlayerId = await getSelectedPlayer();
-  
-  if (newSelectedPlayerId === cachedSelectedPlayerId && cachedSelectedPlayerId !== null) {
-    return;
-  }
-  
-  cachedSelectedPlayerId = newSelectedPlayerId;
   selectedPlayerId = newSelectedPlayerId;
+
   const li = document.getElementById('players-login');
   if (!li) return;
-  
-  li.innerHTML = '';
 
-  const player = players.find(p => p.id === selectedPlayerId);
+  // Always re-render: this runs both before and after the players list loads,
+  // and the player head must replace the login icon once players arrive.
+  // (id can be a number or string depending on how it was created/edited.)
+  const player = players.find(p => String(p.id) === String(selectedPlayerId));
+
+  // Avoid pointless DOM churn if nothing changed.
+  if (li.dataset.renderedFor === String(player ? player.id : 'none')) return;
+  li.dataset.renderedFor = String(player ? player.id : 'none');
+
+  li.innerHTML = '';
 
   if (player) {
     const username = player.type === 'microsoft' ? (player.auth?.name ?? 'MS Account') : (player.username ?? 'Cracked');
