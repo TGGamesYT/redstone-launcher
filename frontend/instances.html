@@ -221,7 +221,7 @@
     <div id="instance-toolbar-container"></div>
     <div id="instance-tab-content" class="tab-content"></div>
     <pre id="logs"
-      style="overflow:auto; border:1px solid var(--secondary-color); border-radius: var(--border-radius); padding:5px; white-space:pre-wrap; word-break:break-word;"></pre>
+      style="overflow:auto; border:1px solid var(--secondary-color); border-radius: var(--border-radius); padding:5px; white-space:pre-wrap; word-break:break-word; user-select:text; -webkit-user-select:text; cursor:text;"></pre>
   </div>
 
   <script>
@@ -843,29 +843,49 @@
               tabContent.innerHTML = "";
               tabContent.appendChild(logsEl);
 
+              // Compare ids as strings: a profile's id can be a number in
+              // profiles.json but a string elsewhere (e.g. after an edit), and
+              // we must show ONLY this instance's logs — never another's.
+              const selectedLogId = String(profile.id);
+
+              // Only auto-scroll when the user is already at the bottom, so a
+              // manual text selection / scroll-up isn't yanked away by new logs.
+              const isAtBottom = () =>
+                logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight < 40;
+              const appendLine = (line) => {
+                const stick = isAtBottom();
+                logsEl.textContent += line + "\n";
+                if (stick) logsEl.scrollTop = logsEl.scrollHeight;
+              };
+
               logsEl.textContent = "Loading history...\n";
 
-              // Load history
+              // Load this instance's history only.
               ipcRenderer.invoke('get-instance-logs', profile.id).then(history => {
                 if (!ensureStillActive()) return;
-                logsEl.textContent = history.join("\n") + "\n";
+                const lines = Array.isArray(history) ? history : [];
+                logsEl.textContent = lines.length ? lines.join("\n") + "\n" : "";
                 logsEl.scrollTop = logsEl.scrollHeight;
               });
 
               ipcRenderer.removeAllListeners('launcher-log');
               ipcRenderer.on('launcher-log', (event, data) => {
                 if (!ensureStillActive()) return;
-                // Only show logs for the currently viewed profile
-                if (data.profileId === profile.id) {
-                  logsEl.textContent += data.msg + "\n";
-                  logsEl.scrollTop = logsEl.scrollHeight;
+                // Strictly this instance's logs.
+                if (data && String(data.profileId) === selectedLogId) {
+                  appendLine(data.msg);
                 }
               });
               ipcRenderer.removeAllListeners('launch-error');
-              ipcRenderer.on('launch-error', (event, msg) => {
+              ipcRenderer.on('launch-error', (event, data) => {
                 if (!ensureStillActive()) return;
-                logsEl.textContent += "[ERROR] " + msg + "\n";
-                logsEl.scrollTop = logsEl.scrollHeight;
+                // launch-error may be a bare string (legacy) or { profileId, msg }.
+                if (data && typeof data === 'object') {
+                  if (String(data.profileId) !== selectedLogId) return;
+                  appendLine("[ERROR] " + data.msg);
+                } else {
+                  appendLine("[ERROR] " + data);
+                }
               });
 
             } else if (["resourcepacks", "mods", "shaderpacks", "worlds"].includes(tabName)) {
