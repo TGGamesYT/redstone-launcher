@@ -1414,7 +1414,7 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
         // Detached so the game keeps running if the launcher is closed.
         detached: true
       },
-      quickplay
+      quickPlay: quickplay
     }
     const childProcess = await launcher.launch(opts);
 
@@ -1805,7 +1805,7 @@ async function getJavaForMinecraft(mcVersion) {
 }
 
 // Launch profile
-ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip }) => {
+ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip, quickPlay }) => {
   const now = Date.now();
   const lastLaunch = launchingProfiles.get(profileId);
   
@@ -1864,12 +1864,14 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
         broadcastLog(profileId, "[ERROR] Failed to refresh Microsoft token: " + err.message);
       }
     }
+    // Quick Play: join a server / open a world straight away. Accepts an
+    // explicit { type, identifier } (multiplayer/singleplayer/legacy) or the
+    // legacy quickplaybool/quickplayip pair.
     let quickplay = null;
-    if (quickplaybool) {
-      quickplay = {
-        "type": 'legacy',
-        "identifier": quickplayip
-      }
+    if (quickPlay && quickPlay.type && quickPlay.identifier) {
+      quickplay = quickPlay;
+    } else if (quickplaybool) {
+      quickplay = { type: 'legacy', identifier: quickplayip };
     }
 
     const rootDir = path.join(dataDir, 'client', String(profile.id));
@@ -1907,7 +1909,7 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
         // Detached so the game keeps running if the launcher is closed.
         detached: true
       },
-      quickplay: quickplay
+      quickPlay: quickplay
     }
     const childProcess = await launcher.launch(opts);
 
@@ -3050,9 +3052,70 @@ ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, fil
 const MOD_INDEX_FILE = ".modindex.json";
 const SKIP_TAB_FILES = new Set(["mods.json", MOD_INDEX_FILE]);
 
+// Pull a display name / version / authors out of a mod jar's own metadata, so
+// even mods not found on any provider show something meaningful.
+function jarAuthorsToString(a) {
+  if (!a) return null;
+  if (Array.isArray(a)) return a.map(x => typeof x === "string" ? x : (x && x.name) || "").filter(Boolean).join(", ") || null;
+  if (typeof a === "string") return a;
+  if (typeof a === "object" && a.name) return a.name;
+  return null;
+}
+
+function readJarMeta(filePath) {
+  try {
+    const zip = new AdmZip(filePath);
+    const fabric = zip.getEntry("fabric.mod.json") || zip.getEntry("quilt.mod.json");
+    if (fabric) {
+      const j = JSON.parse(zip.readAsText(fabric).replace(/[ -]+/g, " "));
+      if (j.quilt_loader) {
+        const q = j.quilt_loader;
+        return { name: q.metadata?.name || q.id || null, version: q.version || null, authors: jarAuthorsToString(q.metadata?.contributors) };
+      }
+      return { name: j.name || j.id || null, version: j.version || null, authors: jarAuthorsToString(j.authors) };
+    }
+    const toml = zip.getEntry("META-INF/mods.toml") || zip.getEntry("META-INF/neoforge.mods.toml");
+    if (toml) {
+      const t = zip.readAsText(toml);
+      const name = (t.match(/displayName\s*=\s*["'](.*?)["']/) || [])[1] || null;
+      let version = (t.match(/\bversion\s*=\s*["'](.*?)["']/) || [])[1] || null;
+      const authors = (t.match(/authors\s*=\s*["'](.*?)["']/) || [])[1] || null;
+      if (version && version.includes("${")) {
+        const mf = zip.getEntry("META-INF/MANIFEST.MF");
+        if (mf) {
+          const mv = (zip.readAsText(mf).match(/Implementation-Version:\s*(.*)/) || [])[1];
+          if (mv) version = mv.trim();
+        }
+      }
+      return { name, version, authors };
+    }
+    const yml = zip.getEntry("plugin.yml") || zip.getEntry("paper-plugin.yml");
+    if (yml) {
+      const y = zip.readAsText(yml);
+      return {
+        name: (y.match(/^name:\s*(.*)$/m) || [])[1]?.trim() || null,
+        version: (y.match(/^version:\s*["']?(.*?)["']?\s*$/m) || [])[1]?.trim() || null,
+        authors: (y.match(/^author:\s*(.*)$/m) || [])[1]?.trim() || null
+      };
+    }
+  } catch { /* not a readable jar */ }
+  return {};
+}
+
 ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
   const basePath = path.join(dataDir, "client", profileId.toString(), tab);
   if (!fs.existsSync(basePath)) return [];
+
+  // Instance loader/version drive update checks.
+  let loader = null, gameVersion = null;
+  try {
+    const profiles = await loadProfiles();
+    const profile = profiles.find(p => String(p.id) === String(profileId));
+    if (profile) { loader = profile.loader; gameVersion = profile.version; }
+  } catch { /* ignore */ }
+  const requireLoader = tab === "mods";
+
+  const enabledPacks = tab === "resourcepacks" ? readEnabledResourcePacks(profileId) : null;
 
   const indexFile = path.join(basePath, MOD_INDEX_FILE);
   let index = { entries: {} };
@@ -3083,7 +3146,8 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
           if (typeof m?.pack?.description === "string") details = m.pack.description;
         } catch { /* ignore */ }
       }
-      results.push({ name: filename, icon: null, path: fullPath, details, disabled: false });
+      const enabled = enabledPacks ? enabledPacks.includes("file/" + filename) : true;
+      results.push({ name: filename, filename, icon: null, path: fullPath, details, version: null, author: null, disabled: !enabled, enabled, isFolder: true });
       continue;
     }
 
@@ -3093,20 +3157,22 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     const disabled = filename.toLowerCase().endsWith(".disabled");
     let entry = index.entries[filename];
     if (!entry || entry.mtimeMs !== stat.mtimeMs || entry.size !== stat.size) {
-      // New/changed file: re-hash and invalidate any cached project match.
-      entry = { mtimeMs: stat.mtimeMs, size: stat.size, sha1: computeSHA1(fullPath), modrinth: null };
+      // New/changed file: re-hash, re-read jar metadata, invalidate matches.
+      entry = {
+        mtimeMs: stat.mtimeMs, size: stat.size,
+        sha1: computeSHA1(fullPath),
+        jar: filename.match(/\.jar(\.disabled)?$/i) ? readJarMeta(fullPath) : {},
+        modrinth: null
+      };
       index.entries[filename] = entry;
     }
     if (!entry.modrinth) needLookup.push({ filename, sha1: entry.sha1 });
 
-    results.push({
-      _filename: filename,
-      name: entry.modrinth?.title || filename,
-      icon: entry.modrinth?.icon || null,
-      path: fullPath,
-      details: filename,
-      disabled
-    });
+    const enabled = (tab === "resourcepacks")
+      ? (enabledPacks ? enabledPacks.includes("file/" + filename) : true)
+      : !disabled;
+
+    results.push({ _filename: filename, path: fullPath, enabled, disabled: !enabled, isFolder: false });
   }
 
   // Drop index entries for files that have been removed.
@@ -3119,7 +3185,7 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
       const hashes = [...new Set(needLookup.map(x => x.sha1))];
       const res = await fetch("https://api.modrinth.com/v2/version_files", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "User-Agent": LAUNCHER_UA },
         body: JSON.stringify({ hashes, algorithm: "sha1" })
       });
       if (res.ok) {
@@ -3127,7 +3193,7 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
         const projectIds = [...new Set(Object.values(versionMap).map(v => v.project_id).filter(Boolean))];
         const projects = {};
         if (projectIds.length) {
-          const pr = await fetch(`https://api.modrinth.com/v2/projects?ids=${encodeURIComponent(JSON.stringify(projectIds))}`);
+          const pr = await fetch(`https://api.modrinth.com/v2/projects?ids=${encodeURIComponent(JSON.stringify(projectIds))}`, { headers: { "User-Agent": LAUNCHER_UA } });
           if (pr.ok) for (const p of await pr.json()) projects[p.id] = p;
         }
         for (const { filename, sha1 } of needLookup) {
@@ -3137,7 +3203,10 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
             index.entries[filename].modrinth = {
               projectId: v.project_id,
               title: p?.title || null,
-              icon: p?.icon_url || null
+              icon: p?.icon_url || null,
+              author: p?.author || null,
+              versionNumber: v.version_number || null,
+              datePublished: v.date_published || null
             };
           }
         }
@@ -3147,14 +3216,50 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     }
   }
 
-  // Fold any freshly-resolved metadata back into the results.
+  // Check for updates on Modrinth-matched files (best-effort, cached ~1h).
+  if (loader && gameVersion) {
+    const now = Date.now();
+    await Promise.all(results.filter(r => r._filename).map(async (r) => {
+      const e = index.entries[r._filename];
+      if (!e?.modrinth?.projectId) return;
+      if (e.update && (now - e.update.checkedAt) < 3600000) return; // cached
+      try {
+        const params = new URLSearchParams();
+        params.set("game_versions", JSON.stringify([gameVersion]));
+        if (requireLoader && loader) params.set("loaders", JSON.stringify([loader === "vanilla" ? "minecraft" : loader]));
+        const vr = await fetch(`https://api.modrinth.com/v2/project/${e.modrinth.projectId}/version?${params.toString()}`, { headers: { "User-Agent": LAUNCHER_UA } });
+        if (!vr.ok) return;
+        const versions = await vr.json();
+        const newest = (Array.isArray(versions) ? versions : []).sort((a, b) => new Date(b.date_published) - new Date(a.date_published))[0];
+        if (newest && e.modrinth.datePublished && new Date(newest.date_published) > new Date(e.modrinth.datePublished)) {
+          const file = (newest.files || []).find(f => f.primary) || (newest.files || [])[0];
+          e.update = { checkedAt: now, available: true, url: file?.url || null, latestNumber: newest.version_number || null };
+        } else {
+          e.update = { checkedAt: now, available: false };
+        }
+      } catch { /* ignore */ }
+    }));
+  }
+
+  // Fold resolved metadata into the results.
   for (const r of results) {
     if (!r._filename) continue;
     const e = index.entries[r._filename];
-    if (e?.modrinth) {
-      if (e.modrinth.title) r.name = e.modrinth.title;
-      if (e.modrinth.icon) r.icon = e.modrinth.icon;
-    }
+    const m = e?.modrinth;
+    const jar = e?.jar || {};
+    const cleanName = r._filename.replace(/\.disabled$/i, "");
+
+    r.filename = r._filename;
+    r.name = (m && m.title) || jar.name || cleanName;
+    r.icon = (m && m.icon) || null;
+    r.version = (m && m.versionNumber) || jar.version || null;
+    r.author = (m && m.author) || jar.authors || null;
+    r.projectId = (m && m.projectId) || null;
+    r.updateAvailable = !!(e?.update?.available);
+    r.updateUrl = e?.update?.url || null;
+    r.latestVersion = e?.update?.latestNumber || null;
+    // Second line: "version • author" (falls back to filename).
+    r.details = [r.version, r.author].filter(Boolean).join("  •  ") || cleanName;
     delete r._filename;
   }
 
@@ -3239,23 +3344,35 @@ ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
 });
 
 // add server
+// servers.dat stores the icon as bare base64 (no data: URL prefix).
+function normalizeServerIcon(icon) {
+  if (!icon) return null;
+  return String(icon).replace(/^data:image\/\w+;base64,/, "");
+}
+
 ipcMain.handle("add-instance-server", async (event, { profileId, name, ip, icon }) => {
   const serversList = await readServersList(profileId);
   const newServer = { name: name ?? "", ip: ip ?? "", acceptTextures: 1 };
-  if (icon != null && icon !== "") newServer.icon = icon;
+  const ic = normalizeServerIcon(icon);
+  if (ic) newServer.icon = ic;
   serversList.push(newServer);
   await writeServersList(profileId, serversList);
-  return { success: true, name, ip, icon };
+  return { success: true, name, ip };
 });
 
-// edit server (by index)
-ipcMain.handle("edit-instance-server", async (event, { profileId, index, name, ip }) => {
+// edit server (by index). Pass icon:"" to clear it, null/undefined to keep it.
+ipcMain.handle("edit-instance-server", async (event, { profileId, index, name, ip, icon }) => {
   const serversList = await readServersList(profileId);
   if (index < 0 || index >= serversList.length) {
     return { success: false, error: "Server not found" };
   }
   if (name != null) serversList[index].name = name;
   if (ip != null) serversList[index].ip = ip;
+  if (icon !== undefined) {
+    const ic = normalizeServerIcon(icon);
+    if (ic) serversList[index].icon = ic;
+    else delete serversList[index].icon;
+  }
   await writeServersList(profileId, serversList);
   return { success: true };
 });
@@ -3269,6 +3386,228 @@ ipcMain.handle("delete-instance-server", async (event, { profileId, index }) => 
   serversList.splice(index, 1);
   await writeServersList(profileId, serversList);
   return { success: true };
+});
+
+// reorder a server from one position to another (drag to reorder)
+ipcMain.handle("reorder-instance-server", async (event, { profileId, from, to }) => {
+  const serversList = await readServersList(profileId);
+  if (from < 0 || from >= serversList.length || to < 0 || to >= serversList.length) {
+    return { success: false, error: "Out of range" };
+  }
+  const [item] = serversList.splice(from, 1);
+  serversList.splice(to, 0, item);
+  await writeServersList(profileId, serversList);
+  return { success: true };
+});
+
+// Live server status (MOTD, players, favicon) via mcsrvstat.
+ipcMain.handle("get-server-status", async (event, { ip }) => {
+  if (!ip) return { online: false };
+  try {
+    const res = await fetch(`https://api.mcsrvstat.us/3/${encodeURIComponent(ip)}`, {
+      headers: { "User-Agent": LAUNCHER_UA }
+    });
+    const d = await res.json();
+    return {
+      online: !!d.online,
+      motd: d.motd?.clean ? d.motd.clean.join("\n").trim() : null,
+      players: d.players ? { online: d.players.online, max: d.players.max } : null,
+      version: d.version || null,
+      icon: d.icon || null // already a data: URL
+    };
+  } catch (err) {
+    devtoolsLog("Server status lookup failed:", err);
+    return { online: false };
+  }
+});
+
+/* ─────────────── Worlds (singleplayer saves) ─────────────── */
+function nbtLongToNumber(v) {
+  if (Array.isArray(v)) return v[0] * 4294967296 + (v[1] >>> 0);
+  return Number(v) || 0;
+}
+
+// Find the directory that actually contains level.dat (handles worlds that were
+// zipped/foldered with an extra wrapper directory).
+function findLevelDatDir(root, depth = 0) {
+  try {
+    if (fs.existsSync(path.join(root, "level.dat"))) return root;
+    if (depth > 2) return null;
+    const subs = fs.readdirSync(root, { withFileTypes: true }).filter(e => e.isDirectory());
+    for (const e of subs) {
+      const r = findLevelDatDir(path.join(root, e.name), depth + 1);
+      if (r) return r;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+ipcMain.handle("get-instance-worlds", async (event, { profileId }) => {
+  const savesDir = path.join(dataDir, "client", String(profileId), "saves");
+  if (!fs.existsSync(savesDir)) return [];
+  const out = [];
+  for (const folder of fs.readdirSync(savesDir)) {
+    const worldPath = path.join(savesDir, folder);
+    let stat; try { stat = fs.statSync(worldPath); } catch { continue; }
+    if (!stat.isDirectory()) continue;
+
+    let name = folder, version = null, lastPlayed = 0;
+    const levelDat = path.join(worldPath, "level.dat");
+    try {
+      if (fs.existsSync(levelDat)) {
+        const parsed = await nbt.parse(fs.readFileSync(levelDat));
+        const d = (nbt.simplify(parsed.parsed) || {}).Data || {};
+        name = d.LevelName || folder;
+        version = d.Version?.Name || null;
+        lastPlayed = nbtLongToNumber(d.LastPlayed);
+      }
+    } catch (err) { devtoolsLog("level.dat parse failed for", folder, err); }
+
+    let icon = null;
+    const iconPath = path.join(worldPath, "icon.png");
+    if (fs.existsSync(iconPath)) {
+      try { icon = "data:image/png;base64," + fs.readFileSync(iconPath).toString("base64"); } catch { /* ignore */ }
+    }
+    out.push({ folder, name, version, lastPlayed, icon, path: worldPath });
+  }
+  out.sort((a, b) => b.lastPlayed - a.lastPlayed);
+  return out;
+});
+
+ipcMain.handle("import-world", async (event, { profileId }) => {
+  const result = await dialog.showOpenDialog({
+    title: "Import a world (folder or .zip)",
+    properties: ["openFile", "openDirectory"],
+    filters: [{ name: "World zip", extensions: ["zip"] }]
+  });
+  if (result.canceled || !result.filePaths.length) return { success: false, cancelled: true };
+
+  const src = result.filePaths[0];
+  const savesDir = path.join(dataDir, "client", String(profileId), "saves");
+  fs.mkdirSync(savesDir, { recursive: true });
+
+  let worldDir = null;
+  let tmp = null;
+  try {
+    const stat = fs.statSync(src);
+    if (stat.isDirectory()) {
+      worldDir = findLevelDatDir(src);
+    } else if (src.toLowerCase().endsWith(".zip")) {
+      tmp = path.join(app.getPath("temp"), "world-import-" + Date.now());
+      fs.mkdirSync(tmp, { recursive: true });
+      new AdmZip(src).extractAllTo(tmp, true);
+      worldDir = findLevelDatDir(tmp);
+    } else {
+      return { success: false, error: "Please select a world folder or a .zip" };
+    }
+
+    if (!worldDir) return { success: false, error: "No valid world (level.dat) found in the selection" };
+
+    // Name the destination after the world folder, made unique within saves.
+    let base = path.basename(worldDir);
+    if (!base || base === "." ) base = "world";
+    let dest = path.join(savesDir, base);
+    let n = 1;
+    while (fs.existsSync(dest)) { dest = path.join(savesDir, `${base}-${n++}`); }
+
+    fs.cpSync(worldDir, dest, { recursive: true });
+    return { success: true, name: path.basename(dest) };
+  } catch (err) {
+    devtoolsLog("World import failed:", err);
+    return { success: false, error: err.message };
+  } finally {
+    if (tmp) { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ } }
+  }
+});
+
+/* ─────────────── enable/disable content ─────────────── */
+// Mods & shaders toggle by adding/removing a ".disabled" suffix.
+ipcMain.handle("set-mod-enabled", async (event, { profileId, tab, filename, enabled }) => {
+  const dir = path.join(dataDir, "client", String(profileId), tab);
+  const full = path.join(dir, filename);
+  if (!fs.existsSync(full)) return { success: false, error: "File not found" };
+  try {
+    let target;
+    if (enabled) {
+      if (!filename.endsWith(".disabled")) return { success: true, filename };
+      target = full.replace(/\.disabled$/, "");
+    } else {
+      if (filename.endsWith(".disabled")) return { success: true, filename };
+      target = full + ".disabled";
+    }
+    fs.renameSync(full, target);
+    return { success: true, filename: path.basename(target) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Resource packs are enabled via options.txt (resourcePacks:[...]) rather than
+// a file suffix, mirroring how Minecraft itself tracks them.
+function readEnabledResourcePacks(profileId) {
+  const optionsPath = path.join(dataDir, "client", String(profileId), "options.txt");
+  if (!fs.existsSync(optionsPath)) return [];
+  try {
+    const line = fs.readFileSync(optionsPath, "utf-8").split(/\r?\n/).find(l => l.startsWith("resourcePacks:"));
+    if (!line) return [];
+    const arr = JSON.parse(line.slice("resourcePacks:".length));
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+function writeEnabledResourcePacks(profileId, packs) {
+  const optionsPath = path.join(dataDir, "client", String(profileId), "options.txt");
+  let lines = [];
+  if (fs.existsSync(optionsPath)) lines = fs.readFileSync(optionsPath, "utf-8").split(/\r?\n/);
+  const serialized = "resourcePacks:" + JSON.stringify(packs);
+  const idx = lines.findIndex(l => l.startsWith("resourcePacks:"));
+  if (idx >= 0) lines[idx] = serialized; else lines.push(serialized);
+  fs.mkdirSync(path.dirname(optionsPath), { recursive: true });
+  fs.writeFileSync(optionsPath, lines.join("\n"));
+}
+
+ipcMain.handle("get-enabled-resourcepacks", async (event, { profileId }) => {
+  return readEnabledResourcePacks(profileId);
+});
+
+ipcMain.handle("set-resourcepack-enabled", async (event, { profileId, filename, enabled }) => {
+  try {
+    let packs = readEnabledResourcePacks(profileId);
+    const entry = "file/" + filename;
+    packs = packs.filter(p => p !== entry);
+    if (enabled) packs.push(entry);
+    writeEnabledResourcePacks(profileId, packs);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Update a mod/pack in place: download the new file, then remove the old one.
+ipcMain.handle("update-instance-mod", async (event, { profileId, tab, oldFilename, fileUrl }) => {
+  try {
+    const dir = path.join(dataDir, "client", String(profileId), tab);
+    fs.mkdirSync(dir, { recursive: true });
+    const newName = path.basename(new URL(fileUrl).pathname);
+    const dest = path.join(dir, newName);
+    await downloadFile(fileUrl, dest);
+
+    // Remove the old file unless the update happens to share its name.
+    const oldPath = path.join(dir, oldFilename);
+    if (path.basename(oldPath) !== newName && fs.existsSync(oldPath)) {
+      try { fs.unlinkSync(oldPath); } catch { /* ignore */ }
+    }
+    // Carry over enabled/disabled state for resource packs.
+    if (tab === "resourcepacks") {
+      const packs = readEnabledResourcePacks(profileId);
+      if (packs.includes("file/" + oldFilename)) {
+        writeEnabledResourcePacks(profileId, packs.map(p => p === "file/" + oldFilename ? "file/" + newName : p));
+      }
+    }
+    return { success: true, filename: newName };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // screenshots
