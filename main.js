@@ -3067,7 +3067,7 @@ function readJarMeta(filePath) {
     const zip = new AdmZip(filePath);
     const fabric = zip.getEntry("fabric.mod.json") || zip.getEntry("quilt.mod.json");
     if (fabric) {
-      const j = JSON.parse(zip.readAsText(fabric).replace(/[ -]+/g, " "));
+      const j = JSON.parse(zip.readAsText(fabric).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ""));
       if (j.quilt_loader) {
         const q = j.quilt_loader;
         return { name: q.metadata?.name || q.id || null, version: q.version || null, authors: jarAuthorsToString(q.metadata?.contributors) };
