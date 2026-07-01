@@ -114,6 +114,27 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     const { ipcRenderer, shell } = require('electron');
 const resultsList = document.getElementById('projectDescription');
 
+// Ensure marked.js is available before we parse markdown (its <script> tag is
+// at the bottom of the page and may not have run yet on the first render).
+function ensureMarked() {
+  return new Promise((resolve) => {
+    if (window.marked) return resolve();
+    const existing = document.querySelector('script[data-marked]');
+    if (existing) { existing.addEventListener('load', () => resolve()); existing.addEventListener('error', () => resolve()); return; }
+    const s = document.createElement('script');
+    s.src = "https://cdn.jsdelivr.net/npm/marked/marked.min.js";
+    s.dataset.marked = "1";
+    s.onload = () => resolve();
+    s.onerror = () => resolve();
+    document.head.appendChild(s);
+  });
+}
+
+// When we arrived from an instance's install browser, this is the instance to
+// install into directly.
+let installTargetInstance = null;
+try { installTargetInstance = JSON.parse(localStorage.getItem("installTargetInstance") || "null"); } catch (e) { installTargetInstance = null; }
+
 let profiles = [];
 let servers = [];
 
@@ -169,7 +190,10 @@ try {
     const full = await res.json();
     const bodyHtml = full.body || full.description || "<p>No description available.</p>";
 
-    // render markdown using marked if available, otherwise insert as plain text
+    // render markdown using marked. The <script> that provides it loads at the
+    // bottom of the page, so on the first visit it may not be ready yet — make
+    // sure it's loaded before parsing so the description isn't shown as raw md.
+    await ensureMarked();
     let html;
     if (window.marked) html = marked.parse(bodyHtml);
     else html = `<div>${bodyHtml}</div>`;
@@ -326,7 +350,15 @@ if (downloadBtn.textContent == "Back") {
     clientHeader.textContent = "Client Instances";
     installArea.appendChild(clientHeader);
 
-    profiles.forEach(p => {
+    // If we came from an instance's install browser, show that instance first.
+    const orderedProfiles = profiles.slice().sort((a, b) => {
+      if (!installTargetInstance) return 0;
+      const at = String(a.id) === String(installTargetInstance.id) ? -1 : 0;
+      const bt = String(b.id) === String(installTargetInstance.id) ? -1 : 0;
+      return at - bt;
+    });
+
+    orderedProfiles.forEach(p => {
       if (projType === "shader") {
         if (!["fabric", "quilt", "forge", "neoforge"].includes(p.loader)) return;
         if (!validVersions.some(v => v.game_versions.includes(p.version))) return;
@@ -337,6 +369,9 @@ if (downloadBtn.textContent == "Back") {
 
       const li = document.createElement("li");
       li.className = "profile-item";
+      if (installTargetInstance && String(p.id) === String(installTargetInstance.id)) {
+        li.style.outline = "2px solid var(--base-color)";
+      }
 
       const img = document.createElement("img");
       img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";

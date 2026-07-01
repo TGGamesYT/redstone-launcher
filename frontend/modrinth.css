@@ -72,6 +72,37 @@
   cursor: not-allowed;
 }
 
+/* Compact provider toggle (replaces the old oversized dropdown) */
+.api-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--menu-bg);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  color: var(--text-color);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--text-font);
+}
+
+.api-toggle:hover {
+  background: var(--menu-hover-bg);
+}
+
+.api-toggle img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+/* Give scroll lists breathing room so the last card isn't clipped. */
+.mainModView-scrolly,
+.install-scroll-area,
+.projectView-scrolly {
+  padding-bottom: 40px;
+}
+
 .project-left {
   display: flex;
   align-items: center;

@@ -71,10 +71,14 @@
     <div class="top-row">
       <input type="text" id="searchInput" placeholder="Search projects..." style="width: 500px;" />
       <br>
-      <select id="apiSelector">
+      <select id="apiSelector" style="display:none;">
         <option value="modrinth">Modrinth</option>
         <option value="curseforge">CurseForge</option>
       </select>
+      <button id="apiToggle" class="api-toggle" title="Switch between Modrinth and CurseForge">
+        <img id="apiToggleIcon" alt="" />
+        <span id="apiToggleLabel">Modrinth</span>
+      </button>
     </div>
     
     <div class="bottom-row">
@@ -123,6 +127,30 @@
     async function fetchServers() {
       servers = await ipcRenderer.invoke('list-servers');
     }
+
+    // Small icon toggle in place of the old oversized provider dropdown. The
+    // hidden <select id="apiSelector"> still holds the value the rest of the
+    // code reads.
+    const apiToggle = document.getElementById('apiToggle');
+    const apiToggleIcon = document.getElementById('apiToggleIcon');
+    const apiToggleLabel = document.getElementById('apiToggleLabel');
+    const PROVIDER_ICON = {
+      modrinth: "https://modrinth.com/favicon.ico",
+      curseforge: "https://www.curseforge.com/favicon.ico"
+    };
+    function refreshApiToggle() {
+      const v = apiSelector.value;
+      apiToggleLabel.textContent = v === 'modrinth' ? 'Modrinth' : 'CurseForge';
+      apiToggleIcon.src = PROVIDER_ICON[v];
+    }
+    apiToggleIcon.onerror = () => { apiToggleIcon.style.display = 'none'; };
+    apiToggle.onclick = () => {
+      apiSelector.value = apiSelector.value === 'modrinth' ? 'curseforge' : 'modrinth';
+      refreshApiToggle();
+      currentPage = 1;
+      loadProjects();
+    };
+    refreshApiToggle();
 
     // ── Install mode: opened from an instance tab's "Install <Tab>" button.
     // Results are graded against the instance (loader + game version); anything
@@ -183,6 +211,8 @@
       // Lock to Modrinth and to the requested content type.
       const apiSel = document.getElementById('apiSelector');
       if (apiSel) { apiSel.value = 'modrinth'; apiSel.style.display = 'none'; }
+      if (apiToggle) apiToggle.style.display = 'none';
+      refreshApiToggle();
 
       const tabs = document.querySelectorAll('#typeTabs .tab');
       tabs.forEach(t => {
@@ -237,7 +267,15 @@
           });
           const data = await res.json();
           currentProjects = data.data || [];
-          totalPages = 1;
+          // CurseForge paginates too — derive the page count from its
+          // pagination block (capped at the API's 10k index limit), or assume a
+          // next page exists whenever we got a full page back.
+          const total = data.pagination?.totalCount;
+          if (typeof total === "number" && total > 0) {
+            totalPages = Math.max(1, Math.ceil(Math.min(total, 10000) / projectsPerPage));
+          } else {
+            totalPages = currentProjects.length >= projectsPerPage ? currentPage + 1 : currentPage;
+          }
           return currentProjects;
         }
       } catch (err) {
@@ -257,6 +295,13 @@
 
     function openProjectDetails(proj) {
       const api = apiSelector.value;
+      // Carry the target instance so the normal project page can offer a direct
+      // "install into this instance" when we came from an instance's tab.
+      if (installMode && installInstance) {
+        localStorage.setItem("installTargetInstance", JSON.stringify(installInstance));
+      } else {
+        localStorage.removeItem("installTargetInstance");
+      }
       if (api === "modrinth") {
         localStorage.setItem("selectedModrinthProject", JSON.stringify(proj));
         localStorage.setItem("selectedProjectType", document.querySelector('#typeTabs .tab.active') ? document.querySelector('#typeTabs .tab.active').dataset.type : 'mod'.toLowerCase());
