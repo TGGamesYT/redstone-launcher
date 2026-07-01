@@ -202,3 +202,48 @@
   gap: 6px;
   flex: 1;
 }
+
+/* Card action buttons (enable/disable, update, play, edit, delete) */
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.card-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-color);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--border-radius);
+  display: inline-flex;
+  align-items: center;
+}
+
+.card-action-btn:hover {
+  background: var(--third-color);
+}
+
+.card-action-btn.update i {
+  color: #6cf06c;
+}
+
+.card-action-btn.play i {
+  color: var(--base-color);
+  filter: brightness(1.6);
+}
+
+.card-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.server-row.dragging {
+  opacity: 0.4;
+}
+
+.server-status.offline {
+  color: #e05555;
+}

@@ -775,51 +775,147 @@
         }
         // map content tabs -> the modrinth project type used by the install browser
         const installTypeForTab = { mods: "mod", resourcepacks: "resourcepack", shaderpacks: "shader" };
+        const DEFAULT_ICON = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
 
-        // Helper to render tab file lists (keeps scope access to tabContent)
-        function renderTabList(files, tabName) {
-          tabContent.classList.remove("logs-active");
-          tabContent.innerHTML = "";
+        // Is the instance's MC version >= target (for quick-play support)?
+        function versionAtLeast(version, target) {
+          if (!version) return false;
+          const parse = (v) => (String(v).match(/^\d+(\.\d+)*/)?.[0] || "").split(".").filter(s => s !== "").map(Number);
+          const a = parse(version), b = parse(target);
+          if (!a.length) return false;
+          for (let i = 0; i < Math.max(a.length, b.length); i++) {
+            const x = a[i] || 0, y = b[i] || 0;
+            if (x !== y) return x > y;
+          }
+          return true;
+        }
 
-          // "Install <Tab>" button -> opens the mod browser filtered to this
-          // instance and content type.
+        const installBtnFor = (tabName) => {
           const installType = installTypeForTab[tabName];
-          if (installType) {
-            const installBtn = document.createElement("button");
-            installBtn.className = "tab-install-btn";
-            installBtn.textContent = `Install ${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`;
-            installBtn.onclick = () => {
-              const params = new URLSearchParams({
-                install: "1",
-                type: installType,
-                instanceId: profile.id,
-                loader: profile.loader || "vanilla",
-                version: profile.version || "",
-                name: profile.name || ""
-              });
-              window.location.href = `modrinth.html?${params.toString()}`;
+          if (!installType) return null;
+          const installBtn = document.createElement("button");
+          installBtn.className = "tab-install-btn";
+          installBtn.textContent = `Install ${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`;
+          installBtn.onclick = () => {
+            const params = new URLSearchParams({
+              install: "1", type: installType, instanceId: profile.id,
+              loader: profile.loader || "vanilla", version: profile.version || "", name: profile.name || ""
+            });
+            window.location.href = `modrinth.html?${params.toString()}`;
+          };
+          return installBtn;
+        };
+
+        // Card for an installed mod/resourcepack/shader with enable/disable +
+        // update controls. `refresh` re-renders the tab after a change.
+        function createContentCard(p, tabName, refresh) {
+          const li = document.createElement("li");
+          li.className = "profile-item";
+          if (p.disabled) li.style.opacity = "0.45";
+
+          const img = document.createElement("img");
+          img.src = p.icon || DEFAULT_ICON;
+          img.onerror = () => { img.src = DEFAULT_ICON; };
+          li.appendChild(img);
+
+          const info = document.createElement("div");
+          info.className = "profile-info";
+          const name = document.createElement("div");
+          name.className = "profile-name";
+          name.textContent = p.name + (p.disabled ? "  (disabled)" : "");
+          const details = document.createElement("div");
+          details.className = "profile-details";
+          details.textContent = p.details || "";
+          info.append(name, details);
+          li.appendChild(info);
+
+          const actions = document.createElement("div");
+          actions.className = "card-actions";
+
+          if (p.updateAvailable && p.updateUrl) {
+            const up = document.createElement("button");
+            up.className = "card-action-btn update";
+            up.innerHTML = `<i class="material-icons">upgrade</i>`;
+            up.title = p.latestVersion ? `Update to ${p.latestVersion}` : "Update available";
+            up.onclick = async (e) => {
+              e.stopPropagation();
+              up.disabled = true;
+              await ipcRenderer.invoke("update-instance-mod", { profileId: profile.id, tab: tabName, oldFilename: p.filename, fileUrl: p.updateUrl });
+              refresh();
             };
-            tabContent.appendChild(installBtn);
+            actions.appendChild(up);
           }
 
-          const ul = document.createElement("ul");
-          ul.className = "profile-list";
-          for (let p of files) {
-            const card = createProfileCard(p, p.path);
-            if (p.disabled) card.style.opacity = "0.5";
-            ul.appendChild(card);
-          }
-          tabContent.appendChild(ul);
+          const toggle = document.createElement("button");
+          toggle.className = "card-action-btn";
+          toggle.innerHTML = `<i class="material-icons">${p.enabled ? "toggle_on" : "toggle_off"}</i>`;
+          toggle.title = p.enabled ? "Disable" : "Enable";
+          toggle.onclick = async (e) => {
+            e.stopPropagation();
+            toggle.disabled = true;
+            if (tabName === "resourcepacks") {
+              await ipcRenderer.invoke("set-resourcepack-enabled", { profileId: profile.id, filename: p.filename, enabled: !p.enabled });
+            } else {
+              await ipcRenderer.invoke("set-mod-enabled", { profileId: profile.id, tab: tabName, filename: p.filename, enabled: !p.enabled });
+            }
+            refresh();
+          };
+          actions.appendChild(toggle);
+          li.appendChild(actions);
+
+          li.onclick = () => ipcRenderer.send("open-folder-path", { pather: p.path });
+          return li;
+        }
+
+        // Modal for adding/editing a server (with an editable icon).
+        function openServerModal({ mode, server }) {
+          return new Promise((resolve) => {
+            const overlay = document.createElement("div");
+            overlay.className = "modal-overlay active";
+            overlay.style.pointerEvents = "auto";
+            overlay.innerHTML = `
+              <div class="modal-content">
+                <div class="modal-header"><h2>${mode === "edit" ? "Edit Server" : "Add Server"}</h2></div>
+                <div class="modal-section"><label>Name</label><input class="sv-name" type="text" placeholder="My Server"></div>
+                <div class="modal-section"><label>Address</label><input class="sv-ip" type="text" placeholder="play.example.net"></div>
+                <div class="modal-section"><label>Icon (PNG)</label><input class="sv-icon" type="file" accept="image/png"></div>
+                <div class="modal-actions"><button class="sv-save">Save</button><button class="sv-cancel">Cancel</button></div>
+              </div>`;
+            document.body.appendChild(overlay);
+            const nameI = overlay.querySelector(".sv-name");
+            const ipI = overlay.querySelector(".sv-ip");
+            const iconI = overlay.querySelector(".sv-icon");
+            nameI.value = server?.name || "";
+            ipI.value = server?.ip || "";
+            let iconData = server?.icon ? `data:image/png;base64,${server.icon}` : null;
+            iconI.onchange = () => {
+              const f = iconI.files[0];
+              if (!f) return;
+              const r = new FileReader();
+              r.onload = () => { iconData = r.result; };
+              r.readAsDataURL(f);
+            };
+            const close = (val) => { overlay.remove(); resolve(val); };
+            overlay.querySelector(".sv-cancel").onclick = () => close(null);
+            overlay.onclick = (e) => { if (e.target === overlay) close(null); };
+            overlay.querySelector(".sv-save").onclick = () => {
+              const name = nameI.value.trim(), ip = ipI.value.trim();
+              if (!name || !ip) return;
+              close({ name, ip, icon: iconData });
+            };
+          });
         }
 
         let currentTabSession = 0; // global counter
         const tabCache = {}; // cache per profileId+tab combination
         // tabs loop
         for (let tab of tabs) {
-          // Logs/servers plus the installable tabs are always shown, so you can
-          // open the install browser even for an instance that has none yet.
-          let alwaysVisible = ["logs", "servers", "mods", "resourcepacks", "shaderpacks"].includes(tab.toLowerCase());
-          let exists = await ipcRenderer.invoke("check-instance-tab", { profileId: profile.id, tab: tab.toLowerCase() });
+          const tName = tab.toLowerCase();
+          // Logs, Worlds and Servers are always shown (Worlds/Servers have their
+          // own import/add actions). Content tabs only show when non-empty.
+          let alwaysVisible = ["logs", "servers", "worlds"].includes(tName);
+          let exists = alwaysVisible ? true
+            : await ipcRenderer.invoke("check-instance-tab", { profileId: profile.id, tab: tName });
           if (!exists && !alwaysVisible) continue;
 
           const btn = document.createElement("button");
@@ -837,11 +933,6 @@
             tabContent.classList.remove("logs-active");
             tabContent.innerHTML = "Loading...";
             logsEl.style.display = "none";
-
-            // Check cache and show immediately if present (then refresh below)
-            if (tabCache[cacheKey]) {
-              renderTabList(tabCache[cacheKey].files, tabName);
-            }
 
             if (tab.toLowerCase() === "logs") {
               tabContent.classList.add("logs-active");
@@ -894,53 +985,129 @@
                 }
               });
 
-            } else if (["resourcepacks", "mods", "shaderpacks", "worlds"].includes(tabName)) {
-              // Single fast, incremental call (only re-hashes changed files and
-              // batches the Modrinth lookups), then render in one shot.
-              const fileInfos = await ipcRenderer.invoke("get-instance-mods", {
-                profileId: profile.id,
-                tab: tabName
-              });
-              if (!ensureStillActive()) return;
+            } else if (["resourcepacks", "mods", "shaderpacks"].includes(tabName)) {
+              const renderContentTab = async () => {
+                const fileInfos = await ipcRenderer.invoke("get-instance-mods", { profileId: profile.id, tab: tabName });
+                if (!ensureStillActive()) return;
+                tabContent.classList.remove("logs-active");
+                tabContent.innerHTML = "";
+                const ib = installBtnFor(tabName);
+                if (ib) tabContent.appendChild(ib);
+                const ul = document.createElement("ul");
+                ul.className = "profile-list";
+                for (const p of fileInfos) ul.appendChild(createContentCard(p, tabName, renderContentTab));
+                tabContent.appendChild(ul);
+              };
+              await renderContentTab();
 
-              tabCache[cacheKey] = { files: fileInfos, lastUpdated: Date.now() };
-              renderTabList(fileInfos, tabName);
+            } else if (tabName === "worlds") {
+              logsEl.style.display = "none";
+              const canQuickPlay = versionAtLeast(profile.version, "1.20");
+
+              const renderWorlds = async () => {
+                const worlds = await ipcRenderer.invoke("get-instance-worlds", { profileId: profile.id });
+                if (!ensureStillActive()) return;
+                tabContent.innerHTML = "";
+
+                const importBtn = document.createElement("button");
+                importBtn.className = "tab-install-btn";
+                importBtn.textContent = "Import World";
+                importBtn.onclick = async () => {
+                  importBtn.disabled = true;
+                  const res = await ipcRenderer.invoke("import-world", { profileId: profile.id });
+                  importBtn.disabled = false;
+                  if (res && res.error) alert("Import failed: " + res.error);
+                  renderWorlds();
+                };
+                tabContent.appendChild(importBtn);
+
+                const ul = document.createElement("ul");
+                ul.className = "profile-list";
+                if (!worlds.length) {
+                  const empty = document.createElement("div");
+                  empty.style.opacity = "0.6"; empty.style.padding = "10px";
+                  empty.textContent = "No worlds yet — create one in-game or import a .zip/folder.";
+                  tabContent.appendChild(empty);
+                }
+                for (const w of worlds) {
+                  const li = document.createElement("li");
+                  li.className = "profile-item";
+                  const img = document.createElement("img");
+                  img.src = w.icon || DEFAULT_ICON;
+                  img.onerror = () => { img.src = DEFAULT_ICON; };
+                  li.appendChild(img);
+                  const info = document.createElement("div");
+                  info.className = "profile-info";
+                  const name = document.createElement("div");
+                  name.className = "profile-name"; name.textContent = w.name;
+                  const details = document.createElement("div");
+                  details.className = "profile-details";
+                  details.textContent = w.version ? `Version ${w.version}` : w.folder;
+                  info.append(name, details);
+                  li.appendChild(info);
+
+                  const actions = document.createElement("div");
+                  actions.className = "card-actions";
+                  const play = document.createElement("button");
+                  play.className = "card-action-btn play";
+                  play.innerHTML = `<i class="material-icons">play_arrow</i>`;
+                  if (canQuickPlay) {
+                    play.title = "Play this world";
+                    play.onclick = (e) => {
+                      e.stopPropagation();
+                      if (!selectedPlayerId) { play.title = "Select a player first!"; return; }
+                      ipcRenderer.send("launch-profile", {
+                        profileId: profile.id, playerId: selectedPlayerId,
+                        quickPlay: { type: "singleplayer", identifier: w.folder }
+                      });
+                      if (tabButtons.logs) tabButtons.logs.click();
+                    };
+                  } else {
+                    play.disabled = true;
+                    play.title = "Quick-play a world requires Minecraft 1.20+";
+                  }
+                  actions.appendChild(play);
+                  li.appendChild(actions);
+                  li.onclick = () => ipcRenderer.send("open-folder-path", { pather: w.path });
+                  ul.appendChild(li);
+                }
+                tabContent.appendChild(ul);
+              };
+              await renderWorlds();
+
             } else if (tab.toLowerCase() === "servers") {
               logsEl.style.display = "none";
+              // Modern multiplayer quick-play needs 1.20+, else fall back to the
+              // legacy --server flag (works on all versions).
+              const qpType = versionAtLeast(profile.version, "1.20") ? "multiplayer" : "legacy";
 
-              async function renderServers() {
+              const renderServers = async () => {
                 const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id });
                 if (!ensureStillActive()) return;
                 tabContent.innerHTML = "";
 
-                // Add-server form
-                const form = document.createElement("div");
-                form.className = "server-add-form";
-                const nameInput = document.createElement("input");
-                nameInput.type = "text"; nameInput.placeholder = "Server name";
-                const ipInput = document.createElement("input");
-                ipInput.type = "text"; ipInput.placeholder = "Server address";
                 const addBtn = document.createElement("button");
+                addBtn.className = "tab-install-btn";
                 addBtn.textContent = "Add Server";
                 addBtn.onclick = async () => {
-                  const name = nameInput.value.trim();
-                  const ip = ipInput.value.trim();
-                  if (!name || !ip) return;
-                  addBtn.disabled = true;
-                  await ipcRenderer.invoke("add-instance-server", { profileId: profile.id, name, ip });
-                  await renderServers();
+                  const data = await openServerModal({ mode: "add" });
+                  if (!data) return;
+                  await ipcRenderer.invoke("add-instance-server", { profileId: profile.id, name: data.name, ip: data.ip, icon: data.icon });
+                  renderServers();
                 };
-                form.append(nameInput, ipInput, addBtn);
-                tabContent.appendChild(form);
+                tabContent.appendChild(addBtn);
 
                 const ul = document.createElement("ul");
                 ul.className = "profile-list";
                 servers.forEach((s) => {
                   const li = document.createElement("li");
-                  li.className = "profile-item";
+                  li.className = "profile-item server-row";
+                  li.draggable = true;
+                  li.dataset.index = s.index;
 
                   const img = document.createElement("img");
-                  img.src = s.icon ? `data:image/png;base64,${s.icon}` : "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+                  img.src = s.icon ? `data:image/png;base64,${s.icon}` : DEFAULT_ICON;
+                  img.onerror = () => { img.src = DEFAULT_ICON; };
                   li.appendChild(img);
 
                   const info = document.createElement("div");
@@ -948,49 +1115,86 @@
                   const name = document.createElement("div");
                   name.className = "profile-name"; name.textContent = s.name;
                   const details = document.createElement("div");
-                  details.className = "profile-details"; details.textContent = s.ip;
+                  details.className = "profile-details server-status";
+                  details.textContent = "Pinging…";
                   info.append(name, details);
                   li.appendChild(info);
 
+                  const actions = document.createElement("div");
+                  actions.className = "card-actions";
+
+                  const play = document.createElement("button");
+                  play.className = "card-action-btn play";
+                  play.innerHTML = `<i class="material-icons">play_arrow</i>`;
+                  play.title = "Join server";
+                  play.onclick = (e) => {
+                    e.stopPropagation();
+                    if (!selectedPlayerId) { play.title = "Select a player first!"; return; }
+                    ipcRenderer.send("launch-profile", {
+                      profileId: profile.id, playerId: selectedPlayerId,
+                      quickPlay: { type: qpType, identifier: s.ip }
+                    });
+                    if (tabButtons.logs) tabButtons.logs.click();
+                  };
+                  actions.appendChild(play);
+
                   const editBtn = document.createElement("button");
+                  editBtn.className = "card-action-btn";
                   editBtn.innerHTML = `<i class="material-icons">edit</i>`;
                   editBtn.title = "Edit server";
-                  editBtn.onclick = (e) => {
+                  editBtn.onclick = async (e) => {
                     e.stopPropagation();
-                    // Inline edit: swap the info block for inputs.
-                    const editWrap = document.createElement("div");
-                    editWrap.className = "server-row-edit";
-                    const en = document.createElement("input"); en.type = "text"; en.value = s.name;
-                    const ei = document.createElement("input"); ei.type = "text"; ei.value = s.ip;
-                    const save = document.createElement("button"); save.textContent = "Save";
-                    save.onclick = async (ev) => {
-                      ev.stopPropagation();
-                      await ipcRenderer.invoke("edit-instance-server", {
-                        profileId: profile.id, index: s.index,
-                        name: en.value.trim(), ip: ei.value.trim()
-                      });
-                      await renderServers();
-                    };
-                    editWrap.append(en, ei, save);
-                    li.replaceChild(editWrap, info);
+                    const data = await openServerModal({ mode: "edit", server: s });
+                    if (!data) return;
+                    await ipcRenderer.invoke("edit-instance-server", { profileId: profile.id, index: s.index, name: data.name, ip: data.ip, icon: data.icon });
+                    renderServers();
                   };
+                  actions.appendChild(editBtn);
 
                   const delBtn = document.createElement("button");
+                  delBtn.className = "card-action-btn";
                   delBtn.innerHTML = `<i class="material-icons">delete</i>`;
                   delBtn.title = "Delete server";
                   delBtn.onclick = async (e) => {
                     e.stopPropagation();
                     await ipcRenderer.invoke("delete-instance-server", { profileId: profile.id, index: s.index });
-                    await renderServers();
+                    renderServers();
                   };
+                  actions.appendChild(delBtn);
+                  li.appendChild(actions);
 
-                  li.append(editBtn, delBtn);
-                  li.onclick = () => ipcRenderer.send("open-folder-path", { pather: s.folder });
+                  // Drag to reorder.
+                  li.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", String(s.index)); li.classList.add("dragging"); });
+                  li.addEventListener("dragend", () => li.classList.remove("dragging"));
+                  li.addEventListener("dragover", (e) => e.preventDefault());
+                  li.addEventListener("drop", async (e) => {
+                    e.preventDefault();
+                    const from = parseInt(e.dataTransfer.getData("text/plain"), 10);
+                    const to = s.index;
+                    if (Number.isInteger(from) && from !== to) {
+                      await ipcRenderer.invoke("reorder-instance-server", { profileId: profile.id, from, to });
+                      renderServers();
+                    }
+                  });
+
+                  // Row click no longer opens the folder (that was surprising).
                   ul.appendChild(li);
+
+                  // Fetch live status → replace the "Pinging…" line and favicon.
+                  if (s.ip) {
+                    ipcRenderer.invoke("get-server-status", { ip: s.ip }).then(st => {
+                      if (!ensureStillActive() || !st) return;
+                      if (!st.online) { details.textContent = "Offline"; details.classList.add("offline"); return; }
+                      const players = st.players ? ` · ${st.players.online}/${st.players.max} online` : "";
+                      details.textContent = (st.motd ? st.motd.replace(/\n/g, "  ") : s.ip) + players;
+                      if (st.icon && !s.icon) img.src = st.icon;
+                    }).catch(() => { details.textContent = s.ip; });
+                  } else {
+                    details.textContent = s.ip;
+                  }
                 });
                 tabContent.appendChild(ul);
-              }
-
+              };
               await renderServers();
 
             } else if (tab.toLowerCase() === "screenshots") {
