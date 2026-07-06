@@ -268,26 +268,24 @@
   max-width: 80%;
 }
 
+/* Match the instance-detail tabs for a consistent look. */
 #typeTabs .tab {
-  background: var(--very-dark);
+  background: var(--toolbar-bg);
   color: var(--text-color);
-  border: 1px solid var(--border-dark);
+  border: none;
   border-radius: var(--border-radius);
   padding: 6px 12px;
   cursor: pointer;
   font-family: var(--text-font);
-  transition: background 0.2s, border 0.2s, transform 0.1s;
+  transition: background 0.2s;
 }
 
 #typeTabs .tab:hover {
-  background: var(--menu-hover-bg);
-  transform: scale(1.05);
+  background: var(--third-color);
 }
 
 #typeTabs .tab.active {
-  background: var(--third-color);
-  border-color: var(--accent);
-  transform: scale(1.08);
+  background: var(--base-color);
 }
 
 /* ---------------- PAGINATION ---------------- */
