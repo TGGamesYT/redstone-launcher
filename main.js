@@ -4477,4 +4477,39 @@ ipcMain.handle("mc:applyCape", async (event, capeId) => {
   return true;
 });
 
+// ---- UPLOAD a local skin file (base64 PNG) ----
+ipcMain.handle("mc:uploadSkin", async (event, { base64, variant }) => {
+  const headers = await authHeaders();
+  delete headers["Content-Type"]; // let fetch set the multipart boundary
+  const buffer = Buffer.from(String(base64).replace(/^data:image\/\w+;base64,/, ""), "base64");
+  const form = new FormData();
+  form.append("variant", (variant || "classic").toLowerCase());
+  form.append("file", new Blob([buffer], { type: "image/png" }), "skin.png");
+  const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
+    method: "POST", headers, body: form
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return true;
+});
+
+// ---- RESET skin to the account's default ----
+ipcMain.handle("mc:resetSkin", async () => {
+  const headers = await authHeaders();
+  const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins/active", {
+    method: "DELETE", headers
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return true;
+});
+
+// ---- DISABLE (remove) the active cape ----
+ipcMain.handle("mc:disableCape", async () => {
+  const headers = await authHeaders();
+  const res = await fetch("https://api.minecraftservices.com/minecraft/profile/capes/active", {
+    method: "DELETE", headers
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return true;
+});
+
 updateDiscordPresenceToggle();
