@@ -395,6 +395,14 @@
       // Append a <br> first
       playersList.appendChild(document.createElement('br'));
       playersList.appendChild(addPlayerLine);
+
+      // Fit the list to the remaining viewport so the last account + add line
+      // aren't cut off.
+      requestAnimationFrame(() => {
+        const top = playersList.getBoundingClientRect().top;
+        playersList.style.maxHeight = Math.max(120, window.innerHeight - top - 16) + "px";
+        playersList.style.overflowY = "auto";
+      });
     }
 
     // Update UI when the account type changes.

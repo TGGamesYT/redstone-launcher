@@ -556,7 +556,30 @@ h4,
 h5 {
   color: var(--text-color);
   font-weight: 900;
-  
+
+}
+
+/* Consistent form controls across every page (also applies the theme font,
+   e.g. to the mod-browser search bar). */
+input[type="text"],
+input[type="password"],
+input[type="search"],
+input[type="number"],
+select,
+textarea {
+  font-family: var(--text-font);
+  background: var(--menu-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  padding: 8px 10px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, var(--text-color) 55%, transparent);
 }
 
 #toolbar {
@@ -997,7 +1020,7 @@ a:hover {
   margin: 8px 0;
   transition: var(--smooth-transition);
   cursor: pointer;
-  max-width: 60vw;
+  max-width: 100%;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 

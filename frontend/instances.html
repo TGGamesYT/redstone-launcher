@@ -457,7 +457,9 @@
 
       const selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
 
-      if (instanceId) {
+      // NEWINSTANCE is the "create" shortcut — it must still render the LIST
+      // (with the modal on top), not an empty detail view.
+      if (instanceId && instanceId !== 'NEWINSTANCE') {
         searchsort.style.display = "none";
         // Hide the page heading in detail view so the instance panel (which is
         // sized to the viewport) isn't pushed down and clipped/unscrollable.
@@ -1349,7 +1351,9 @@
         li.appendChild(info);
 
         const openFolderBtn = document.createElement("button");
-        openFolderBtn.textContent = "Open Folder";
+        openFolderBtn.className = "icon-btn";
+        openFolderBtn.title = "Open folder";
+        openFolderBtn.innerHTML = `<i class="material-icons">folder_open</i>`;
         openFolderBtn.onclick = (e) => {
           e.stopPropagation();
           ipcRenderer.send("open-folder", { id: p.id, isClient: true });
@@ -1411,6 +1415,13 @@
         addInstanceModal.classList.add('active');
       };
       profilesList.appendChild(liAdd);
+
+      // Size the list to the space actually left below it so the last item and
+      // the "Add an instance" button aren't pushed off-screen.
+      requestAnimationFrame(() => {
+        const top = profilesList.getBoundingClientRect().top;
+        profilesList.style.maxHeight = Math.max(120, window.innerHeight - top - 16) + "px";
+      });
     }
 
     if (modalCancelBtn) {
