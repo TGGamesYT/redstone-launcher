@@ -1985,7 +1985,7 @@ ipcMain.handle("download-file", async (event, { type, id, relativePath, fileUrl 
 
     // Determine full path
     const baseDir = path.join(dataDir, type, String(id), relativePath);
-    const fileName = path.basename(fileUrl.split("?")[0]); // removes query params if any
+    const fileName = decodeURIComponent(path.basename(fileUrl.split("?")[0])); // removes query params if any
     const fullPath = path.join(baseDir, fileName);
 
     // Ensure directory exists
@@ -2062,7 +2062,8 @@ ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType 
     const targetDir = path.join(baseDir, typeFolder);
     fs.mkdirSync(targetDir, { recursive: true });
 
-    const fileName = path.basename(new URL(fileUrl).pathname);
+    // Decode %20 etc. so the saved file keeps its real name (spaces, +, …).
+    const fileName = decodeURIComponent(path.basename(new URL(fileUrl).pathname));
     const dest = path.join(targetDir, fileName);
 
     await downloadFile(fileUrl, dest);
@@ -2553,7 +2554,8 @@ ipcMain.handle('export-mrpack', async (event, profileId) => {
     const profilesPath = path.join(dataDir, 'profiles.json');
     if (!fs.existsSync(profilesPath)) throw new Error("profiles.json not found");
     const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
-    const profile = profiles.find(p => Number(p.id) === Number(profileId));
+    // Profile ids can be strings (e.g. "sulfur"), so compare as strings.
+    const profile = profiles.find(p => String(p.id) === String(profileId));
     if (!profile) throw new Error("Profile not found");
     devtoolsLog("[mrpack] Profile found:", profile);
 
@@ -3102,6 +3104,26 @@ function readJarMeta(filePath) {
   return {};
 }
 
+// Read a resource pack's pack.mcmeta "description" (from a folder or a .zip),
+// returning the RAW text component (string / object / array) so the renderer
+// can reproduce Minecraft's colours and formatting.
+function readPackDescription(fullPath, isDir) {
+  try {
+    let text = null;
+    if (isDir) {
+      const p = path.join(fullPath, "pack.mcmeta");
+      if (fs.existsSync(p)) text = fs.readFileSync(p, "utf-8");
+    } else if (/\.zip(\.disabled)?$/i.test(fullPath)) {
+      const zip = new AdmZip(fullPath);
+      const e = zip.getEntry("pack.mcmeta");
+      if (e) text = zip.readAsText(e);
+    }
+    if (!text) return null;
+    const j = JSON.parse(text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ""));
+    return j?.pack?.description ?? null;
+  } catch { return null; }
+}
+
 ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
   const basePath = path.join(dataDir, "client", profileId.toString(), tab);
   if (!fs.existsSync(basePath)) return [];
@@ -3117,12 +3139,13 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
 
   const enabledPacks = tab === "resourcepacks" ? readEnabledResourcePacks(profileId) : null;
 
+  const MOD_INDEX_VERSION = 2; // bump to force a rebuild when the entry shape changes
   const indexFile = path.join(basePath, MOD_INDEX_FILE);
-  let index = { entries: {} };
+  let index = { version: MOD_INDEX_VERSION, entries: {} };
   if (fs.existsSync(indexFile)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(indexFile, "utf-8"));
-      if (parsed && parsed.entries) index = parsed;
+      if (parsed && parsed.entries && parsed.version === MOD_INDEX_VERSION) index = parsed;
     } catch { /* rebuild from scratch */ }
   }
 
@@ -3138,16 +3161,9 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     const fullPath = path.join(basePath, filename);
 
     if (d.isDirectory()) {
-      let details = "(folder)";
-      const mcmetaPath = path.join(fullPath, "pack.mcmeta");
-      if (fs.existsSync(mcmetaPath)) {
-        try {
-          const m = JSON.parse(fs.readFileSync(mcmetaPath, "utf-8"));
-          if (typeof m?.pack?.description === "string") details = m.pack.description;
-        } catch { /* ignore */ }
-      }
+      const description = tab === "resourcepacks" ? readPackDescription(fullPath, true) : null;
       const enabled = enabledPacks ? enabledPacks.includes("file/" + filename) : true;
-      results.push({ name: filename, filename, icon: null, path: fullPath, details, version: null, author: null, disabled: !enabled, enabled, isFolder: true });
+      results.push({ name: filename, filename, icon: null, path: fullPath, details: "(folder)", description, version: null, author: null, disabled: !enabled, enabled, isFolder: true });
       continue;
     }
 
@@ -3157,11 +3173,12 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     const disabled = filename.toLowerCase().endsWith(".disabled");
     let entry = index.entries[filename];
     if (!entry || entry.mtimeMs !== stat.mtimeMs || entry.size !== stat.size) {
-      // New/changed file: re-hash, re-read jar metadata, invalidate matches.
+      // New/changed file: re-hash, re-read jar / pack metadata, invalidate matches.
       entry = {
         mtimeMs: stat.mtimeMs, size: stat.size,
         sha1: computeSHA1(fullPath),
         jar: filename.match(/\.jar(\.disabled)?$/i) ? readJarMeta(fullPath) : {},
+        packDescription: tab === "resourcepacks" ? readPackDescription(fullPath, false) : null,
         modrinth: null
       };
       index.entries[filename] = entry;
@@ -3255,9 +3272,12 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     r.version = (m && m.versionNumber) || jar.version || null;
     r.author = (m && m.author) || jar.authors || null;
     r.projectId = (m && m.projectId) || null;
+    r.projectType = m ? "modrinth" : null;
     r.updateAvailable = !!(e?.update?.available);
     r.updateUrl = e?.update?.url || null;
     r.latestVersion = e?.update?.latestNumber || null;
+    // Resource packs: expose the raw pack.mcmeta description for rich rendering.
+    if (tab === "resourcepacks") r.description = e?.packDescription ?? null;
     // Second line: "version • author" (falls back to filename).
     r.details = [r.version, r.author].filter(Boolean).join("  •  ") || cleanName;
     delete r._filename;
@@ -3588,7 +3608,7 @@ ipcMain.handle("update-instance-mod", async (event, { profileId, tab, oldFilenam
   try {
     const dir = path.join(dataDir, "client", String(profileId), tab);
     fs.mkdirSync(dir, { recursive: true });
-    const newName = path.basename(new URL(fileUrl).pathname);
+    const newName = decodeURIComponent(path.basename(new URL(fileUrl).pathname));
     const dest = path.join(dir, newName);
     await downloadFile(fileUrl, dest);
 
@@ -3661,7 +3681,7 @@ function checkIfFileExists(instanceID, isClient, fileUrl) {
     "world/datapacks"
   ];
 
-  const filename = path.basename(fileUrl);
+  const filename = decodeURIComponent(path.basename(fileUrl));
 
   // Helper: recursively check inside subfolders
   function fileExistsInDir(dir) {
