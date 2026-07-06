@@ -202,6 +202,19 @@ function renderInstances(instances) {
   ul.appendChild(liAdd);
 }
 
+// The sidebar's mod-browser entry shows the currently-selected provider's logo
+// and updates everywhere the provider is switched.
+function applyModProviderIcon() {
+  const provider = localStorage.getItem('modProvider') || 'modrinth';
+  const icon = provider === 'curseforge'
+    ? 'https://www.curseforge.com/favicon.ico'
+    : 'https://modrinth.com/favicon.ico';
+  document.querySelectorAll('.sidebar a.modrinth > li').forEach(li => {
+    li.innerHTML = `<img class="provider-icon" src="${icon}" onerror="this.style.display='none'"><span>Mod Browser</span>`;
+  });
+}
+applyModProviderIcon();
+
 // Ask backend for profiles/instances
 function updateSideBar() {
   updateLoginIcon()

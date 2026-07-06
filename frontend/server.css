@@ -38,6 +38,19 @@
   font-family: Modrinth;
 }
 
+/* Sidebar mod-browser provider icon + label (overrides the Modrinth logo font
+   so the "Mod Browser" text renders normally). */
+.sidebar a.modrinth .provider-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.sidebar a.modrinth span {
+  font-family: var(--text-font);
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }

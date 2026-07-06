@@ -66,18 +66,16 @@
       <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
     </ul>
   </div>
-  <h1 style="margin-top: 20px;">Modrinth Browser</h1>
+  <h1 style="margin-top: 20px;">Mod Browser</h1>
   <div id="searchPagination">
-    <div class="top-row">
-      <input type="text" id="searchInput" placeholder="Search projects..." style="width: 500px;" />
-      <br>
+    <div class="top-row" style="display:flex; align-items:stretch; gap:8px;">
+      <input type="text" id="searchInput" placeholder="Search projects..." style="flex:1; max-width:500px;" />
       <select id="apiSelector" style="display:none;">
         <option value="modrinth">Modrinth</option>
         <option value="curseforge">CurseForge</option>
       </select>
       <button id="apiToggle" class="api-toggle" title="Switch between Modrinth and CurseForge">
         <img id="apiToggleIcon" alt="" />
-        <span id="apiToggleLabel">Modrinth</span>
       </button>
     </div>
     
@@ -133,15 +131,20 @@
     // code reads.
     const apiToggle = document.getElementById('apiToggle');
     const apiToggleIcon = document.getElementById('apiToggleIcon');
-    const apiToggleLabel = document.getElementById('apiToggleLabel');
     const PROVIDER_ICON = {
       modrinth: "https://modrinth.com/favicon.ico",
       curseforge: "https://www.curseforge.com/favicon.ico"
     };
+    // Restore the last-used provider.
+    apiSelector.value = localStorage.getItem('modProvider') === 'curseforge' ? 'curseforge' : 'modrinth';
     function refreshApiToggle() {
       const v = apiSelector.value;
-      apiToggleLabel.textContent = v === 'modrinth' ? 'Modrinth' : 'CurseForge';
+      apiToggle.title = v === 'modrinth' ? 'Using Modrinth — click for CurseForge' : 'Using CurseForge — click for Modrinth';
       apiToggleIcon.src = PROVIDER_ICON[v];
+      apiToggleIcon.style.display = '';
+      // Persist + reflect the provider in the sidebar globally.
+      localStorage.setItem('modProvider', v);
+      if (typeof applyModProviderIcon === 'function') applyModProviderIcon();
     }
     apiToggleIcon.onerror = () => { apiToggleIcon.style.display = 'none'; };
     apiToggle.onclick = () => {
@@ -208,10 +211,7 @@
 
     function setupInstallModeUI() {
       if (!installMode) return;
-      // Lock to Modrinth and to the requested content type.
-      const apiSel = document.getElementById('apiSelector');
-      if (apiSel) { apiSel.value = 'modrinth'; apiSel.style.display = 'none'; }
-      if (apiToggle) apiToggle.style.display = 'none';
+      // Keep the provider toggle available even on the instance install page.
       refreshApiToggle();
 
       const tabs = document.querySelectorAll('#typeTabs .tab');
