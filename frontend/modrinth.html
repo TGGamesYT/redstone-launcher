@@ -74,9 +74,7 @@
         <option value="modrinth">Modrinth</option>
         <option value="curseforge">CurseForge</option>
       </select>
-      <button id="apiToggle" class="api-toggle" title="Switch between Modrinth and CurseForge">
-        <img id="apiToggleIcon" alt="" />
-      </button>
+      <button id="apiToggle" class="api-toggle" title="Switch between Modrinth and CurseForge"></button>
     </div>
     
     <div class="bottom-row">
@@ -130,23 +128,18 @@
     // hidden <select id="apiSelector"> still holds the value the rest of the
     // code reads.
     const apiToggle = document.getElementById('apiToggle');
-    const apiToggleIcon = document.getElementById('apiToggleIcon');
-    const PROVIDER_ICON = {
-      modrinth: "https://modrinth.com/favicon.ico",
-      curseforge: "https://www.curseforge.com/favicon.ico"
-    };
     // Restore the last-used provider.
     apiSelector.value = localStorage.getItem('modProvider') === 'curseforge' ? 'curseforge' : 'modrinth';
     function refreshApiToggle() {
       const v = apiSelector.value;
       apiToggle.title = v === 'modrinth' ? 'Using Modrinth — click for CurseForge' : 'Using CurseForge — click for Modrinth';
-      apiToggleIcon.src = PROVIDER_ICON[v];
-      apiToggleIcon.style.display = '';
+      // The inline SVG logos live in sidebar.js (window.PROVIDER_SVG), which
+      // loads after this script — fall back gracefully until it's ready.
+      apiToggle.innerHTML = (window.PROVIDER_SVG && window.PROVIDER_SVG[v]) || '';
       // Persist + reflect the provider in the sidebar globally.
       localStorage.setItem('modProvider', v);
       if (typeof applyModProviderIcon === 'function') applyModProviderIcon();
     }
-    apiToggleIcon.onerror = () => { apiToggleIcon.style.display = 'none'; };
     apiToggle.onclick = () => {
       apiSelector.value = apiSelector.value === 'modrinth' ? 'curseforge' : 'modrinth';
       refreshApiToggle();
@@ -154,6 +147,8 @@
       loadProjects();
     };
     refreshApiToggle();
+    // Re-run once sidebar.js (and its SVGs) are loaded so the icon appears.
+    window.addEventListener('load', refreshApiToggle);
 
     // ── Install mode: opened from an instance tab's "Install <Tab>" button.
     // Results are graded against the instance (loader + game version); anything

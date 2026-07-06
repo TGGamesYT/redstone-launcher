@@ -72,18 +72,19 @@
   cursor: not-allowed;
 }
 
-/* Compact icon-only provider toggle, square and the same height as the search
-   bar it sits next to. */
+/* Compact icon-only provider toggle: a fixed square the same height as the
+   search bar next to it. */
 .api-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  aspect-ratio: 1 / 1;
+  width: 40px;
+  height: 40px;
   background: var(--menu-bg);
   border: 1px solid var(--border-dark);
   border-radius: var(--border-radius);
   color: var(--text-color);
-  padding: 4px;
+  padding: 0;
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -92,9 +93,10 @@
   background: var(--menu-hover-bg);
 }
 
+.api-toggle svg,
 .api-toggle img {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
 }
 
@@ -222,8 +224,8 @@
 #searchPagination .top-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 8px;
 }
 
 #searchInput {
@@ -233,11 +235,10 @@
   border: 1px solid var(--border-dark);
   background: var(--very-dark);
   color: var(--text-color);
-  font-family: Arial, sans-serif;
+  font-family: var(--text-font);
   font-size: 16px;
   height: 40px;
   box-sizing: border-box;
-  width: 100%;
 }
 
 #apiSelector {
