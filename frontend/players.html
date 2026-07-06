@@ -95,6 +95,27 @@
     .playerModal button {
       margin-top: 15px;
     }
+
+    .account-type-choice {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 10px 0;
+    }
+
+    .type-option {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      padding: 8px 12px;
+      background: var(--secondary-color);
+      border-radius: var(--border-radius);
+    }
+
+    .type-option input {
+      margin: 0;
+    }
   </style>
   <link rel="stylesheet" href="server.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
@@ -154,26 +175,24 @@
     <h3 style="margin: 0 0 10px 0; font-size: 18px;">No Players</h3>
     <p style="margin: 0 0 20px 0; font-size: 14px;">Add your first player account to get started</p>
     <button
-      onclick="(async()=>{ await updatePlayerModal(); document.getElementById('playerModal').classList.add('show'); document.getElementById('premInfo').style.display='block'; })()"
+      onclick="openAddPlayerModal()"
       style="background: var(--secondary-color); color: var(--text-color); border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;">➕
       Add New Player</button>
   </div>
   <ul id="players-list">
-    <span id="addPlayerLine"
-      onclick="(async()=>{ await updatePlayerModal(); document.getElementById('playerModal').classList.add('show'); document.getElementById('premInfo').style.display='block'; })()">
-      Add New Player</span>
+    <span id="addPlayerLine" onclick="openAddPlayerModal()">Add New Player</span>
   </ul>
 
   <!-- Modal -->
   <div id="playerModal" class="playerModal">
     <div class="modal-content">
       <h3>Add New Player</h3>
-      <label>
-        <input type="radio" name="playerType" value="premium" checked> Premium
-      </label>
-      <label>
-        <input type="radio" name="playerType" value="cracked"> Cracked
-      </label>
+      <div class="account-type-choice">
+        <label class="type-option"><span>Premium</span>
+          <input type="radio" name="playerType" value="premium" checked></label>
+        <label class="type-option" id="offlineOption"><span>Offline</span>
+          <input type="radio" name="playerType" value="cracked"></label>
+      </div>
       <div id="crackedNameContainer">
         <label>Username:
           <input type="text" id="crackedNameInput" placeholder="Steve">
@@ -238,32 +257,46 @@
     const submitPlayerBtn = document.getElementById("submitPlayerBtn");
     const cancelPlayerBtn = document.getElementById("cancelPlayerBtn");
     (async () => {
-      selectedPlayerId = (await ipcRenderer.invoke('get-selected-player'))?.id || null;
+      selectedPlayerId = await ipcRenderer.invoke('get-selected-player');
       ipcRenderer.send("get-players");
     })();
+
     async function updatePlayerModal() {
+      // Show/hide (never remove) the Offline option so it comes back instantly
+      // when cracked accounts get allowed — no page refresh needed.
       const allowed = await ipcRenderer.invoke('are-crackeds-allowed');
-
-      const crackedLabel = document.querySelector('input[name="playerType"][value="cracked"]')?.closest('label');
-      const premiumLabel = document.querySelector('input[name="playerType"][value="premium"]')?.closest('label');
-
+      const offlineOption = document.getElementById('offlineOption');
+      if (offlineOption) offlineOption.style.display = allowed ? '' : 'none';
       if (!allowed) {
-        // remove cracked option if exists
-        if (crackedLabel) crackedLabel.remove();
-        // ensure premium is checked
-        const premiumInput = premiumLabel?.querySelector('input');
+        const premiumInput = document.querySelector('input[name="playerType"][value="premium"]');
         if (premiumInput) premiumInput.checked = true;
-      } else {
-        // show both options (if you previously hid or removed, you may need to re-add it)
-        if (crackedLabel) crackedLabel.style.display = '';
       }
-
-      // toggle cracked name container based on selection
-      const crackedNameContainer = document.getElementById('crackedNameContainer');
-      crackedNameContainer.style.display = allowed && document.querySelector('input[name="playerType"]:checked').value === 'cracked' ? 'block' : 'none';
-
-      // Start each modal session with a fresh QR area.
       if (typeof resetQrUi === 'function') resetQrUi();
+      applyTypeUI();
+    }
+
+    // Reflect the selected account type: premium shows the QR immediately, offline
+    // shows the username field.
+    function applyTypeUI() {
+      const type = document.querySelector('input[name="playerType"]:checked').value;
+      const crackedNameContainer = document.getElementById('crackedNameContainer');
+      const premInfo = document.getElementById('premInfo');
+      if (type === 'premium') {
+        crackedNameContainer.style.display = 'none';
+        premInfo.style.display = 'block';
+        submitPlayerBtn.style.display = 'none';
+        if (!qrLoginActive) startQrLogin();
+      } else {
+        crackedNameContainer.style.display = 'block';
+        premInfo.style.display = 'none';
+        submitPlayerBtn.style.display = '';
+        if (qrLoginActive) { qrLoginActive = false; ipcRenderer.send('cancel-qr-login'); resetQrUi(); }
+      }
+    }
+
+    async function openAddPlayerModal() {
+      await updatePlayerModal();
+      playerModal.classList.add('show');
     }
     // Selected player
     function setSelectedPlayer(id) { ipcRenderer.send('set-selected-player', id); }
@@ -281,8 +314,8 @@
     });
 
     // Render player list
-    function renderPlayers() {
-      selectedPlayerId = getSelectedPlayer().id;
+    async function renderPlayers() {
+      selectedPlayerId = await getSelectedPlayer();
       updateSideBar();
       playersList.innerHTML = "";
 
@@ -301,7 +334,11 @@
         li.className = "profile-item";
 
         const img = document.createElement("img");
-        img.src = `https://minotar.net/helm/${encodeURIComponent(p.username || p.auth?.name || "Steve")}/32`;
+        // Offline accounts show the DEFAULT skin, not whatever skin a real
+        // account with that name happens to have.
+        img.src = p.type === "microsoft"
+          ? `https://minotar.net/helm/${encodeURIComponent(p.auth?.name || p.username || "Steve")}/32`
+          : "https://minotar.net/helm/MHF_Steve/32";
         img.onerror = () => { img.src = "https://tggamesyt.dev/assets/stevehead.png"; };
         li.appendChild(img);
 
@@ -315,7 +352,7 @@
 
         const details = document.createElement("div");
         details.className = "profile-details";
-        const typeLabel = p.type === "microsoft" ? "Premium Account" : "Cracked Account";
+        const typeLabel = p.type === "microsoft" ? "Premium Account" : "Offline Account";
         details.textContent = typeLabel;
         info.appendChild(details);
 
@@ -339,15 +376,11 @@
           setSelectedPlayer(p.id);
           Array.from(playersList.children).forEach(c => c.classList.remove("selected"));
           li.classList.add("selected");
-          let image = document.getElementById('playerIconSiderbar');
-          const username = p.auth?.name || p.username || "Unknown Player";
-          image.src = `https://minotar.net/helm/${encodeURIComponent(username)}/24`;
-          let span = document.getElementById('playerIconTextSidebar');
-          span.textContent = username;
+          if (typeof updateLoginIcon === 'function') updateLoginIcon();
         };
 
         // Highlight currently selected one
-        if (p.id === selectedPlayerId) li.classList.add("selected");
+        if (String(p.id) === String(selectedPlayerId)) li.classList.add("selected");
 
         playersList.appendChild(li);
       });
@@ -357,25 +390,16 @@
       addPlayerLine.style.cursor = 'pointer';
 
       // Attach click handler
-      addPlayerLine.addEventListener('click', async () => {
-        await updatePlayerModal();
-        const playerModal = document.getElementById('playerModal');
-        const premInfo = document.getElementById('premInfo');
-        playerModal.classList.add('show');
-        premInfo.style.display = 'block';
-      });
+      addPlayerLine.addEventListener('click', () => openAddPlayerModal());
 
       // Append a <br> first
       playersList.appendChild(document.createElement('br'));
       playersList.appendChild(addPlayerLine);
     }
 
-    // Update input visibility when player type changes
+    // Update UI when the account type changes.
     document.querySelectorAll('input[name="playerType"]').forEach(radio => {
-      radio.addEventListener('change', () => {
-        crackedNameContainer.style.display = radio.value === 'cracked' ? 'block' : 'none';
-        premInfo.style.display = radio.value === 'premium' ? 'block' : 'none';
-      });
+      radio.addEventListener('change', () => applyTypeUI());
     });
 
     const { shell } = require('electron');
@@ -396,8 +420,9 @@
         ipcRenderer.send('cancel-qr-login');
       }
       resetQrUi();
+      // Only toggle the class — an inline display:none here would win over the
+      // .show class and stop the modal from ever reopening without a reload.
       playerModal.classList.remove('show');
-      playerModal.style.display = "none";
       crackedNameInput.value = "";
     }
 

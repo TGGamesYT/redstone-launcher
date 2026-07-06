@@ -121,10 +121,13 @@ async function updateLoginIcon() {
   li.innerHTML = '';
 
   if (player) {
-    const username = player.type === 'microsoft' ? (player.auth?.name ?? 'MS Account') : (player.username ?? 'Cracked');
+    const username = player.type === 'microsoft' ? (player.auth?.name ?? 'MS Account') : (player.username ?? 'Offline');
 
     const img = document.createElement('img');
-    img.src = `https://minotar.net/helm/${encodeURIComponent(username)}/24`;
+    // Offline accounts get the default skin, premium accounts their real one.
+    img.src = player.type === 'microsoft'
+      ? `https://minotar.net/helm/${encodeURIComponent(username)}/24`
+      : 'https://minotar.net/helm/MHF_Steve/24';
     img.onerror = () => { img.src = 'https://tggamesyt.dev/assets/stevehead.png'; };
     img.style.width = '24px';
     img.style.height = '24px';
