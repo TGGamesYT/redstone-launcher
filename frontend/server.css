@@ -38,6 +38,41 @@
   font-family: Modrinth;
 }
 
+/* Top-right launch progress indicator (in the toolbar). */
+.toolbar-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 12px;
+  -webkit-app-region: no-drag;
+  max-width: 320px;
+}
+
+.toolbar-progress .tp-label {
+  font-size: 11px;
+  color: var(--text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.toolbar-progress .tp-track {
+  width: 90px;
+  height: 8px;
+  background: color-mix(in srgb, var(--secondary-color) 40%, black);
+  border-radius: var(--border-radius);
+  overflow: hidden;
+}
+
+.toolbar-progress .tp-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--base-color);
+  transition: width 0.15s linear;
+}
+
 /* Sidebar mod-browser provider icon + label (overrides the Modrinth logo font
    so the "Mod Browser" text renders normally). */
 .sidebar a.modrinth .provider-icon {

@@ -242,6 +242,43 @@ function updateMaxIcon(isMaximized) {
 ipcRenderer.on("window-maximized", () => updateMaxIcon(true));
 ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
 
+// Global launch progress indicator, shown in the top-right toolbar on every
+// page while an instance is downloading/preparing.
+(function setupToolbarProgress() {
+  const container = document.getElementById('instance-processes');
+  if (!container) return;
+  let bar = null, label = null, fill = null, hideTimer = null;
+  function ensureBar() {
+    if (bar) return;
+    bar = document.createElement('div');
+    bar.className = 'toolbar-progress';
+    bar.innerHTML = '<span class="tp-label"></span><span class="tp-track"><span class="tp-fill"></span></span>';
+    label = bar.querySelector('.tp-label');
+    fill = bar.querySelector('.tp-fill');
+    container.appendChild(bar);
+  }
+  ipcRenderer.on('launch-progress', (e, data) => {
+    if (!data) return;
+    if (data.done) {
+      if (bar) {
+        label.textContent = data.label || 'Ready';
+        fill.style.width = '100%';
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => { if (bar) { bar.remove(); bar = null; } }, 1500);
+      }
+      return;
+    }
+    ensureBar();
+    clearTimeout(hideTimer);
+    const pct = data.total ? Math.min(100, Math.round((data.current / data.total) * 100)) : null;
+    fill.style.width = pct === null ? '100%' : pct + '%';
+    let text = data.label || 'Loading';
+    if (pct !== null && !data.bytes) text += ` ${data.current}/${data.total}`;
+    else if (pct !== null) text += ` ${pct}%`;
+    label.textContent = text;
+  });
+})();
+
   ipcRenderer.send("get-players");
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });
   ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });

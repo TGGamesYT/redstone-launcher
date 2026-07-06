@@ -1008,6 +1008,11 @@
               const appendLine = (line) => {
                 const stick = isAtBottom();
                 logsEl.textContent += line + "\n";
+                // Cap the console size — an unbounded <pre> makes every append a
+                // huge reflow, which is a big source of lag while launching.
+                if (logsEl.textContent.length > 400000) {
+                  logsEl.textContent = logsEl.textContent.slice(-300000);
+                }
                 if (stick) logsEl.scrollTop = logsEl.scrollHeight;
               };
 
