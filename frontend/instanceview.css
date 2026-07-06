@@ -88,7 +88,9 @@
   flex-direction: column;
   height: calc(100vh - 38px - 16px);
   box-sizing: border-box;
+  margin: 0;
   padding-right: 20px;
+  overflow: hidden;
 }
 
 .instance-top-row,
@@ -145,6 +147,13 @@
   background: var(--base-color);
 }
 
+.tab-action-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
 .tab-install-btn {
   background: var(--base-color);
   color: var(--text-color);
@@ -152,11 +161,18 @@
   padding: 8px 14px;
   border-radius: var(--border-radius);
   cursor: pointer;
-  margin-bottom: 10px;
   font-family: var(--text-font);
 }
 
 .tab-install-btn:hover {
+  background: var(--third-color);
+}
+
+.tab-install-btn.secondary {
+  background: var(--secondary-color);
+}
+
+.tab-install-btn.secondary:hover {
   background: var(--third-color);
 }
 

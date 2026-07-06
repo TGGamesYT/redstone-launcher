@@ -2836,6 +2836,17 @@ ipcMain.on('open-folder', (event, { id, isClient }) => {
   }
 });
 
+// Open a specific subfolder of an instance (mods, resourcepacks, saves, …).
+ipcMain.on("open-instance-folder", (event, { profileId, sub }) => {
+  try {
+    const folderPath = path.join(dataDir, 'client', String(profileId), sub || "");
+    fs.mkdirSync(folderPath, { recursive: true });
+    shell.openPath(folderPath);
+  } catch (err) {
+    devtoolsLog("open-instance-folder failed:", err);
+  }
+});
+
 ipcMain.on("open-folder-path", async (event, { pather }) => {
   try {
     let targetPath = pather;

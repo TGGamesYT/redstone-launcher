@@ -471,7 +471,9 @@
         const emptyState = document.getElementById('emptyInstanceState');
         emptyState.style.display = "none";
         profilesList.style.display = "none";
-        instanceDetail.style.display = "block";
+        // Must be flex (matches the CSS flex-column layout) so the tab content
+        // gets a bounded height and scrolls instead of overflowing the viewport.
+        instanceDetail.style.display = "flex";
         instanceDetail.innerHTML = ""; // clear previous content
 
         // TOP ROW: ICON + INFO + BUTTONS
@@ -806,6 +808,52 @@
           return installBtn;
         };
 
+        // ── Minecraft text-component renderer (resource-pack descriptions) ──
+        const MC_LEGACY = { '0':'#000000','1':'#0000AA','2':'#00AA00','3':'#00AAAA','4':'#AA0000','5':'#AA00AA','6':'#FFAA00','7':'#AAAAAA','8':'#555555','9':'#5555FF','a':'#55FF55','b':'#55FFFF','c':'#FF5555','d':'#FF55FF','e':'#FFFF55','f':'#FFFFFF' };
+        const MC_NAMED = { black:'#000000', dark_blue:'#0000AA', dark_green:'#00AA00', dark_aqua:'#00AAAA', dark_red:'#AA0000', dark_purple:'#AA00AA', gold:'#FFAA00', gray:'#AAAAAA', grey:'#AAAAAA', dark_gray:'#555555', dark_grey:'#555555', blue:'#5555FF', green:'#55FF55', aqua:'#55FFFF', red:'#FF5555', light_purple:'#FF55FF', yellow:'#FFFF55', white:'#FFFFFF' };
+        function mcColorToCss(c) { if (!c) return null; return c[0] === '#' ? c : (MC_NAMED[c] || null); }
+        function applyMcStyle(span, s) {
+          if (s.color) span.style.color = s.color;
+          if (s.bold) span.style.fontWeight = 'bold';
+          if (s.italic) span.style.fontStyle = 'italic';
+          const deco = [];
+          if (s.underlined) deco.push('underline');
+          if (s.strikethrough) deco.push('line-through');
+          if (deco.length) span.style.textDecoration = deco.join(' ');
+        }
+        function renderLegacyString(str, parent, base) {
+          let style = { ...base }, buf = '';
+          const flush = () => { if (!buf) return; const sp = document.createElement('span'); applyMcStyle(sp, style); sp.textContent = buf; parent.appendChild(sp); buf = ''; };
+          for (let i = 0; i < str.length; i++) {
+            const ch = str[i];
+            if ((ch === '§' || ch === '&') && i + 1 < str.length) {
+              const code = str[++i].toLowerCase(); flush();
+              if (code === 'r') style = { ...base };
+              else if (MC_LEGACY[code]) style = { color: MC_LEGACY[code] };
+              else if (code === 'l') style.bold = true;
+              else if (code === 'o') style.italic = true;
+              else if (code === 'n') style.underlined = true;
+              else if (code === 'm') style.strikethrough = true;
+            } else if (ch === '\n') { flush(); parent.appendChild(document.createElement('br')); }
+            else buf += ch;
+          }
+          flush();
+        }
+        function renderMcComponent(comp, parent, inherited = {}) {
+          if (comp == null) return;
+          if (typeof comp === 'string') { renderLegacyString(comp, parent, inherited); return; }
+          if (typeof comp === 'number' || typeof comp === 'boolean') { renderLegacyString(String(comp), parent, inherited); return; }
+          if (Array.isArray(comp)) { comp.forEach(c => renderMcComponent(c, parent, inherited)); return; }
+          const style = { ...inherited };
+          const css = mcColorToCss(comp.color); if (css) style.color = css;
+          if (comp.bold !== undefined) style.bold = !!comp.bold;
+          if (comp.italic !== undefined) style.italic = !!comp.italic;
+          if (comp.underlined !== undefined) style.underlined = !!comp.underlined;
+          if (comp.strikethrough !== undefined) style.strikethrough = !!comp.strikethrough;
+          if (typeof comp.text === 'string') renderLegacyString(comp.text, parent, style);
+          if (Array.isArray(comp.extra)) comp.extra.forEach(c => renderMcComponent(c, parent, style));
+        }
+
         // Card for an installed mod/resourcepack/shader with enable/disable +
         // update controls. `refresh` re-renders the tab after a change.
         function createContentCard(p, tabName, refresh) {
@@ -825,7 +873,13 @@
           name.textContent = p.name + (p.disabled ? "  (disabled)" : "");
           const details = document.createElement("div");
           details.className = "profile-details";
-          details.textContent = p.details || "";
+          // Resource packs: render the pack.mcmeta description with Minecraft's
+          // colours/formatting. Everything else: "version • author".
+          if (tabName === "resourcepacks" && p.description != null) {
+            renderMcComponent(p.description, details, {});
+          } else {
+            details.textContent = p.details || "";
+          }
           info.append(name, details);
           li.appendChild(info);
 
@@ -862,8 +916,8 @@
           };
           actions.appendChild(toggle);
           li.appendChild(actions);
-
-          li.onclick = () => ipcRenderer.send("open-folder-path", { pather: p.path });
+          // Clicking a row no longer opens the folder (use the Open … Folder
+          // button above the list instead).
           return li;
         }
 
@@ -991,8 +1045,16 @@
                 if (!ensureStillActive()) return;
                 tabContent.classList.remove("logs-active");
                 tabContent.innerHTML = "";
+                const bar = document.createElement("div");
+                bar.className = "tab-action-bar";
                 const ib = installBtnFor(tabName);
-                if (ib) tabContent.appendChild(ib);
+                if (ib) bar.appendChild(ib);
+                const openBtn = document.createElement("button");
+                openBtn.className = "tab-install-btn secondary";
+                openBtn.textContent = `Open ${tabName.charAt(0).toUpperCase() + tabName.slice(1)} Folder`;
+                openBtn.onclick = () => ipcRenderer.send("open-instance-folder", { profileId: profile.id, sub: tabName });
+                bar.appendChild(openBtn);
+                tabContent.appendChild(bar);
                 const ul = document.createElement("ul");
                 ul.className = "profile-list";
                 for (const p of fileInfos) ul.appendChild(createContentCard(p, tabName, renderContentTab));
@@ -1009,6 +1071,8 @@
                 if (!ensureStillActive()) return;
                 tabContent.innerHTML = "";
 
+                const bar = document.createElement("div");
+                bar.className = "tab-action-bar";
                 const importBtn = document.createElement("button");
                 importBtn.className = "tab-install-btn";
                 importBtn.textContent = "Import World";
@@ -1019,7 +1083,13 @@
                   if (res && res.error) alert("Import failed: " + res.error);
                   renderWorlds();
                 };
-                tabContent.appendChild(importBtn);
+                bar.appendChild(importBtn);
+                const openSaves = document.createElement("button");
+                openSaves.className = "tab-install-btn secondary";
+                openSaves.textContent = "Open Saves Folder";
+                openSaves.onclick = () => ipcRenderer.send("open-instance-folder", { profileId: profile.id, sub: "saves" });
+                bar.appendChild(openSaves);
+                tabContent.appendChild(bar);
 
                 const ul = document.createElement("ul");
                 ul.className = "profile-list";
@@ -1068,7 +1138,6 @@
                   }
                   actions.appendChild(play);
                   li.appendChild(actions);
-                  li.onclick = () => ipcRenderer.send("open-folder-path", { pather: w.path });
                   ul.appendChild(li);
                 }
                 tabContent.appendChild(ul);
