@@ -488,8 +488,21 @@
       resetCard.classList.add("action-card");
       skinsDiv.appendChild(resetCard);
 
-      // Persist the current active skin into the local library so it survives
-      // being changed elsewhere, then render the whole library.
+      // The currently-active skin from Mojang (usually a URL) — always show it
+      // and mark it selected so it's clear which skin is applied.
+      if (activeSkin) {
+        const preview = createSkinCanvas(activeSkin);
+        const card = createCard(
+          "Current skin",
+          () => { /* already applied */ },
+          preview
+        );
+        card.classList.add("selected");
+        skinsDiv.appendChild(card);
+      }
+
+      // Persist the active skin into the local library too (when we have its
+      // bytes) so it survives being changed elsewhere, then render the library.
       if (activeSkinB64) {
         await ipcRenderer.invoke("skins:add", { uuid, base64: activeSkinB64, variant: activeSkin.variant === "SLIM" ? "slim" : "classic", name: "Skin" });
       }
@@ -501,7 +514,7 @@
           () => applyLibrarySkin(skin),
           preview
         );
-        if (activeSkinB64 && skin.hash && activeSkinB64 && activeSkin && skin.base64 === activeSkinB64) card.classList.add("selected");
+        if (activeSkinB64 && skin.base64 === activeSkinB64) card.classList.add("selected");
         skinsDiv.appendChild(card);
       });
 
