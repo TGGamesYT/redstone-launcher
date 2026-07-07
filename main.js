@@ -4512,4 +4512,90 @@ ipcMain.handle("mc:disableCape", async () => {
   return true;
 });
 
+// ---- DEFAULT SKINS ----
+// Extract the vanilla default player skins straight from the latest client jar
+// (the resources.download.minecraft.net URLs derived from file hashes don't
+// serve jar contents). Returns [{ name, model, base64 }]; cached per version.
+ipcMain.handle("mc:getDefaultSkins", async () => {
+  const cacheFile = path.join(texturesDir, "defaultskins.json");
+  let latest = null;
+  try {
+    const manifest = await (await fetch("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")).json();
+    latest = manifest?.latest?.release || null;
+
+    if (fs.existsSync(cacheFile)) {
+      try {
+        const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+        if (cached.version === latest && Array.isArray(cached.skins) && cached.skins.length) return cached.skins;
+      } catch { /* rebuild */ }
+    }
+
+    const ver = manifest.versions.find(v => v.id === latest);
+    const vj = await (await fetch(ver.url)).json();
+    const jarUrl = vj.downloads.client.url;
+    const jarBuf = Buffer.from(await (await fetch(jarUrl)).arrayBuffer());
+    const zip = new AdmZip(jarBuf);
+
+    const skins = [];
+    for (const e of zip.getEntries()) {
+      const p = e.entryName;
+      if (!p.startsWith("assets/minecraft/textures/entity/player/") || !p.endsWith(".png")) continue;
+      const parts = p.split("/");
+      const model = parts[parts.length - 2];        // wide | slim
+      const name = parts[parts.length - 1].replace(/\.png$/, "");
+      if (model !== "wide" && model !== "slim") continue;
+      skins.push({ name, model, base64: e.getData().toString("base64") });
+    }
+    // Sort by name then model for a stable gallery order.
+    skins.sort((a, b) => a.name.localeCompare(b.name) || a.model.localeCompare(b.model));
+
+    fs.mkdirSync(texturesDir, { recursive: true });
+    fs.writeFileSync(cacheFile, JSON.stringify({ version: latest, skins }));
+    return skins;
+  } catch (err) {
+    devtoolsLog("Failed to get default skins:", err);
+    // Serve a stale cache if we have one.
+    if (fs.existsSync(cacheFile)) {
+      try { return JSON.parse(fs.readFileSync(cacheFile, "utf8")).skins || []; } catch { /* ignore */ }
+    }
+    return [];
+  }
+});
+
+// ---- LOCAL SKIN LIBRARY (per account uuid) ----
+// So a player's previously-used skins persist even if their active skin is
+// changed elsewhere.
+function loadSkinLib() {
+  try { return JSON.parse(fs.readFileSync(skinsJsonPath, "utf8")) || {}; } catch { return {}; }
+}
+function saveSkinLib(obj) {
+  fs.mkdirSync(texturesDir, { recursive: true });
+  fs.writeFileSync(skinsJsonPath, JSON.stringify(obj));
+}
+
+ipcMain.handle("skins:list", (event, { uuid }) => {
+  return loadSkinLib()[uuid] || [];
+});
+
+ipcMain.handle("skins:add", (event, { uuid, base64, variant, name }) => {
+  const b = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
+  if (!b) return loadSkinLib()[uuid] || [];
+  const lib = loadSkinLib();
+  const arr = lib[uuid] || [];
+  const hash = crypto.createHash("sha1").update(b).digest("hex");
+  if (!arr.some(s => s.hash === hash)) {
+    arr.unshift({ id: Date.now(), hash, name: name || "Skin", base64: b, variant: (variant || "classic"), addedAt: Date.now() });
+    lib[uuid] = arr;
+    saveSkinLib(lib);
+  }
+  return arr;
+});
+
+ipcMain.handle("skins:remove", (event, { uuid, id }) => {
+  const lib = loadSkinLib();
+  lib[uuid] = (lib[uuid] || []).filter(s => String(s.id) !== String(id));
+  saveSkinLib(lib);
+  return lib[uuid];
+});
+
 updateDiscordPresenceToggle();
