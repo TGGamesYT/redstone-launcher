@@ -335,7 +335,12 @@
 
 .modal-overlay, .modal-base {
   position: fixed;
-  inset: 0;
+  /* Only cover the content area — the toolbar (top 38px) and sidebar (left
+     70px) stay sharp AND clickable while a modal is open. */
+  top: 38px;
+  left: 70px;
+  right: 0;
+  bottom: 0;
   background: rgba(0, 0, 0, 0.6);
   display: none;
   justify-content: center;
@@ -656,9 +661,7 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  /* Above modal overlays so the window controls (close/min/max) always work
-     even while a modal is open. */
-  z-index: 10050;
+  z-index: 1000;
   -webkit-app-region: drag;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }

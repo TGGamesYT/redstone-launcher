@@ -26,14 +26,16 @@
   <style>
     .modal-overlay {
       position: fixed;
-      inset: 0;
+      /* Content area only — the toolbar and sidebar stay sharp and functional. */
+      top: 38px;
+      left: 70px;
+      right: 0;
+      bottom: 0;
       background: rgba(0, 0, 0, 0.5);
       display: none;
       justify-content: center;
       align-items: center;
-      /* Below the toolbar (10050) so window controls stay clickable, but above
-         everything else so the blur covers the sidebar. */
-      z-index: 9999;
+      z-index: 2000;
       backdrop-filter: blur(5px);
       -webkit-backdrop-filter: blur(5px);
       pointer-events: none;

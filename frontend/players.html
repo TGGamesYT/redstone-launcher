@@ -67,14 +67,15 @@
     .playerModal {
       display: none;
       position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
+      /* Content area only — the toolbar and sidebar stay sharp and functional. */
+      top: 38px;
+      left: 70px;
+      right: 0;
+      bottom: 0;
       background: rgba(0, 0, 0, 0.5);
       backdrop-filter: blur(5px);
       -webkit-backdrop-filter: blur(5px);
-      z-index: 9999;
+      z-index: 2000;
       justify-content: center;
       align-items: center;
     }
