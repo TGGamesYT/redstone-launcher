@@ -31,7 +31,11 @@
       display: none;
       justify-content: center;
       align-items: center;
+      /* Below the toolbar (10050) so window controls stay clickable, but above
+         everything else so the blur covers the sidebar. */
       z-index: 9999;
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
       pointer-events: none;
     }
 
@@ -917,8 +921,23 @@
           };
           actions.appendChild(toggle);
           li.appendChild(actions);
-          // Clicking a row no longer opens the folder (use the Open … Folder
-          // button above the list instead).
+
+          // Clicking a resolved item opens its project page on the right provider.
+          if (p.projectId || p.curseId) {
+            li.style.cursor = "pointer";
+            li.onclick = () => {
+              const type = installTypeForTab[tabName] || "mod";
+              localStorage.setItem("selectedProjectType", type);
+              if (p.projectId) {
+                localStorage.setItem("selectedModrinthProject", JSON.stringify({ project_id: p.projectId, title: p.name, icon_url: p.icon }));
+                localStorage.removeItem("installTargetInstance");
+                window.location.href = "modrinth_project.html";
+              } else {
+                localStorage.setItem("selectedCurseforgeProject", JSON.stringify({ id: p.curseId, name: p.name, logo: { url: p.icon } }));
+                window.location.href = "curseforge_project.html";
+              }
+            };
+          }
           return li;
         }
 
@@ -1260,8 +1279,20 @@
                     ipcRenderer.invoke("get-server-status", { ip: s.ip }).then(st => {
                       if (!ensureStillActive() || !st) return;
                       if (!st.online) { details.textContent = "Offline"; details.classList.add("offline"); return; }
-                      const players = st.players ? ` · ${st.players.online}/${st.players.max} online` : "";
-                      details.textContent = (st.motd ? st.motd.replace(/\n/g, "  ") : s.ip) + players;
+                      details.textContent = "";
+                      details.classList.remove("offline");
+                      if (st.motd) {
+                        // Render the MOTD with Minecraft colours/formatting.
+                        renderMcComponent(st.motd, details, {});
+                      } else {
+                        details.appendChild(document.createTextNode(s.ip));
+                      }
+                      if (st.players) {
+                        const p = document.createElement("span");
+                        p.style.opacity = "0.8";
+                        p.textContent = `  ·  ${st.players.online}/${st.players.max} online`;
+                        details.appendChild(p);
+                      }
                       if (st.icon && !s.icon) img.src = st.icon;
                     }).catch(() => { details.textContent = s.ip; });
                   } else {

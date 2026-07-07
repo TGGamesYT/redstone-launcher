@@ -3244,6 +3244,52 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     }
   }
 
+  // For anything Modrinth didn't recognise, try CurseForge by fingerprint so
+  // those items can still open their project page.
+  {
+    const cfCandidates = results.filter(r => r._filename && !index.entries[r._filename]?.modrinth
+      && index.entries[r._filename]?.curse === undefined
+      && /\.(jar|zip)(\.disabled)?$/i.test(r._filename));
+    if (cfCandidates.length) {
+      try {
+        for (const r of cfCandidates) {
+          const e = index.entries[r._filename];
+          if (e.fingerprint === undefined) e.fingerprint = await getFingerprint(r.path);
+        }
+        const fps = cfCandidates.map(r => index.entries[r._filename].fingerprint).filter(Boolean);
+        if (fps.length) {
+          const fr = await fetch(`${WORKER_URL}/fingerprints`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fingerprints: fps })
+          });
+          if (fr.ok) {
+            const data = await fr.json();
+            const matches = data.data?.exactMatches || [];
+            const byFp = {};
+            for (const m of matches) { if (m.file?.fileFingerprint) byFp[m.file.fileFingerprint] = m; }
+            for (const r of cfCandidates) {
+              const e = index.entries[r._filename];
+              const m = byFp[e.fingerprint];
+              if (m?.id) {
+                let title = null, icon = null;
+                try {
+                  const mr = await fetch(`${WORKER_URL}/mods`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modId: m.id }) });
+                  if (mr.ok) { const md = (await mr.json()).data; title = md?.name || null; icon = md?.logo?.url || null; }
+                } catch { /* ignore */ }
+                e.curse = { projectId: m.id, title, icon };
+              } else {
+                e.curse = null; // record "checked, not found"
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("CurseForge fingerprint lookup failed:", err);
+      }
+    }
+  }
+
   // Check for updates on Modrinth-matched files (best-effort, cached ~1h).
   if (loader && gameVersion) {
     const now = Date.now();
@@ -3274,16 +3320,18 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     if (!r._filename) continue;
     const e = index.entries[r._filename];
     const m = e?.modrinth;
+    const cf = e?.curse;
     const jar = e?.jar || {};
     const cleanName = r._filename.replace(/\.disabled$/i, "");
 
     r.filename = r._filename;
-    r.name = (m && m.title) || jar.name || cleanName;
-    r.icon = (m && m.icon) || null;
+    r.name = (m && m.title) || (cf && cf.title) || jar.name || cleanName;
+    r.icon = (m && m.icon) || (cf && cf.icon) || null;
     r.version = (m && m.versionNumber) || jar.version || null;
     r.author = (m && m.author) || jar.authors || null;
     r.projectId = (m && m.projectId) || null;
-    r.projectType = m ? "modrinth" : null;
+    r.curseId = (cf && cf.projectId) || null;
+    r.projectType = m ? "modrinth" : (cf ? "curseforge" : null);
     r.updateAvailable = !!(e?.update?.available);
     r.updateUrl = e?.update?.url || null;
     r.latestVersion = e?.update?.latestNumber || null;
@@ -3439,9 +3487,12 @@ ipcMain.handle("get-server-status", async (event, { ip }) => {
       headers: { "User-Agent": LAUNCHER_UA }
     });
     const d = await res.json();
+    // Prefer the raw (§-coded) MOTD so the UI can render its colours/formatting.
+    const motdRaw = d.motd?.raw ? d.motd.raw.join("\n").trim() : null;
+    const motdClean = d.motd?.clean ? d.motd.clean.join("\n").trim() : null;
     return {
       online: !!d.online,
-      motd: d.motd?.clean ? d.motd.clean.join("\n").trim() : null,
+      motd: motdRaw || motdClean || null,
       players: d.players ? { online: d.players.online, max: d.players.max } : null,
       version: d.version || null,
       icon: d.icon || null // already a data: URL

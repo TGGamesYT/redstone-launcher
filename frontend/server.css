@@ -341,7 +341,8 @@
   justify-content: center;
   align-items: center;
   z-index: 2000;
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
   animation: fadeIn 0.2s ease;
 }
 
@@ -655,7 +656,9 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  z-index: 1000;
+  /* Above modal overlays so the window controls (close/min/max) always work
+     even while a modal is open. */
+  z-index: 10050;
   -webkit-app-region: drag;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
