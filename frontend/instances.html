@@ -107,14 +107,13 @@
       <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
     </ul>
   </div>
-  <br id="instancesTopBr">
   <h1 id="instancesHeading">Instances</h1>
   <div id="search-sort"
-    style="scale: 1.3; transform-origin: left; padding: 0 20px; display: flex; flex-direction: column; gap: 10px; margin-top: 100px;">
-    <div style="margin-bottom: 10px;">
-      <input id="searchInput" type="text" placeholder="Search instances..." style="padding:5px; width:200px;" />
+    style="padding: 0 20px 0 0; display: flex; flex-direction: column; gap: 10px;">
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <input id="searchInput" type="text" placeholder="Search instances..." style="flex:1; min-width:220px;" />
 
-      <select id="filterLoader" style="width: 20%;">
+      <select id="filterLoader" style="width:170px;">
         <option value="">All Loaders</option>
         <option value="vanilla">Vanilla</option>
         <option value="fabric">Fabric</option>
@@ -123,11 +122,11 @@
         <option value="neoforge">NeoForge</option>
       </select>
 
-      <input id="filterVersion" type="text" placeholder="Filter by version..." style="padding:5px; width:120px;" />
+      <input id="filterVersion" type="text" placeholder="Filter by version..." style="width:170px;" />
     </div>
-    <div style="margin-bottom: 10px;">
+    <div style="display:flex; gap:10px; align-items:center;">
       <label for="sortSelect">Sort by: </label>
-      <select id="sortSelect" style="width: 40%;">
+      <select id="sortSelect" style="flex:1; max-width:420px;">
         <option value="custom">Custom</option>
         <option value="name-asc">By Name (ascending)</option>
         <option value="name-desc">By Name (descending)</option>
@@ -148,7 +147,7 @@
     <h3 style="margin: 0 0 10px 0; font-size: 18px;">No Instances</h3>
     <p style="margin: 0 0 20px 0; font-size: 14px;">Create your first instance to get started</p>
   </div>
-  <ul id="profiles-list" style="max-height: calc(100vh - ( 38px + 112px )); overflow-y: auto; overflow-x: hidden;"></ul>
+  <ul id="profiles-list" style="overflow-y: auto; overflow-x: hidden; padding-right: 20px;"></ul>
 
   <div id="addInstanceModal" class="modal-overlay">
     <div class="modal-content">
@@ -1332,6 +1331,14 @@
       emptyState.style.display = 'none';
       profilesList.style.display = 'block';
 
+      // "Add an instance" at the TOP of the list.
+      const liAddTop = document.createElement("li");
+      liAddTop.className = "profile-item add-instance-row";
+      liAddTop.innerHTML = `<i class="material-icons">add</i><span>Add an instance</span>`;
+      liAddTop.style.cursor = "pointer";
+      liAddTop.onclick = () => { instanceLoader.value = "vanilla"; addInstanceModal.classList.add('active'); };
+      profilesList.appendChild(liAddTop);
+
       list.forEach(p => {
         const li = document.createElement("li");
         li.className = "profile-item";
@@ -1402,24 +1409,6 @@
 
         profilesList.appendChild(li);
       });
-
-      // Add Instance button
-      const liAdd = document.createElement("li");
-      liAdd.className = "profile-item";
-      const iAdd = document.createElement("i");
-      iAdd.className = "material-icons";
-      iAdd.textContent = "add";
-      const spanAdd = document.createElement("span");
-      spanAdd.textContent = "Add an instance";
-
-      liAdd.appendChild(iAdd);
-      liAdd.appendChild(spanAdd);
-      liAdd.style.cursor = "pointer";
-      liAdd.onclick = () => {
-        instanceLoader.value = "vanilla";
-        addInstanceModal.classList.add('active');
-      };
-      profilesList.appendChild(liAdd);
 
       // Size the list to the space actually left below it so the last item and
       // the "Add an instance" button aren't pushed off-screen.

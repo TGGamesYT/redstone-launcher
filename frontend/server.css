@@ -1088,8 +1088,9 @@ a:hover {
 }
 
 .profile-item:hover {
+  /* No translate here — shifting the row right made it overflow and pop a
+     horizontal scrollbar. */
   background: linear-gradient(135deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 70%, black) 100%);
-  transform: translateX(4px);
   box-shadow: 0 4px 16px rgba(179, 12, 12, 0.3);
   border-color: var(--accent);
 }
