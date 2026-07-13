@@ -1195,6 +1195,7 @@ ipcMain.on('create-profile', async (event, profile) => {
     version: profile.version || "1.20.1",
     loader: profile.loader || "vanilla",
     icon: profile.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png",
+    alwaysUpdate: !!profile.alwaysUpdate,
     created: Date.now()
   };
 
