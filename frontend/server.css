@@ -368,6 +368,8 @@
   backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
   animation: fadeIn 0.2s ease;
+  /* Keep the rounded top-left corner where the bars meet visible. */
+  border-top-left-radius: var(--border-radius);
 }
 
 .modal-overlay.active, .modal-base.active {
@@ -519,6 +521,9 @@
   z-index: 10000;
   opacity: 1;
   transition: opacity 0.5s ease;
+  /* Match the body's rounded top-left corner so the curve where the toolbar
+     meets the sidebar stays visible instead of being covered by a square edge. */
+  border-top-left-radius: var(--border-radius);
 }
 
 .loading-overlay.fade-out {
@@ -944,7 +949,7 @@ select:focus,
 textarea:focus {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--secondary-color) 70%, black);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), 0 0 8px rgba(179, 12, 12, 0.3);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), 0 0 8px color-mix(in srgb, var(--base-color) 30%, transparent);
 }
 
 input[type="checkbox"] {
@@ -1057,7 +1062,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(1.1);
-  box-shadow: 0 2px 10px rgba(179, 12, 12, 0.4);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--base-color) 40%, transparent);
 }
 
 a {
@@ -1115,20 +1120,21 @@ a:hover {
 
 .profile-item:hover {
   /* No translate here — shifting the row right made it overflow and pop a
-     horizontal scrollbar. */
-  background: linear-gradient(135deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 70%, black) 100%);
-  box-shadow: 0 4px 16px rgba(179, 12, 12, 0.3);
+     horizontal scrollbar. A subtle lift (not a jump to secondary-color) keeps
+     the muted description text readable on top of the row. */
+  background: linear-gradient(135deg, color-mix(in srgb, var(--secondary-color) 60%, black) 0%, color-mix(in srgb, var(--menu-bg) 88%, white) 100%);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--base-color) 30%, transparent);
   border-color: var(--accent);
 }
 
 .profile-item.selected {
   border: 2px solid var(--accent);
-  box-shadow: 0 0 16px rgba(179, 12, 12, 0.5);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--base-color) 50%, transparent);
   background: linear-gradient(135deg, var(--base-color) 0%, var(--third-color) 100%);
 }
 
 .profile-item.selected:hover {
-  box-shadow: 0 0 20px rgba(179, 12, 12, 0.7);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--base-color) 70%, transparent);
 }
 
 .profile-item img {

@@ -39,6 +39,7 @@
       backdrop-filter: blur(5px);
       -webkit-backdrop-filter: blur(5px);
       pointer-events: none;
+      border-top-left-radius: var(--border-radius);
     }
 
     .modal-overlay.active {
@@ -47,10 +48,10 @@
     }
 
     .modal {
-      background: #222;
+      background: var(--third-color);
       padding: 20px;
-      border-radius: 8px;
-      color: #fff;
+      border-radius: var(--border-radius);
+      color: var(--text-color);
     }
 
     .modal input {
