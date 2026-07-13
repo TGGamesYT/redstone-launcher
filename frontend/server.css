@@ -76,13 +76,32 @@
 /* Sidebar mod-browser provider icon + label (overrides the Modrinth logo font
    so the "Mod Browser" text renders normally). */
 .sidebar a.modrinth .provider-icon {
-  width: 22px;
-  height: 22px;
+  /* This is a <span>, so it would otherwise inherit the tooltip-label styling
+     below (.sidebar .menu li span: absolute + opacity 0). Reset all of that so
+     the logo actually shows in the button. */
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  left: auto;
+  top: auto;
+  transform: none;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--text-color);
+  filter: drop-shadow(1px 1px 2px rgba(0, 0, 0, 0.4));
+  transition: var(--smooth-transition);
+}
+
+.sidebar a.modrinth > li:hover .provider-icon {
+  transform: scale(1.15);
 }
 
 .sidebar a.modrinth .provider-icon svg {

@@ -78,8 +78,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 46px;
+  height: 46px;
   background: var(--menu-bg);
   border: 1px solid var(--border-dark);
   border-radius: var(--border-radius);
@@ -95,8 +95,8 @@
 
 .api-toggle svg,
 .api-toggle img {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   object-fit: contain;
 }
 
