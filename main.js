@@ -3163,7 +3163,9 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
 
   let dirents = [];
   try { dirents = fs.readdirSync(basePath, { withFileTypes: true }); } catch { return []; }
-  const files = dirents.filter(d => !SKIP_TAB_FILES.has(d.name.toLowerCase()));
+  // ".toupdate" files are mods/plugins set aside pending a compatible release
+  // for the instance's version — hide them from the active content list.
+  const files = dirents.filter(d => !SKIP_TAB_FILES.has(d.name.toLowerCase()) && !d.name.endsWith(".toupdate"));
 
   const results = [];
   const needLookup = []; // { filename, sha1 }
@@ -3688,6 +3690,151 @@ ipcMain.handle("update-instance-mod", async (event, { profileId, tab, oldFilenam
       }
     }
     return { success: true, filename: newName };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Instance version changes + the ".toupdate" system.
+//
+// When an instance's game version changes, every mod/plugin is checked for a
+// compatible release on the new version. If one exists it's downloaded in
+// place; if none does (yet), the file is renamed to "<name>.toupdate" and set
+// aside. Each time the instance is opened we re-scan the ".toupdate" files and
+// pull a now-compatible version if one has since been published. Only mods and
+// plugins are touched — the rest (resource/data packs, shaders) rarely break
+// across versions.
+// ─────────────────────────────────────────────────────────────────────────
+
+const TOUPDATE_SUFFIX = ".toupdate";
+const VERSIONED_TABS = ["mods", "plugins"];
+
+// Resolve a file's Modrinth project id straight from its hash (independent of
+// the per-tab index cache, so it works for renamed .toupdate files too).
+async function modrinthProjectIdForFile(fullPath) {
+  try {
+    const sha1 = computeSHA1(fullPath);
+    const res = await fetch("https://api.modrinth.com/v2/version_files", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": LAUNCHER_UA },
+      body: JSON.stringify({ hashes: [sha1], algorithm: "sha1" })
+    });
+    if (!res.ok) return null;
+    const map = await res.json();
+    return map[sha1]?.project_id || null;
+  } catch { return null; }
+}
+
+// Newest Modrinth version of a project that's compatible with gameVersion (and
+// the loader for mods). Returns { url, versionNumber } or null.
+async function findCompatibleModVersion(projectId, gameVersion, loader, requireLoader) {
+  try {
+    const params = new URLSearchParams();
+    params.set("game_versions", JSON.stringify([gameVersion]));
+    if (requireLoader && loader) params.set("loaders", JSON.stringify([loader === "vanilla" ? "minecraft" : loader]));
+    const vr = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version?${params.toString()}`, { headers: { "User-Agent": LAUNCHER_UA } });
+    if (!vr.ok) return null;
+    const versions = await vr.json();
+    const newest = (Array.isArray(versions) ? versions : []).sort((a, b) => new Date(b.date_published) - new Date(a.date_published))[0];
+    if (!newest) return null;
+    const file = (newest.files || []).find(f => f.primary) || (newest.files || [])[0];
+    return file ? { url: file.url, versionNumber: newest.version_number || null } : null;
+  } catch { return null; }
+}
+
+// Migrate all mods/plugins of an instance to gameVersion. Incompatible files
+// are set aside as ".toupdate".
+async function migrateContentToVersion(profileId, gameVersion, loader) {
+  const report = { updated: [], deferred: [], unchanged: [] };
+  for (const tab of VERSIONED_TABS) {
+    const dir = path.join(dataDir, "client", String(profileId), tab);
+    if (!fs.existsSync(dir)) continue;
+    const requireLoader = tab === "mods";
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const filename of files) {
+      if (filename.endsWith(TOUPDATE_SUFFIX)) continue;              // handled by the scan
+      if (!/\.jar(\.disabled)?$/i.test(filename)) continue;          // only jars
+      const fullPath = path.join(dir, filename);
+      const projectId = await modrinthProjectIdForFile(fullPath);
+      if (!projectId) { report.unchanged.push(filename); continue; } // unknown → leave alone
+      const compat = await findCompatibleModVersion(projectId, gameVersion, loader, requireLoader);
+      if (compat) {
+        try {
+          const newName = decodeURIComponent(path.basename(new URL(compat.url).pathname));
+          await downloadFile(compat.url, path.join(dir, newName));
+          if (newName !== filename) { try { fs.unlinkSync(fullPath); } catch { /* ignore */ } }
+          report.updated.push({ from: filename, to: newName });
+        } catch { report.unchanged.push(filename); }
+      } else {
+        // No compatible release yet → set aside for later.
+        try { fs.renameSync(fullPath, fullPath + TOUPDATE_SUFFIX); report.deferred.push(filename); }
+        catch { report.unchanged.push(filename); }
+      }
+    }
+  }
+  return report;
+}
+
+// Re-check every ".toupdate" file for a now-compatible release. Runs cheaply on
+// instance open.
+async function scanToUpdate(profileId, gameVersion, loader) {
+  const report = { installed: [], stillWaiting: [] };
+  for (const tab of VERSIONED_TABS) {
+    const dir = path.join(dataDir, "client", String(profileId), tab);
+    if (!fs.existsSync(dir)) continue;
+    const requireLoader = tab === "mods";
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const filename of files) {
+      if (!filename.endsWith(TOUPDATE_SUFFIX)) continue;
+      const fullPath = path.join(dir, filename);
+      const projectId = await modrinthProjectIdForFile(fullPath);
+      if (!projectId) { report.stillWaiting.push(filename); continue; }
+      const compat = await findCompatibleModVersion(projectId, gameVersion, loader, requireLoader);
+      if (compat) {
+        try {
+          const newName = decodeURIComponent(path.basename(new URL(compat.url).pathname));
+          await downloadFile(compat.url, path.join(dir, newName));
+          try { fs.unlinkSync(fullPath); } catch { /* ignore */ }
+          report.installed.push({ from: filename, to: newName });
+        } catch { report.stillWaiting.push(filename); }
+      } else {
+        report.stillWaiting.push(filename);
+      }
+    }
+  }
+  return report;
+}
+
+// Change an instance's game version and migrate its mods/plugins.
+ipcMain.handle("change-instance-version", async (event, { profileId, newVersion }) => {
+  try {
+    const profiles = await loadProfiles();
+    const idx = profiles.findIndex(p => String(p.id) === String(profileId));
+    if (idx === -1) return { success: false, error: "Instance not found" };
+    if (!newVersion) return { success: false, error: "No version given" };
+    const loader = profiles[idx].loader;
+    if (profiles[idx].version === newVersion) return { success: true, report: null, unchanged: true };
+    profiles[idx].version = newVersion;
+    saveProfiles(profiles);
+    const report = await migrateContentToVersion(profileId, newVersion, loader);
+    event.reply?.("profiles-updated", profiles);
+    return { success: true, report };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Scan an instance's ".toupdate" files for newly-available compatible versions.
+ipcMain.handle("scan-instance-toupdate", async (event, { profileId }) => {
+  try {
+    const profiles = await loadProfiles();
+    const profile = profiles.find(p => String(p.id) === String(profileId));
+    if (!profile) return { success: false, error: "Instance not found" };
+    const report = await scanToUpdate(profileId, profile.version, profile.loader);
+    return { success: true, report };
   } catch (err) {
     return { success: false, error: err.message };
   }

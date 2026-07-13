@@ -499,6 +499,15 @@
     }
 
 
+    // Cached Mojang version manifest (for the instance-detail update button).
+    let _mcManifest = null;
+    async function getMcManifest() {
+      if (_mcManifest) return _mcManifest;
+      try { _mcManifest = await (await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json')).json(); }
+      catch { _mcManifest = null; }
+      return _mcManifest;
+    }
+
     async function renderListOrDetail() {
       const urlParams = new URLSearchParams(window.location.search);
       const instanceId = urlParams.get('i');
@@ -642,6 +651,66 @@
           addInstanceModal.classList.add('active');
         };
         right.appendChild(editBtn);
+
+        // Version-update button (shown when a newer game version exists) and an
+        // auto-update toggle.
+        const updateVerBtn = document.createElement("button");
+        updateVerBtn.innerHTML = `<i class="material-icons">system_update_alt</i> Update`;
+        updateVerBtn.title = "Update to the latest game version";
+        updateVerBtn.style.display = "none";
+        right.appendChild(updateVerBtn);
+
+        const autoWrap = document.createElement("label");
+        autoWrap.style.cssText = "display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;margin:0;";
+        autoWrap.title = "Automatically update the game version when a new one releases";
+        const autoCb = document.createElement("input");
+        autoCb.type = "checkbox";
+        autoCb.checked = !!(profile.autoUpdateVersion ?? profile.alwaysUpdate);
+        autoCb.style.width = "auto";
+        autoCb.style.margin = "0";
+        autoCb.onchange = () => {
+          profile.autoUpdateVersion = autoCb.checked;
+          ipcRenderer.send("edit-profile", { id: profile.id, autoUpdateVersion: autoCb.checked });
+        };
+        autoWrap.appendChild(autoCb);
+        autoWrap.appendChild(document.createTextNode("Auto-update"));
+        right.appendChild(autoWrap);
+
+        async function applyVersionChange(target) {
+          updateVerBtn.disabled = true;
+          updateVerBtn.innerHTML = `<i class="material-icons">hourglass_top</i> Updating…`;
+          try {
+            await ipcRenderer.invoke("change-instance-version", { profileId: profile.id, newVersion: target });
+          } catch (err) { console.error("version update failed", err); }
+          // Update the in-memory profiles array too, so the re-render sees the
+          // new version immediately and doesn't re-trigger an auto-update loop
+          // before the 'profiles-updated' event lands.
+          profile.version = target;
+          const p = profiles.find(x => String(x.id) === String(profile.id));
+          if (p) p.version = target;
+          renderListOrDetail();
+        }
+
+        // Decide whether an update is available (newer release, or newer
+        // snapshot if this instance already tracks snapshots).
+        (async () => {
+          const manifest = await getMcManifest();
+          if (!manifest) return;
+          const curIsRelease = !!manifest.versions.find(v => v.id === profile.version && v.type === "release");
+          const target = curIsRelease ? manifest.latest.release : manifest.latest.snapshot;
+          const curEntry = manifest.versions.find(v => v.id === profile.version);
+          const tgtEntry = manifest.versions.find(v => v.id === target);
+          const newer = curEntry && tgtEntry && new Date(tgtEntry.releaseTime) > new Date(curEntry.releaseTime);
+          if (!newer) return;
+          updateVerBtn.style.display = "";
+          updateVerBtn.innerHTML = `<i class="material-icons">system_update_alt</i> Update to ${target}`;
+          updateVerBtn.onclick = () => applyVersionChange(target);
+          if (autoCb.checked) applyVersionChange(target);
+        })();
+
+        // On open, re-scan any deferred (.toupdate) mods/plugins for newly
+        // compatible versions.
+        ipcRenderer.invoke("scan-instance-toupdate", { profileId: profile.id }).catch(() => {});
 
         // Three-dot menu
         const menuBtn = document.createElement("button");
