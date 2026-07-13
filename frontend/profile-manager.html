@@ -235,11 +235,6 @@
         </div>
 
         <div>
-          <div class="cards-header"><span>Default Skins</span></div>
-          <div id="default-skins"></div>
-        </div>
-
-        <div>
           <div class="cards-header"><span>Capes</span></div>
           <div id="capes"></div>
         </div>
@@ -253,16 +248,45 @@
   <!-- Upload skin modal (choose model) -->
   <div id="uploadModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2000; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
     <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); width:320px;">
-      <h3 style="margin-top:0;">Upload Skin</h3>
+      <h3 style="margin-top:0;">Save Skin</h3>
       <label style="display:block; margin-bottom:10px;">File: <span id="uploadFileName" style="opacity:0.8;">none selected</span></label>
+      <label style="display:block; margin-bottom:10px;">Name:
+        <input type="text" id="uploadNameInput" placeholder="My skin" style="width:100%; margin-top:4px;">
+      </label>
       <label class="model-option"><span>Classic (wide arms)</span><input type="radio" name="skinModel" value="classic" checked></label>
       <label class="model-option"><span>Slim (Alex arms)</span><input type="radio" name="skinModel" value="slim"></label>
       <div style="display:flex; gap:8px; margin-top:12px;">
-        <button class="pm-btn" id="uploadConfirmBtn">Upload</button>
+        <button class="pm-btn" id="uploadConfirmBtn">Save to library</button>
         <button class="pm-btn" id="uploadCancelBtn">Cancel</button>
       </div>
     </div>
   </div>
+
+  <!-- Default skins picker -->
+  <div id="defaultSkinsModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2000; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+    <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); width:520px; max-height:80vh; overflow:auto;">
+      <h3 style="margin-top:0;">Pick a default skin</h3>
+      <div id="defaultSkinsGrid" style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center;"></div>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="pm-btn" id="defaultSkinsCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Variant picker (wide / slim) -->
+  <div id="variantModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2001; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+    <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); width:300px; text-align:center;">
+      <h3 style="margin-top:0;" id="variantModalTitle">Choose arm style</h3>
+      <div style="display:flex; gap:8px; justify-content:center;">
+        <button class="pm-btn" id="variantWideBtn">Wide</button>
+        <button class="pm-btn" id="variantSlimBtn">Slim</button>
+        <button class="pm-btn" id="variantCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Apply-to-Mojang button, bottom-left -->
+  <button id="applySkinBtn" style="display:none; position:fixed; bottom:20px; left:90px; z-index:1500; background:var(--base-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 22px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Apply skin</button>
   <script src="skinview3d.bundle.js"></script>
   <script>
     function createSkinCanvas(skin) {
@@ -383,12 +407,19 @@
     async function getSelectedPlayer() { return await ipcRenderer.invoke('get-selected-player') }
     let selectedplayer;
 
-    // uuid of the account currently being managed (for the local skin library).
+    // Skin-changer state.
     let currentUuid = null;
+    let activePixelHash = null;   // pixel hash of the skin currently applied on Mojang
+    let pendingSelection = null;  // { base64, variant, name, pixelHash } chosen but not yet applied
+    let libraryCache = [];
+    let defaultSkinsCache = [];
 
     function showLoading(on) {
       document.getElementById('pm-loading').style.display = on ? 'flex' : 'none';
     }
+
+    // "classic" arms are called "wide" in Minecraft's own UI.
+    function variantLabel(v) { return v === "slim" ? "slim" : "wide"; }
 
     async function updateSKin() {
       selectedplayer = await getSelectedPlayer();
@@ -419,7 +450,13 @@
       showLoading(false);
       sections.style.display = "block";
 
-      // Update 3D viewer
+      // Determine the active skin/cape.
+      const activeSkin = profile.skins.find(s => s.state === "ACTIVE") || profile.skins[0] || null;
+      const activeSkinB64 = activeSkin && activeSkin.base64 ? activeSkin.base64 : null;
+      const activeCape = profile.capes.find(c => c.state === "ACTIVE") || null;
+
+      // Update 3D viewer (only reset to the active skin when nothing is pending,
+      // so a locally-selected-but-unapplied skin keeps previewing).
       if (typeof skinview3d !== 'undefined' && skinview3d !== null) {
         if (window.skinViewer) {
           window.skinViewer.dispose();
@@ -430,9 +467,9 @@
           height: 800
         });
 
-        // Load current active skin or fall back to name
-        const activeSkin = profile.skins.find(s => s.state === "ACTIVE") || profile.skins[0];
-        if (activeSkin) {
+        if (pendingSelection) {
+          window.skinViewer.loadSkin("data:image/png;base64," + pendingSelection.base64, { model: pendingSelection.variant === "slim" ? "slim" : "default" });
+        } else if (activeSkin) {
           const skinUrl = activeSkin.base64 ? ("data:image/png;base64," + activeSkin.base64) : activeSkin.url;
           window.skinViewer.loadSkin(skinUrl, { model: activeSkin.variant === "SLIM" ? "slim" : "default" });
         } else {
@@ -461,83 +498,45 @@
       const uuid = profile.id || player.uuid || (player.auth && player.auth.uuid) || name;
       currentUuid = uuid;
 
-      // Determine the active skin/cape so we can highlight them.
-      const activeSkin = profile.skins.find(s => s.state === "ACTIVE") || profile.skins[0] || null;
-      const activeSkinB64 = activeSkin && activeSkin.base64 ? activeSkin.base64 : null;
-      const activeSkinUrl = activeSkin && activeSkin.url ? activeSkin.url : null;
-      const activeCape = profile.capes.find(c => c.state === "ACTIVE") || null;
+      // Persist the active skin into the local library (deduped by pixels) and
+      // remember its pixel hash so we can highlight the matching card instead of
+      // showing a separate "current skin" card.
+      activePixelHash = null;
+      if (activeSkinB64) {
+        await ipcRenderer.invoke("skins:add", { uuid, base64: activeSkinB64, variant: activeSkin.variant === "SLIM" ? "slim" : "classic" });
+        activePixelHash = await ipcRenderer.invoke("skins:pixelHash", { base64: activeSkinB64 });
+      }
 
-      // ---- Load Skins/Capes lists ----
+      // ---- Render Skins ----
       const skinsDiv = document.getElementById("skins");
-      const defaultsDiv = document.getElementById("default-skins");
       const capesDiv = document.getElementById("capes");
       skinsDiv.innerHTML = "";
-      defaultsDiv.innerHTML = "";
       capesDiv.innerHTML = "";
 
-      // --- "Your Skins": upload + reset action cards, then the active skin and
-      // the saved local library. ---
-      const uploadCard = createCard("Upload Skin", () => openUploadModal(), iconEl("upload"));
+      // Action cards, in order: Upload · Default Skins · Reset.
+      const uploadCard = createCard("Upload Skin", openUploadModal, iconEl("upload"));
       uploadCard.classList.add("action-card");
       skinsDiv.appendChild(uploadCard);
 
-      const resetCard = createCard("Reset to Default", async () => {
-        try { await ipcRenderer.invoke("mc:resetSkin"); updateSKin(); }
-        catch (err) { alert("Reset failed: " + (err.message || err)); }
-      }, iconEl("restart_alt"));
+      const defaultCard = createCard("Default Skins", openDefaultSkinsModal, iconEl("groups"));
+      defaultCard.classList.add("action-card");
+      skinsDiv.appendChild(defaultCard);
+
+      const resetCard = createCard("Reset to Default", resetSkin, iconEl("restart_alt"));
       resetCard.classList.add("action-card");
       skinsDiv.appendChild(resetCard);
 
-      // The currently-active skin from Mojang (usually a URL) — always show it
-      // and mark it selected so it's clear which skin is applied.
-      if (activeSkin) {
-        const preview = createSkinCanvas(activeSkin);
-        const card = createCard(
-          "Current skin",
-          () => { /* already applied */ },
-          preview
-        );
-        card.classList.add("selected");
-        skinsDiv.appendChild(card);
-      }
-
-      // Persist the active skin into the local library too (when we have its
-      // bytes) so it survives being changed elsewhere, then render the library.
-      if (activeSkinB64) {
-        await ipcRenderer.invoke("skins:add", { uuid, base64: activeSkinB64, variant: activeSkin.variant === "SLIM" ? "slim" : "classic", name: "Skin" });
-      }
+      // Saved local library. Clicking selects locally (no upload); Apply applies.
       const library = await ipcRenderer.invoke("skins:list", { uuid });
+      libraryCache = library;
       library.forEach(skin => {
         const preview = createSkinCanvas({ base64: skin.base64, variant: skin.variant === "slim" ? "SLIM" : "CLASSIC" });
-        const card = createCard(
-          skin.variant === "slim" ? "Slim skin" : "Skin",
-          () => applyLibrarySkin(skin),
-          preview
-        );
-        if (activeSkinB64 && skin.base64 === activeSkinB64) card.classList.add("selected");
+        const card = createCard(`${skin.name} (${variantLabel(skin.variant)})`, () => selectSkin(skin), preview);
+        card.dataset.pixelhash = skin.pixelHash || "";
         skinsDiv.appendChild(card);
       });
 
-      // ---- Default skins (extracted from the vanilla client jar) ----
-      defaultsDiv.innerHTML = "<span style='opacity:0.7'>Loading default skins…</span>";
-      ipcRenderer.invoke("mc:getDefaultSkins").then(defs => {
-        defaultsDiv.innerHTML = "";
-        if (!defs || !defs.length) { defaultsDiv.innerHTML = "<span style='opacity:0.7'>Couldn't load default skins.</span>"; return; }
-        defs.forEach(def => {
-          const preview = createSkinCanvas({ base64: def.base64, variant: def.model === "slim" ? "SLIM" : "CLASSIC" });
-          const label = `${def.name} (${def.model})`;
-          const card = createCard(label, async () => {
-            try {
-              await ipcRenderer.invoke("mc:uploadSkin", { base64: def.base64, variant: def.model === "slim" ? "slim" : "classic" });
-              await ipcRenderer.invoke("skins:add", { uuid: currentUuid, base64: def.base64, variant: def.model === "slim" ? "slim" : "classic", name: def.name });
-              if (window.skinViewer) window.skinViewer.loadSkin("data:image/png;base64," + def.base64, { model: def.model === "slim" ? "slim" : "default" });
-              updateSKin();
-            } catch (err) { alert("Failed to apply skin: " + (err.message || err)); }
-          }, preview);
-          if (activeSkinB64 && def.base64 === activeSkinB64) card.classList.add("selected");
-          defaultsDiv.appendChild(card);
-        });
-      });
+      refreshSelectionUI();
 
       // ---- Capes: a "None" card to disable, then the owned capes ----
       const noneCard = createCard("None (disable)", async () => {
@@ -577,15 +576,116 @@
       return i;
     }
 
-    async function applyLibrarySkin(skin) {
-      try {
-        await ipcRenderer.invoke("mc:uploadSkin", { base64: skin.base64, variant: skin.variant });
-        if (window.skinViewer) window.skinViewer.loadSkin("data:image/png;base64," + skin.base64, { model: skin.variant === "slim" ? "slim" : "default" });
-        updateSKin();
-      } catch (err) { alert("Failed to apply skin: " + (err.message || err)); }
+    // ---- Local selection (preview only, no Mojang until Apply) ----
+    function selectSkin(skin) {
+      pendingSelection = { base64: skin.base64, variant: skin.variant, name: skin.name, pixelHash: skin.pixelHash };
+      if (window.skinViewer) window.skinViewer.loadSkin("data:image/png;base64," + skin.base64, { model: skin.variant === "slim" ? "slim" : "default" });
+      refreshSelectionUI();
     }
 
-    // ---- Upload flow ----
+    // Highlight the pending selection (or the applied skin when nothing pending)
+    // and show the Apply button only when the selection differs from Mojang.
+    function refreshSelectionUI() {
+      const targetHash = pendingSelection ? pendingSelection.pixelHash : activePixelHash;
+      document.querySelectorAll('#skins .card[data-pixelhash]').forEach(card => {
+        card.classList.toggle("selected", !!targetHash && card.dataset.pixelhash === targetHash);
+      });
+      updateApplyButton();
+    }
+
+    function updateApplyButton() {
+      const btn = document.getElementById('applySkinBtn');
+      const show = pendingSelection && pendingSelection.pixelHash && pendingSelection.pixelHash !== activePixelHash;
+      btn.style.display = show ? "" : "none";
+    }
+
+    document.getElementById('applySkinBtn').onclick = async () => {
+      if (!pendingSelection) return;
+      const btn = document.getElementById('applySkinBtn');
+      const label = btn.textContent;
+      btn.disabled = true; btn.textContent = "Applying…";
+      try {
+        await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
+        activePixelHash = pendingSelection.pixelHash;
+        pendingSelection = null;
+        bustPlayerHead();
+        await updateSKin();
+      } catch (err) {
+        alert("Failed to apply skin: " + (err.message || err));
+      } finally {
+        btn.disabled = false; btn.textContent = label;
+      }
+    };
+
+    async function resetSkin() {
+      try {
+        await ipcRenderer.invoke("mc:resetSkin");
+        pendingSelection = null;
+        bustPlayerHead();
+        await updateSKin();
+      } catch (err) { alert("Reset failed: " + (err.message || err)); }
+    }
+
+    // Force the sidebar player head to re-fetch after a skin change (the URL is
+    // cached, so append a cache-busting query param).
+    function bustPlayerHead() {
+      const img = document.getElementById('playerIconSiderbar');
+      if (img && img.src) img.src = img.src.split('?')[0] + '?t=' + Date.now();
+    }
+
+    // ---- Default skins modal (pick skin -> pick arm style -> save locally) ----
+    async function openDefaultSkinsModal() {
+      const modal = document.getElementById('defaultSkinsModal');
+      const grid = document.getElementById('defaultSkinsGrid');
+      modal.style.display = 'flex';
+      if (!defaultSkinsCache.length) {
+        grid.innerHTML = "<span style='opacity:0.7'>Loading default skins…</span>";
+        defaultSkinsCache = (await ipcRenderer.invoke("mc:getDefaultSkins")) || [];
+      }
+      grid.innerHTML = "";
+      if (!defaultSkinsCache.length) { grid.innerHTML = "<span style='opacity:0.7'>Couldn't load default skins.</span>"; return; }
+
+      // Group the flat [{name, model, base64}] list into one entry per skin name
+      // holding both arm variants.
+      const byName = {};
+      defaultSkinsCache.forEach(d => {
+        (byName[d.name] ||= { name: d.name })[d.model] = d.base64;
+      });
+      Object.values(byName).forEach(entry => {
+        const b64 = entry.wide || entry.slim;
+        const preview = createSkinCanvas({ base64: b64, variant: entry.wide ? "CLASSIC" : "SLIM" });
+        const card = createCard(entry.name, () => chooseDefaultVariant(entry), preview);
+        grid.appendChild(card);
+      });
+    }
+
+    function chooseDefaultVariant(entry) {
+      const vm = document.getElementById('variantModal');
+      document.getElementById('variantModalTitle').textContent = `${entry.name}: choose arm style`;
+      const wideBtn = document.getElementById('variantWideBtn');
+      const slimBtn = document.getElementById('variantSlimBtn');
+      wideBtn.style.display = entry.wide ? "" : "none";
+      slimBtn.style.display = entry.slim ? "" : "none";
+      wideBtn.onclick = () => { vm.style.display = 'none'; addDefault(entry.name, entry.wide, "classic"); };
+      slimBtn.onclick = () => { vm.style.display = 'none'; addDefault(entry.name, entry.slim, "slim"); };
+      vm.style.display = 'flex';
+    }
+
+    async function addDefault(name, base64, variant) {
+      if (!base64 || !currentUuid) return;
+      document.getElementById('defaultSkinsModal').style.display = 'none';
+      await ipcRenderer.invoke("skins:add", { uuid: currentUuid, base64, variant, name });
+      await updateSKin();
+    }
+
+    document.getElementById('defaultSkinsCancelBtn').onclick = () => {
+      document.getElementById('defaultSkinsModal').style.display = 'none';
+    };
+    document.getElementById('variantCancelBtn').onclick = () => {
+      document.getElementById('variantModal').style.display = 'none';
+    };
+
+    // ---- Upload flow: saves to the local library only (no Mojang) ----
     let pendingSkinBase64 = null;
     function openUploadModal() { document.getElementById('skinFileInput').click(); }
     document.getElementById('skinFileInput').onchange = (e) => {
@@ -595,6 +695,7 @@
       reader.onload = () => {
         pendingSkinBase64 = reader.result;
         document.getElementById('uploadFileName').textContent = file.name;
+        document.getElementById('uploadNameInput').value = (file.name || "My skin").replace(/\.png$/i, "");
         document.getElementById('uploadModal').style.display = 'flex';
       };
       reader.readAsDataURL(file);
@@ -607,20 +708,19 @@
     document.getElementById('uploadConfirmBtn').onclick = async () => {
       if (!pendingSkinBase64) return;
       const variant = document.querySelector('input[name="skinModel"]:checked').value;
+      const nameVal = (document.getElementById('uploadNameInput').value || "").trim() || "My skin";
       const btn = document.getElementById('uploadConfirmBtn');
-      btn.disabled = true; btn.textContent = "Uploading…";
+      btn.disabled = true; btn.textContent = "Saving…";
       try {
-        await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSkinBase64, variant });
-        // Save into the player's local library so it stays available.
-        if (currentUuid) await ipcRenderer.invoke("skins:add", { uuid: currentUuid, base64: pendingSkinBase64, variant, name: "Skin" });
+        if (currentUuid) await ipcRenderer.invoke("skins:add", { uuid: currentUuid, base64: pendingSkinBase64, variant, name: nameVal });
         document.getElementById('uploadModal').style.display = 'none';
-        if (window.skinViewer) window.skinViewer.loadSkin(pendingSkinBase64, { model: variant === 'slim' ? 'slim' : 'default' });
-        updateSKin();
+        await updateSKin();
       } catch (err) {
-        alert("Upload failed: " + (err.message || err));
+        alert("Save failed: " + (err.message || err));
       } finally {
-        btn.disabled = false; btn.textContent = "Upload";
+        btn.disabled = false; btn.textContent = "Save to library";
         document.getElementById('skinFileInput').value = '';
+        document.getElementById('uploadNameInput').value = '';
         pendingSkinBase64 = null;
       }
     };

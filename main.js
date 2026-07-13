@@ -4178,20 +4178,56 @@ ipcMain.handle("frpc:getCreds", async () => {
   return loadCreds(); // returns { username, ... } or null
 });
 
+// Throttle token refreshes: refreshing on every call was slow and got the
+// account rate-limited by Mojang.
+let lastAuthRefreshAt = 0;
 async function authHeaders() {
-  let id = storage.get("selectedPlayerId", null);
-  let players = await loadPlayers();
-  let obj = players.find(item => item.id === id);
-  obj = await refreshPlayer(obj);
-  ACCESS_TOKEN = obj?.auth?.access_token || null;
+  const id = storage.get("selectedPlayerId", null);
+  const players = await loadPlayers();
+  let obj = players.find(item => String(item.id) === String(id));
+  if (!obj) throw new Error("No account selected");
+
+  if (Date.now() - lastAuthRefreshAt > 10 * 60 * 1000) {
+    try {
+      const refreshed = await refreshPlayer(obj);
+      if (refreshed?.auth?.access_token) {
+        obj = refreshed;
+        const idx = players.findIndex(p => String(p.id) === String(id));
+        if (idx !== -1) { players[idx] = obj; savePlayers(players); }
+        lastAuthRefreshAt = Date.now();
+      }
+    } catch (e) {
+      devtoolsLog("authHeaders refresh failed, using existing token:", e?.message || e);
+    }
+  }
+
+  const token = obj?.auth?.access_token;
+  if (!token) throw new Error("This account has no valid session — please sign in again");
+  ACCESS_TOKEN = token;
   return {
-    "Authorization": "Bearer " + ACCESS_TOKEN,
+    "Authorization": "Bearer " + token,
     "Content-Type": "application/json"
   };
 }
 const texturesDir = path.join(dataDir, "textures");
 const skinsJsonPath = path.join(texturesDir, "skins.json");
 const capesJsonPath = path.join(texturesDir, "capes.json");
+// Separate file for the user's saved skin library (kept apart from the Mojang
+// profile skins cache that mc:getProfile manages).
+const skinLibraryPath = path.join(texturesDir, "skinlibrary.json");
+
+// Hash a skin by its DECODED pixels, so two PNGs with identical pixels (but
+// different byte encodings) are treated as the same skin.
+async function skinPixelHash(base64) {
+  const raw = String(base64).replace(/^data:image\/\w+;base64,/, "");
+  try {
+    const buf = Buffer.from(raw, "base64");
+    const px = await sharp(buf).ensureAlpha().raw().toBuffer();
+    return crypto.createHash("sha1").update(px).digest("hex");
+  } catch {
+    return crypto.createHash("sha1").update(raw).digest("hex");
+  }
+}
 
 // ------------------------
 // Helper: load JSON
@@ -4528,39 +4564,64 @@ ipcMain.handle("mc:applyCape", async (event, capeId) => {
   return true;
 });
 
-// ---- UPLOAD a local skin file (base64 PNG) ----
+// Turn any thrown value / error response into a clean string message so the
+// renderer never shows "[object Object]".
+async function cleanHttpError(res) {
+  let body = "";
+  try { body = await res.text(); } catch { /* ignore */ }
+  try { const j = JSON.parse(body); body = j.errorMessage || j.error || j.message || body; } catch { /* keep text */ }
+  if (res.status === 429) return "Minecraft is rate-limiting skin changes — wait a moment and try again";
+  return `Minecraft returned HTTP ${res.status}${body ? ": " + body : ""}`;
+}
+
+// ---- UPLOAD a local skin file (base64 PNG) -> applies to Mojang ----
 ipcMain.handle("mc:uploadSkin", async (event, { base64, variant }) => {
-  const headers = await authHeaders();
-  delete headers["Content-Type"]; // let fetch set the multipart boundary
-  const buffer = Buffer.from(String(base64).replace(/^data:image\/\w+;base64,/, ""), "base64");
-  const form = new FormData();
-  form.append("variant", (variant || "classic").toLowerCase());
-  form.append("file", new Blob([buffer], { type: "image/png" }), "skin.png");
-  const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
-    method: "POST", headers, body: form
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return true;
+  try {
+    const headers = await authHeaders();
+    delete headers["Content-Type"]; // let fetch set the multipart boundary
+    const buffer = Buffer.from(String(base64).replace(/^data:image\/\w+;base64,/, ""), "base64");
+    const form = new FormData();
+    form.append("variant", (variant || "classic").toLowerCase());
+    form.append("file", new Blob([buffer], { type: "image/png" }), "skin.png");
+    const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
+      method: "POST", headers, body: form
+    });
+    if (!res.ok) throw new Error(await cleanHttpError(res));
+    profileCache.clear(); // active skin changed
+    return true;
+  } catch (err) {
+    throw new Error(err && err.message ? err.message : String(err));
+  }
 });
 
 // ---- RESET skin to the account's default ----
 ipcMain.handle("mc:resetSkin", async () => {
-  const headers = await authHeaders();
-  const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins/active", {
-    method: "DELETE", headers
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return true;
+  try {
+    const headers = await authHeaders();
+    const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins/active", {
+      method: "DELETE", headers
+    });
+    if (!res.ok) throw new Error(await cleanHttpError(res));
+    profileCache.clear();
+    return true;
+  } catch (err) {
+    throw new Error(err && err.message ? err.message : String(err));
+  }
 });
 
 // ---- DISABLE (remove) the active cape ----
 ipcMain.handle("mc:disableCape", async () => {
-  const headers = await authHeaders();
-  const res = await fetch("https://api.minecraftservices.com/minecraft/profile/capes/active", {
-    method: "DELETE", headers
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return true;
+  try {
+    const headers = await authHeaders();
+    const res = await fetch("https://api.minecraftservices.com/minecraft/profile/capes/active", {
+      method: "DELETE", headers
+    });
+    if (!res.ok) throw new Error(await cleanHttpError(res));
+    profileCache.clear();
+    return true;
+  } catch (err) {
+    throw new Error(err && err.message ? err.message : String(err));
+  }
 });
 
 // ---- DEFAULT SKINS ----
@@ -4615,30 +4676,36 @@ ipcMain.handle("mc:getDefaultSkins", async () => {
 
 // ---- LOCAL SKIN LIBRARY (per account uuid) ----
 // So a player's previously-used skins persist even if their active skin is
-// changed elsewhere.
+// changed elsewhere. Deduped by decoded-pixel hash.
 function loadSkinLib() {
-  try { return JSON.parse(fs.readFileSync(skinsJsonPath, "utf8")) || {}; } catch { return {}; }
+  try { return JSON.parse(fs.readFileSync(skinLibraryPath, "utf8")) || {}; } catch { return {}; }
 }
 function saveSkinLib(obj) {
   fs.mkdirSync(texturesDir, { recursive: true });
-  fs.writeFileSync(skinsJsonPath, JSON.stringify(obj));
+  fs.writeFileSync(skinLibraryPath, JSON.stringify(obj));
 }
 
 ipcMain.handle("skins:list", (event, { uuid }) => {
   return loadSkinLib()[uuid] || [];
 });
 
-ipcMain.handle("skins:add", (event, { uuid, base64, variant, name }) => {
+// Add a skin to the library WITHOUT touching Mojang. No-op (returns existing)
+// if a pixel-identical skin is already saved.
+ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name }) => {
   const b = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
-  if (!b) return loadSkinLib()[uuid] || [];
+  if (!b || !uuid) return loadSkinLib()[uuid] || [];
+  const pixelHash = await skinPixelHash(b);
   const lib = loadSkinLib();
   const arr = lib[uuid] || [];
-  const hash = crypto.createHash("sha1").update(b).digest("hex");
-  if (!arr.some(s => s.hash === hash)) {
-    arr.unshift({ id: Date.now(), hash, name: name || "Skin", base64: b, variant: (variant || "classic"), addedAt: Date.now() });
-    lib[uuid] = arr;
-    saveSkinLib(lib);
+  const existing = arr.find(s => s.pixelHash === pixelHash);
+  if (existing) {
+    // Update the name if a nicer one was provided.
+    if (name && existing.name !== name) { existing.name = name; lib[uuid] = arr; saveSkinLib(lib); }
+    return arr;
   }
+  arr.unshift({ id: Date.now(), pixelHash, name: name || "Skin", base64: b, variant: (variant || "classic"), addedAt: Date.now() });
+  lib[uuid] = arr;
+  saveSkinLib(lib);
   return arr;
 });
 
@@ -4647,6 +4714,13 @@ ipcMain.handle("skins:remove", (event, { uuid, id }) => {
   lib[uuid] = (lib[uuid] || []).filter(s => String(s.id) !== String(id));
   saveSkinLib(lib);
   return lib[uuid];
+});
+
+// Pixel hash for arbitrary base64 (used to detect if the active Mojang skin
+// matches a library entry, regardless of PNG encoding).
+ipcMain.handle("skins:pixelHash", async (event, { base64 }) => {
+  if (!base64) return null;
+  return await skinPixelHash(base64);
 });
 
 updateDiscordPresenceToggle();
