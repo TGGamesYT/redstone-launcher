@@ -888,15 +888,16 @@ button,
 
 button:not(.toolbar-buttons button):hover,
 .btn:hover {
+  /* No translateY here: lifting the button on hover made its bottom edge move
+     out from under the cursor, causing a rapid hover/un-hover jitter loop
+     (very visible on the instance-detail and mod-browser tab rows). */
   background: var(--menu-hover-bg);
   border-color: var(--accent);
-  transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 button:active,
 .btn:active {
-  transform: translateY(0);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
