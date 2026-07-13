@@ -61,6 +61,57 @@
     .modal button {
       margin-right: 5px;
     }
+
+    /* Search / filter / sort toolbar. */
+    #search-sort {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #search-sort .ss-row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+
+    /* Normalise every control in the toolbar to the same height (native selects
+       and text inputs otherwise render a couple of pixels apart) and drop the
+       global bottom margin so the rows sit tight. */
+    #search-sort input,
+    #search-sort select,
+    #search-sort .add-instance-btn {
+      height: 42px;
+      margin-bottom: 0;
+      box-sizing: border-box;
+    }
+
+    #search-sort select,
+    #search-sort input {
+      min-width: 170px;
+    }
+
+    #search-sort #searchInput { min-width: 220px; }
+
+    /* "+" create-instance button, sized to match the search field. */
+    .add-instance-btn {
+      width: 42px;
+      flex: 0 0 42px;
+      min-width: 42px !important;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      cursor: pointer;
+      background: var(--base-color);
+      color: var(--text-color);
+      border: 2px solid var(--border-dark);
+      border-radius: var(--border-radius);
+    }
+
+    .add-instance-btn:hover { background: var(--third-color); }
+    .add-instance-btn .material-icons { font-size: 24px; }
   </style>
 </head>
 
@@ -114,12 +165,13 @@
     </ul>
   </div>
   <h1 id="instancesHeading">Instances</h1>
-  <div id="search-sort"
-    style="padding: 0 20px 0 0; display: flex; flex-direction: column; gap: 10px;">
-    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-      <input id="searchInput" type="text" placeholder="Search instances..." style="flex:1; min-width:220px;" />
-
-      <select id="filterLoader" style="width:170px;">
+  <div id="search-sort" style="padding: 0 20px 0 0;">
+    <div class="ss-row">
+      <input id="searchInput" type="text" placeholder="Search instances..." style="flex:1;" />
+      <button id="addInstanceTopBtn" class="add-instance-btn" title="Create a new instance"><i class="material-icons">add</i></button>
+    </div>
+    <div class="ss-row">
+      <select id="filterLoader">
         <option value="">All Loaders</option>
         <option value="vanilla">Vanilla</option>
         <option value="fabric">Fabric</option>
@@ -128,22 +180,20 @@
         <option value="neoforge">NeoForge</option>
       </select>
 
-      <input id="filterVersion" type="text" placeholder="Filter by version..." style="width:170px;" />
-    </div>
-    <div style="display:flex; gap:10px; align-items:center;">
-      <label for="sortSelect">Sort by: </label>
-      <select id="sortSelect" style="flex:1; max-width:420px;">
-        <option value="custom">Custom</option>
-        <option value="name-asc">By Name (ascending)</option>
-        <option value="name-desc">By Name (descending)</option>
-        <option value="created-asc">By Creation Date (ascending)</option>
-        <option value="created-desc">By Creation Date (descending)</option>
-        <option value="lastused-asc">By Last Used (ascending)</option>
-        <option value="lastused-desc">By Last Used (descending)</option>
-        <option value="loader-asc">By Mod Loader (ascending)</option>
-        <option value="loader-desc">By Mod Loader (descending)</option>
-        <option value="version-asc">By Game Version (ascending)</option>
-        <option value="version-desc">By Game Version (descending)</option>
+      <input id="filterVersion" type="text" placeholder="Filter by version..." />
+
+      <select id="sortSelect" style="flex:1;">
+        <option value="custom">Sort: Custom order</option>
+        <option value="name-asc">Sort: Name (A→Z)</option>
+        <option value="name-desc">Sort: Name (Z→A)</option>
+        <option value="created-asc">Sort: Created (oldest)</option>
+        <option value="created-desc">Sort: Created (newest)</option>
+        <option value="lastused-asc">Sort: Last used (oldest)</option>
+        <option value="lastused-desc">Sort: Last used (newest)</option>
+        <option value="loader-asc">Sort: Mod loader (A→Z)</option>
+        <option value="loader-desc">Sort: Mod loader (Z→A)</option>
+        <option value="version-asc">Sort: Game version (asc)</option>
+        <option value="version-desc">Sort: Game version (desc)</option>
       </select>
       <button id="editOrderBtn" style="display:none;">Edit Order</button>
     </div>
@@ -298,25 +348,25 @@
         reader.readAsDataURL(file);
       });
     }
-    const sidebarAddBtn = document.querySelector('.sidebar .menu.medium li#sidebar-add-instance');
-    if (sidebarAddBtn) {
-      sidebarAddBtn.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const url = new URL(window.location);
-        const instanceId = url.searchParams.get('i');
-        if (instanceId && instanceId !== 'NEWINSTANCE') {
-          window.location.href = 'instances.html?i=NEWINSTANCE';
-        } else {
-          instanceName.value = "";
-          instanceLoader.value = "vanilla";
-          instanceIcon.value = "";
-          delete modalCreateBtn.dataset.editingId;
-          delete modalCreateBtn._originalProfile;
-          addInstanceModal.classList.add('active');
-        }
-      };
+    function openNewInstance(e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      const url = new URL(window.location);
+      const instanceId = url.searchParams.get('i');
+      if (instanceId && instanceId !== 'NEWINSTANCE') {
+        window.location.href = 'instances.html?i=NEWINSTANCE';
+      } else {
+        instanceName.value = "";
+        instanceLoader.value = "vanilla";
+        instanceIcon.value = "";
+        delete modalCreateBtn.dataset.editingId;
+        delete modalCreateBtn._originalProfile;
+        addInstanceModal.classList.add('active');
+      }
     }
+    const sidebarAddBtn = document.querySelector('.sidebar .menu.medium li#sidebar-add-instance');
+    if (sidebarAddBtn) sidebarAddBtn.onclick = openNewInstance;
+    const addInstanceTopBtn = document.getElementById('addInstanceTopBtn');
+    if (addInstanceTopBtn) addInstanceTopBtn.onclick = openNewInstance;
     sortSelect.addEventListener("change", async () => {
       const sortValue = sortSelect.value;
       if (sortValue === "custom") {
@@ -1364,13 +1414,7 @@
       emptyState.style.display = 'none';
       profilesList.style.display = 'block';
 
-      // "Add an instance" at the TOP of the list.
-      const liAddTop = document.createElement("li");
-      liAddTop.className = "profile-item add-instance-row";
-      liAddTop.innerHTML = `<i class="material-icons">add</i><span>Add an instance</span>`;
-      liAddTop.style.cursor = "pointer";
-      liAddTop.onclick = () => { instanceLoader.value = "vanilla"; addInstanceModal.classList.add('active'); };
-      profilesList.appendChild(liAddTop);
+      // (The "+" button beside the search bar creates new instances now.)
 
       list.forEach(p => {
         const li = document.createElement("li");
