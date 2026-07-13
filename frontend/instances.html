@@ -1057,6 +1057,11 @@
             Object.values(tabButtons).forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
 
+            // Restart the fade-in animation so the new tab's contents cross-fade.
+            tabContent.classList.remove("tab-fade-in");
+            void tabContent.offsetWidth; // force reflow to re-trigger the animation
+            tabContent.classList.add("tab-fade-in");
+
             tabContent.classList.remove("logs-active");
             tabContent.innerHTML = "Loading...";
             logsEl.style.display = "none";

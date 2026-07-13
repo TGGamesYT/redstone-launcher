@@ -371,6 +371,10 @@
     // Render current page projects
     function renderProjects(projects) {
       resultsList.innerHTML = '';
+      // Cross-fade the results when the list is swapped (tab/filter/page change).
+      resultsList.classList.remove('tab-fade-in');
+      void resultsList.offsetWidth;
+      resultsList.classList.add('tab-fade-in');
       if (!projects.length) {
         resultsList.innerHTML = '<p>No projects found</p>';
         return;

@@ -104,6 +104,17 @@
   transform: scale(1.15);
 }
 
+/* Tab-content fade: applied (and restarted) whenever a tab's contents are
+   swapped in, so switching tabs cross-fades instead of snapping. */
+@keyframes tabFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tab-fade-in {
+  animation: tabFadeIn 0.2s ease;
+}
+
 .sidebar a.modrinth .provider-icon svg {
   width: 100%;
   height: 100%;
