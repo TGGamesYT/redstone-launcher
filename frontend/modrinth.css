@@ -256,6 +256,34 @@
 
 /* ---------------- TYPE TABS ---------------- */
 
+#searchPagination .filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+#searchPagination .filter-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--text-font);
+  font-size: 13px;
+  color: var(--text-color);
+  opacity: 0.9;
+}
+
+#searchPagination .filter-row select {
+  padding: 6px 10px;
+  border-radius: var(--border-radius);
+  border: 1px solid var(--border-dark);
+  background: var(--very-dark);
+  color: var(--text-color);
+  font-family: var(--text-font);
+  font-size: 13px;
+  cursor: pointer;
+}
+
 #searchPagination .bottom-row {
   display: flex;
   justify-content: space-between;

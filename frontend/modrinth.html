@@ -77,6 +77,36 @@
       <button id="apiToggle" class="api-toggle" title="Switch between Modrinth and CurseForge"></button>
     </div>
     
+    <div class="filter-row" id="filterRow">
+      <label>Sort
+        <select id="sortSelect">
+          <option value="relevance">Relevance</option>
+          <option value="downloads">Downloads</option>
+          <option value="follows">Follows</option>
+          <option value="newest">Newest</option>
+          <option value="updated">Updated</option>
+        </select>
+      </label>
+      <label>Version
+        <select id="versionFilter"><option value="">Any</option></select>
+      </label>
+      <label class="loader-filter">Loader
+        <select id="loaderFilter">
+          <option value="">Any</option>
+          <option value="fabric">Fabric</option>
+          <option value="forge">Forge</option>
+          <option value="neoforge">NeoForge</option>
+          <option value="quilt">Quilt</option>
+          <option value="paper">Paper</option>
+          <option value="spigot">Spigot</option>
+          <option value="bukkit">Bukkit</option>
+        </select>
+      </label>
+      <label class="category-filter">Category
+        <select id="categoryFilter"><option value="">Any</option></select>
+      </label>
+    </div>
+
     <div class="bottom-row">
       <div id="typeTabs">
         <button class="tab active" data-type="mod">Mod</button>
@@ -221,14 +251,35 @@
     setupInstallModeUI();
 
     // Fetch top 20 projects from Modrinth
+    // Read the current filter/sort selections from the toolbar.
+    function getFilters() {
+      return {
+        sort: (document.getElementById('sortSelect') || {}).value || 'relevance',
+        version: (document.getElementById('versionFilter') || {}).value || '',
+        loader: (document.getElementById('loaderFilter') || {}).value || '',
+        category: (document.getElementById('categoryFilter') || {}).value || ''
+      };
+    }
+
     async function fetchProjects(type, page = 1, search = "") {
       const api = apiSelector.value;
+      const f = getFilters();
       resultsList.innerHTML = 'Loading...';
       try {
         if (api === "modrinth") {
           const offset = (page - 1) * projectsPerPage;
-          const facets = encodeURIComponent(JSON.stringify([["project_type:" + type]]));
-          let url = `https://api.modrinth.com/v2/search?facets=${facets}&limit=${projectsPerPage}&offset=${offset}`;
+          // Facets are AND-ed across groups; each inner array is OR-ed.
+          const facetGroups = [["project_type:" + type]];
+          if (f.version) facetGroups.push(["versions:" + f.version]);
+          if (f.loader) facetGroups.push(["categories:" + f.loader]);
+          if (f.category) facetGroups.push(["categories:" + f.category]);
+          const facets = encodeURIComponent(JSON.stringify(facetGroups));
+          const mrIndex = f.sort === 'relevance' ? 'relevance'
+            : f.sort === 'downloads' ? 'downloads'
+            : f.sort === 'follows' ? 'follows'
+            : f.sort === 'newest' ? 'newest'
+            : f.sort === 'updated' ? 'updated' : 'relevance';
+          let url = `https://api.modrinth.com/v2/search?facets=${facets}&index=${mrIndex}&limit=${projectsPerPage}&offset=${offset}`;
           if (search) url += `&query=${encodeURIComponent(search)}`;
           const res = await fetch(url);
           const data = await res.json();
@@ -246,14 +297,22 @@
           };
 
           const classId = curseforgeTypeMap[type] || 6; // Default to mods
+          // CurseForge sortField: 2=Popularity, 3=LastUpdated, 6=TotalDownloads, 4=Name.
+          const cfSort = f.sort === 'downloads' ? 6
+            : f.sort === 'updated' || f.sort === 'newest' ? 3
+            : f.sort === 'follows' ? 2 : 2;
+          const cfLoaderMap = { forge: 1, fabric: 4, quilt: 5, neoforge: 6 };
           const searchBody = {
             gameId: 432, // 432 = Minecraft
             classId,
             searchFilter: search || "",
-            sortField: 2, // Sort by popularity
+            sortField: cfSort,
+            sortOrder: "desc",
             pageSize: projectsPerPage,
             index: (page - 1) * projectsPerPage
           };
+          if (f.version) searchBody.gameVersion = f.version;
+          if (f.loader && cfLoaderMap[f.loader]) searchBody.modLoaderType = cfLoaderMap[f.loader];
 
           const res = await fetch("https://curseforge.tgdoescode.workers.dev/search", {
             method: "POST",
@@ -454,6 +513,64 @@
 
     // Type change & refresh
     apiSelector.onchange = () => { currentPage = 1; loadProjects(); };
+
+    // Filter/sort changes reload from page 1.
+    ['sortSelect', 'versionFilter', 'loaderFilter', 'categoryFilter'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.onchange = () => { currentPage = 1; loadProjects(); };
+    });
+
+    // Loaders only apply to code-bearing types; hide the filter elsewhere so we
+    // don't accidentally facet resource packs / shaders down to nothing.
+    function updateFilterVisibility() {
+      const type = document.querySelector('#typeTabs .tab.active')?.dataset.type || 'mod';
+      const loaderApplies = ['mod', 'modpack', 'plugin', 'datapack'].includes(type);
+      const lf = document.querySelector('.loader-filter');
+      if (lf) {
+        lf.style.display = loaderApplies ? '' : 'none';
+        if (!loaderApplies) { const s = document.getElementById('loaderFilter'); if (s) s.value = ''; }
+      }
+    }
+
+    // Populate the game-version and category filters from Modrinth's tag API.
+    let categoryTags = [];
+    function repopulateCategories() {
+      const sel = document.getElementById('categoryFilter');
+      if (!sel) return;
+      const type = document.querySelector('#typeTabs .tab.active')?.dataset.type || 'mod';
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">Any</option>';
+      categoryTags
+        .filter(c => c.project_type === type)
+        .forEach(c => {
+          const o = document.createElement('option');
+          o.value = c.name; o.textContent = c.name.charAt(0).toUpperCase() + c.name.slice(1);
+          sel.appendChild(o);
+        });
+      // Keep the previous choice if it still applies.
+      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+    }
+    (async () => {
+      try {
+        const [versions, cats] = await Promise.all([
+          fetch('https://api.modrinth.com/v2/tag/game_version').then(r => r.json()),
+          fetch('https://api.modrinth.com/v2/tag/category').then(r => r.json())
+        ]);
+        const vsel = document.getElementById('versionFilter');
+        if (vsel && Array.isArray(versions)) {
+          versions
+            .filter(v => v.version_type === 'release')
+            .forEach(v => {
+              const o = document.createElement('option');
+              o.value = v.version; o.textContent = v.version;
+              vsel.appendChild(o);
+            });
+        }
+        categoryTags = Array.isArray(cats) ? cats : [];
+        repopulateCategories();
+      } catch (err) { console.warn('Failed to load filter tags', err); }
+    })();
+    updateFilterVisibility();
 
     // Initial load
     loadProjects();
@@ -708,6 +825,10 @@
         typeTabs.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
         // activate clicked one
         tab.classList.add("active");
+
+        // Categories are per-project-type, so refresh them for the new tab.
+        if (typeof repopulateCategories === 'function') repopulateCategories();
+        if (typeof updateFilterVisibility === 'function') updateFilterVisibility();
 
         // optionally reload projects
         currentPage = 1;
