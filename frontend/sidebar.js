@@ -169,6 +169,14 @@ function renderInstances(instances) {
       // clickable icon + link
       const a = document.createElement("a");
       a.href = `instances.html?i=${instance.id}`;
+      // If we're already on the instances page, switch in-page instead of
+      // triggering a full reload.
+      a.addEventListener("click", (e) => {
+        if (typeof window.openInstanceInPage === "function") {
+          e.preventDefault();
+          window.openInstanceInPage(instance.id);
+        }
+      });
       const img = document.createElement("img");
       img.src = instance.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
       img.alt = instance.name;
@@ -197,7 +205,11 @@ function renderInstances(instances) {
   liAdd.appendChild(iAdd);
   liAdd.appendChild(spanAdd);
   liAdd.addEventListener("click", () => {
-    window.location.href = "instances.html?i=NEWINSTANCE";
+    if (typeof window.openNewInstanceInPage === "function") {
+      window.openNewInstanceInPage();
+    } else {
+      window.location.href = "instances.html?i=NEWINSTANCE";
+    }
   });
   ul.appendChild(liAdd);
 }
@@ -219,6 +231,21 @@ function applyModProviderIcon() {
   });
 }
 applyModProviderIcon();
+
+// Global loading-screen handling. Any page that includes a
+// `#loading-overlay` element gets the same fade-out once the window finishes
+// loading, so every page shows the launcher splash without duplicating logic.
+function hideLoadingOverlay() {
+  const overlay = document.getElementById('loading-overlay');
+  if (!overlay) return;
+  overlay.classList.add('fade-out');
+  setTimeout(() => { overlay.style.display = 'none'; }, 500);
+}
+if (document.readyState === 'complete') {
+  setTimeout(hideLoadingOverlay, 400);
+} else {
+  window.addEventListener('load', () => setTimeout(hideLoadingOverlay, 400));
+}
 
 // Ask backend for profiles/instances
 function updateSideBar() {

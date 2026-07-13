@@ -368,6 +368,25 @@
     if (sidebarAddBtn) sidebarAddBtn.onclick = openNewInstance;
     const addInstanceTopBtn = document.getElementById('addInstanceTopBtn');
     if (addInstanceTopBtn) addInstanceTopBtn.onclick = openNewInstance;
+
+    // In-page navigation: the sidebar calls these when we're ALREADY on the
+    // instances page, so switching instance/new-instance swaps the view in
+    // place (updating the URL via history) instead of reloading the page.
+    window.openInstanceInPage = function (id) {
+      const url = new URL(window.location);
+      url.searchParams.set('i', id);
+      history.pushState({}, '', url);
+      renderListOrDetail();
+    };
+    window.openNewInstanceInPage = function () {
+      const url = new URL(window.location);
+      url.searchParams.delete('i');
+      history.pushState({}, '', url);
+      renderListOrDetail();
+      openNewInstance();
+    };
+    // Keep the browser back/forward buttons working with the in-page switches.
+    window.addEventListener('popstate', () => renderListOrDetail());
     sortSelect.addEventListener("change", async () => {
       const sortValue = sortSelect.value;
       if (sortValue === "custom") {
