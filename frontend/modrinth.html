@@ -122,6 +122,7 @@
         <button class="tab" data-type="shader">Shader</button>
         <button class="tab" data-type="modpack">Modpack</button>
         <button class="tab" data-type="plugin">Plugin</button>
+        <button class="tab modrinth-only" data-type="server">Server</button>
       </div>
 
       <div id="paginationControls">
@@ -180,6 +181,11 @@
     apiToggle.onclick = () => {
       apiSelector.value = apiSelector.value === 'modrinth' ? 'curseforge' : 'modrinth';
       refreshApiToggle();
+      // Categories differ per provider — rebuild them for the new one.
+      if (typeof repopulateCategories === 'function') repopulateCategories();
+      if (typeof updateCategoryVisibility === 'function') updateCategoryVisibility();
+      if (typeof updateProviderTabs === 'function') updateProviderTabs();
+      if (typeof updateFilterVisibility === 'function') updateFilterVisibility();
       currentPage = 1;
       loadProjects();
     };
@@ -275,8 +281,10 @@
       try {
         if (api === "modrinth") {
           const offset = (page - 1) * projectsPerPage;
+          // "server" is Modrinth's minecraft_java_server project type.
+          const mrType = type === "server" ? "minecraft_java_server" : type;
           // Facets are AND-ed across groups; each inner array is OR-ed.
-          const facetGroups = [["project_type:" + type]];
+          const facetGroups = [["project_type:" + mrType]];
           if (f.version) facetGroups.push(["versions:" + f.version]);
           if (f.loader) facetGroups.push(["categories:" + f.loader]);
           if (f.category) facetGroups.push(["categories:" + f.category]);
@@ -320,6 +328,8 @@
           };
           if (f.version) searchBody.gameVersion = f.version;
           if (f.loader && cfLoaderMap[f.loader]) searchBody.modLoaderType = cfLoaderMap[f.loader];
+          // On CurseForge the category value is a numeric category id.
+          if (f.category && /^\d+$/.test(f.category)) searchBody.categoryId = parseInt(f.category, 10);
 
           const res = await fetch("https://curseforge.tgdoescode.workers.dev/search", {
             method: "POST",
@@ -388,6 +398,7 @@
       }
 
       const api = apiSelector.value;
+      const activeType = document.querySelector('#typeTabs .tab.active')?.dataset.type || 'mod';
       projects.forEach(proj => {
         console.log(proj)
         const card = document.createElement("div");
@@ -433,6 +444,11 @@
             installBtn.textContent = "Incompatible";
             installBtn.disabled = true;
           }
+        } else if (activeType === "server" && api === "modrinth") {
+          // Server projects are modpack-shaped: set one up as an instance.
+          installBtn.textContent = "Set up";
+          installBtn.title = "Download this server's modpack as a new instance";
+          installBtn.onclick = (e) => { e.stopPropagation(); installServer(proj, installBtn); };
         }
 
         // Clicking the card still opens the project page for reading.
@@ -516,6 +532,39 @@
       renderProjects(projects);
     }
 
+    // Set up a Modrinth server project (a modpack-shaped .mrpack) as a new
+    // instance. The join address isn't exposed by the API, so we point the user
+    // at the project page for it.
+    async function installServer(proj, btn) {
+      const orig = btn.textContent;
+      btn.disabled = true; btn.textContent = "Setting up…";
+      try {
+        const versions = await (await fetch(`https://api.modrinth.com/v2/project/${proj.project_id}/version`)).json();
+        (versions || []).sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
+        const v = (versions || []).find(x => (x.files || []).some(f => f.filename.endsWith(".mrpack"))) || versions[0];
+        const mrpack = v && (v.files || []).find(f => f.filename.endsWith(".mrpack"));
+        if (!mrpack) { alert("This server has no installable modpack file."); return; }
+        await ipcRenderer.invoke("install-mrpack-url", mrpack.url);
+        alert(`Set up "${proj.title}" as a new instance. Open its Modrinth page for the join address.`);
+      } catch (e) {
+        alert("Setup failed: " + (e.message || e));
+      } finally {
+        btn.disabled = false; btn.textContent = orig;
+      }
+    }
+
+    // The "Server" type is Modrinth-only; hide it (and switch away) on CurseForge.
+    function updateProviderTabs() {
+      const isCurse = apiSelector.value === "curseforge";
+      document.querySelectorAll('#typeTabs .modrinth-only').forEach(t => { t.style.display = isCurse ? "none" : ""; });
+      const active = document.querySelector('#typeTabs .tab.active');
+      if (isCurse && active && active.classList.contains("modrinth-only")) {
+        document.querySelectorAll('#typeTabs .tab').forEach(t => t.classList.remove("active"));
+        const modTab = document.querySelector('#typeTabs .tab[data-type="mod"]');
+        if (modTab) modTab.classList.add("active");
+      }
+    }
+
     // Search handler
     searchInput.oninput = () => {
       currentPage = 1;
@@ -535,13 +584,40 @@
     // don't accidentally facet resource packs / shaders down to nothing.
     function updateFilterVisibility() {
       const type = document.querySelector('#typeTabs .tab.active')?.dataset.type || 'mod';
-      const loaderApplies = ['mod', 'modpack', 'plugin', 'datapack'].includes(type);
+      const loaderApplies = ['mod', 'modpack', 'plugin', 'datapack', 'server'].includes(type);
       const lf = document.querySelector('.loader-filter');
       if (lf) {
         lf.style.display = loaderApplies ? '' : 'none';
         if (!loaderApplies) { const s = document.getElementById('loaderFilter'); if (s) s.value = ''; }
       }
     }
+
+    // CurseForge's own category ids (gameId 432). The proxy worker has no
+    // categories endpoint, so these well-known static ids are used directly.
+    const CURSEFORGE_CATEGORIES = {
+      mod: [
+        [406, 'World Gen'], [407, 'Biomes'], [408, 'Ores and Resources'], [409, 'Structures'],
+        [410, 'Dimensions'], [411, 'Mobs'], [412, 'Technology'], [414, 'Player Transport'],
+        [415, 'Energy, Fluid, and Item Transport'], [416, 'Farming'], [417, 'Energy'],
+        [419, 'Magic'], [420, 'Storage'], [421, 'API and Library'], [422, 'Adventure and RPG'],
+        [423, 'Map and Information'], [424, 'Cosmetic'], [425, 'Addons'], [426, 'Thermal Expansion'],
+        [427, 'Redstone'], [428, 'Server Utility'], [434, 'Buildcraft'], [435, 'Forestry'],
+        [436, 'Food'], [4671, 'Automation'], [5191, 'Utility & QoL'], [6145, 'Create'],
+        [6484, 'Performance'], [6814, 'Twitch Integration']
+      ],
+      modpack: [
+        [4472, 'Adventure and RPG'], [4473, 'Combat / PvP'], [4474, 'Exploration'],
+        [4475, 'Extra Large'], [4476, 'FTB Official Pack'], [4477, 'Hardcore'], [4478, 'Magic'],
+        [4479, 'Map Based'], [4480, 'Mini Game'], [4481, 'Multiplayer'], [4482, 'Quests'],
+        [4483, 'Sci-Fi'], [4484, 'Skyblock'], [4487, 'Small / Light'], [4488, 'Tech'],
+        [4489, 'Vanilla+']
+      ],
+      resourcepack: [
+        [393, 'Miscellaneous'], [394, 'Animated'], [395, 'Font Packs'], [396, 'Modern'],
+        [397, 'Steampunk'], [398, 'Traditional'], [399, 'Photo Realistic'], [400, 'Medieval'],
+        [402, 'Mod Support'], [403, 'Themed']
+      ]
+    };
 
     // Populate the game-version and category filters from Modrinth's tag API.
     let categoryTags = [];
@@ -551,15 +627,36 @@
       const type = document.querySelector('#typeTabs .tab.active')?.dataset.type || 'mod';
       const prev = sel.value;
       sel.innerHTML = '<option value="">Any</option>';
-      categoryTags
-        .filter(c => c.project_type === type)
-        .forEach(c => {
+
+      if (apiSelector.value === 'curseforge') {
+        // CurseForge: numeric category ids for the classes we know.
+        (CURSEFORGE_CATEGORIES[type] || []).forEach(([id, name]) => {
           const o = document.createElement('option');
-          o.value = c.name; o.textContent = c.name.charAt(0).toUpperCase() + c.name.slice(1);
+          o.value = String(id); o.textContent = name;
           sel.appendChild(o);
         });
+      } else {
+        // Modrinth: named category tags from the tag API.
+        categoryTags
+          .filter(c => c.project_type === type)
+          .forEach(c => {
+            const o = document.createElement('option');
+            o.value = c.name; o.textContent = c.name.charAt(0).toUpperCase() + c.name.slice(1);
+            sel.appendChild(o);
+          });
+      }
       // Keep the previous choice if it still applies.
       if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+    }
+
+    // Hide the category filter for CurseForge classes we don't have ids for.
+    function updateCategoryVisibility() {
+      const cf = document.querySelector('.category-filter');
+      if (!cf) return;
+      const type = document.querySelector('#typeTabs .tab.active')?.dataset.type || 'mod';
+      const hide = apiSelector.value === 'curseforge' && !CURSEFORGE_CATEGORIES[type];
+      cf.style.display = hide ? 'none' : '';
+      if (hide) { const s = document.getElementById('categoryFilter'); if (s) s.value = ''; }
     }
     (async () => {
       try {
@@ -582,6 +679,8 @@
       } catch (err) { console.warn('Failed to load filter tags', err); }
     })();
     updateFilterVisibility();
+    updateCategoryVisibility();
+    updateProviderTabs();
 
     // Initial load
     loadProjects();
@@ -840,6 +939,7 @@
         // Categories are per-project-type, so refresh them for the new tab.
         if (typeof repopulateCategories === 'function') repopulateCategories();
         if (typeof updateFilterVisibility === 'function') updateFilterVisibility();
+        if (typeof updateCategoryVisibility === 'function') updateCategoryVisibility();
 
         // optionally reload projects
         currentPage = 1;
