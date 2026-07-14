@@ -1468,11 +1468,14 @@ async function mrpack(mrpackPath) {
   else if (deps["neoforge"]) loader = "neoforge";
   const mcVersion = deps["minecraft"] || "1.20.1";
 
+  // Unique instance id/folder derived from the pack name.
+  const profileId = getUniqueFolderName(indexJson.name || "Imported Profile");
+
   // Create instance folder
   const profilesDir = path.join(dataDir, "client");
   if (!fs.existsSync(profilesDir)) fs.mkdirSync(profilesDir, { recursive: true });
   const profileFolder = path.join(profilesDir, `${profileId}`);
-  fs.mkdirSync(profileFolder);
+  fs.mkdirSync(profileFolder, { recursive: true });
 
   // Handle overrides inside the .mrpack (everything except modrinth.index.json)
   zip.getEntries().forEach(entry => {

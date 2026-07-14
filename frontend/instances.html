@@ -209,13 +209,21 @@
   <div id="addInstanceModal" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <h2>Create Instance</h2>
+        <h2 id="addInstanceTitle">Create Instance</h2>
         <button type="button" class="modal-close" id="closeAddInstanceBtn" onclick="document.getElementById('addInstanceModal').classList.remove('active');">✕</button>
       </div>
-      
+
+      <div class="modal-section" id="importSection">
+        <label>Import a pack</label>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button type="button" id="importMrpackBtn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import .mrpack / Modrinth zip</button>
+          <button type="button" id="importCurseZipBtn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import CurseForge .zip</button>
+        </div>
+      </div>
+
       <div class="modal-section">
         <label>Instance Name</label>
-        <input id="instanceName" type="text" placeholder="Leave blank to auto-name (e.g. Vanilla 1.21)" />
+        <input id="instanceName" type="text" placeholder="Leave blank to auto-name (e.g. Fabric 1.21)" />
       </div>
 
       <div class="form-row">
@@ -365,6 +373,7 @@
         instanceIcon.value = "";
         delete modalCreateBtn.dataset.editingId;
         delete modalCreateBtn._originalProfile;
+        if (typeof setModalMode === 'function') setModalMode('create');
         addInstanceModal.classList.add('active');
       }
     }
@@ -391,6 +400,90 @@
     };
     // Keep the browser back/forward buttons working with the in-page switches.
     window.addEventListener('popstate', () => renderListOrDetail());
+
+    // Proper display names for the loaders (used for auto-naming).
+    const LOADER_DISPLAY = { vanilla: "Vanilla", fabric: "Fabric", quilt: "Quilt", forge: "Forge", neoforge: "NeoForge" };
+
+    function isReleaseVersion(v) {
+      if (versionManifest) {
+        const entry = versionManifest.versions.find(x => x.id === v);
+        if (entry) return entry.type === "release";
+      }
+      // Fallback heuristic when the manifest hasn't loaded: releases look like
+      // 1.21 or 1.21.4; snapshots contain letters (24w14a, 1.21-pre1, -rc1).
+      return /^\d+\.\d+(\.\d+)?$/.test(v);
+    }
+
+    // Switch the shared instance modal between Create and Edit/Update modes.
+    function setModalMode(mode) {
+      const title = document.getElementById('addInstanceTitle');
+      const importSection = document.getElementById('importSection');
+      if (mode === 'edit') {
+        if (title) title.textContent = 'Edit Instance';
+        modalCreateBtn.textContent = 'Save Changes';
+        if (importSection) importSection.style.display = 'none';
+      } else {
+        if (title) title.textContent = 'Create Instance';
+        modalCreateBtn.textContent = 'Create Instance';
+        if (importSection) importSection.style.display = '';
+      }
+    }
+
+    async function openEditModal(profile) {
+      instanceName.value = profile.name;
+      instanceLoader.value = profile.loader;
+      instanceIcon.value = "";
+
+      // If the instance is on a snapshot/non-release, auto-enable "Show All" so
+      // the version is actually present in the dropdown.
+      const showAllCb = document.getElementById('showAllVersions');
+      const alwaysCb = document.getElementById('alwaysUpdate');
+      if (alwaysCb) alwaysCb.checked = !!profile.alwaysUpdate;
+      if (showAllCb && !isReleaseVersion(profile.version)) showAllCb.checked = true;
+      // Repopulate the version list to reflect the toggles, then select the
+      // instance's current version (unless Always Update pins it).
+      if (typeof applyVersionMode === 'function') applyVersionMode();
+      if (!(alwaysCb && alwaysCb.checked)) {
+        if (![...instanceVersion.options].some(o => o.value === profile.version)) {
+          const opt = document.createElement('option');
+          opt.value = profile.version; opt.textContent = profile.version;
+          instanceVersion.insertBefore(opt, instanceVersion.firstChild);
+        }
+        instanceVersion.value = profile.version;
+      }
+
+      modalCreateBtn.dataset.editingId = profile.id;
+      modalCreateBtn._originalProfile = profile;
+      setModalMode('edit');
+      addInstanceModal.classList.add('active');
+    }
+
+    // Import .mrpack / Modrinth-zip and CurseForge .zip (both open a native
+    // file dialog in the main process and build the instance).
+    async function runImport(channel, btn) {
+      const orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = `<i class="material-icons" style="vertical-align:middle;font-size:18px;">hourglass_top</i> Importing…`;
+      try {
+        const res = await ipcRenderer.invoke(channel);
+        if (res && res.success) {
+          addInstanceModal.classList.remove('active');
+          ipcRenderer.once("profiles-list", (e, p) => { profiles = p; renderListOrDetail(); });
+          ipcRenderer.send("get-profiles");
+        } else if (res && res.error && res.error !== "No file selected") {
+          alert("Import failed: " + res.error);
+        }
+      } catch (err) {
+        alert("Import failed: " + (err.message || err));
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+      }
+    }
+    const importMrpackBtn = document.getElementById('importMrpackBtn');
+    const importCurseZipBtn = document.getElementById('importCurseZipBtn');
+    if (importMrpackBtn) importMrpackBtn.onclick = () => runImport('import-mrpack', importMrpackBtn);
+    if (importCurseZipBtn) importCurseZipBtn.onclick = () => runImport('import-curseforge-zip', importCurseZipBtn);
     sortSelect.addEventListener("change", async () => {
       const sortValue = sortSelect.value;
       if (sortValue === "custom") {
@@ -641,15 +734,7 @@
         const editBtn = document.createElement("button");
         editBtn.innerHTML = `<i class="material-icons">edit</i>`;
         editBtn.title = "Edit Profile";
-        editBtn.onclick = () => {
-          instanceName.value = profile.name;
-          instanceVersion.value = profile.version;
-          instanceLoader.value = profile.loader;
-          instanceIcon.value = "";
-          modalCreateBtn.dataset.editingId = profile.id;
-          modalCreateBtn._originalProfile = profile;
-          addInstanceModal.classList.add('active');
-        };
+        editBtn.onclick = () => openEditModal(profile);
         right.appendChild(editBtn);
 
         // Version-update button (shown when a newer game version exists) and an
@@ -1627,22 +1712,29 @@
           if (editingId) {
             const original = modalCreateBtn._originalProfile;
             const updatedProfile = { id: editingId };
+            const newVersion = instanceVersion.value.trim();
+            const versionChanged = newVersion && newVersion !== original.version;
 
             if (instanceName.value.trim() !== original.name) {
               updatedProfile.name = instanceName.value.trim();
             }
-            if (instanceVersion.value.trim() !== original.version) {
-              updatedProfile.version = instanceVersion.value.trim();
-            }
             if (instanceLoader.value !== original.loader) {
               updatedProfile.loader = instanceLoader.value;
             }
+            const alwaysCbEl = document.getElementById('alwaysUpdate');
+            if (alwaysCbEl) updatedProfile.alwaysUpdate = alwaysCbEl.checked;
             if (instanceIcon.files.length > 0) {
               updatedProfile.icon = await fileToBase64(instanceIcon.files[0]);
             }
 
             if (Object.keys(updatedProfile).length > 1) {
               ipcRenderer.send("edit-profile", updatedProfile);
+            }
+            // A version change goes through the migration path so mods/plugins
+            // get updated (or set aside as .toupdate).
+            if (versionChanged) {
+              await ipcRenderer.invoke("change-instance-version", { profileId: editingId, newVersion });
+              ipcRenderer.send("get-profiles");
             }
 
             delete modalCreateBtn.dataset.editingId;
@@ -1658,8 +1750,8 @@
 
             const loader = instanceLoader.value;
             // Auto-name blank instances after their loader + version, e.g.
-            // "Vanilla 1.21".
-            const autoName = `${loader.charAt(0).toUpperCase() + loader.slice(1)} ${instanceVersion.value}`;
+            // "Fabric 1.21".
+            const autoName = `${LOADER_DISPLAY[loader] || loader} ${instanceVersion.value}`;
             const name = instanceName.value.trim() || autoName;
 
             const newProfile = {
@@ -1696,6 +1788,7 @@
         instanceIcon.value = "";
         delete modalCreateBtn.dataset.editingId;
         delete modalCreateBtn._originalProfile;
+        if (typeof setModalMode === 'function') setModalMode('create');
         addInstanceModal.classList.add('active');
         // Remove NEWINSTANCE from URL
         const url = new URL(window.location);
