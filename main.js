@@ -1477,33 +1477,35 @@ async function mrpack(mrpackPath) {
   const profileFolder = path.join(profilesDir, `${profileId}`);
   fs.mkdirSync(profileFolder, { recursive: true });
 
+  // Record every file the pack places (path -> sha1) so a later "update
+  // modpack" can diff against it and tell user edits from pack changes.
+  const packFiles = {};
+
   // Handle overrides inside the .mrpack (everything except modrinth.index.json)
   zip.getEntries().forEach(entry => {
-    if (!entry.isDirectory && entry.entryName !== "modrinth.index.json") {
-      // If the entry is inside "overrides/", strip that prefix
-      let relativePath = entry.entryName;
-      if (relativePath.startsWith("overrides/")) {
-        relativePath = relativePath.slice("overrides/".length);
-      }
-
-      // Only process files inside overrides or other root-level files
+    if (!entry.isDirectory) {
+      const relativePath = mrpackRelPath(entry.entryName);
       if (!relativePath) return;
 
+      const data = entry.getData();
       const entryPath = path.join(profileFolder, relativePath);
       const entryDir = path.dirname(entryPath);
       if (!fs.existsSync(entryDir)) fs.mkdirSync(entryDir, { recursive: true });
-      fs.writeFileSync(entryPath, entry.getData());
+      fs.writeFileSync(entryPath, data);
+      packFiles[relativePath.split(path.sep).join("/")] = sha1OfBuffer(data);
     }
   });
 
   // Download files listed in indexJson.files
   for (const fileObj of indexJson.files || []) {
+    const rel = fileObj.path.replace(/\\/g, "/");
     const filePath = path.join(profileFolder, fileObj.path.replace(/\//g, path.sep));
     const fileDir = path.dirname(filePath);
     if (!fs.existsSync(fileDir)) fs.mkdirSync(fileDir, { recursive: true });
 
     const url = fileObj.downloads[0]; // we take the first URL
     await downloadFile(url, filePath)
+    packFiles[rel] = fileObj.hashes?.sha1 || (fs.existsSync(filePath) ? computeSHA1(filePath) : null);
   }
 
   // Optional: read icon from pack
@@ -1517,8 +1519,11 @@ async function mrpack(mrpackPath) {
     version: mcVersion,
     loader,
     icon,
+    modpack: true,
     created: Date.now()
   };
+
+  writeModpackMeta(profileFolder, { name: newProfile.name, files: packFiles });
 
   const profiles = await loadProfiles();
   profiles.push(newProfile);
@@ -1527,6 +1532,201 @@ async function mrpack(mrpackPath) {
 
   return { success: true, profile: newProfile };
 }
+
+const MODPACK_META = ".modpackmeta.json";
+
+function sha1OfBuffer(buf) {
+  return crypto.createHash("sha1").update(buf).digest("hex");
+}
+
+// Path an .mrpack entry maps to inside the instance folder (strips overrides/;
+// keeps root-level files; skips the manifest and server-only overrides). Shared
+// by import and the update-diff so both agree on what a pack "owns".
+function mrpackRelPath(entryName) {
+  if (entryName === "modrinth.index.json") return null;
+  if (entryName === "icon.png") return null; // pack icon, not an instance file
+  if (entryName.startsWith("overrides/")) return entryName.slice("overrides/".length) || null;
+  if (entryName.startsWith("client-overrides/")) return entryName.slice("client-overrides/".length) || null;
+  if (entryName.startsWith("server-overrides/")) return null; // server-only
+  return entryName;
+}
+
+function writeModpackMeta(profileFolder, meta) {
+  try {
+    fs.writeFileSync(path.join(profileFolder, MODPACK_META), JSON.stringify({ ...meta, updatedAt: Date.now() }));
+  } catch (e) { devtoolsLog("Failed to write modpack meta:", e); }
+}
+
+function readModpackMeta(profileFolder) {
+  try { return JSON.parse(fs.readFileSync(path.join(profileFolder, MODPACK_META), "utf8")); } catch { return null; }
+}
+
+// Parse a .mrpack file into { name, files: { relPath -> { sha1, source } } }
+// WITHOUT writing anything. `source` says where to fetch the file when applying
+// an update: a download URL, or an override entry inside the zip.
+function readMrpackPlan(zipPath) {
+  const zip = new AdmZip(zipPath);
+  const indexEntry = zip.getEntry("modrinth.index.json");
+  if (!indexEntry) throw new Error("modrinth.index.json not found in .mrpack");
+  const indexJson = JSON.parse(indexEntry.getData().toString("utf8"));
+
+  const files = {};
+  for (const f of indexJson.files || []) {
+    const rel = f.path.replace(/\\/g, "/");
+    files[rel] = { sha1: f.hashes?.sha1 || null, source: { type: "url", url: f.downloads?.[0] || null } };
+  }
+  for (const entry of zip.getEntries()) {
+    if (entry.isDirectory) continue;
+    const rel = mrpackRelPath(entry.entryName);
+    if (!rel) continue;
+    const relKey = rel.split(path.sep).join("/");
+    files[relKey] = { sha1: sha1OfBuffer(entry.getData()), source: { type: "override", entryName: entry.entryName } };
+  }
+  return { name: indexJson.name || "Modpack", deps: indexJson.dependencies || {}, files };
+}
+
+// Prepared-but-not-applied modpack updates, keyed by profile id.
+const pendingModpackUpdates = new Map();
+
+// Resolve rel -> absolute path inside the instance, guarding against traversal.
+function safeInstancePath(profileFolder, rel) {
+  const dest = path.resolve(path.join(profileFolder, rel.split("/").join(path.sep)));
+  if (dest !== path.resolve(profileFolder) && !dest.startsWith(path.resolve(profileFolder) + path.sep)) return null;
+  return dest;
+}
+
+// Diff a new .mrpack against the instance's stored modpack meta + current disk
+// state, returning a plan the renderer can present before anything is written.
+ipcMain.handle("prepare-modpack-update", async (event, { profileId }) => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: "Select the new .mrpack to update to",
+      filters: [{ name: "Modrinth Pack", extensions: ["mrpack"] }],
+      properties: ["openFile"]
+    });
+    if (canceled || !filePaths.length) return { success: false, error: "No file selected" };
+    const newZipPath = filePaths[0];
+
+    const profileFolder = path.join(dataDir, "client", String(profileId));
+    const oldMeta = readModpackMeta(profileFolder);
+    const oldFiles = oldMeta?.files || {};              // rel -> sha1
+    const newPlan = readMrpackPlan(newZipPath);
+    const newFiles = newPlan.files;                     // rel -> { sha1, source }
+
+    const curHash = (rel) => {
+      const p = safeInstancePath(profileFolder, rel);
+      try { return p && fs.existsSync(p) ? computeSHA1(p) : null; } catch { return null; }
+    };
+
+    const add = [], updateSafe = [], updateConflict = [], deleteSafe = [], deleteModified = [];
+
+    // Files present in the NEW pack.
+    for (const rel of Object.keys(newFiles)) {
+      const oldSha = oldFiles[rel] || null;
+      const newSha = newFiles[rel].sha1;
+      const cur = curHash(rel);
+      if (!oldSha) {
+        if (cur == null) { add.push(rel); }                 // brand-new file
+        else if (cur !== newSha) { updateConflict.push(rel); } // user-added, differs
+        continue;
+      }
+      if (oldSha === newSha) {                                // pack didn't change it
+        if (cur == null) add.push(rel);                      // user deleted → reinstall
+        continue;
+      }
+      // Pack changed this file.
+      if (cur == null) add.push(rel);                        // user deleted → install new
+      else if (cur === oldSha) updateSafe.push(rel);         // untouched → safe update
+      else updateConflict.push(rel);                         // user modified → ask
+    }
+
+    // Files that the OLD pack had but the NEW pack drops.
+    for (const rel of Object.keys(oldFiles)) {
+      if (newFiles[rel]) continue;
+      const cur = curHash(rel);
+      if (cur == null) continue;                             // already gone
+      if (cur === oldFiles[rel]) deleteSafe.push(rel);       // untouched → safe delete
+      else deleteModified.push(rel);                         // user modified → ask
+    }
+
+    const plan = { add, updateSafe, updateConflict, deleteSafe, deleteModified };
+    pendingModpackUpdates.set(String(profileId), { newZipPath, newPlan, plan });
+
+    return { success: true, hasMeta: !!oldMeta, name: newPlan.name, plan };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Apply a previously-prepared modpack update using the user's per-file choices.
+// decisions = { conflicts: { rel: "update"|"keep" }, deletes: { rel: "delete"|"keep" } }
+ipcMain.handle("apply-modpack-update", async (event, { profileId, decisions }) => {
+  try {
+    const stash = pendingModpackUpdates.get(String(profileId));
+    if (!stash) return { success: false, error: "No prepared update — please start again." };
+    const { newZipPath, newPlan, plan } = stash;
+    const profileFolder = path.join(dataDir, "client", String(profileId));
+    const zip = new AdmZip(newZipPath);
+
+    decisions = decisions || {};
+    const conflictChoice = decisions.conflicts || {};
+    const deleteChoice = decisions.deletes || {};
+
+    const writeFile = async (rel) => {
+      const info = newPlan.files[rel];
+      const dest = safeInstancePath(profileFolder, rel);
+      if (!info || !dest) return;
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      if (info.source.type === "url" && info.source.url) {
+        await downloadFile(info.source.url, dest);
+      } else if (info.source.type === "override") {
+        const entry = zip.getEntry(info.source.entryName);
+        if (entry) fs.writeFileSync(dest, entry.getData());
+      }
+    };
+    const rmFile = (rel) => {
+      const dest = safeInstancePath(profileFolder, rel);
+      try { if (dest && fs.existsSync(dest)) fs.unlinkSync(dest); } catch { /* ignore */ }
+    };
+
+    for (const rel of plan.add) await writeFile(rel);
+    for (const rel of plan.updateSafe) await writeFile(rel);
+    for (const rel of plan.updateConflict) if (conflictChoice[rel] === "update") await writeFile(rel);
+    for (const rel of plan.deleteSafe) rmFile(rel);
+    for (const rel of plan.deleteModified) if (deleteChoice[rel] === "delete") rmFile(rel);
+
+    // New meta = the new pack's file map (only for files that now exist).
+    const files = {};
+    for (const rel of Object.keys(newPlan.files)) {
+      const dest = safeInstancePath(profileFolder, rel);
+      if (dest && fs.existsSync(dest)) {
+        try { files[rel] = newPlan.files[rel].sha1 || computeSHA1(dest); } catch { /* skip */ }
+      }
+    }
+    writeModpackMeta(profileFolder, { name: newPlan.name, files });
+    pendingModpackUpdates.delete(String(profileId));
+
+    // Bring the profile's version/loader in line with the new pack.
+    const deps = newPlan.deps || {};
+    let loader = "vanilla";
+    if (deps["fabric-loader"]) loader = "fabric";
+    else if (deps["quilt-loader"]) loader = "quilt";
+    else if (deps["forge"]) loader = "forge";
+    else if (deps["neoforge"]) loader = "neoforge";
+    const profiles = await loadProfiles();
+    const idx = profiles.findIndex(p => String(p.id) === String(profileId));
+    if (idx !== -1) {
+      if (deps["minecraft"]) profiles[idx].version = deps["minecraft"];
+      profiles[idx].loader = loader;
+      profiles[idx].modpack = true;
+      saveProfiles(profiles);
+      event.reply?.("profiles-updated", profiles);
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
 
 async function getDownloadUrl(projectID, fileID) {
   try {

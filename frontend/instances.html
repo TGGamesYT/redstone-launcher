@@ -214,10 +214,11 @@
       </div>
 
       <div class="modal-section" id="importSection">
-        <label>Import a pack</label>
+        <label id="importSectionLabel">Import a pack</label>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button type="button" id="importMrpackBtn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import .mrpack / Modrinth zip</button>
-          <button type="button" id="importCurseZipBtn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import CurseForge .zip</button>
+          <button type="button" id="importMrpackBtn" class="import-new-btn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import .mrpack / Modrinth zip</button>
+          <button type="button" id="importCurseZipBtn" class="import-new-btn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import CurseForge .zip</button>
+          <button type="button" id="updateModpackBtn" style="display:none;"><i class="material-icons" style="vertical-align:middle;font-size:18px;">upgrade</i> Update Modpack</button>
         </div>
       </div>
 
@@ -261,6 +262,29 @@
         <button type="button" id="modalCreateBtn">Create Instance</button>
         <a href="instances.html">
         <button type="button" id="modalCancelBtn" onclick="document.getElementById('addInstanceModal').classList.remove('active'); renderListOrDetail();">Cancel</button></a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modpack update review modal -->
+  <div id="modpackUpdateModal" class="modal-overlay">
+    <div class="modal-content" style="width:640px; max-width:92vw; max-height:82vh; display:flex; flex-direction:column;">
+      <div class="modal-header">
+        <h2 id="modpackUpdateTitle">Update Modpack</h2>
+        <button type="button" class="modal-close" onclick="document.getElementById('modpackUpdateModal').classList.remove('active');">✕</button>
+      </div>
+      <p id="modpackUpdateSummary" style="margin:0 0 8px 0; opacity:0.85; font-size:13px;"></p>
+      <div id="modpackUpdateList" style="overflow:auto; flex:1; border:1px solid var(--border-dark); border-radius:var(--border-radius); padding:8px;"></div>
+      <div style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12px; opacity:0.85;">
+        <span style="color:#e05a5a;">■ removed</span>
+        <span style="color:#e0a100;">■ modified (your edits)</span>
+        <span style="color:#57b661;">■ added</span>
+        <span style="color:var(--text-color);">■ updated</span>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="modpackUpdateAllBtn">Update all</button>
+        <button type="button" id="modpackApplyBtn">Apply choices</button>
+        <button type="button" onclick="document.getElementById('modpackUpdateModal').classList.remove('active');">Cancel</button>
       </div>
     </div>
   </div>
@@ -418,13 +442,23 @@
     function setModalMode(mode) {
       const title = document.getElementById('addInstanceTitle');
       const importSection = document.getElementById('importSection');
+      const importLabel = document.getElementById('importSectionLabel');
+      const importNew = document.querySelectorAll('.import-new-btn');
+      const updateBtn = document.getElementById('updateModpackBtn');
       if (mode === 'edit') {
         if (title) title.textContent = 'Edit Instance';
         modalCreateBtn.textContent = 'Save Changes';
+        importNew.forEach(b => b.style.display = 'none');
+        if (updateBtn) updateBtn.style.display = 'none';
+        if (importLabel) importLabel.textContent = 'Modpack';
+        // openEditModal decides whether to reveal the section (modpack only).
         if (importSection) importSection.style.display = 'none';
       } else {
         if (title) title.textContent = 'Create Instance';
         modalCreateBtn.textContent = 'Create Instance';
+        importNew.forEach(b => b.style.display = '');
+        if (updateBtn) updateBtn.style.display = 'none';
+        if (importLabel) importLabel.textContent = 'Import a pack';
         if (importSection) importSection.style.display = '';
       }
     }
@@ -455,6 +489,16 @@
       modalCreateBtn.dataset.editingId = profile.id;
       modalCreateBtn._originalProfile = profile;
       setModalMode('edit');
+
+      // Reveal the "Update Modpack" control only for modpack-imported instances.
+      const importSection = document.getElementById('importSection');
+      const updateBtn = document.getElementById('updateModpackBtn');
+      if (profile.modpack && importSection && updateBtn) {
+        importSection.style.display = '';
+        updateBtn.style.display = '';
+        updateBtn.onclick = () => startModpackUpdate(profile);
+      }
+
       addInstanceModal.classList.add('active');
     }
 
@@ -484,6 +528,107 @@
     const importCurseZipBtn = document.getElementById('importCurseZipBtn');
     if (importMrpackBtn) importMrpackBtn.onclick = () => runImport('import-mrpack', importMrpackBtn);
     if (importCurseZipBtn) importCurseZipBtn.onclick = () => runImport('import-curseforge-zip', importCurseZipBtn);
+
+    // ── Modpack update flow: pick a new .mrpack, review the diff, apply. ──
+    let currentUpdateProfileId = null;
+    let currentUpdatePlan = null;
+
+    async function startModpackUpdate(profile) {
+      const btn = document.getElementById('updateModpackBtn');
+      const orig = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = 'Reading pack…';
+      try {
+        const res = await ipcRenderer.invoke('prepare-modpack-update', { profileId: profile.id });
+        if (!res || !res.success) {
+          if (res && res.error && res.error !== 'No file selected') alert('Update failed: ' + res.error);
+          return;
+        }
+        currentUpdateProfileId = profile.id;
+        currentUpdatePlan = res.plan;
+        renderModpackUpdate(res);
+      } finally { btn.disabled = false; btn.innerHTML = orig; }
+    }
+
+    function renderModpackUpdate(res) {
+      const plan = res.plan;
+      const list = document.getElementById('modpackUpdateList');
+      const total = plan.add.length + plan.updateSafe.length + plan.updateConflict.length + plan.deleteSafe.length + plan.deleteModified.length;
+      document.getElementById('modpackUpdateSummary').textContent = total === 0
+        ? 'This modpack is already up to date.'
+        : `Updating to "${res.name}". Review the ${total} change(s) below — saves and unrelated configs are left untouched.`;
+      list.innerHTML = '';
+
+      function section(titleText, files, color, kind) {
+        if (!files.length) return;
+        const h = document.createElement('div');
+        h.style.cssText = `font-weight:700;margin:8px 0 4px;color:${color};`;
+        h.textContent = `${titleText} (${files.length})`;
+        list.appendChild(h);
+        files.forEach(rel => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 0;font-size:13px;';
+          const name = document.createElement('span');
+          name.style.cssText = `color:${color};word-break:break-all;`;
+          name.textContent = rel;
+          row.appendChild(name);
+          if (kind === 'conflict' || kind === 'deleteMod') {
+            const sel = document.createElement('select');
+            sel.dataset.rel = rel; sel.dataset.kind = kind;
+            sel.style.cssText = 'width:auto;margin:0;flex-shrink:0;';
+            sel.innerHTML = kind === 'conflict'
+              ? '<option value="keep">Keep mine</option><option value="update">Use pack</option>'
+              : '<option value="keep">Keep file</option><option value="delete">Delete</option>';
+            row.appendChild(sel);
+          }
+          list.appendChild(row);
+        });
+      }
+
+      section('Removed by the pack (unmodified — will delete)', plan.deleteSafe, '#e05a5a', 'deleteSafe');
+      section('Removed by the pack, but you edited these — choose', plan.deleteModified, '#e0a100', 'deleteMod');
+      section('You edited these and the pack changed them — choose', plan.updateConflict, '#e0a100', 'conflict');
+      section('Added by the pack', plan.add, '#57b661', 'add');
+      section('Updated by the pack', plan.updateSafe, 'var(--text-color)', 'updateSafe');
+
+      document.getElementById('modpackApplyBtn').disabled = total === 0;
+      document.getElementById('addInstanceModal').classList.remove('active');
+      document.getElementById('modpackUpdateModal').classList.add('active');
+    }
+
+    function collectUpdateDecisions() {
+      const conflicts = {}, deletes = {};
+      document.querySelectorAll('#modpackUpdateList select').forEach(sel => {
+        if (sel.dataset.kind === 'conflict') conflicts[sel.dataset.rel] = sel.value;
+        else if (sel.dataset.kind === 'deleteMod') deletes[sel.dataset.rel] = sel.value;
+      });
+      return { conflicts, deletes };
+    }
+
+    async function applyModpackUpdate(updateAll) {
+      if (!currentUpdatePlan) return;
+      const decisions = updateAll
+        ? {
+            conflicts: Object.fromEntries(currentUpdatePlan.updateConflict.map(r => [r, 'update'])),
+            deletes: Object.fromEntries(currentUpdatePlan.deleteModified.map(r => [r, 'delete']))
+          }
+        : collectUpdateDecisions();
+      const applyBtn = document.getElementById('modpackApplyBtn');
+      const allBtn = document.getElementById('modpackUpdateAllBtn');
+      applyBtn.disabled = allBtn.disabled = true;
+      const applyText = applyBtn.textContent; applyBtn.textContent = 'Applying…';
+      try {
+        const res = await ipcRenderer.invoke('apply-modpack-update', { profileId: currentUpdateProfileId, decisions });
+        if (!res || !res.success) { alert('Update failed: ' + ((res && res.error) || 'unknown')); return; }
+        document.getElementById('modpackUpdateModal').classList.remove('active');
+        ipcRenderer.once('profiles-list', (e, p) => { profiles = p; renderListOrDetail(); });
+        ipcRenderer.send('get-profiles');
+      } finally {
+        applyBtn.disabled = allBtn.disabled = false; applyBtn.textContent = applyText;
+      }
+    }
+
+    document.getElementById('modpackApplyBtn').onclick = () => applyModpackUpdate(false);
+    document.getElementById('modpackUpdateAllBtn').onclick = () => applyModpackUpdate(true);
     sortSelect.addEventListener("change", async () => {
       const sortValue = sortSelect.value;
       if (sortValue === "custom") {
