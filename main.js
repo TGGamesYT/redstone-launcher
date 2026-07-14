@@ -3154,7 +3154,7 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
 
   const enabledPacks = tab === "resourcepacks" ? readEnabledResourcePacks(profileId) : null;
 
-  const MOD_INDEX_VERSION = 2; // bump to force a rebuild when the entry shape changes
+  const MOD_INDEX_VERSION = 3; // bump to force a rebuild when the entry shape changes
   const indexFile = path.join(basePath, MOD_INDEX_FILE);
   let index = { version: MOD_INDEX_VERSION, entries: {} };
   if (fs.existsSync(indexFile)) {
@@ -3240,7 +3240,12 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
               icon: p?.icon_url || null,
               author: p?.author || null,
               versionNumber: v.version_number || null,
-              datePublished: v.date_published || null
+              datePublished: v.date_published || null,
+              // Keep incompatible-type dependencies so we can warn when a
+              // conflicting mod is installed alongside this one.
+              incompatibleWith: (v.dependencies || [])
+                .filter(d => d.dependency_type === "incompatible" && d.project_id)
+                .map(d => d.project_id)
             };
           }
         }
@@ -3321,6 +3326,14 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     }));
   }
 
+  // Map installed Modrinth project ids -> display name so we can flag mods that
+  // declare an installed project as "incompatible".
+  const installedProjects = {};
+  for (const fn of Object.keys(index.entries)) {
+    const md = index.entries[fn]?.modrinth;
+    if (md?.projectId) installedProjects[md.projectId] = md.title || fn;
+  }
+
   // Fold resolved metadata into the results.
   for (const r of results) {
     if (!r._filename) continue;
@@ -3341,6 +3354,10 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     r.updateAvailable = !!(e?.update?.available);
     r.updateUrl = e?.update?.url || null;
     r.latestVersion = e?.update?.latestNumber || null;
+    // Warn if this mod flags an installed mod as incompatible.
+    r.incompatibleWith = (m?.incompatibleWith || [])
+      .filter(pid => pid !== r.projectId && installedProjects[pid])
+      .map(pid => installedProjects[pid]);
     // Resource packs: expose the raw pack.mcmeta description for rich rendering.
     if (tab === "resourcepacks") r.description = e?.packDescription ?? null;
     // Second line: "version • author" (falls back to filename).
@@ -3730,7 +3747,7 @@ async function modrinthProjectIdForFile(fullPath) {
 }
 
 // Newest Modrinth version of a project that's compatible with gameVersion (and
-// the loader for mods). Returns { url, versionNumber } or null.
+// the loader for mods). Returns { url, versionNumber, dependencies } or null.
 async function findCompatibleModVersion(projectId, gameVersion, loader, requireLoader) {
   try {
     const params = new URLSearchParams();
@@ -3742,8 +3759,24 @@ async function findCompatibleModVersion(projectId, gameVersion, loader, requireL
     const newest = (Array.isArray(versions) ? versions : []).sort((a, b) => new Date(b.date_published) - new Date(a.date_published))[0];
     if (!newest) return null;
     const file = (newest.files || []).find(f => f.primary) || (newest.files || [])[0];
-    return file ? { url: file.url, versionNumber: newest.version_number || null } : null;
+    return file ? { url: file.url, versionNumber: newest.version_number || null, dependencies: newest.dependencies || [] } : null;
   } catch { return null; }
+}
+
+// Ensure every REQUIRED dependency of a candidate version also has a compatible
+// release for the target version/loader — so we don't update a mod into a
+// dependency-missing crash. Unknown/looping deps are treated as satisfied.
+async function requiredDepsSatisfiable(dependencies, gameVersion, loader, requireLoader, seen = new Set()) {
+  const required = (dependencies || []).filter(d => d.dependency_type === "required" && d.project_id);
+  for (const d of required) {
+    if (seen.has(d.project_id)) continue;
+    seen.add(d.project_id);
+    const dv = await findCompatibleModVersion(d.project_id, gameVersion, loader, requireLoader);
+    if (!dv) return false;
+    // Recurse one level into the dependency's own required deps.
+    if (!(await requiredDepsSatisfiable(dv.dependencies, gameVersion, loader, requireLoader, seen))) return false;
+  }
+  return true;
 }
 
 // Migrate all mods/plugins of an instance to gameVersion. Incompatible files
@@ -3763,7 +3796,10 @@ async function migrateContentToVersion(profileId, gameVersion, loader) {
       const projectId = await modrinthProjectIdForFile(fullPath);
       if (!projectId) { report.unchanged.push(filename); continue; } // unknown → leave alone
       const compat = await findCompatibleModVersion(projectId, gameVersion, loader, requireLoader);
-      if (compat) {
+      // Only update once the mod AND all its required dependencies have a
+      // compatible release — otherwise defer to avoid a missing-dep crash.
+      const depsOk = compat ? await requiredDepsSatisfiable(compat.dependencies, gameVersion, loader, requireLoader) : false;
+      if (compat && depsOk) {
         try {
           const newName = decodeURIComponent(path.basename(new URL(compat.url).pathname));
           await downloadFile(compat.url, path.join(dir, newName));
@@ -3771,7 +3807,7 @@ async function migrateContentToVersion(profileId, gameVersion, loader) {
           report.updated.push({ from: filename, to: newName });
         } catch { report.unchanged.push(filename); }
       } else {
-        // No compatible release yet → set aside for later.
+        // No compatible release (or deps not ready) yet → set aside for later.
         try { fs.renameSync(fullPath, fullPath + TOUPDATE_SUFFIX); report.deferred.push(filename); }
         catch { report.unchanged.push(filename); }
       }
@@ -3796,7 +3832,8 @@ async function scanToUpdate(profileId, gameVersion, loader) {
       const projectId = await modrinthProjectIdForFile(fullPath);
       if (!projectId) { report.stillWaiting.push(filename); continue; }
       const compat = await findCompatibleModVersion(projectId, gameVersion, loader, requireLoader);
-      if (compat) {
+      const depsOk = compat ? await requiredDepsSatisfiable(compat.dependencies, gameVersion, loader, requireLoader) : false;
+      if (compat && depsOk) {
         try {
           const newName = decodeURIComponent(path.basename(new URL(compat.url).pathname));
           await downloadFile(compat.url, path.join(dir, newName));

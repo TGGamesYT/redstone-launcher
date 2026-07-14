@@ -1116,6 +1116,16 @@
             details.textContent = p.details || "";
           }
           info.append(name, details);
+
+          // Warn when this mod declares an installed mod as incompatible.
+          if (Array.isArray(p.incompatibleWith) && p.incompatibleWith.length) {
+            const warn = document.createElement("div");
+            warn.className = "profile-details";
+            warn.style.cssText = "color:#e0a100;display:flex;align-items:center;gap:4px;margin-top:2px;";
+            warn.innerHTML = `<i class="material-icons" style="font-size:15px;">warning</i> Incompatible with installed: ${p.incompatibleWith.join(", ")}`;
+            info.appendChild(warn);
+          }
+
           li.appendChild(info);
 
           const actions = document.createElement("div");
