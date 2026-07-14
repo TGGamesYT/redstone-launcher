@@ -96,7 +96,10 @@
         </select>
       </label>
       <label>Version
-        <select id="versionFilter"><option value="">Any</option></select>
+        <span class="version-filter-inline">
+          <select id="versionFilter"><option value="">Any</option></select>
+          <label class="mini-check" title="Include snapshots"><input type="checkbox" id="versionShowAll"> all</label>
+        </span>
       </label>
       <label class="loader-filter">Loader
         <select id="loaderFilter">
@@ -110,9 +113,7 @@
           <option value="bukkit">Bukkit</option>
         </select>
       </label>
-      <label class="category-filter">Category
-        <select id="categoryFilter"><option value="">Any</option></select>
-      </label>
+      <span id="dynamicFilters" style="display:contents;"></span>
     </div>
 
     <div class="bottom-row">
@@ -183,8 +184,7 @@
       apiSelector.value = apiSelector.value === 'modrinth' ? 'curseforge' : 'modrinth';
       refreshApiToggle();
       // Categories differ per provider — rebuild them for the new one.
-      if (typeof repopulateCategories === 'function') repopulateCategories();
-      if (typeof updateCategoryVisibility === 'function') updateCategoryVisibility();
+      if (typeof buildDynamicFilters === 'function') buildDynamicFilters();
       if (typeof updateProviderTabs === 'function') updateProviderTabs();
       if (typeof updateFilterVisibility === 'function') updateFilterVisibility();
       currentPage = 1;
@@ -267,11 +267,14 @@
     // Fetch top 20 projects from Modrinth
     // Read the current filter/sort selections from the toolbar.
     function getFilters() {
+      const mrCats = [...document.querySelectorAll('#dynamicFilters .mr-cat')].map(s => s.value).filter(Boolean);
+      const cfCat = (document.querySelector('#dynamicFilters .cf-cat') || {}).value || '';
       return {
         sort: (document.getElementById('sortSelect') || {}).value || 'relevance',
         version: (document.getElementById('versionFilter') || {}).value || '',
         loader: (document.getElementById('loaderFilter') || {}).value || '',
-        category: (document.getElementById('categoryFilter') || {}).value || ''
+        categories: mrCats,   // Modrinth: one facet per selected category
+        cfCategory: cfCat     // CurseForge: single category id
       };
     }
 
@@ -288,7 +291,7 @@
           const facetGroups = [["project_type:" + mrType]];
           if (f.version) facetGroups.push(["versions:" + f.version]);
           if (f.loader) facetGroups.push(["categories:" + f.loader]);
-          if (f.category) facetGroups.push(["categories:" + f.category]);
+          (f.categories || []).forEach(cat => facetGroups.push(["categories:" + cat]));
           const facets = encodeURIComponent(JSON.stringify(facetGroups));
           const mrIndex = f.sort === 'relevance' ? 'relevance'
             : f.sort === 'downloads' ? 'downloads'
@@ -330,7 +333,7 @@
           if (f.version) searchBody.gameVersion = f.version;
           if (f.loader && cfLoaderMap[f.loader]) searchBody.modLoaderType = cfLoaderMap[f.loader];
           // On CurseForge the category value is a numeric category id.
-          if (f.category && /^\d+$/.test(f.category)) searchBody.categoryId = parseInt(f.category, 10);
+          if (f.cfCategory && /^\d+$/.test(f.cfCategory)) searchBody.categoryId = parseInt(f.cfCategory, 10);
 
           const res = await fetch("https://curseforge.tgdoescode.workers.dev/search", {
             method: "POST",
@@ -418,9 +421,18 @@
         const author = api === "modrinth" ? proj.author : proj.authors?.[0]?.name || "Unknown";
         const downloads = api === "modrinth" ? proj.downloads : proj.downloadCount;
 
+        const follows = api === "modrinth" ? proj.follows : proj.thumbsUpCount;
+        let meta;
+        if (activeType === "server") {
+          // Modrinth doesn't expose a live player count, so surface the stats it
+          // does: downloads and followers ("members").
+          meta = `${formatNumber(downloads)} downloads • ${formatNumber(follows || 0)} followers`;
+        } else {
+          meta = `by ${author} • ${formatNumber(downloads)} downloads`;
+        }
         info.innerHTML = `
       <div class="project-title">${title}</div>
-      <div class="project-meta">by ${author} • ${formatNumber(downloads)} downloads</div>
+      <div class="project-meta">${meta}</div>
     `;
         left.appendChild(info);
 
@@ -575,8 +587,9 @@
     // Type change & refresh
     apiSelector.onchange = () => { currentPage = 1; loadProjects(); };
 
-    // Filter/sort changes reload from page 1.
-    ['sortSelect', 'versionFilter', 'loaderFilter', 'categoryFilter'].forEach(id => {
+    // Filter/sort changes reload from page 1 (dynamic category selects wire
+    // their own handlers when built).
+    ['sortSelect', 'versionFilter', 'loaderFilter'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.onchange = () => { currentPage = 1; loadProjects(); };
     });
@@ -620,67 +633,89 @@
       ]
     };
 
-    // Populate the game-version and category filters from Modrinth's tag API.
+    // Modrinth category tags (grouped by header) + all game versions.
     let categoryTags = [];
-    function repopulateCategories() {
-      const sel = document.getElementById('categoryFilter');
-      if (!sel) return;
+    let allGameVersions = [];
+
+    // Populate the version dropdown; include snapshots when "all" is ticked.
+    function populateVersionFilter() {
+      const vsel = document.getElementById('versionFilter');
+      if (!vsel) return;
+      const showAll = document.getElementById('versionShowAll')?.checked;
+      const prev = vsel.value;
+      vsel.innerHTML = '<option value="">Any</option>';
+      allGameVersions
+        .filter(v => showAll || v.version_type === 'release')
+        .forEach(v => {
+          const o = document.createElement('option');
+          o.value = v.version; o.textContent = v.version;
+          vsel.appendChild(o);
+        });
+      if ([...vsel.options].some(o => o.value === prev)) vsel.value = prev;
+    }
+
+    // Rebuild the category filters for the active provider + type. Modrinth
+    // exposes several facet groups per type (categories, features, resolutions,
+    // performance impact, …) via each tag's `header`; render one select each.
+    function buildDynamicFilters() {
+      const holder = document.getElementById('dynamicFilters');
+      if (!holder) return;
       const type = document.querySelector('#typeTabs .tab.active')?.dataset.type || 'mod';
-      const prev = sel.value;
-      sel.innerHTML = '<option value="">Any</option>';
+      // Preserve current selections by value.
+      const prev = {};
+      holder.querySelectorAll('select').forEach(s => { prev[s.dataset.key] = s.value; });
+      holder.innerHTML = '';
+
+      const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 
       if (apiSelector.value === 'curseforge') {
-        // CurseForge: numeric category ids for the classes we know.
-        (CURSEFORGE_CATEGORIES[type] || []).forEach(([id, name]) => {
-          const o = document.createElement('option');
-          o.value = String(id); o.textContent = name;
-          sel.appendChild(o);
-        });
-      } else {
-        // Modrinth: named category tags from the tag API.
-        categoryTags
-          .filter(c => c.project_type === type)
-          .forEach(c => {
-            const o = document.createElement('option');
-            o.value = c.name; o.textContent = c.name.charAt(0).toUpperCase() + c.name.slice(1);
-            sel.appendChild(o);
-          });
+        const cats = CURSEFORGE_CATEGORIES[type];
+        if (!cats) return;
+        const lbl = document.createElement('label');
+        lbl.textContent = 'Category';
+        const sel = document.createElement('select');
+        sel.className = 'cf-cat'; sel.dataset.key = 'cf';
+        sel.innerHTML = '<option value="">Any</option>' + cats.map(([id, n]) => `<option value="${id}">${n}</option>`).join('');
+        if (prev.cf && [...sel.options].some(o => o.value === prev.cf)) sel.value = prev.cf;
+        sel.onchange = () => { currentPage = 1; loadProjects(); };
+        lbl.appendChild(sel); holder.appendChild(lbl);
+        return;
       }
-      // Keep the previous choice if it still applies.
-      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+
+      // Modrinth: group this type's tags by header.
+      const mrType = type === 'server' ? 'minecraft_java_server' : type;
+      const groups = {};
+      categoryTags
+        .filter(c => c.project_type === mrType && c.header !== 'loaders')
+        .forEach(c => { (groups[c.header || 'categories'] ||= []).push(c.name); });
+
+      Object.keys(groups).sort().forEach(header => {
+        const lbl = document.createElement('label');
+        lbl.textContent = cap(header);
+        const sel = document.createElement('select');
+        sel.className = 'mr-cat'; sel.dataset.key = header;
+        sel.innerHTML = '<option value="">Any</option>' +
+          groups[header].sort().map(n => `<option value="${n}">${cap(n.replace(/-/g, ' '))}</option>`).join('');
+        if (prev[header] && [...sel.options].some(o => o.value === prev[header])) sel.value = prev[header];
+        sel.onchange = () => { currentPage = 1; loadProjects(); };
+        lbl.appendChild(sel); holder.appendChild(lbl);
+      });
     }
 
-    // Hide the category filter for CurseForge classes we don't have ids for.
-    function updateCategoryVisibility() {
-      const cf = document.querySelector('.category-filter');
-      if (!cf) return;
-      const type = document.querySelector('#typeTabs .tab.active')?.dataset.type || 'mod';
-      const hide = apiSelector.value === 'curseforge' && !CURSEFORGE_CATEGORIES[type];
-      cf.style.display = hide ? 'none' : '';
-      if (hide) { const s = document.getElementById('categoryFilter'); if (s) s.value = ''; }
-    }
     (async () => {
       try {
         const [versions, cats] = await Promise.all([
           fetch('https://api.modrinth.com/v2/tag/game_version').then(r => r.json()),
           fetch('https://api.modrinth.com/v2/tag/category').then(r => r.json())
         ]);
-        const vsel = document.getElementById('versionFilter');
-        if (vsel && Array.isArray(versions)) {
-          versions
-            .filter(v => v.version_type === 'release')
-            .forEach(v => {
-              const o = document.createElement('option');
-              o.value = v.version; o.textContent = v.version;
-              vsel.appendChild(o);
-            });
-        }
+        allGameVersions = Array.isArray(versions) ? versions : [];
         categoryTags = Array.isArray(cats) ? cats : [];
-        repopulateCategories();
+        populateVersionFilter();
+        buildDynamicFilters();
       } catch (err) { console.warn('Failed to load filter tags', err); }
     })();
+    document.getElementById('versionShowAll').onchange = () => { populateVersionFilter(); currentPage = 1; loadProjects(); };
     updateFilterVisibility();
-    updateCategoryVisibility();
     updateProviderTabs();
 
     // Initial load
@@ -938,9 +973,8 @@
         tab.classList.add("active");
 
         // Categories are per-project-type, so refresh them for the new tab.
-        if (typeof repopulateCategories === 'function') repopulateCategories();
+        if (typeof buildDynamicFilters === 'function') buildDynamicFilters();
         if (typeof updateFilterVisibility === 'function') updateFilterVisibility();
-        if (typeof updateCategoryVisibility === 'function') updateCategoryVisibility();
 
         // optionally reload projects
         currentPage = 1;

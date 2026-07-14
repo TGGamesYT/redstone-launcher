@@ -264,13 +264,35 @@
 }
 
 #searchPagination .filter-row label {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   font-family: var(--text-font);
   font-size: 13px;
   color: var(--text-color);
   opacity: 0.9;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+#searchPagination .filter-row .version-filter-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#searchPagination .filter-row .mini-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+#searchPagination .filter-row .mini-check input {
+  width: auto;
+  height: auto;
+  margin: 0;
 }
 
 #searchPagination .filter-row select {
