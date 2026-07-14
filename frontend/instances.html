@@ -134,6 +134,43 @@
 
     .add-instance-btn:hover { background: var(--third-color); }
     .add-instance-btn .material-icons { font-size: 24px; }
+
+    /* Instance Settings modal tabs. */
+    .settings-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border-dark);
+      padding-bottom: 8px;
+    }
+
+    .settings-tab {
+      background: var(--menu-bg);
+      color: var(--text-color);
+      border: none;
+      border-radius: var(--border-radius);
+      padding: 6px 14px;
+      cursor: pointer;
+      font-family: var(--text-font);
+    }
+
+    .settings-tab:hover { background: var(--menu-hover-bg); }
+    .settings-tab.active { background: var(--base-color); }
+
+    .settings-panel { display: none; }
+    .settings-panel.active { display: block; }
+
+    .inline-check {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      margin: 6px 0;
+      cursor: pointer;
+    }
+
+    .inline-check input { width: auto; margin: 0; }
   </style>
 </head>
 
@@ -237,48 +274,74 @@
         <button type="button" class="modal-close" id="closeAddInstanceBtn" onclick="document.getElementById('addInstanceModal').classList.remove('active');">✕</button>
       </div>
 
-      <div class="modal-section" id="importSection">
-        <label id="importSectionLabel">Import a pack</label>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button type="button" id="importPackBtn" class="import-new-btn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import modpack (.mrpack / .zip)</button>
-          <button type="button" id="updateModpackBtn" style="display:none;"><i class="material-icons" style="vertical-align:middle;font-size:18px;">upgrade</i> Update Modpack</button>
-        </div>
+      <div class="settings-tabs">
+        <button type="button" class="settings-tab active" data-tab="general">General</button>
+        <button type="button" class="settings-tab" data-tab="version">Version</button>
+        <button type="button" class="settings-tab" data-tab="java">Java &amp; Launch</button>
+        <button type="button" class="settings-tab" data-tab="modpack" id="modpackTabBtn" style="display:none;">Modpack</button>
       </div>
 
-      <div class="modal-section">
-        <label>Instance Name</label>
-        <input id="instanceName" type="text" placeholder="Leave blank to auto-name (e.g. Fabric 1.21)" />
-      </div>
-
-      <div class="form-row">
-        <div class="modal-section">
-          <label>Game Version</label>
-          <select id="instanceVersion"></select>
+      <div class="settings-panel active" data-panel="general">
+        <div class="modal-section" id="importSection">
+          <label id="importSectionLabel">Import a pack</label>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" id="importPackBtn" class="import-new-btn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import modpack (.mrpack / .zip)</button>
+          </div>
         </div>
         <div class="modal-section">
-          <label>Show All</label>
-          <input type="checkbox" id="showAllVersions" />
+          <label>Instance Name</label>
+          <input id="instanceName" type="text" placeholder="Leave blank to auto-name (e.g. Fabric 1.21)" />
         </div>
         <div class="modal-section">
-          <label>Always Update</label>
-          <input type="checkbox" id="alwaysUpdate" />
+          <label>Mod Loader</label>
+          <select id="instanceLoader">
+            <option value="vanilla">Vanilla</option>
+            <option value="fabric">Fabric</option>
+            <option value="quilt">Quilt</option>
+            <option value="forge">Forge</option>
+            <option value="neoforge">NeoForge</option>
+          </select>
+        </div>
+        <div class="modal-section">
+          <label>Instance Icon</label>
+          <input type="file" id="instanceIcon" accept="image/*" />
         </div>
       </div>
 
-      <div class="modal-section">
-        <label>Mod Loader</label>
-        <select id="instanceLoader">
-          <option value="vanilla">Vanilla</option>
-          <option value="fabric">Fabric</option>
-          <option value="quilt">Quilt</option>
-          <option value="forge">Forge</option>
-          <option value="neoforge">NeoForge</option>
-        </select>
+      <div class="settings-panel" data-panel="version">
+        <div class="form-row">
+          <div class="modal-section" style="flex:1;">
+            <label>Game Version</label>
+            <select id="instanceVersion"></select>
+          </div>
+          <label class="inline-check"><input type="checkbox" id="showAllVersions" /> Show all</label>
+          <label class="inline-check"><input type="checkbox" id="alwaysUpdate" /> Always update</label>
+        </div>
+        <label class="inline-check"><input type="checkbox" id="autoUpdateVersionCb" /> Auto-update to newer game versions when released</label>
       </div>
 
-      <div class="modal-section">
-        <label>Instance Icon</label>
-        <input type="file" id="instanceIcon" accept="image/*" />
+      <div class="settings-panel" data-panel="java">
+        <div class="modal-section">
+          <label>Custom JVM arguments</label>
+          <input id="instanceLaunchArgs" type="text" placeholder="-XX:+UseG1GC -Dfoo=bar" />
+        </div>
+        <div class="form-row">
+          <div class="modal-section" style="flex:1;">
+            <label>Min RAM (MB, optional)</label>
+            <input id="instanceRamMin" type="number" min="256" step="256" placeholder="global default" />
+          </div>
+          <div class="modal-section" style="flex:1;">
+            <label>Max RAM (MB, optional)</label>
+            <input id="instanceRamMax" type="number" min="512" step="256" placeholder="global default" />
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-panel" data-panel="modpack">
+        <div class="modal-section">
+          <label>Modpack</label>
+          <button type="button" id="updateModpackBtn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">upgrade</i> Update Modpack from a new .mrpack</button>
+        </div>
       </div>
 
       <div class="modal-actions">
@@ -474,27 +537,21 @@
       return /^\d+\.\d+(\.\d+)?$/.test(v);
     }
 
-    // Switch the shared instance modal between Create and Edit/Update modes.
+    // Switch the shared instance modal between Create and Instance Settings.
     function setModalMode(mode) {
       const title = document.getElementById('addInstanceTitle');
       const importSection = document.getElementById('importSection');
-      const importLabel = document.getElementById('importSectionLabel');
-      const importNew = document.querySelectorAll('.import-new-btn');
-      const updateBtn = document.getElementById('updateModpackBtn');
+      const modpackTabBtn = document.getElementById('modpackTabBtn');
+      resetSettingsTabs();
+      if (modpackTabBtn) modpackTabBtn.style.display = 'none';
       if (mode === 'edit') {
-        if (title) title.textContent = 'Edit Instance';
+        if (title) title.textContent = 'Instance Settings';
         modalCreateBtn.textContent = 'Save Changes';
-        importNew.forEach(b => b.style.display = 'none');
-        if (updateBtn) updateBtn.style.display = 'none';
-        if (importLabel) importLabel.textContent = 'Modpack';
-        // openEditModal decides whether to reveal the section (modpack only).
+        // Importing a pack only applies when creating.
         if (importSection) importSection.style.display = 'none';
       } else {
         if (title) title.textContent = 'Create Instance';
         modalCreateBtn.textContent = 'Create Instance';
-        importNew.forEach(b => b.style.display = '');
-        if (updateBtn) updateBtn.style.display = 'none';
-        if (importLabel) importLabel.textContent = 'Import a pack';
         if (importSection) importSection.style.display = '';
       }
     }
@@ -526,12 +583,18 @@
       modalCreateBtn._originalProfile = profile;
       setModalMode('edit');
 
-      // Reveal the "Update Modpack" control only for modpack-imported instances.
-      const importSection = document.getElementById('importSection');
+      // Java & Launch fields.
+      document.getElementById('instanceLaunchArgs').value = profile.launchArgs || '';
+      document.getElementById('instanceRamMin').value = profile.ramMin || '';
+      document.getElementById('instanceRamMax').value = profile.ramMax || '';
+      // Version tab toggles.
+      document.getElementById('autoUpdateVersionCb').checked = !!(profile.autoUpdateVersion ?? profile.alwaysUpdate);
+
+      // Reveal the Modpack tab + wire the update button for modpack instances.
+      const modpackTabBtn = document.getElementById('modpackTabBtn');
       const updateBtn = document.getElementById('updateModpackBtn');
-      if (profile.modpack && importSection && updateBtn) {
-        importSection.style.display = '';
-        updateBtn.style.display = '';
+      if (profile.modpack && modpackTabBtn && updateBtn) {
+        modpackTabBtn.style.display = '';
         updateBtn.onclick = () => startModpackUpdate(profile);
       }
 
@@ -579,6 +642,21 @@
     }
     const importPackBtn = document.getElementById('importPackBtn');
     if (importPackBtn) importPackBtn.onclick = () => runImport(importPackBtn);
+
+    // Instance Settings modal tabs.
+    document.querySelectorAll('#addInstanceModal .settings-tab').forEach(tab => {
+      tab.onclick = () => {
+        document.querySelectorAll('#addInstanceModal .settings-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('#addInstanceModal .settings-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        const panel = document.querySelector(`#addInstanceModal .settings-panel[data-panel="${tab.dataset.tab}"]`);
+        if (panel) panel.classList.add('active');
+      };
+    });
+    function resetSettingsTabs() {
+      document.querySelectorAll('#addInstanceModal .settings-tab').forEach((t, i) => t.classList.toggle('active', i === 0));
+      document.querySelectorAll('#addInstanceModal .settings-panel').forEach((p) => p.classList.toggle('active', p.dataset.panel === 'general'));
+    }
 
     // Auto-open a freshly created instance.
     ipcRenderer.on('profile-created', (e, newProfile) => {
@@ -1942,6 +2020,10 @@
             }
             const alwaysCbEl = document.getElementById('alwaysUpdate');
             if (alwaysCbEl) updatedProfile.alwaysUpdate = alwaysCbEl.checked;
+            updatedProfile.autoUpdateVersion = document.getElementById('autoUpdateVersionCb').checked;
+            updatedProfile.launchArgs = document.getElementById('instanceLaunchArgs').value.trim();
+            updatedProfile.ramMin = parseInt(document.getElementById('instanceRamMin').value) || null;
+            updatedProfile.ramMax = parseInt(document.getElementById('instanceRamMax').value) || null;
             if (instanceIcon.files.length > 0) {
               updatedProfile.icon = await fileToBase64(instanceIcon.files[0]);
             }
@@ -1978,6 +2060,10 @@
               version: instanceVersion.value,
               loader,
               alwaysUpdate: document.getElementById('alwaysUpdate').checked,
+              autoUpdateVersion: document.getElementById('autoUpdateVersionCb').checked,
+              launchArgs: document.getElementById('instanceLaunchArgs').value.trim(),
+              ramMin: parseInt(document.getElementById('instanceRamMin').value) || null,
+              ramMax: parseInt(document.getElementById('instanceRamMax').value) || null,
               icon: null
             };
 

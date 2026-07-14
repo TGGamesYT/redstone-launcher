@@ -2074,8 +2074,10 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
 
   try {
     broadcastLog(profileId, "Launching, please wait.");
-    const minRam = `${settings.get('ramInstancesMin', 1024)}m`;
-    const maxRam = `${settings.get('ramInstancesMax', 4096)}m`;
+    // Per-instance RAM override falls back to the global setting.
+    const profileForRam = (await loadProfiles()).find(p => String(p.id) === String(profileId)) || {};
+    const minRam = `${profileForRam.ramMin || settings.get('ramInstancesMin', 1024)}m`;
+    const maxRam = `${profileForRam.ramMax || settings.get('ramInstancesMax', 4096)}m`;
     const profiles = await loadProfiles();
     const players = loadPlayers();
 
@@ -2154,6 +2156,9 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
       },
       quickPlay: quickplay
     }
+    // Per-instance custom JVM args (Instance Settings → Java & Launch).
+    const extraArgs = (profileForRam.launchArgs || "").trim();
+    if (extraArgs) opts.customArgs = extraArgs.split(/\s+/).filter(Boolean);
     const childProcess = await launcher.launch(opts);
 
     launchingProfiles.delete(profileId);
