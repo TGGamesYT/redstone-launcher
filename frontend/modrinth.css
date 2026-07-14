@@ -298,7 +298,7 @@
 }
 
 #searchPagination .filter-row select,
-#searchPagination .filter-row input {
+#searchPagination .filter-row input:not([type="checkbox"]) {
   padding: 6px 10px;
   border-radius: var(--border-radius);
   border: 1px solid var(--border-dark);
@@ -319,6 +319,41 @@
   margin-top: 0;
   margin-bottom: 0;
 }
+
+/* "all" versions toggle — a fixed-size switch so it never resizes/reflows the
+   row between states. */
+#searchPagination .filter-row .mini-check input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 32px;
+  height: 17px;
+  min-width: 32px;
+  padding: 0;
+  border-radius: 9px;
+  background: var(--menu-bg);
+  border: 1px solid var(--border-dark);
+  position: relative;
+  cursor: pointer;
+  margin: 0;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+#searchPagination .filter-row .mini-check input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--text-color);
+  transition: transform 0.2s;
+}
+
+#searchPagination .filter-row .mini-check input[type="checkbox"]:checked { background: var(--base-color); }
+#searchPagination .filter-row .mini-check input[type="checkbox"]:checked::after { transform: translateX(15px); }
 
 #searchPagination .bottom-row {
   display: flex;

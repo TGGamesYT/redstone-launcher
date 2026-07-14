@@ -584,14 +584,14 @@
       const uuid = profile.id || player.uuid || (player.auth && player.auth.uuid) || name;
       currentUuid = uuid;
 
-      // Persist the active skin into the local library (deduped by pixels) and
-      // remember its pixel hash so we can highlight the matching card instead of
-      // showing a separate "current skin" card.
+      // Remember the active skin's pixel hash so we can highlight the matching
+      // library card. We do NOT auto-add the active skin to the library —
+      // Mojang re-encodes uploads, which produced a duplicate entry.
       activePixelHash = null;
       if (activeSkinB64) {
-        await ipcRenderer.invoke("skins:add", { uuid, base64: activeSkinB64, variant: activeSkin.variant === "SLIM" ? "slim" : "classic" });
         activePixelHash = await ipcRenderer.invoke("skins:pixelHash", { base64: activeSkinB64 });
       }
+      const appliedId = localStorage.getItem('appliedSkin_' + uuid);
 
       // ---- Render Skins ----
       const skinsDiv = document.getElementById("skins");
@@ -613,12 +613,21 @@
       skinsDiv.appendChild(resetCard);
 
       // Saved local library. Clicking selects locally (no upload); Apply applies.
-      const library = await ipcRenderer.invoke("skins:list", { uuid });
+      // Dedup any pixel-identical entries left over from older versions.
+      const rawLibrary = await ipcRenderer.invoke("skins:list", { uuid });
+      const seenHashes = new Set();
+      const library = rawLibrary.filter(s => {
+        const key = s.pixelHash || s.base64;
+        if (seenHashes.has(key)) return false;
+        seenHashes.add(key);
+        return true;
+      });
       libraryCache = library;
       library.forEach(skin => {
         const preview = createSkinCanvas({ base64: skin.base64, variant: skin.variant === "slim" ? "SLIM" : "CLASSIC" });
         const card = createCard(`${skin.name} (${variantLabel(skin.variant)})`, () => selectSkin(skin), preview);
         card.dataset.pixelhash = skin.pixelHash || "";
+        card.dataset.skinid = String(skin.id);
 
         // Rename + delete controls.
         const acts = document.createElement("div");
@@ -677,18 +686,29 @@
 
     // ---- Local selection (preview only, no Mojang until Apply) ----
     function selectSkin(skin) {
-      pendingSelection = { base64: skin.base64, variant: skin.variant, name: skin.name, pixelHash: skin.pixelHash };
+      pendingSelection = { id: skin.id, base64: skin.base64, variant: skin.variant, name: skin.name, pixelHash: skin.pixelHash };
       if (window.skinViewer) window.skinViewer.loadSkin("data:image/png;base64," + skin.base64, { model: skin.variant === "slim" ? "slim" : "default" });
       refreshSelectionUI();
     }
 
-    // Highlight the pending selection (or the applied skin when nothing pending)
-    // and show the Apply button only when the selection differs from Mojang.
+    // Highlight exactly ONE card: the pending selection if any, otherwise the
+    // last-applied library skin (tracked by id), otherwise a pixel-hash match to
+    // the active Mojang skin. Only the first match is marked.
     function refreshSelectionUI() {
-      const targetHash = pendingSelection ? pendingSelection.pixelHash : activePixelHash;
-      document.querySelectorAll('#skins .card[data-pixelhash]').forEach(card => {
-        card.classList.toggle("selected", !!targetHash && card.dataset.pixelhash === targetHash);
-      });
+      const cards = [...document.querySelectorAll('#skins .card[data-skinid]')];
+      cards.forEach(c => c.classList.remove("selected"));
+      let match = null;
+      if (pendingSelection && pendingSelection.id != null) {
+        match = cards.find(c => c.dataset.skinid === String(pendingSelection.id));
+      }
+      if (!match) {
+        const appliedId = localStorage.getItem('appliedSkin_' + (currentUuid || ''));
+        if (appliedId) match = cards.find(c => c.dataset.skinid === appliedId);
+      }
+      if (!match && activePixelHash) {
+        match = cards.find(c => c.dataset.pixelhash && c.dataset.pixelhash === activePixelHash);
+      }
+      if (match) match.classList.add("selected");
       updateApplyButton();
     }
 
@@ -706,6 +726,9 @@
       try {
         await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
         activePixelHash = pendingSelection.pixelHash;
+        // Remember which library skin is now applied so it highlights even if
+        // Mojang re-encodes it (which changes the pixel hash).
+        if (pendingSelection.id != null) localStorage.setItem('appliedSkin_' + currentUuid, String(pendingSelection.id));
         pendingSelection = null;
         bustPlayerHead();
         await updateSKin();
@@ -719,6 +742,7 @@
     async function resetSkin() {
       try {
         await ipcRenderer.invoke("mc:resetSkin");
+        if (currentUuid) localStorage.removeItem('appliedSkin_' + currentUuid);
         pendingSelection = null;
         bustPlayerHead();
         await updateSKin();
