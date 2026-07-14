@@ -5104,6 +5104,14 @@ ipcMain.handle("skins:remove", (event, { uuid, id }) => {
   return lib[uuid];
 });
 
+ipcMain.handle("skins:rename", (event, { uuid, id, name }) => {
+  const lib = loadSkinLib();
+  const arr = lib[uuid] || [];
+  const s = arr.find(x => String(x.id) === String(id));
+  if (s && name) { s.name = name; lib[uuid] = arr; saveSkinLib(lib); }
+  return arr;
+});
+
 // Pixel hash for arbitrary base64 (used to detect if the active Mojang skin
 // matches a library entry, regardless of PNG encoding).
 ipcMain.handle("skins:pixelHash", async (event, { base64 }) => {
