@@ -553,33 +553,17 @@
       renderProjects(projects);
     }
 
-    // Pull a likely server address out of a project description/body. Only
-    // returns something when a real join address is published — many server
-    // projects are download-and-host packs with no public server at all.
-    function extractServerAddress(text) {
-      if (!text) return null;
-      const bad = /modrinth|youtube|youtu\.be|discord|patreon|twitter|x\.com|curseforge|github|paypal|ko-fi|tiktok|instagram|twitch/i;
-      // A domain that follows an IP/join/connect keyword.
-      let m = text.match(/(?:server\s*ip|ip\s*address|\bip\b|address|connect(?:\s*to)?|join(?:\s*(?:at|on))?)\s*[:=]?\s*[`*_ ]*((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?::\d{2,5})?)/i);
-      if (m && !bad.test(m[1])) return m[1];
-      // Explicit server-host prefixes anywhere.
-      m = text.match(/\b((?:play|mc|join|server|smp)\.[a-z0-9.\-]+\.[a-z]{2,}(?::\d{2,5})?)\b/i);
-      if (m && !bad.test(m[1])) return m[1];
-      return null;
-    }
-
-    // Best-effort: find the server's address and ping it for an online count.
+    // Modrinth pings the servers itself and exposes the result on the v3
+    // project's `minecraft_java_server.ping` — use that for a live online count.
     async function enhanceServerCard(proj, metaEl, downloads, follows) {
       if (!metaEl) return;
       try {
         const slug = proj.slug || proj.project_id;
-        const full = await fetch(`https://api.modrinth.com/v2/project/${slug}`).then(r => r.ok ? r.json() : null);
-        if (!full) return;
-        const addr = extractServerAddress(full.description) || extractServerAddress(full.body);
-        if (!addr) return;
-        const st = await ipcRenderer.invoke('get-server-status', { ip: addr });
-        if (st && st.online && st.players) {
-          metaEl.textContent = `🟢 ${st.players.online}/${st.players.max} online • ${formatNumber(downloads)} downloads • ${formatNumber(follows || 0)} followers`;
+        const full = await fetch(`https://api.modrinth.com/v3/project/${slug}`, { headers: { 'User-Agent': 'RedstoneLauncher' } })
+          .then(r => r.ok ? r.json() : null);
+        const ping = full?.minecraft_java_server?.ping?.data;
+        if (ping && typeof ping.players_online === 'number') {
+          metaEl.textContent = `🟢 ${formatNumber(ping.players_online)}/${formatNumber(ping.players_max)} online • ${formatNumber(downloads)} downloads • ${formatNumber(follows || 0)} followers`;
         }
       } catch { /* leave the downloads/followers line */ }
     }
