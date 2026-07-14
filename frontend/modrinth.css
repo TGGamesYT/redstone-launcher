@@ -284,15 +284,17 @@
 #searchPagination .filter-row .mini-check {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   font-size: 11px;
   opacity: 0.85;
 }
 
+/* Keep the shared 18px custom checkbox size so on/off states match. */
 #searchPagination .filter-row .mini-check input {
-  width: auto;
-  height: auto;
+  width: 18px;
+  height: 18px;
   margin: 0;
+  flex-shrink: 0;
 }
 
 #searchPagination .filter-row select,

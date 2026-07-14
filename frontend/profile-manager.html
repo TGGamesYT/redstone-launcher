@@ -347,6 +347,30 @@
     </div>
   </div>
 
+  <!-- Rename skin modal -->
+  <div id="skinRenameModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2001; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+    <div class="skin-modal-card" style="width:320px;">
+      <h3 style="margin-top:0;">Rename skin</h3>
+      <input type="text" id="skinRenameInput" placeholder="Skin name" style="width:100%; margin-bottom:14px;">
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="pm-btn" id="skinRenameCancelBtn">Cancel</button>
+        <button class="pm-btn" id="skinRenameSaveBtn" style="background:var(--base-color);">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete skin confirm modal -->
+  <div id="skinDeleteModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2001; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+    <div class="skin-modal-card" style="width:320px;">
+      <h3 style="margin-top:0;">Delete skin</h3>
+      <p id="skinDeleteText" style="opacity:0.85; margin-top:0;">Remove this skin from your library?</p>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="pm-btn" id="skinDeleteCancelBtn">Cancel</button>
+        <button class="pm-btn" id="skinDeleteConfirmBtn" style="background:#c0392b;">Delete</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Apply-to-Mojang button, bottom-left -->
   <button id="applySkinBtn" style="display:none; position:fixed; bottom:20px; left:90px; z-index:1500; background:var(--base-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 22px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Apply skin</button>
   <script src="skinview3d.bundle.js"></script>
@@ -601,22 +625,10 @@
         acts.className = "skin-card-actions";
         const renameBtn = document.createElement("button");
         renameBtn.title = "Rename"; renameBtn.appendChild(iconEl("edit"));
-        renameBtn.onclick = async (e) => {
-          e.stopPropagation();
-          const newName = prompt("Skin name:", skin.name);
-          if (newName == null) return;
-          await ipcRenderer.invoke("skins:rename", { uuid, id: skin.id, name: newName.trim() || skin.name });
-          updateSKin();
-        };
+        renameBtn.onclick = (e) => { e.stopPropagation(); openSkinRename(uuid, skin); };
         const delBtn = document.createElement("button");
         delBtn.title = "Delete"; delBtn.appendChild(iconEl("delete"));
-        delBtn.onclick = async (e) => {
-          e.stopPropagation();
-          if (!confirm(`Delete "${skin.name}" from your skin library?`)) return;
-          await ipcRenderer.invoke("skins:remove", { uuid, id: skin.id });
-          if (pendingSelection && pendingSelection.pixelHash === skin.pixelHash) pendingSelection = null;
-          updateSKin();
-        };
+        delBtn.onclick = (e) => { e.stopPropagation(); openSkinDelete(uuid, skin); };
         acts.append(renameBtn, delBtn);
         card.appendChild(acts);
 
@@ -770,6 +782,40 @@
     };
     document.getElementById('variantCancelBtn').onclick = () => {
       document.getElementById('variantModal').style.display = 'none';
+    };
+
+    // ---- Rename / delete skin modals (no native prompt/confirm) ----
+    let renameTarget = null; // { uuid, skin }
+    let deleteTarget = null;
+    function openSkinRename(uuid, skin) {
+      renameTarget = { uuid, skin };
+      document.getElementById('skinRenameInput').value = skin.name || '';
+      document.getElementById('skinRenameModal').style.display = 'flex';
+      setTimeout(() => document.getElementById('skinRenameInput').focus(), 0);
+    }
+    function openSkinDelete(uuid, skin) {
+      deleteTarget = { uuid, skin };
+      document.getElementById('skinDeleteText').textContent = `Remove "${skin.name}" from your skin library?`;
+      document.getElementById('skinDeleteModal').style.display = 'flex';
+    }
+    document.getElementById('skinRenameCancelBtn').onclick = () => { document.getElementById('skinRenameModal').style.display = 'none'; renameTarget = null; };
+    document.getElementById('skinRenameSaveBtn').onclick = async () => {
+      if (!renameTarget) return;
+      const name = (document.getElementById('skinRenameInput').value || '').trim() || renameTarget.skin.name;
+      await ipcRenderer.invoke("skins:rename", { uuid: renameTarget.uuid, id: renameTarget.skin.id, name });
+      document.getElementById('skinRenameModal').style.display = 'none';
+      renameTarget = null;
+      updateSKin();
+    };
+    document.getElementById('skinRenameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('skinRenameSaveBtn').click(); });
+    document.getElementById('skinDeleteCancelBtn').onclick = () => { document.getElementById('skinDeleteModal').style.display = 'none'; deleteTarget = null; };
+    document.getElementById('skinDeleteConfirmBtn').onclick = async () => {
+      if (!deleteTarget) return;
+      await ipcRenderer.invoke("skins:remove", { uuid: deleteTarget.uuid, id: deleteTarget.skin.id });
+      if (pendingSelection && pendingSelection.pixelHash === deleteTarget.skin.pixelHash) pendingSelection = null;
+      document.getElementById('skinDeleteModal').style.display = 'none';
+      deleteTarget = null;
+      updateSKin();
     };
 
     // ---- Upload flow: saves to the local library only (no Mojang) ----
