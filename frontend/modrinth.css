@@ -295,7 +295,8 @@
   margin: 0;
 }
 
-#searchPagination .filter-row select {
+#searchPagination .filter-row select,
+#searchPagination .filter-row input {
   padding: 6px 10px;
   border-radius: var(--border-radius);
   border: 1px solid var(--border-dark);
@@ -304,6 +305,17 @@
   font-family: var(--text-font);
   font-size: 13px;
   cursor: pointer;
+  /* The global `select { margin-bottom: 15px }` throws off vertical centering
+     inside this align-items:center row — zero it out. */
+  margin: 0;
+  vertical-align: middle;
+}
+
+/* Belt-and-braces: nothing in the filter row keeps a bottom margin. */
+#searchPagination .filter-row,
+#searchPagination .filter-row * {
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
 #searchPagination .bottom-row {

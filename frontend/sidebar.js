@@ -56,7 +56,13 @@ function applyTheme(settings) {
   const textFont = settings.font;
   const base = settings.baseColor;
   const secondary = settings.secondaryColor;
-  const mid = settings.thirdColor ?? getMiddleColor(base, secondary);
+  // Derive the third colour from base+secondary unless the user explicitly
+  // turned OFF auto-third and picked a manual one. Presets/older saves left a
+  // stale red thirdColor behind, which is why sidebar hovers, tooltips, install
+  // buttons and pagination stayed red regardless of the theme.
+  const mid = (settings.autoThird === false && settings.thirdColor)
+    ? settings.thirdColor
+    : getMiddleColor(base, secondary);
   document.documentElement.style.setProperty('--base-color', base);
   document.documentElement.style.setProperty('--secondary-color', secondary);
   document.documentElement.style.setProperty('--third-color', mid);
