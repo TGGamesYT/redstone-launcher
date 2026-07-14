@@ -240,8 +240,7 @@
       <div class="modal-section" id="importSection">
         <label id="importSectionLabel">Import a pack</label>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button type="button" id="importMrpackBtn" class="import-new-btn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import .mrpack / Modrinth zip</button>
-          <button type="button" id="importCurseZipBtn" class="import-new-btn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import CurseForge .zip</button>
+          <button type="button" id="importPackBtn" class="import-new-btn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import modpack (.mrpack / .zip)</button>
           <button type="button" id="updateModpackBtn" style="display:none;"><i class="material-icons" style="vertical-align:middle;font-size:18px;">upgrade</i> Update Modpack</button>
         </div>
       </div>
@@ -286,6 +285,17 @@
         <button type="button" id="modalCreateBtn">Create Instance</button>
         <a href="instances.html">
         <button type="button" id="modalCancelBtn" onclick="document.getElementById('addInstanceModal').classList.remove('active'); renderListOrDetail();">Cancel</button></a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import progress overlay -->
+  <div id="importProgressModal" class="modal-overlay">
+    <div class="modal-content" style="width:360px; text-align:center;">
+      <h2 style="margin-top:0;">Importing modpack…</h2>
+      <div id="importProgressLabel" style="opacity:0.8; font-size:13px; margin-bottom:10px; min-height:16px;">Preparing…</div>
+      <div style="background:var(--menu-bg); border-radius:var(--border-radius); overflow:hidden; height:14px;">
+        <div id="importProgressBar" style="height:100%; width:0%; background:var(--base-color); transition:width 0.2s;"></div>
       </div>
     </div>
   </div>
@@ -528,32 +538,54 @@
       addInstanceModal.classList.add('active');
     }
 
-    // Import .mrpack / Modrinth-zip and CurseForge .zip (both open a native
-    // file dialog in the main process and build the instance).
-    async function runImport(channel, btn) {
+    // One import entry point (accepts .mrpack or CurseForge .zip). Shows a
+    // progress bar, then auto-opens the imported instance.
+    const importProgressModal = document.getElementById('importProgressModal');
+    ipcRenderer.on('import-progress', (e, p) => {
+      if (!p) return;
+      if (p.finished) { importProgressModal.classList.remove('active'); return; }
+      importProgressModal.classList.add('active');
+      const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+      document.getElementById('importProgressBar').style.width = pct + '%';
+      document.getElementById('importProgressLabel').textContent = p.label
+        ? `${p.label}${p.total ? `  (${p.done}/${p.total})` : ''}` : 'Importing…';
+    });
+
+    async function runImport(btn) {
       const orig = btn.innerHTML;
       btn.disabled = true;
       btn.innerHTML = `<i class="material-icons" style="vertical-align:middle;font-size:18px;">hourglass_top</i> Importing…`;
+      addInstanceModal.classList.remove('active');
       try {
-        const res = await ipcRenderer.invoke(channel);
+        const res = await ipcRenderer.invoke('import-pack');
+        importProgressModal.classList.remove('active');
         if (res && res.success) {
-          addInstanceModal.classList.remove('active');
-          ipcRenderer.once("profiles-list", (e, p) => { profiles = p; renderListOrDetail(); });
+          const newId = res.profile && res.profile.id;
+          ipcRenderer.once("profiles-list", (e, p) => {
+            profiles = p;
+            if (newId) window.openInstanceInPage(newId); else renderListOrDetail();
+          });
           ipcRenderer.send("get-profiles");
         } else if (res && res.error && res.error !== "No file selected") {
           alert("Import failed: " + res.error);
         }
       } catch (err) {
+        importProgressModal.classList.remove('active');
         alert("Import failed: " + (err.message || err));
       } finally {
         btn.disabled = false;
         btn.innerHTML = orig;
       }
     }
-    const importMrpackBtn = document.getElementById('importMrpackBtn');
-    const importCurseZipBtn = document.getElementById('importCurseZipBtn');
-    if (importMrpackBtn) importMrpackBtn.onclick = () => runImport('import-mrpack', importMrpackBtn);
-    if (importCurseZipBtn) importCurseZipBtn.onclick = () => runImport('import-curseforge-zip', importCurseZipBtn);
+    const importPackBtn = document.getElementById('importPackBtn');
+    if (importPackBtn) importPackBtn.onclick = () => runImport(importPackBtn);
+
+    // Auto-open a freshly created instance.
+    ipcRenderer.on('profile-created', (e, newProfile) => {
+      if (!newProfile || !newProfile.id) return;
+      ipcRenderer.once('profiles-list', (ev, p) => { profiles = p; window.openInstanceInPage(newProfile.id); });
+      ipcRenderer.send('get-profiles');
+    });
 
     // ── Modpack update flow: pick a new .mrpack, review the diff, apply. ──
     let currentUpdateProfileId = null;
@@ -927,33 +959,10 @@
         editBtn.onclick = () => openEditModal(profile);
         right.appendChild(editBtn);
 
-        // Version-update button (shown when a newer game version exists) and an
-        // auto-update toggle.
-        const updateVerBtn = document.createElement("button");
-        updateVerBtn.innerHTML = `<i class="material-icons">system_update_alt</i> Update`;
-        updateVerBtn.title = "Update to the latest game version";
-        updateVerBtn.style.display = "none";
-        right.appendChild(updateVerBtn);
-
-        const autoWrap = document.createElement("label");
-        autoWrap.style.cssText = "display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;margin:0;";
-        autoWrap.title = "Automatically update the game version when a new one releases";
-        const autoCb = document.createElement("input");
-        autoCb.type = "checkbox";
-        autoCb.checked = !!(profile.autoUpdateVersion ?? profile.alwaysUpdate);
-        autoCb.style.width = "auto";
-        autoCb.style.margin = "0";
-        autoCb.onchange = () => {
-          profile.autoUpdateVersion = autoCb.checked;
-          ipcRenderer.send("edit-profile", { id: profile.id, autoUpdateVersion: autoCb.checked });
-        };
-        autoWrap.appendChild(autoCb);
-        autoWrap.appendChild(document.createTextNode("Auto-update"));
-        right.appendChild(autoWrap);
-
+        // Version-update button — only for instances that opted into
+        // auto-update (via Instance Settings). Deliberately-old instances aren't
+        // nagged. The applyVersionChange helper is also used by Settings.
         async function applyVersionChange(target) {
-          updateVerBtn.disabled = true;
-          updateVerBtn.innerHTML = `<i class="material-icons">hourglass_top</i> Updating…`;
           try {
             await ipcRenderer.invoke("change-instance-version", { profileId: profile.id, newVersion: target });
           } catch (err) { console.error("version update failed", err); }
@@ -965,23 +974,33 @@
           if (p) p.version = target;
           renderListOrDetail();
         }
+        window._applyVersionChangeFor = { id: profile.id, fn: applyVersionChange };
 
-        // Decide whether an update is available (newer release, or newer
-        // snapshot if this instance already tracks snapshots).
-        (async () => {
-          const manifest = await getMcManifest();
-          if (!manifest) return;
-          const curIsRelease = !!manifest.versions.find(v => v.id === profile.version && v.type === "release");
-          const target = curIsRelease ? manifest.latest.release : manifest.latest.snapshot;
-          const curEntry = manifest.versions.find(v => v.id === profile.version);
-          const tgtEntry = manifest.versions.find(v => v.id === target);
-          const newer = curEntry && tgtEntry && new Date(tgtEntry.releaseTime) > new Date(curEntry.releaseTime);
-          if (!newer) return;
-          updateVerBtn.style.display = "";
-          updateVerBtn.innerHTML = `<i class="material-icons">system_update_alt</i> Update to ${target}`;
-          updateVerBtn.onclick = () => applyVersionChange(target);
-          if (autoCb.checked) applyVersionChange(target);
-        })();
+        if (profile.autoUpdateVersion ?? profile.alwaysUpdate) {
+          const updateVerBtn = document.createElement("button");
+          updateVerBtn.innerHTML = `<i class="material-icons">system_update_alt</i> Update`;
+          updateVerBtn.title = "Update to the latest game version";
+          updateVerBtn.style.display = "none";
+          right.appendChild(updateVerBtn);
+
+          // Decide whether an update is available (newer release, or newer
+          // snapshot if this instance already tracks snapshots).
+          (async () => {
+            const manifest = await getMcManifest();
+            if (!manifest) return;
+            const curIsRelease = !!manifest.versions.find(v => v.id === profile.version && v.type === "release");
+            const target = curIsRelease ? manifest.latest.release : manifest.latest.snapshot;
+            const curEntry = manifest.versions.find(v => v.id === profile.version);
+            const tgtEntry = manifest.versions.find(v => v.id === target);
+            const newer = curEntry && tgtEntry && new Date(tgtEntry.releaseTime) > new Date(curEntry.releaseTime);
+            if (!newer) return;
+            updateVerBtn.style.display = "";
+            updateVerBtn.innerHTML = `<i class="material-icons">system_update_alt</i> Update to ${target}`;
+            updateVerBtn.onclick = () => applyVersionChange(target);
+            // Opted into auto-update → apply immediately.
+            applyVersionChange(target);
+          })();
+        }
 
         // On open, re-scan any deferred (.toupdate) mods/plugins for newly
         // compatible versions.

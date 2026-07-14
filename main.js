@@ -1196,13 +1196,16 @@ ipcMain.on('create-profile', async (event, profile) => {
     loader: profile.loader || "vanilla",
     icon: profile.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png",
     alwaysUpdate: !!profile.alwaysUpdate,
-    created: Date.now()
+    autoUpdateVersion: !!profile.alwaysUpdate,
+    created: Date.now(),
+    lastUsed: Date.now()
   };
 
   profiles.push(newProfile);
   saveProfiles(profiles);
 
   event.reply('profiles-updated', profiles);
+  event.reply('profile-created', newProfile);
 });
 
 ipcMain.on('edit-profile', (event, updatedProfile) => {
@@ -1452,7 +1455,7 @@ async function mrpackFromUrl(url) {
   return mrpack(tmpFile); // call your existing mrpack() function
 }
 
-async function mrpack(mrpackPath) {
+async function mrpack(mrpackPath, onProgress) {
   const zip = new AdmZip(mrpackPath);
 
   const indexEntry = zip.getEntry("modrinth.index.json");
@@ -1497,7 +1500,9 @@ async function mrpack(mrpackPath) {
   });
 
   // Download files listed in indexJson.files
-  for (const fileObj of indexJson.files || []) {
+  const dlList = indexJson.files || [];
+  let dlDone = 0;
+  for (const fileObj of dlList) {
     const rel = fileObj.path.replace(/\\/g, "/");
     const filePath = path.join(profileFolder, fileObj.path.replace(/\//g, path.sep));
     const fileDir = path.dirname(filePath);
@@ -1506,6 +1511,8 @@ async function mrpack(mrpackPath) {
     const url = fileObj.downloads[0]; // we take the first URL
     await downloadFile(url, filePath)
     packFiles[rel] = fileObj.hashes?.sha1 || (fs.existsSync(filePath) ? computeSHA1(filePath) : null);
+    dlDone++;
+    if (typeof onProgress === "function") onProgress(dlDone, dlList.length, rel);
   }
 
   // Optional: read icon from pack
@@ -1520,7 +1527,8 @@ async function mrpack(mrpackPath) {
     loader,
     icon,
     modpack: true,
-    created: Date.now()
+    created: Date.now(),
+    lastUsed: Date.now()
   };
 
   writeModpackMeta(profileFolder, { name: newProfile.name, files: packFiles });
@@ -1766,6 +1774,32 @@ ipcMain.handle("import-curseforge-zip", async () => {
     return { success: false, error: err.message };
   }
 });
+
+// One import entry point: accepts a Modrinth .mrpack or a CurseForge .zip and
+// dispatches by extension, emitting import-progress to the renderer.
+ipcMain.handle("import-pack", async (event) => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: "Select a modpack (.mrpack or CurseForge .zip)",
+      filters: [{ name: "Modpack", extensions: ["mrpack", "zip"] }],
+      properties: ["openFile"]
+    });
+    if (canceled || !filePaths.length) return { success: false, error: "No file selected" };
+    const p = filePaths[0];
+    const onProgress = (done, total, label) => {
+      try { event.sender.send("import-progress", { done, total, label }); } catch { /* ignore */ }
+    };
+    onProgress(0, 1, "Reading pack…");
+    const res = p.toLowerCase().endsWith(".mrpack")
+      ? await mrpack(p, onProgress)
+      : await curseforgeImport(p, onProgress);
+    try { event.sender.send("import-progress", { done: 1, total: 1, finished: true }); } catch { /* ignore */ }
+    return res;
+  } catch (err) {
+    try { event.sender.send("import-progress", { finished: true }); } catch { /* ignore */ }
+    return { success: false, error: err.message };
+  }
+});
 ipcMain.handle("import-curseforge-code", async (e, code) => {
   try {
     // --- 1. Validate input ---
@@ -1811,7 +1845,7 @@ async function getModInfo(projectID) {
   return data.data; // CF wraps data inside { data: {...} }
 }
 
-async function curseforgeImport(zipPath) {
+async function curseforgeImport(zipPath, onProgress) {
   const zip = new AdmZip(zipPath);
 
   const manifestEntry = zip.getEntry("manifest.json");
@@ -1844,7 +1878,9 @@ async function curseforgeImport(zipPath) {
   });
 
   // Download mods
-  for (const fileObj of manifest.files || []) {
+  const cfList = manifest.files || [];
+  let cfDone = 0;
+  for (const fileObj of cfList) {
     try {
       // Step 1: Lookup mod info → get classId
       const modInfo = await getModInfo(fileObj.projectID);
@@ -1871,6 +1907,8 @@ async function curseforgeImport(zipPath) {
     } catch (err) {
       devtoolsLog(`❌ Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
     }
+    cfDone++;
+    if (typeof onProgress === "function") onProgress(cfDone, cfList.length, `mod ${cfDone}/${cfList.length}`);
   }
 
 
@@ -1886,7 +1924,8 @@ async function curseforgeImport(zipPath) {
     version: mcVersion,
     loader,
     icon,
-    created: Date.now()
+    created: Date.now(),
+    lastUsed: Date.now()
   };
 
   const profiles = await loadProfiles();
