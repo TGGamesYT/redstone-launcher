@@ -15,7 +15,7 @@
 :root {
   --base-color: #b30c0c;
   --secondary-color: #ff4d4d;
-  --third-color: #d92d2d;
+  --third-color: color-mix(in srgb, var(--base-color) 50%, var(--secondary-color));
   --text-color: #ffffff;
   --text-font: Pixel;
   --border-radius: 8px;
@@ -696,7 +696,8 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  z-index: 1000;
+  /* Above the modal overlay so the window controls stay clickable. */
+  z-index: 3001;
   -webkit-app-region: drag;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
@@ -816,7 +817,9 @@ html:not(.gradient-enabled) .sidebar {
   align-items: center;
   padding-top: 20px;
   gap: 12px;
-  z-index: 100;
+  /* Above the modal overlay (2000) so the sidebar AND its hover tooltips stay
+     sharp and clickable while a modal blur is up. */
+  z-index: 3000;
 }
 
 .sidebar .menu {

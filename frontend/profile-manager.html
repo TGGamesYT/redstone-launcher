@@ -11,7 +11,8 @@
     if (cached.baseColor) {
       document.documentElement.style.setProperty('--base-color', cached.baseColor);
       document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
-      document.documentElement.style.setProperty('--third-color', cached.thirdColor);
+      var _third = cached.thirdColor || (function(a,b){try{var p=function(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(function(c){return c+c;}).join('');return [0,2,4].map(function(i){return parseInt(h.slice(i,i+2),16);});};var x=p(a),y=p(b);return '#'+[0,1,2].map(function(i){return Math.round((x[i]+y[i])/2).toString(16).padStart(2,'0');}).join('');}catch(e){return b;}})(cached.baseColor, cached.secondaryColor);
+      if (_third) document.documentElement.style.setProperty('--third-color', _third);
       document.documentElement.style.setProperty('--text-color', cached.textColor);
       document.documentElement.style.setProperty('--text-font', cached.font);
       if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');

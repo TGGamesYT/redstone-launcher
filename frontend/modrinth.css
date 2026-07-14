@@ -14,7 +14,7 @@
 :root {
   --base-color: #b30c0c;
   --secondary-color: #ff4d4d;
-  --third-color: #d92d2d;
+  --third-color: color-mix(in srgb, var(--base-color) 50%, var(--secondary-color));
   --text-color: #ffffff;
   --text-font: Pixel;
   --border-radius: 0;
