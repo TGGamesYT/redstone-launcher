@@ -89,12 +89,32 @@
       box-sizing: border-box;
     }
 
-    #search-sort select,
-    #search-sort input {
+    #search-sort #searchInput { min-width: 180px; }
+
+    /* Version dropdown + "All" toggle share one cell. */
+    #search-sort .version-filter-wrap {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
+      flex: 1;
       min-width: 170px;
     }
 
-    #search-sort #searchInput { min-width: 220px; }
+    #search-sort .all-versions-toggle {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+      font-size: 12px;
+      margin: 0;
+    }
+
+    #search-sort .all-versions-toggle input {
+      width: auto;
+      height: auto;
+      min-width: 0;
+      margin: 0;
+    }
 
     /* "+" create-instance button, sized to match the search field. */
     .add-instance-btn {
@@ -169,11 +189,9 @@
   <h1 id="instancesHeading">Instances</h1>
   <div id="search-sort" style="padding: 0 20px 0 0;">
     <div class="ss-row">
-      <input id="searchInput" type="text" placeholder="Search instances..." style="flex:1;" />
-      <button id="addInstanceTopBtn" class="add-instance-btn" title="Create a new instance"><i class="material-icons">add</i></button>
-    </div>
-    <div class="ss-row">
-      <select id="filterLoader">
+      <input id="searchInput" type="text" placeholder="Search instances..." style="flex:2; min-width:180px;" />
+
+      <select id="filterLoader" style="flex:1; min-width:130px;">
         <option value="">All Loaders</option>
         <option value="vanilla">Vanilla</option>
         <option value="fabric">Fabric</option>
@@ -182,9 +200,12 @@
         <option value="neoforge">NeoForge</option>
       </select>
 
-      <input id="filterVersion" type="text" placeholder="Filter by version..." />
+      <div class="version-filter-wrap">
+        <select id="filterVersion" style="flex:1; min-width:110px;"><option value="">All versions</option></select>
+        <label class="all-versions-toggle" title="Ignore the version filter"><input type="checkbox" id="filterVersionAll"> All</label>
+      </div>
 
-      <select id="sortSelect" style="flex:1;">
+      <select id="sortSelect" style="flex:1; min-width:150px;">
         <option value="custom">Sort: Custom order</option>
         <option value="name-asc">Sort: Name (A→Z)</option>
         <option value="name-desc">Sort: Name (Z→A)</option>
@@ -197,6 +218,8 @@
         <option value="version-asc">Sort: Game version (asc)</option>
         <option value="version-desc">Sort: Game version (desc)</option>
       </select>
+
+      <button id="addInstanceTopBtn" class="add-instance-btn" title="Create a new instance"><i class="material-icons">add</i></button>
       <button id="editOrderBtn" style="display:none;">Edit Order</button>
     </div>
   </div>
@@ -368,7 +391,9 @@
     function attachFilterListeners() {
       if (searchInput) searchInput.addEventListener('input', debounce(renderListOrDetail, 120));
       if (filterLoader) filterLoader.addEventListener('change', renderListOrDetail);
-      if (filterVersion) filterVersion.addEventListener('input', renderListOrDetail);
+      if (filterVersion) filterVersion.addEventListener('change', renderListOrDetail);
+      const fva = document.getElementById('filterVersionAll');
+      if (fva) fva.addEventListener('change', renderListOrDetail);
       if (sortSelect) sortSelect.addEventListener('change', async () => {
         // send sort preference to backend if you support it
         try { await ipcRenderer.invoke('sort-instances', sortSelect.value); } catch (e) { }
@@ -747,14 +772,33 @@
       return _mcManifest;
     }
 
+    // Fill the version filter dropdown with the distinct versions present among
+    // the instances (preserving the current choice). Disabled when "All" is on.
+    function populateVersionFilter() {
+      const sel = document.getElementById('filterVersion');
+      const allCb = document.getElementById('filterVersionAll');
+      if (!sel) return;
+      if (allCb) sel.disabled = allCb.checked;
+      const prev = sel.value;
+      const versions = [...new Set((profiles || []).map(p => p.version).filter(Boolean))]
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+      sel.innerHTML = '<option value="">All versions</option>' +
+        versions.map(v => `<option value="${v}">${v}</option>`).join('');
+      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+    }
+
     async function renderListOrDetail() {
       const urlParams = new URLSearchParams(window.location.search);
       const instanceId = urlParams.get('i');
 
+      // Keep the version dropdown populated with the versions actually present.
+      populateVersionFilter();
+
       // read filter/search values now
       const q = (searchInput?.value || '').trim().toLowerCase();
       const loaderFilterVal = (filterLoader?.value || '').trim();
-      const versionFilterVal = (filterVersion?.value || '').trim().toLowerCase();
+      const allVersions = document.getElementById('filterVersionAll')?.checked;
+      const versionFilterVal = allVersions ? '' : (filterVersion?.value || '').trim().toLowerCase();
       const sortMode = (sortSelect?.value || 'custom');
       const gridView = await ipcRenderer.invoke("get-setting", "gridView");
 
