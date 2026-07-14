@@ -1004,13 +1004,18 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--menu-bg);
+  background: transparent;
+  /* Inset the track by the corner radius so the scrollbar doesn't paint over
+     the rounded top/bottom corners of scrollable panels (logs, lists, etc.). */
+  margin: var(--border-radius) 0;
+  border-radius: 6px;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--third-color);
-  border: 2px solid var(--menu-bg);
-  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb:hover {

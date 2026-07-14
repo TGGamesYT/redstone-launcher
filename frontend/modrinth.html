@@ -424,8 +424,6 @@
         const follows = api === "modrinth" ? proj.follows : proj.thumbsUpCount;
         let meta;
         if (activeType === "server") {
-          // Modrinth doesn't expose a live player count, so surface the stats it
-          // does: downloads and followers ("members").
           meta = `${formatNumber(downloads)} downloads • ${formatNumber(follows || 0)} followers`;
         } else {
           meta = `by ${author} • ${formatNumber(downloads)} downloads`;
@@ -435,6 +433,13 @@
       <div class="project-meta">${meta}</div>
     `;
         left.appendChild(info);
+
+        // For server projects, try to find a join address in the project body
+        // and ping it so we can show a live online-player count.
+        if (activeType === "server" && api === "modrinth") {
+          const metaEl = info.querySelector('.project-meta');
+          enhanceServerCard(proj, metaEl, downloads, follows);
+        }
 
         const actions = document.createElement("div");
         actions.className = "project-actions";
@@ -545,9 +550,37 @@
       renderProjects(projects);
     }
 
+    // Pull a likely server address out of a project description/body.
+    function extractServerAddress(text) {
+      if (!text) return null;
+      // "IP: play.example.com" style first.
+      let m = text.match(/\bIP\s*[:=]?\s*`?\*?\*?\s*([a-z0-9][a-z0-9.\-]*\.[a-z]{2,}(?::\d{2,5})?)/i);
+      if (m) return m[1];
+      // Common server-host prefixes.
+      m = text.match(/\b((?:play|mc|join|server|smp)\.[a-z0-9.\-]+\.[a-z]{2,}(?::\d{2,5})?)\b/i);
+      if (m) return m[1];
+      return null;
+    }
+
+    // Best-effort: find the server's address and ping it for an online count.
+    async function enhanceServerCard(proj, metaEl, downloads, follows) {
+      if (!metaEl) return;
+      try {
+        const slug = proj.slug || proj.project_id;
+        const full = await fetch(`https://api.modrinth.com/v2/project/${slug}`).then(r => r.ok ? r.json() : null);
+        if (!full) return;
+        const addr = extractServerAddress(full.description) || extractServerAddress(full.body);
+        if (!addr) return;
+        const st = await ipcRenderer.invoke('get-server-status', { ip: addr });
+        if (st && st.online && st.players) {
+          metaEl.textContent = `🟢 ${st.players.online}/${st.players.max} online • ${formatNumber(downloads)} downloads • ${formatNumber(follows || 0)} followers`;
+        }
+      } catch { /* leave the downloads/followers line */ }
+    }
+
     // Set up a Modrinth server project (a modpack-shaped .mrpack) as a new
-    // instance. The join address isn't exposed by the API, so we point the user
-    // at the project page for it.
+    // instance. The join address isn't always structured, so we also point the
+    // user at the project page.
     async function installServer(proj, btn) {
       const orig = btn.textContent;
       btn.disabled = true; btn.textContent = "Setting up…";

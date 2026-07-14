@@ -281,6 +281,13 @@
   gap: 6px;
 }
 
+/* Fixed width so adding snapshots (longer names) can't grow the dropdown and
+   push the whole row wider. */
+#searchPagination .filter-row #versionFilter {
+  width: 95px;
+  max-width: 95px;
+}
+
 #searchPagination .filter-row .mini-check {
   display: inline-flex;
   align-items: center;
