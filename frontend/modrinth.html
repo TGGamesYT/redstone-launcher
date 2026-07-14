@@ -434,8 +434,10 @@
     `;
         left.appendChild(info);
 
-        // For server projects, try to find a join address in the project body
-        // and ping it so we can show a live online-player count.
+        // Server projects: try (best-effort) to show a live online-player count
+        // when the project actually publishes a joinable address. Most are
+        // download-and-host packs with no public server, so this usually leaves
+        // the downloads/followers line as-is.
         if (activeType === "server" && api === "modrinth") {
           const metaEl = info.querySelector('.project-meta');
           enhanceServerCard(proj, metaEl, downloads, follows);
@@ -464,7 +466,8 @@
           }
         } else if (activeType === "server" && api === "modrinth") {
           // Server projects are modpack-shaped: set one up as an instance.
-          installBtn.textContent = "Set up";
+          installBtn.innerHTML = '<i class="material-icons" style="font-size:18px;vertical-align:middle;">play_arrow</i>';
+          installBtn.classList.add("server-play-btn");
           installBtn.title = "Download this server's modpack as a new instance";
           installBtn.onclick = (e) => { e.stopPropagation(); installServer(proj, installBtn); };
         }
@@ -550,15 +553,18 @@
       renderProjects(projects);
     }
 
-    // Pull a likely server address out of a project description/body.
+    // Pull a likely server address out of a project description/body. Only
+    // returns something when a real join address is published — many server
+    // projects are download-and-host packs with no public server at all.
     function extractServerAddress(text) {
       if (!text) return null;
-      // "IP: play.example.com" style first.
-      let m = text.match(/\bIP\s*[:=]?\s*`?\*?\*?\s*([a-z0-9][a-z0-9.\-]*\.[a-z]{2,}(?::\d{2,5})?)/i);
-      if (m) return m[1];
-      // Common server-host prefixes.
+      const bad = /modrinth|youtube|youtu\.be|discord|patreon|twitter|x\.com|curseforge|github|paypal|ko-fi|tiktok|instagram|twitch/i;
+      // A domain that follows an IP/join/connect keyword.
+      let m = text.match(/(?:server\s*ip|ip\s*address|\bip\b|address|connect(?:\s*to)?|join(?:\s*(?:at|on))?)\s*[:=]?\s*[`*_ ]*((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?::\d{2,5})?)/i);
+      if (m && !bad.test(m[1])) return m[1];
+      // Explicit server-host prefixes anywhere.
       m = text.match(/\b((?:play|mc|join|server|smp)\.[a-z0-9.\-]+\.[a-z]{2,}(?::\d{2,5})?)\b/i);
-      if (m) return m[1];
+      if (m && !bad.test(m[1])) return m[1];
       return null;
     }
 
@@ -700,6 +706,13 @@
       holder.innerHTML = '';
 
       const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+      // Pretty header label: strip the "minecraft_server_" prefix, turn
+      // separators into spaces and title-case each word.
+      const prettyHeader = h => h
+        .replace(/^minecraft_(java_)?server_?/i, '')
+        .replace(/[_-]+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, c => c.toUpperCase()) || 'Category';
 
       if (apiSelector.value === 'curseforge') {
         const cats = CURSEFORGE_CATEGORIES[type];
@@ -724,7 +737,7 @@
 
       Object.keys(groups).sort().forEach(header => {
         const lbl = document.createElement('label');
-        lbl.textContent = cap(header);
+        lbl.textContent = prettyHeader(header);
         const sel = document.createElement('select');
         sel.className = 'mr-cat'; sel.dataset.key = header;
         sel.innerHTML = '<option value="">Any</option>' +

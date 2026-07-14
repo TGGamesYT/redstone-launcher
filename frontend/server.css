@@ -1251,12 +1251,24 @@ a:hover {
 
 #logs {
   max-width: 90%;
+  /* Clip the scrollbar to the rounded rectangle so it doesn't paint over the
+     rounded corners (scrollbar-track margin isn't reliable for this). */
+  clip-path: inset(0 round var(--border-radius));
 }
 
 .instanceView-scrolly {
   height: calc(100vh - 170px);
   overflow-y: auto;
   padding: 0px;
+}
+
+/* Any scroll panel with rounded corners: keep the scrollbar inside the curve. */
+.instanceView-scrolly,
+.mainModView-scrolly,
+.projectView-scrolly,
+.main-scrolly,
+.settings-scrolly {
+  clip-path: inset(0 round var(--border-radius));
 }
 
 .full-scrolly {

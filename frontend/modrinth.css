@@ -72,6 +72,19 @@
   cursor: not-allowed;
 }
 
+/* Server "play" (set up) button — icon-only, circular. */
+.project-actions .server-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--base-color);
+}
+.project-actions .server-play-btn:hover { background: var(--third-color); }
+
 /* Compact icon-only provider toggle: a fixed square the same height as the
    search bar next to it. */
 .api-toggle {
@@ -282,10 +295,14 @@
 }
 
 /* Fixed width so adding snapshots (longer names) can't grow the dropdown and
-   push the whole row wider. */
+   push the whole row wider. min-width:0 is required — as a flex child the
+   select's default min-width:auto would otherwise grow it to its longest
+   option and ignore width/max-width. */
 #searchPagination .filter-row #versionFilter {
   width: 95px;
+  min-width: 0;
   max-width: 95px;
+  flex: 0 0 95px;
 }
 
 #searchPagination .filter-row .mini-check {
