@@ -109,15 +109,22 @@ async function makeServer({ name, version, type }) {
 
 // --- Server Lifecycle ---
 function startServer(name, settings) {
-  const minRam = `${settings.get('ramServersMin', "1024m")}`;
-  const maxRam = `${settings.get('ramServersMax', "4096m")}`;
+  // Accept a number or a "1024m"/"1024" string; emit a clean "-Xms1024m".
+  const ramMB = (key, def) => {
+    let v = settings ? settings.get(key, def) : def;
+    const n = parseInt(String(v).replace(/[^\d]/g, ""), 10) || def;
+    return n + "m";
+  };
+  const minRam = ramMB('ramServersMin', 1024);
+  const maxRam = ramMB('ramServersMax', 4096);
   const server = servers.get(name);
   if (!server) throw new Error("Server not found");
+  if (server.process) return; // already running
 
   const jarPath = path.join(server.dir, "server.jar");
   if (!fs.existsSync(jarPath)) throw new Error("Server jar missing");
 
-  const proc = spawn("java", ["-Xms" + minRam + "m", "-Xmx" + maxRam + "m", "-jar", jarPath, "nogui"], { cwd: server.dir });
+  const proc = spawn("java", ["-Xms" + minRam, "-Xmx" + maxRam, "-jar", jarPath, "nogui"], { cwd: server.dir });
 
   server.process = proc;
   server.status = "running";
@@ -146,9 +153,10 @@ function stopServer(name) {
   server.process.stdin.write("stop\n");
 }
 
-function restartServer(name) {
-  stopServer(name);
-  setTimeout(() => startServer(name), 5000);
+function restartServer(name, settings) {
+  const server = servers.get(name);
+  if (server?.process) stopServer(name);
+  setTimeout(() => startServer(name, settings), 5000);
 }
 
 function sendServerCommand(name, cmd) {
@@ -193,6 +201,50 @@ function getConsole(name) {
   return server ? server.logs : [];
 }
 
+// --- Delete a server (stops it first) ---
+function deleteServer(name) {
+  const server = servers.get(name);
+  try { if (server?.process) server.process.kill(); } catch { /* ignore */ }
+  servers.delete(name);
+  const dir = path.join(serversDir, name);
+  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  return { success: true };
+}
+
+// --- server.properties read/write ---
+function getServerProperties(name) {
+  const p = path.join(serversDir, name, "server.properties");
+  try { return fs.readFileSync(p, "utf-8"); } catch { return ""; }
+}
+
+function saveServerProperties(name, text) {
+  const p = path.join(serversDir, name, "server.properties");
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, text);
+  return { success: true };
+}
+
+// Read the configured server port from server.properties (defaults to 25565).
+function getServerPort(name) {
+  const props = getServerProperties(name);
+  const m = props.match(/^server-port\s*=\s*(\d+)/m);
+  return m ? Number(m[1]) : 25565;
+}
+
+// Single-server info incl. live status.
+function getServerInfo(name) {
+  const server = servers.get(name);
+  const dir = path.join(serversDir, name);
+  let info = { name };
+  try { info = JSON.parse(fs.readFileSync(path.join(dir, "serverinfo.json"), "utf-8")); } catch { /* ignore */ }
+  return {
+    ...info,
+    dir,
+    status: server?.status || "stopped",
+    port: getServerPort(name),
+  };
+}
+
 export default {
   makeServer,
   startServer,
@@ -200,5 +252,10 @@ export default {
   restartServer,
   sendServerCommand,
   getServers,
-  getConsole
+  getConsole,
+  deleteServer,
+  getServerProperties,
+  saveServerProperties,
+  getServerPort,
+  getServerInfo,
 };

@@ -23,64 +23,78 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <link rel="stylesheet" href="server.css" />
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    #serversList {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      overflow-y: auto;
-      max-height: calc(100vh - 140px);
-      padding-right: 8px;
-    }
-
-    /* Modal */
-    #createServerModal {
-      display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-                 background: rgba(0,0,0,0.5); justify-content: center; align-items: center; 
-    }
-
-    .modal-content {
-      background: var(--third-color); 
-      padding: 20px;
-      color: var(--text-color);
+    .promain { display: flex; gap: 16px; padding: 0 20px 0 0; }
+    #serverListView { flex: 2; min-width: 0; }
+    #upnpPanel {
+      flex: 0 0 280px;
+      background: var(--menu-bg);
+      border: 1px solid var(--border-dark);
       border-radius: var(--border-radius);
-      padding: 20px;
-      width: 400px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      padding: 16px;
+      height: fit-content;
+      margin-top: 8px;
+    }
+    #upnpPanel h3 { margin: 0 0 10px 0; display: flex; align-items: center; gap: 6px; }
+    #upnpPanel .hint { opacity: 0.75; font-size: 12px; margin-bottom: 12px; }
+    #upnpPanel input { width: 100%; margin-bottom: 8px; }
+    #upnpPanel .upnp-actions { display: flex; gap: 8px; }
+    #upnpPanel .upnp-actions button { flex: 1; }
+    #upnpStatus { font-size: 12px; margin-top: 10px; white-space: pre-wrap; word-break: break-word; }
+
+    /* Search / filter / sort toolbar (mirrors the instances page). */
+    #server-search-sort { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+    #server-search-sort .ss-row { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
+    #server-search-sort input, #server-search-sort select, #server-search-sort .add-server-btn {
+      height: 42px; margin-bottom: 0; box-sizing: border-box;
+    }
+    .add-server-btn {
+      width: 42px; flex: 0 0 42px; display: inline-flex; align-items: center; justify-content: center;
+      padding: 0; cursor: pointer; background: var(--base-color); color: var(--text-color);
+      border: 2px solid var(--border-dark); border-radius: var(--border-radius);
+    }
+    .add-server-btn:hover { background: var(--third-color); }
+
+    #serversList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+
+    /* Status dot at the card's bottom-right. */
+    .server-item { position: relative; }
+    .status-dot {
+      position: absolute; right: 12px; bottom: 10px;
+      width: 12px; height: 12px; border-radius: 50%;
+      box-shadow: 0 0 6px currentColor;
+    }
+    .status-dot.online { background: #46d160; color: #46d160; }
+    .status-dot.idle { background: #e0a100; color: #e0a100; }
+    .status-dot.offline { background: #888; color: #888; box-shadow: none; }
+
+    .server-actions { display: flex; gap: 6px; align-items: center; }
+    .server-actions button {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; padding: 0; border-radius: var(--border-radius);
     }
 
-    #consoleView {
-      display: none;
-      flex-direction: column;
-      gap: 10px;
-    }
-
+    /* Detail view. */
+    #serverDetail { display: none; flex-direction: column; padding: 8px 20px 0 0; height: calc(100vh - 60px); }
+    .srv-top-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .srv-top-row img { width: 64px; height: 64px; border-radius: 8px; margin-right: 10px; }
+    .srv-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-dark); padding-bottom: 8px; margin-bottom: 10px; }
+    .srv-tab { background: var(--menu-bg); color: var(--text-color); border: none; border-radius: var(--border-radius); padding: 6px 14px; cursor: pointer; font-family: var(--text-font); }
+    .srv-tab.active { background: var(--base-color); }
+    .srv-panel { display: none; flex: 1; min-height: 0; }
+    .srv-panel.active { display: flex; flex-direction: column; }
     #console {
-      background: #111;
-      color: #0f0;
-      font-family: monospace;
-      padding: 10px;
-      border-radius: var(--border-radius);
-      height: 400px;
-      overflow-y: auto;
-      white-space: pre-wrap; /* 👈 This is the key! */
+      background: #111; color: #0f0; font-family: monospace; padding: 10px;
+      border-radius: var(--border-radius); flex: 1; overflow-y: auto; white-space: pre-wrap;
+      clip-path: inset(0 round var(--border-radius));
     }
-    .promain {
-      display: flex;
-    }
-    #serverListView {
-  flex: 2;              /* 2 parts */
-  padding: 20px;
-  overflow-y: auto;
-}
+    #cmdRow { display: flex; gap: 8px; margin-top: 8px; }
+    #cmdRow input { flex: 1; margin: 0; }
+    #propsEditor { flex: 1; width: 100%; font-family: monospace; resize: none; margin: 0; }
 
-/* Right panel */
-#proxysidebar {
-  flex: 1;              /* 1 part → 1/3 of space */
-  padding: 20px;
-  overflow-y: auto;
-}
+    .play-button { background: var(--base-color); color: var(--text-color); }
+    .play-button:hover { background: var(--third-color); }
+    .inline-check { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 6px 0; cursor: pointer; white-space: nowrap; }
+    .inline-check input { width: auto; margin: 0; }
   </style>
 </head>
 <body>
@@ -108,7 +122,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <ul class="menu top">
     <a href="index.html"><li><i class="material-icons">home</i><span>Home</span></li></a>
     <a href="instances.html"><li><i class="material-icons">play_arrow</i><span>Instances</span></li></a>
-    <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
+    <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
     <a href="server.html"><li><i class="material-icons">storage</i><span>Server Manager</span></li></a>
   </ul>
   <ul class="menu middle" id="instances">
@@ -122,453 +136,319 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   </ul>
 </div>
 
-  <div class="promain" style="padding-top: 1px;">
+  <h1 style="margin-left:0;">Servers</h1>
+  <div class="promain">
+    <!-- LIST VIEW -->
     <div id="serverListView">
-      <h1>Servers</h1>
+      <div id="server-search-sort">
+        <div class="ss-row">
+          <button id="addServerBtn" class="add-server-btn" title="Create a server"><i class="material-icons">add</i></button>
+          <input id="srvSearch" type="text" placeholder="Search servers..." style="flex:2; min-width:180px;" />
+          <select id="srvTypeFilter" style="flex:1; min-width:130px;">
+            <option value="">All types</option>
+            <option value="vanilla">Vanilla</option>
+            <option value="paper">Paper</option>
+            <option value="fabric">Fabric</option>
+          </select>
+          <select id="srvSort" style="flex:1; min-width:150px;">
+            <option value="name-asc">Sort: Name (A→Z)</option>
+            <option value="name-desc">Sort: Name (Z→A)</option>
+            <option value="status">Sort: Running first</option>
+          </select>
+        </div>
+      </div>
+
       <div id="emptyServerState" style="text-align: center; padding: 60px 20px; opacity: 0.7;">
         <i class="material-icons" style="font-size: 64px; display: block; margin-bottom: 20px;">storage</i>
         <h3 style="margin: 0 0 10px 0; font-size: 18px;">No Servers</h3>
         <p style="margin: 0 0 20px 0; font-size: 14px;">Create your first server to get started</p>
       </div>
       <ul id="serversList"></ul>
-      <button id="openCreateModal" class="create-btn">+ Create Server</button>
     </div>
 
-    <div id="proxysidebar">
-      <div>
-        <button  onclick="() => {document.getElementById('proxypart').style.display = 'block'; document.getElementById('newproxypart').style.display = 'none'; document.getElementById('loginpart').style.display = 'none';}">Proxies</button>
-        <button   onclick="() => {document.getElementById('proxypart').style.display = 'none'; document.getElementById('newproxypart').style.display = 'none'; document.getElementById('loginpart').style.display = 'block';}">Log in</button>
+    <!-- UPnP PANEL -->
+    <div id="upnpPanel">
+      <h3><i class="material-icons">router</i> UPnP Port Forward</h3>
+      <div class="hint">Auto-open a port on your router so friends can join over the internet. Requires UPnP enabled on your router.</div>
+      <label style="font-size:13px;">Port</label>
+      <input id="upnpPort" type="number" value="25565" min="1" max="65535" />
+      <div class="upnp-actions">
+        <button id="upnpOpen">Open</button>
+        <button id="upnpClose">Close</button>
       </div>
-      <div id="proxypart">
-        <h1>Proxies</h1>
-        <button onclick="() => {document.getElementById('proxypart').style.display = 'none'; document.getElementById('newproxypart').style.display = 'block';}">create new proxy</button>
-        <ul id="proxies"></ul>
-      </div>
-      <div id="loginpart" style="display:none;">
-        <div id="loggedinpart" style="display: none;">
-          <h1>Logged in</h1>
-          Logged in as <span id="loggedinas"></span><br><br>
-        <button id="deleteaccount">Delete Account</button><br>
-        <button id="logout">Log out</button><br>
-        </div>
-        <div id="loginerpart">
-          <h1>Log in</h1>
-        <input type="text" id="username" placeholder="username"><br>
-        <input type="text" id="password" placeholder="password"><br>
-        <button id="loginbutton">log in</button><br><br>
-        <a onclick="document.getElementById('createaccount').style.display='block';
-                    document.getElementById('loginerpart').style.display='none';" style="cursor: pointer;">
-            create a new account instead
-        </a>
+      <button id="upnpIp" style="width:100%; margin-top:8px;">Show my public IP</button>
+      <div id="upnpStatus"></div>
+    </div>
 
-        </div>
-        <div id="createaccount" style="display: none;">
-          <h1>Create Account</h1>
-          <input type="text" id="createusername" placeholder="username"><br>
-          <input type="text" id="createpassword" placeholder="password"><br>
-          <input type="text" id="createpassword1" placeholder="password again"><br>
-          <button id="createaccountbutton">create</button>
+    <!-- DETAIL VIEW -->
+    <div id="serverDetail">
+      <div class="srv-top-row">
+        <div style="display:flex; align-items:center;">
+          <img id="srvDetailIcon" src="https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png" />
+          <div>
+            <div id="srvDetailName" style="font-size:1.2em; font-weight:bold;"></div>
+            <div id="srvDetailInfo" style="font-size:0.9em; opacity:0.85;"></div>
           </div>
+        </div>
+        <div class="server-actions">
+          <button id="dStart" class="play-button" title="Start"><i class="material-icons">play_arrow</i></button>
+          <button id="dStop" title="Stop"><i class="material-icons">stop</i></button>
+          <button id="dRestart" title="Restart"><i class="material-icons">restart_alt</i></button>
+          <button id="dFolder" title="Open folder"><i class="material-icons">folder</i></button>
+          <button id="dDelete" title="Delete"><i class="material-icons">delete</i></button>
+          <button id="dBack" title="Back"><i class="material-icons">arrow_back</i></button>
+        </div>
       </div>
-      <div id="newproxypart" style="display:none;">
-        <h1>Create new proxy</h1>
-        <input type="text" id="proxyid" placeholder="proserver"><br>
-        <input type="text" id="port" placeholder="port"><br>
-        Use domain: <input type="checkbox" id="domain"><br>
-        <button id="createproxy">create</button>
+      <div class="srv-tabs">
+        <button class="srv-tab active" data-tab="console">Console</button>
+        <button class="srv-tab" data-tab="properties">Properties</button>
       </div>
-    </div>
-
-    <div id="consoleView">
-      <h2 id="consoleTitle">Console</h2>
-      <div id="console"></div>
-      <div>
-        <input id="cmdInput" placeholder="say hello" />
-        <button id="sendCmdBtn">Send</button>
+      <div class="srv-panel active" data-panel="console">
+        <div id="console"></div>
+        <div id="cmdRow">
+          <input id="cmdInput" placeholder="say hello" />
+          <button id="sendCmdBtn">Send</button>
+        </div>
       </div>
-      <div>
-        <button id="startBtn">Start</button>
-        <button id="stopBtn">Stop</button>
-        <button id="restartBtn">Restart</button>
+      <div class="srv-panel" data-panel="properties">
+        <textarea id="propsEditor" spellcheck="false"></textarea>
+        <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
+          <button id="savePropsBtn">Save server.properties</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Modal -->
-  <div id="createServerModal">
+  <!-- Create modal -->
+  <div id="createServerModal" class="modal-overlay">
     <div class="modal-content">
-      <h3>Create New Server</h3>
-      <label>Server Name: <input id="srvName" placeholder="My Server" /></label>
-      <label>Version: <select id="srvVersion"></select><input type="checkbox" id="showAllVersions" style="transform: scale(1.5); transform-origin: center;" /></label>
-      <label>Type:
+      <div class="modal-header"><h2>Create Server</h2>
+        <button class="modal-close" onclick="document.getElementById('createServerModal').classList.remove('active');">✕</button>
+      </div>
+      <div class="modal-section"><label>Server Name</label><input id="srvName" placeholder="My Server" /></div>
+      <div class="form-row">
+        <div class="modal-section" style="flex:1;"><label>Version</label><select id="srvVersion"></select></div>
+        <label class="inline-check"><input type="checkbox" id="showAllVersions" /> Show all</label>
+      </div>
+      <div class="modal-section"><label>Type</label>
         <select id="srvType">
           <option value="vanilla">Vanilla</option>
           <option value="paper">Paper</option>
-          <option value="fabric">Fabric (server)</option>
+          <option value="fabric">Fabric</option>
         </select>
-      </label>
-      <div style="display:flex; gap:10px; justify-content:end;">
-        <button id="cancelCreate">Cancel</button>
+      </div>
+      <div class="modal-actions">
         <button id="createServerBtn">Create</button>
+        <button id="cancelCreate" onclick="document.getElementById('createServerModal').classList.remove('active');">Cancel</button>
       </div>
     </div>
   </div>
 
   <script>
     const { ipcRenderer } = require('electron');
-    const serversList = document.getElementById('serversList');
-    const openCreateModal = document.getElementById('openCreateModal');
-    const createServerModal = document.getElementById('createServerModal');
-    const createServerBtn = document.getElementById('createServerBtn');
-    const cancelCreate = document.getElementById('cancelCreate');
-    const srvName = document.getElementById('srvName');
-    const srvVersion = document.getElementById('srvVersion');
-    const srvType = document.getElementById('srvType');
-    const consoleView = document.getElementById('consoleView');
-    const serverListView = document.getElementById('serverListView');
-    const consoleBox = document.getElementById('console');
-    const cmdInput = document.getElementById('cmdInput');
-    const sendCmdBtn = document.getElementById('sendCmdBtn');
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const restartBtn = document.getElementById('restartBtn');
-    const consoleTitle = document.getElementById('consoleTitle');
+    const $ = (id) => document.getElementById(id);
 
     let servers = [];
     let selectedServer = null;
+    let consoleTimer = null;
 
-    openCreateModal.onclick = () => (createServerModal.style.display = "flex");
-    cancelCreate.onclick = () => (createServerModal.style.display = "none");
-
-    createServerBtn.onclick = async () => {
-      const name = srvName.value.trim() || `Server-${Date.now()}`;
-      const version = srvVersion.value.trim() || "1.20.1";
-      const type = srvType.value;
-      await ipcRenderer.invoke('make-server', { name, version, type });
-      createServerModal.style.display = "none";
-      await loadServers();
-    };
-
+    // ---------- List ----------
     async function loadServers() {
-      servers = await ipcRenderer.invoke('list-servers');
+      servers = await ipcRenderer.invoke('list-servers') || [];
       renderServers();
     }
 
     function renderServers() {
-      serversList.innerHTML = '';
-      const emptyState = document.getElementById('emptyServerState');
-      
-      if (!servers || servers.length === 0) {
-        emptyState.style.display = 'block';
-        return;
-      }
-      
-      emptyState.style.display = 'none';
-      servers.forEach(p => {
-        const li = document.createElement("li");
-        li.className = "profile-item";
+      const list = $('serversList');
+      const empty = $('emptyServerState');
+      const q = ($('srvSearch').value || '').toLowerCase().trim();
+      const typeF = $('srvTypeFilter').value;
+      const sort = $('srvSort').value;
 
-        const img = document.createElement("img");
-        img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      let arr = servers.slice();
+      if (q) arr = arr.filter(s => (s.name || '').toLowerCase().includes(q));
+      if (typeF) arr = arr.filter(s => (s.type || '').toLowerCase() === typeF);
+      if (sort === 'name-asc') arr.sort((a, b) => a.name.localeCompare(b.name));
+      else if (sort === 'name-desc') arr.sort((a, b) => b.name.localeCompare(a.name));
+      else if (sort === 'status') arr.sort((a, b) => (b.status === 'running') - (a.status === 'running'));
+
+      list.innerHTML = '';
+      empty.style.display = arr.length ? 'none' : 'block';
+
+      arr.forEach(s => {
+        const li = document.createElement('li');
+        li.className = 'profile-item server-item';
+
+        const img = document.createElement('img');
+        img.src = s.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
         li.appendChild(img);
 
-        const info = document.createElement("div");
-        info.className = "profile-info";
-
-        const name = document.createElement("div");
-        name.className = "profile-name";
-        name.textContent = p.name;
-        info.appendChild(name);
-
-        const details = document.createElement("div");
-        details.className = "profile-details";
-        details.textContent = `v${p.version} • ${p.type}`;
-        info.appendChild(details);
-
+        const info = document.createElement('div');
+        info.className = 'profile-info';
+        info.innerHTML = `<div class="profile-name">${s.name}</div><div class="profile-details">v${s.version} • ${s.type}</div>`;
         li.appendChild(info);
 
-        const openFolderBtn = document.createElement("button");
-        openFolderBtn.textContent = "Open Folder";
-        openFolderBtn.onclick = (e) => {
-          e.stopPropagation();
-          ipcRenderer.send("open-folder", { id: p.name, isClient: false });
-        };
-        li.appendChild(openFolderBtn);
+        const actions = document.createElement('div');
+        actions.className = 'server-actions';
+        const running = s.status === 'running';
+        const toggle = document.createElement('button');
+        toggle.className = running ? '' : 'play-button';
+        toggle.innerHTML = `<i class="material-icons">${running ? 'stop' : 'play_arrow'}</i>`;
+        toggle.title = running ? 'Stop' : 'Start';
+        toggle.onclick = async (e) => { e.stopPropagation(); await ipcRenderer.invoke(running ? 'stop-server' : 'start-server', s.name); setTimeout(loadServers, 600); };
+        const restart = document.createElement('button');
+        restart.innerHTML = `<i class="material-icons">restart_alt</i>`;
+        restart.title = 'Restart';
+        restart.onclick = async (e) => { e.stopPropagation(); await ipcRenderer.invoke('restart-server', s.name); setTimeout(loadServers, 600); };
+        actions.append(toggle, restart);
+        li.appendChild(actions);
 
-        const launchBtn = document.createElement("button");
-        launchBtn.className = "play-button";
-        launchBtn.innerHTML = `<i class="material-icons">terminal</i>`;
-        launchBtn.onclick = (e) => {
-          e.stopPropagation();
-          openConsoleView(p);
-        };
-        li.appendChild(launchBtn);
+        const dot = document.createElement('span');
+        dot.className = 'status-dot ' + (running ? 'online' : 'offline');
+        dot.title = running ? 'Online' : 'Offline';
+        li.appendChild(dot);
 
-        li.onclick = () => openConsoleView(p);
-        serversList.appendChild(li);
+        li.onclick = () => openDetail(s);
+        list.appendChild(li);
       });
     }
 
-    function openConsoleView(server) {
-      document.getElementById('proxysidebar').style.display = 'none';
+    ['srvSearch', 'srvTypeFilter', 'srvSort'].forEach(id => {
+      const el = $(id);
+      el.addEventListener('input', renderServers);
+      el.addEventListener('change', renderServers);
+    });
+
+    // ---------- Detail ----------
+    async function openDetail(server) {
       selectedServer = server;
-      consoleTitle.textContent = `Console — ${server.name}`;
-      serverListView.style.display = "none";
-      consoleView.style.display = "flex";
-      pollConsole();
+      $('serverListView').style.display = 'none';
+      $('upnpPanel').style.display = 'none';
+      $('serverDetail').style.display = 'flex';
+      $('srvDetailIcon').src = server.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
+      $('srvDetailName').textContent = server.name;
+      $('srvDetailInfo').textContent = `${server.type} ${server.version} • port ${server.port || 25565}`;
+      // Load properties.
+      $('propsEditor').value = await ipcRenderer.invoke('get-server-properties', server.name);
+      // Start console polling.
+      startConsolePolling();
     }
 
-    async function pollConsole() {
-      if (!selectedServer) return;
-      const content = await ipcRenderer.invoke('server-console', selectedServer.name);
-      console.log(content)
-      consoleBox.textContent = Array.isArray(content) ? content.join('') : content;
-      consoleBox.scrollTop = consoleBox.scrollHeight;
-      setTimeout(pollConsole, 1000);
+    function closeDetail() {
+      selectedServer = null;
+      clearTimeout(consoleTimer);
+      $('serverDetail').style.display = 'none';
+      $('serverListView').style.display = '';
+      $('upnpPanel').style.display = '';
+      loadServers();
     }
 
-    sendCmdBtn.onclick = async () => {
-      if (!selectedServer) return;
-      const cmd = cmdInput.value.trim();
-      if (!cmd) return;
+    function startConsolePolling() {
+      clearTimeout(consoleTimer);
+      const box = $('console');
+      async function poll() {
+        if (!selectedServer) return;
+        const content = await ipcRenderer.invoke('server-console', selectedServer.name);
+        const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+        box.textContent = Array.isArray(content) ? content.join('') : (content || '');
+        if (atBottom) box.scrollTop = box.scrollHeight;
+        consoleTimer = setTimeout(poll, 1000);
+      }
+      poll();
+    }
+
+    // Detail tab switching.
+    document.querySelectorAll('.srv-tab').forEach(tab => {
+      tab.onclick = () => {
+        document.querySelectorAll('.srv-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.srv-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.querySelector(`.srv-panel[data-panel="${tab.dataset.tab}"]`).classList.add('active');
+      };
+    });
+
+    $('dBack').onclick = closeDetail;
+    $('dStart').onclick = async () => { await ipcRenderer.invoke('start-server', selectedServer.name); };
+    $('dStop').onclick = async () => { await ipcRenderer.invoke('stop-server', selectedServer.name); };
+    $('dRestart').onclick = async () => { await ipcRenderer.invoke('restart-server', selectedServer.name); };
+    $('dFolder').onclick = () => ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false });
+    $('dDelete').onclick = async () => {
+      if (!confirm(`Delete server "${selectedServer.name}" and all its files?`)) return;
+      await ipcRenderer.invoke('delete-server', selectedServer.name);
+      closeDetail();
+    };
+    $('sendCmdBtn').onclick = async () => {
+      const cmd = $('cmdInput').value.trim();
+      if (!cmd || !selectedServer) return;
       await ipcRenderer.invoke('send-server-command', selectedServer.name, cmd);
-      cmdInput.value = '';
+      $('cmdInput').value = '';
+    };
+    $('cmdInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('sendCmdBtn').click(); });
+    $('savePropsBtn').onclick = async () => {
+      await ipcRenderer.invoke('save-server-properties', selectedServer.name, $('propsEditor').value);
+      $('savePropsBtn').textContent = 'Saved ✓';
+      setTimeout(() => ($('savePropsBtn').textContent = 'Save server.properties'), 1500);
     };
 
-    startBtn.onclick = () => ipcRenderer.invoke('start-server', selectedServer.name);
-    stopBtn.onclick = () => ipcRenderer.invoke('stop-server', selectedServer.name);
-    restartBtn.onclick = () => ipcRenderer.invoke('restart-server', selectedServer.name);
-async function fetchVersions() {
-  const response = await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json');
-  const data = await response.json();
-  return data.versions; // array of {id, type, url, ...}
-}
-function populateSelect(versions, showAll) {
-  const select = document.getElementById('srvVersion');
-  select.innerHTML = ''; // clear existing options
+    // ---------- Create ----------
+    $('addServerBtn').onclick = () => $('createServerModal').classList.add('active');
+    $('createServerBtn').onclick = async () => {
+      const name = ($('srvName').value.trim()) || `Server-${Date.now()}`;
+      const version = $('srvVersion').value.trim() || '1.20.1';
+      const type = $('srvType').value;
+      const btn = $('createServerBtn'); btn.disabled = true; btn.textContent = 'Creating…';
+      try {
+        await ipcRenderer.invoke('make-server', { name, version, type });
+        $('createServerModal').classList.remove('active');
+        await loadServers();
+      } catch (e) { alert('Failed to create server: ' + (e.message || e)); }
+      finally { btn.disabled = false; btn.textContent = 'Create'; }
+    };
 
-  const filtered = showAll ? versions : versions.filter(v => v.type === 'release');
+    // Version dropdown.
+    async function initVersionSelect() {
+      const versions = (await (await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json')).json()).versions;
+      const sel = $('srvVersion');
+      const fill = (showAll) => {
+        sel.innerHTML = '';
+        versions.filter(v => showAll || v.type === 'release').forEach(v => {
+          const o = document.createElement('option'); o.value = v.id; o.textContent = v.id; sel.appendChild(o);
+        });
+      };
+      fill(false);
+      $('showAllVersions').addEventListener('change', e => fill(e.target.checked));
+    }
+    initVersionSelect();
 
-  filtered.forEach(v => {
-    const opt = document.createElement('option');
-    opt.value = v.id;
-    opt.textContent = v.id;
-    select.appendChild(opt);
-  });
+    // ---------- UPnP ----------
+    $('upnpOpen').onclick = async () => {
+      const port = $('upnpPort').value;
+      $('upnpStatus').textContent = 'Opening port…';
+      const res = await ipcRenderer.invoke('upnp:open', { port });
+      $('upnpStatus').textContent = res.success
+        ? `✅ Port ${res.port} forwarded to ${res.internal}` + (res.externalIP ? `\nJoin at: ${res.externalIP}:${res.port}` : '')
+        : `❌ ${res.error}`;
+    };
+    $('upnpClose').onclick = async () => {
+      const port = $('upnpPort').value;
+      $('upnpStatus').textContent = 'Closing port…';
+      const res = await ipcRenderer.invoke('upnp:close', { port });
+      $('upnpStatus').textContent = res.success ? `✅ Port ${res.port} closed` : `❌ ${res.error}`;
+    };
+    $('upnpIp').onclick = async () => {
+      $('upnpStatus').textContent = 'Looking up…';
+      const res = await ipcRenderer.invoke('upnp:externalIp');
+      $('upnpStatus').textContent = res.success ? `Your public IP: ${res.ip}` : `❌ ${res.error}`;
+    };
 
-  // optionally select latest release by default
-  if (!showAll) {
-    const latest = filtered.find(v => v.type === 'release');
-    if (latest) select.value = latest.id;
-  }
-}
-async function initVersionSelect() {
-  const versions = await fetchVersions();
-  const checkbox = document.getElementById('showAllVersions');
-
-  // initial populate (release only)
-  populateSelect(versions, false);
-
-  // update select when toggle changes
-  checkbox.addEventListener('change', () => {
-    populateSelect(versions, checkbox.checked);
-  });
-}
-initVersionSelect();
+    // ---------- Init + periodic status refresh ----------
     loadServers();
+    setInterval(() => { if (!selectedServer) loadServers(); }, 4000);
 
-async function updateLoginInfo() {
-  const user = await ipcRenderer.invoke("frpc:getCreds");
-  if (user?.username) {
-    $("loggedinpart").style.display = "block"
-    $("loggedinas").textContent = user.username;
-    $("loginerpart").style.display = "none";
-
-  } else {
-    $("loggedinpart").style.display = "none"
-    $("createaccount").style.display = "none"
-    $("loginerpart").style.display = "block";
-  }
-}
-
-    const $ = (id) => document.getElementById(id);
-
-/* ---------------------------------------------------
-   PANEL SWITCH
---------------------------------------------------- */
-function show(id) {
-  $("proxypart").style.display = "none";
-  $("loginpart").style.display = "none";
-  $("newproxypart").style.display = "none";
-  $("createaccount").style.display = "none"
-  $(id).style.display = "block";
-}
-
-/* ---------------------------------------------------
-   LOGIN
---------------------------------------------------- */
-async function loginHandler() {
-  const username = $("username").value;
-  const password = $("password").value;
-
-  const res = await ipcRenderer.invoke("frpc:login", username, password);
-  if (res?.ok) {
-    await refreshProxyList();
-    show("proxypart");
-    await updateLoginInfo();
-  }
-}
-
-/* ---------------------------------------------------
-   create account
---------------------------------------------------- */
-async function createaccount() {
-  if($("createpassword").value === $("createpassword1").value) {
-  const username = $("createusername").value;
-  const password = $("createpassword").value;
-  console.log("username: " + username)
-  console.log("password: " + password)
-
-  const res = await ipcRenderer.invoke("frpc:createAccount", username, password);
-  if (res?.ok) {
-    await refreshProxyList();
-    show("proxypart");
-    await updateLoginInfo();
-  } else {
-    error("Error: " + res.error)
-  }
-} else {
-  error("passwords not the same")
-}
-}
-
-/* ---------------------------------------------------
-   CREATE NEW PROXY
---------------------------------------------------- */
-let domain = false;
-document.getElementById('domain').addEventListener("change", e => {
-    domain = e.target.checked;
-  });
-
-async function createProxyHandler() {
-  console.log("creating...")
-  const identifier = $("proxyid").value;
-  const localport = Number($("port").value);
-  const params = {
-    identifier,
-    localport,
-    hasdomain: domain,
-    subdomain: identifier
-  };
-  console.log(params)
-
-  const res = await ipcRenderer.invoke("frpc:createTunnel", params);
-  console.log(res)
-  if (res?.ok) {
-    await refreshProxyList();
-    show("proxypart");
-    await updateLoginInfo();
-  }
-}
-
-/* ---------------------------------------------------
-   LIST PROXIES (Updated with Start/Stop)
---------------------------------------------------- */
-async function refreshProxyList() {
-  const res = await ipcRenderer.invoke("frpc:listTunnels");
-  const running = await ipcRenderer.invoke("frpc:listRunningTunnels");
-  const ul = $("proxies");
-  ul.innerHTML = "";
-
-  if (!res || !res.tunnels) return;
-
-  for (const t of res.tunnels) {
-    const li = document.createElement("li");
-    li.className = "proxy-item";
-
-    const remotePort = t.publicip?.split(":")[1] || "???";
-    const isRunning = running.includes(t.identifier);
-
-    li.innerHTML = `
-      <span>${t.identifier} | localhost:${t.local_port} → ${t.hasdomain ? t.publicdomain : t.publicip}</span><br>
-      <button class="toggle">${isRunning ? "Stop" : "Start"}</button>
-      <button class="delete">Delete</button>
-    `;
-
-    // Start / Stop tunnel
-    li.querySelector(".toggle").addEventListener("click", async (e) => {
-      if (isRunning) {
-        await ipcRenderer.invoke("frpc:stopTunnel", t.identifier);
-      } else {
-        await ipcRenderer.invoke("frpc:connectTunnel", t.identifier);
-      }
-      await refreshProxyList(); // refresh buttons and list
-    });
-
-    // Delete tunnel
-    li.querySelector(".delete").addEventListener("click", async () => {
-      await ipcRenderer.invoke("frpc:deleteTunnel", t.identifier);
-      await refreshProxyList();
-    });
-
-    ul.appendChild(li);
-  }
-}
-
-
-/* ---------------------------------------------------
-   EVENT BINDINGS (Fixing your broken inline onclick)
---------------------------------------------------- */
-
-// Sidebar
-document.querySelectorAll("#proxysidebar button").forEach(btn => {
-  btn.addEventListener("click", (e) => {
-    const t = e.target.innerText.trim().toLowerCase();
-    if (t === "proxies") show("proxypart");
-    if (t === "log in") show("loginpart");
-  });
-});
-
-// Login button
-$("loginbutton").addEventListener("click", loginHandler);
-$("createaccountbutton").addEventListener("click", createaccount);
-
-// Create new proxy button
-$("createproxy").addEventListener("click", createProxyHandler);
-//delete button
-$("deleteaccount").addEventListener("click", async () => {
-  await ipcRenderer.invoke("frpc:deleteAccount");
-  await updateLoginInfo();
-  show("loginpart");
-});
-$("logout").addEventListener("click", async () => {
-  await ipcRenderer.invoke("frpc:logout");
-  await updateLoginInfo();
-  show("loginpart");
-});
-
-// Inside proxy menu → show creation
-document.querySelector("#proxypart button")?.addEventListener("click", () => {
-  show("newproxypart");
-});
-
-/* ---------------------------------------------------
-   INITIAL LOAD
---------------------------------------------------- */
-(async () => {
-  const res = await ipcRenderer.invoke("frpc:listTunnels");
-  if (res?.ok) {
-    await updateLoginInfo();
-    await refreshProxyList();
-    show("proxypart");
-  } else {
-    show("loginpart");
-  }
-})();
-
-
+    function updatePresence(details, state = 'Idle') { ipcRenderer.send('update-discord-presence', { details, state }); }
+    updatePresence('Managing servers');
   </script>
   <script src="sidebar.js"></script>
-<script src="notifications.js"></script>
+  <script src="notifications.js"></script>
 </body>
 </html>

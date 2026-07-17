@@ -15,6 +15,7 @@ import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
 import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
 import serverManager from './serverManager.js';
+import upnp from './upnp.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
 import { exec, execSync, spawn } from "child_process";
@@ -2206,7 +2207,7 @@ ipcMain.handle("stop-server", (event, id) => {
 });
 
 ipcMain.handle("restart-server", (event, id) => {
-  return serverManager.restartServer(id);
+  return serverManager.restartServer(id, settings);
 });
 
 ipcMain.handle("list-servers", () => {
@@ -2219,6 +2220,38 @@ ipcMain.handle("server-console", (event, id) => {
 
 ipcMain.handle("send-server-command", (event, id, cmd) => {
   return serverManager.sendServerCommand(id, cmd);
+});
+
+ipcMain.handle("delete-server", (event, id) => {
+  return serverManager.deleteServer(id);
+});
+
+ipcMain.handle("get-server-info", (event, id) => {
+  return serverManager.getServerInfo(id);
+});
+
+ipcMain.handle("get-server-properties", (event, id) => {
+  return serverManager.getServerProperties(id);
+});
+
+ipcMain.handle("save-server-properties", (event, id, text) => {
+  return serverManager.saveServerProperties(id, text);
+});
+
+// ── UPnP auto port-forward (self-hosting) ──
+ipcMain.handle("upnp:open", async (event, { port, description }) => {
+  try { return await upnp.openPort(Number(port), "TCP", description || "Redstone Launcher server"); }
+  catch (err) { return { success: false, error: err.message }; }
+});
+
+ipcMain.handle("upnp:close", async (event, { port }) => {
+  try { return await upnp.closePort(Number(port), "TCP"); }
+  catch (err) { return { success: false, error: err.message }; }
+});
+
+ipcMain.handle("upnp:externalIp", async () => {
+  try { return { success: true, ip: await upnp.getExternalIP() }; }
+  catch (err) { return { success: false, error: err.message }; }
 });
 
 /* ─────────────── Modrinth ─────────────── */
