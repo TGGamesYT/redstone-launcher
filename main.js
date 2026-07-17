@@ -1256,7 +1256,6 @@ ipcMain.on("delete-profile", async (event, profileId) => {
 
   saveProfiles(newProfiles);
   event.reply("profiles-updated", newProfiles);
-  alert("deleted: " + id)
 });
 
 ipcMain.on("close-app", () => {
@@ -1788,12 +1787,15 @@ ipcMain.handle("import-pack", async (event) => {
     const p = filePaths[0];
     const onProgress = (done, total, label) => {
       try { event.sender.send("import-progress", { done, total, label }); } catch { /* ignore */ }
+      // Also surface in the global top-right toolbar progress.
+      broadcastProgress("import", { label: label || "Importing modpack", current: done, total });
     };
     onProgress(0, 1, "Reading pack…");
     const res = p.toLowerCase().endsWith(".mrpack")
       ? await mrpack(p, onProgress)
       : await curseforgeImport(p, onProgress);
     try { event.sender.send("import-progress", { done: 1, total: 1, finished: true }); } catch { /* ignore */ }
+    broadcastProgress("import", { done: true, label: "Imported" });
     return res;
   } catch (err) {
     try { event.sender.send("import-progress", { finished: true }); } catch { /* ignore */ }
@@ -2348,6 +2350,60 @@ ipcMain.handle("install-mrpack-url", async (event, url) => {
     return await mrpack(tmpPath);
   } catch (err) {
     devtoolsLog("Failed to install .mrpack from URL:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+// Set up (once) an instance for a Modrinth server project, then return its id so
+// the caller can launch + quick-join. Re-running with the same server project
+// reuses the existing instance instead of re-importing.
+ipcMain.handle("setup-server-instance", async (event, { projectId, name, address, iconUrl, mrpackUrl, kind, version }) => {
+  try {
+    const SETUP_ID = "server-setup";
+    // Already set up? Reuse it.
+    let profiles = await loadProfiles();
+    const existing = profiles.find(p => p.serverProjectId && String(p.serverProjectId) === String(projectId));
+    if (existing) return { success: true, profileId: existing.id, existed: true };
+
+    let profileId;
+    if (mrpackUrl) {
+      broadcastProgress(SETUP_ID, { label: "Downloading modpack", current: 0, total: 1 });
+      const tmpPath = path.join(app.getPath("temp"), `srv-${Date.now()}.mrpack`);
+      await downloadFile(mrpackUrl, tmpPath);
+      const res = await mrpack(tmpPath, (done, total, label) =>
+        broadcastProgress(SETUP_ID, { label: "Installing " + (name || "server"), current: done, total }));
+      if (!res || !res.success) { broadcastProgress(SETUP_ID, { done: true }); return { success: false, error: res?.error || "import failed" }; }
+      profileId = res.profile.id;
+    } else {
+      // Vanilla-kind server: a plain instance to join from.
+      profileId = getUniqueFolderName(name || "Server");
+      const folder = path.join(dataDir, "client", String(profileId));
+      fs.mkdirSync(folder, { recursive: true });
+      profiles = await loadProfiles();
+      profiles.push({
+        id: profileId, name: name || "Server", version: version || "1.21",
+        loader: "vanilla", created: Date.now(), lastUsed: Date.now()
+      });
+      saveProfiles(profiles);
+    }
+
+    // Tag the instance with the server so re-clicks launch instead of re-setup,
+    // and give it the project icon when the pack didn't ship one.
+    profiles = await loadProfiles();
+    const idx = profiles.findIndex(p => String(p.id) === String(profileId));
+    if (idx !== -1) {
+      profiles[idx].serverProjectId = projectId;
+      profiles[idx].serverAddress = address || null;
+      profiles[idx].lastUsed = Date.now();
+      const defIcon = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      if (iconUrl && (!profiles[idx].icon || profiles[idx].icon === defIcon)) profiles[idx].icon = iconUrl;
+      saveProfiles(profiles);
+    }
+    broadcastProgress(SETUP_ID, { done: true, label: "Ready" });
+    try { event.sender.send("profiles-updated", profiles); } catch { /* ignore */ }
+    return { success: true, profileId, existed: false };
+  } catch (err) {
+    broadcastProgress("server-setup", { done: true });
     return { success: false, error: err.message };
   }
 });

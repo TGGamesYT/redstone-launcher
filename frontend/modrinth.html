@@ -568,24 +568,60 @@
       } catch { /* leave the downloads/followers line */ }
     }
 
-    // Set up a Modrinth server project (a modpack-shaped .mrpack) as a new
-    // instance. The join address isn't always structured, so we also point the
-    // user at the project page.
+    // Set up (once) a Modrinth server as an instance, then launch it and
+    // quick-join the server. A second click just launches + joins.
     async function installServer(proj, btn) {
-      const orig = btn.textContent;
-      btn.disabled = true; btn.textContent = "Setting up…";
+      const orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="material-icons" style="font-size:18px;">hourglass_top</i>';
       try {
-        const versions = await (await fetch(`https://api.modrinth.com/v2/project/${proj.project_id}/version`)).json();
-        (versions || []).sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
-        const v = (versions || []).find(x => (x.files || []).some(f => f.filename.endsWith(".mrpack"))) || versions[0];
-        const mrpack = v && (v.files || []).find(f => f.filename.endsWith(".mrpack"));
-        if (!mrpack) { alert("This server has no installable modpack file."); return; }
-        await ipcRenderer.invoke("install-mrpack-url", mrpack.url);
-        alert(`Set up "${proj.title}" as a new instance. Open its Modrinth page for the join address.`);
+        const playerId = await ipcRenderer.invoke('get-selected-player');
+        if (!playerId) { alert("Select a player first (Login) before joining a server."); return; }
+
+        // v3 project carries the join address + server "content" (modpack/vanilla).
+        const v3 = await fetch(`https://api.modrinth.com/v3/project/${proj.slug || proj.project_id}`, { headers: { 'User-Agent': 'RedstoneLauncher' } })
+          .then(r => r.ok ? r.json() : null);
+        const mjs = v3 && v3.minecraft_java_server;
+        const address = mjs?.address || null;
+        const content = mjs?.content || {};
+        const kind = content.kind || "modpack";
+        let mrpackUrl = null;
+        let version = content.recommended_game_version || (Array.isArray(content.supported_game_versions) ? content.supported_game_versions[0] : null);
+
+        if (kind === "modpack") {
+          // Resolve the modpack version's .mrpack file. Prefer the referenced
+          // content version, else the server project's own latest.
+          let ver = null;
+          if (content.version_id) {
+            ver = await fetch(`https://api.modrinth.com/v2/version/${content.version_id}`).then(r => r.ok ? r.json() : null);
+          }
+          if (!ver) {
+            const versions = await (await fetch(`https://api.modrinth.com/v2/project/${content.project_id || proj.project_id}/version`)).json();
+            (versions || []).sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
+            ver = (versions || []).find(x => (x.files || []).some(f => f.filename.endsWith(".mrpack"))) || (versions || [])[0];
+          }
+          const file = ver && (ver.files || []).find(f => f.filename.endsWith(".mrpack"));
+          mrpackUrl = file ? file.url : null;
+        }
+
+        const setup = await ipcRenderer.invoke("setup-server-instance", {
+          projectId: proj.project_id,
+          name: proj.title,
+          address,
+          iconUrl: proj.icon_url || null,
+          mrpackUrl,
+          kind,
+          version
+        });
+        if (!setup || !setup.success) { alert("Setup failed: " + (setup?.error || "unknown")); return; }
+
+        // Launch the instance, quick-joining the server if we have an address.
+        const quickPlay = address ? { type: 'multiplayer', identifier: address } : null;
+        ipcRenderer.send("launch-profile", { profileId: setup.profileId, playerId, quickPlay });
       } catch (e) {
         alert("Setup failed: " + (e.message || e));
       } finally {
-        btn.disabled = false; btn.textContent = orig;
+        btn.disabled = false; btn.innerHTML = orig;
       }
     }
 

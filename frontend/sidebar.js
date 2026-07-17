@@ -260,6 +260,11 @@ function updateSideBar() {
   ipcRenderer.on("profiles-list", (event, profiles) => {
     renderInstances(profiles);
   });
+  // Keep the sidebar instance shortcuts in sync when instances are
+  // created/edited/deleted anywhere in the app.
+  ipcRenderer.on("profiles-updated", (event, profiles) => {
+    renderInstances(profiles);
+  });
 }
 
 function closeApp() {ipcRenderer.send("close-app")}
