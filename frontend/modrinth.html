@@ -85,6 +85,24 @@
       <button id="apiToggle" class="api-toggle" title="Switch between Modrinth and CurseForge"></button>
     </div>
     
+    <div class="bottom-row">
+      <div id="typeTabs">
+        <button class="tab active" data-type="mod">Mod</button>
+        <button class="tab" data-type="resourcepack">Resourcepack</button>
+        <button class="tab" data-type="datapack">Datapack</button>
+        <button class="tab" data-type="shader">Shader</button>
+        <button class="tab" data-type="modpack">Modpack</button>
+        <button class="tab" data-type="plugin">Plugin</button>
+        <button class="tab modrinth-only" data-type="server">Server</button>
+      </div>
+
+      <div id="paginationControls">
+        <button id="prevPage">&lt;</button>
+        <span id="pageDisplay">1</span>
+        <button id="nextPage">&gt;</button>
+      </div>
+    </div>
+
     <div class="filter-row" id="filterRow">
       <label>Sort
         <select id="sortSelect">
@@ -114,24 +132,6 @@
         </select>
       </label>
       <span id="dynamicFilters" style="display:contents;"></span>
-    </div>
-
-    <div class="bottom-row">
-      <div id="typeTabs">
-        <button class="tab active" data-type="mod">Mod</button>
-        <button class="tab" data-type="resourcepack">Resourcepack</button>
-        <button class="tab" data-type="datapack">Datapack</button>
-        <button class="tab" data-type="shader">Shader</button>
-        <button class="tab" data-type="modpack">Modpack</button>
-        <button class="tab" data-type="plugin">Plugin</button>
-        <button class="tab modrinth-only" data-type="server">Server</button>
-      </div>
-
-      <div id="paginationControls">
-        <button id="prevPage">&lt;</button>
-        <span id="pageDisplay">1</span>
-        <button id="nextPage">&gt;</button>
-      </div>
     </div>
   </div>
 

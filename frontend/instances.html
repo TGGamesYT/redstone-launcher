@@ -916,10 +916,16 @@
       const showSnap = document.getElementById('filterVersionAll')?.checked;
       if (!sel) return;
       const prev = sel.value;
-      const isRelease = v => /^\d+\.\d+(\.\d+)?$/.test(v);
+      // Release detection + ordering come straight from the Mojang manifest
+      // (no custom sort). Fall back to a regex when the manifest isn't loaded.
+      const manifestVers = versionManifest ? versionManifest.versions : null;
+      const order = new Map();
+      const typeOf = {};
+      if (manifestVers) manifestVers.forEach((v, i) => { order.set(v.id, i); typeOf[v.id] = v.type; });
+      const isRelease = v => manifestVers ? typeOf[v] === 'release' : /^\d+\.\d+(\.\d+)?$/.test(v);
       const versions = [...new Set((profiles || []).map(p => p.version).filter(Boolean))]
         .filter(v => showSnap || isRelease(v))
-        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+        .sort((a, b) => (order.has(a) ? order.get(a) : 1e9) - (order.has(b) ? order.get(b) : 1e9));
       sel.innerHTML = '<option value="">All versions</option>' +
         versions.map(v => `<option value="${v}">${v}</option>`).join('');
       if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
@@ -1030,6 +1036,7 @@
 
         // Play button
         const playBtn = document.createElement("button");
+        playBtn.className = "detail-play-btn";
         playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
         playBtn.title = "Launch Profile";
         let isLaunching = false;

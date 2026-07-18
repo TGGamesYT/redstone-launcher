@@ -100,6 +100,16 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       font-weight: bold;
     }
 
+    /* Checkbox settings: keep the box vertically centred with its label. */
+    .setting-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0;
+      cursor: pointer;
+    }
+    .setting-toggle input { margin: 0; flex-shrink: 0; }
+
     /* === THEME CARDS === */
     .theme-list {
       display: grid;
@@ -212,15 +222,18 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     <div class="section active settings-scrolly" id="general">
       <h3 style="margin-top: 30px;">General</h3>
       <div style="margin-bottom: 50px;">
-        <label><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label><br>
-        <label><input type="checkbox" id="discord-presence"> Enable Discord Presence</label><br>
-        <label><input type="checkbox" id="grid-view"> Enable Grid View</label><br>
+        <label class="setting-toggle"><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label>
+        <label class="setting-toggle"><input type="checkbox" id="discord-presence"> Enable Discord Presence</label>
+        <label class="setting-toggle"><input type="checkbox" id="grid-view"> Enable Grid View</label>
       </div>
     </div>
 
     <!-- === Theme Section === -->
     <div class="section settings-scrolly" id="theme" style="display: none;">
-      <h3>Theme</h3>
+      <h3>Themes</h3>
+      <div class="theme-list" id="theme-list"></div>
+
+      <h3 style="margin-top: 30px;">Custom colors</h3>
 
       <div class="color-input">
         <span>Base:</span>
@@ -249,7 +262,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <input type="text" id="third-color-code" placeholder="#RRGGBB">
         <button data-color="third">Reset</button>
       </div>
-      <label><input type="checkbox" id="auto-third" checked> Automatic Third Color</label>
+      <label class="setting-toggle"><input type="checkbox" id="auto-third" checked> Automatic Third Color</label>
       <br>
       <label style="margin-top: 40px;">Font</label>
       <select id="font-selector">
@@ -268,10 +281,9 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <span class="slider-value" id="border-radius-value"></span>
 
       <h4 style="margin-top: 40px;">Gradient Settings: <span style="background: #ff9800; color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; margin-left: 10px;">BETA</span></h4>
-      <label><input type="checkbox" id="gradient-enabled"> Enable Global Gradient</label>
+      <label class="setting-toggle"><input type="checkbox" id="gradient-enabled"> Enable Global Gradient</label>
+      <label class="setting-toggle"><input type="checkbox" id="predefined-theme-sync"> Predefined Theme Sync</label>
       <br>
-      <label style="margin-top: 10px;"><input type="checkbox" id="predefined-theme-sync"> Predefined Theme Sync</label>
-      <br><br>
 
       <div id="gradient-controls" style="display: none; border: 1px solid var(--border-dark); padding: 15px; border-radius: 5px; background: color-mix(in srgb, var(--secondary-color) 50%, black);">
         <label>Gradient Angle (deg):</label>
@@ -289,8 +301,6 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <div id="gradient-preview" style="margin-top: 15px; height: 60px; border-radius: 5px; border: 1px solid var(--border-dark); background: linear-gradient(180deg, #ff4d4d, #b30c0c);"></div>
       </div>
 
-      <h4>Predefined Themes:</h4>
-      <div class="theme-list" id="theme-list"></div>
     </div>
 
     <div class="section settings-scrolly" id="advanced" style="display: none;">
