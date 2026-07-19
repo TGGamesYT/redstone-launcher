@@ -21,8 +21,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 }
 </script>
 <link rel="stylesheet" href="modrinth.css" />
-<link rel="stylesheet" href="server.css" />
-<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+<link rel="stylesheet" href="server.css" />  <link rel="stylesheet" href="news-sidebar.css" /><link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 <style>
   .project-header {
     display: flex;
@@ -118,6 +117,18 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     <div id="projectDescription" class="description"></div>
   </div>
 
+  <aside id="news-sidebar">
+    <div class="news-sidebar-header">
+      <h3><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v2H3V3zm0 4h18v2H3V7zm0 4h18v2H3v-2zm0 4h18v2H3v-2zm0 4h18v2H3v-2z"/></svg> News</h3>
+      <button class="news-sidebar-close" title="Close news sidebar">&times;</button>
+    </div>
+    <div id="news-sidebar-content" class="news-sidebar-content">
+      <div class="news-sidebar-loading">Loading news...</div>
+    </div>
+  </aside>
+  <button class="news-sidebar-toggle" title="Toggle news sidebar"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M15 18H9v-2h6v2zm4-7H5V9h14v2zm-6-8H9v2h4V3z"/></svg></button>
+
+<script src="news-sidebar.js"></script>
 <script>
     const { ipcRenderer, shell } = require('electron');
 const resultsList = document.getElementById('projectDescription');
