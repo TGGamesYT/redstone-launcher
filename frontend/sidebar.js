@@ -304,10 +304,10 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
     if (!data) return;
     if (data.done) {
       if (bar) {
-        label.textContent = data.label || 'Ready';
         fill.style.width = '100%';
         clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => { if (bar) { bar.remove(); bar = null; } }, 1500);
+        // Remove almost immediately so it doesn't linger after work finishes.
+        hideTimer = setTimeout(() => { if (bar) { bar.remove(); bar = null; } }, 250);
       }
       return;
     }

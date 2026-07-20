@@ -215,17 +215,51 @@ function progressLabel(type) {
 }
 
 // Progress events fire extremely often (per download chunk); throttle them so
-// they don't flood the renderer, but always let terminal "done" frames through.
-const lastProgressSent = new Map(); // profileId -> timestamp
-function broadcastProgress(profileId, progress) {
-  const now = Date.now();
-  if (!progress.done) {
-    const last = lastProgressSent.get(profileId) || 0;
-    if (now - last < 100) return;
-  }
-  lastProgressSent.set(profileId, now);
+// they don't flood the renderer. The leading frame of a burst is sent
+// immediately (so the bar appears instantly), intermediate frames are
+// rate-limited, and a trailing frame is always flushed so the last state
+// before a pause isn't lost. "done" frames bypass the throttle entirely so the
+// bar disappears the moment work finishes.
+const lastProgressSent = new Map();    // profileId -> timestamp of last send
+const pendingProgress = new Map();     // profileId -> { progress, timer }
+const PROGRESS_MIN_GAP = 80;           // ms between rate-limited frames
+function sendProgressNow(profileId, progress) {
+  lastProgressSent.set(profileId, Date.now());
   if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('launch-progress', { profileId, ...progress });
+  }
+}
+function broadcastProgress(profileId, progress) {
+  // Terminal frames go through immediately and cancel any pending trailing send.
+  if (progress.done) {
+    const pend = pendingProgress.get(profileId);
+    if (pend && pend.timer) clearTimeout(pend.timer);
+    pendingProgress.delete(profileId);
+    lastProgressSent.delete(profileId);
+    sendProgressNow(profileId, progress);
+    return;
+  }
+  const now = Date.now();
+  const last = lastProgressSent.get(profileId) || 0;
+  const gap = now - last;
+  if (gap >= PROGRESS_MIN_GAP) {
+    // Leading edge: send right away.
+    const pend = pendingProgress.get(profileId);
+    if (pend && pend.timer) clearTimeout(pend.timer);
+    pendingProgress.delete(profileId);
+    sendProgressNow(profileId, progress);
+  } else {
+    // Too soon: remember the latest frame and flush it when the gap elapses.
+    let pend = pendingProgress.get(profileId);
+    if (!pend) { pend = { progress: null, timer: null }; pendingProgress.set(profileId, pend); }
+    pend.progress = progress;
+    if (!pend.timer) {
+      pend.timer = setTimeout(() => {
+        const p = pendingProgress.get(profileId);
+        pendingProgress.delete(profileId);
+        if (p && p.progress) sendProgressNow(profileId, p.progress);
+      }, PROGRESS_MIN_GAP - gap);
+    }
   }
 }
 
@@ -976,7 +1010,7 @@ const LIVE_SCOPE = "service::user.auth.xboxlive.com::MBI_SSL";
 // api.minecraftservices.com is behind Cloudflare and rejects requests with no
 // (or Node's default) User-Agent, returning a bare {"path":...} body. A normal
 // launcher-style UA is required for the Minecraft auth/profile calls to work.
-const LAUNCHER_UA = "RedstoneLauncher/1.14.0 (+https://redstone-launcher.com)";
+const LAUNCHER_UA = "RedstoneLauncher/1.15.0 (+https://redstone-launcher.com)";
 let qrLoginAbort = null;
 
 async function msDeviceCodeStart() {
