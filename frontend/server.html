@@ -56,11 +56,12 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
     #serversList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
 
-    /* Status dot at the card's bottom-right. */
-    .server-item { position: relative; }
+    /* Status dot sits on the bottom-right of the server ICON. */
+    .icon-with-dot { position: relative; display: inline-flex; flex-shrink: 0; }
     .status-dot {
-      position: absolute; right: 12px; bottom: 10px;
-      width: 12px; height: 12px; border-radius: 50%;
+      position: absolute; right: -2px; bottom: -2px;
+      width: 13px; height: 13px; border-radius: 50%;
+      border: 2px solid var(--menu-bg);
       box-shadow: 0 0 6px currentColor;
     }
     .status-dot.online { background: #46d160; color: #46d160; }
@@ -73,8 +74,23 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       width: 36px; height: 36px; padding: 0; border-radius: var(--border-radius);
     }
 
-    /* Detail view. */
-    #serverDetail { display: none; flex-direction: column; padding: 8px 20px 0 0; height: calc(100vh - 60px); }
+    /* 3-dot dropdown menu. */
+    .srv-menu-wrap { position: relative; }
+    .srv-menu {
+      display: none; position: absolute; right: 0; top: 42px; z-index: 50;
+      background: var(--third-color); border: 1px solid var(--border-dark);
+      border-radius: var(--border-radius); box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+      min-width: 170px; overflow: hidden;
+    }
+    .srv-menu.open { display: block; }
+    .srv-menu button {
+      display: flex; align-items: center; gap: 8px; width: 100%; height: auto;
+      justify-content: flex-start; padding: 10px 12px; border-radius: 0; background: none;
+    }
+    .srv-menu button:hover { background: var(--menu-hover-bg); }
+
+    /* Detail view — bounded so the console + command row always fit. */
+    #serverDetail { display: none; flex-direction: column; padding: 8px 20px 0 0; height: calc(100vh - 110px); }
     .srv-top-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
     .srv-top-row img { width: 64px; height: 64px; border-radius: 8px; margin-right: 10px; }
     .srv-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-dark); padding-bottom: 8px; margin-bottom: 10px; }
@@ -93,6 +109,14 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
     .play-button { background: var(--base-color); color: var(--text-color); }
     .play-button:hover { background: var(--third-color); }
+
+    /* File explorer rows. */
+    .file-entry {
+      display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+      border-radius: var(--border-radius); cursor: pointer; font-size: 13px;
+    }
+    .file-entry:hover { background: var(--menu-hover-bg); }
+    .file-entry .material-icons { font-size: 18px; }
     .inline-check { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 6px 0; cursor: pointer; white-space: nowrap; }
     .inline-check input { width: auto; margin: 0; }
   </style>
@@ -150,6 +174,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
             <option value="paper">Paper</option>
             <option value="fabric">Fabric</option>
           </select>
+          <select id="srvVersionFilter" style="flex:1; min-width:120px;"><option value="">All versions</option></select>
           <select id="srvSort" style="flex:1; min-width:150px;">
             <option value="name-asc">Sort: Name (A→Z)</option>
             <option value="name-desc">Sort: Name (Z→A)</option>
@@ -184,24 +209,31 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     <div id="serverDetail">
       <div class="srv-top-row">
         <div style="display:flex; align-items:center;">
-          <img id="srvDetailIcon" src="https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png" />
+          <span class="icon-with-dot">
+            <img id="srvDetailIcon" src="https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png" />
+            <span id="srvDetailDot" class="status-dot offline"></span>
+          </span>
           <div>
             <div id="srvDetailName" style="font-size:1.2em; font-weight:bold;"></div>
             <div id="srvDetailInfo" style="font-size:0.9em; opacity:0.85;"></div>
           </div>
         </div>
         <div class="server-actions">
-          <button id="dStart" class="play-button" title="Start"><i class="material-icons">play_arrow</i></button>
-          <button id="dStop" title="Stop"><i class="material-icons">stop</i></button>
+          <button id="dToggle" class="play-button" title="Start"><i class="material-icons">play_arrow</i></button>
           <button id="dRestart" title="Restart"><i class="material-icons">restart_alt</i></button>
-          <button id="dFolder" title="Open folder"><i class="material-icons">folder</i></button>
-          <button id="dDelete" title="Delete"><i class="material-icons">delete</i></button>
+          <div class="srv-menu-wrap">
+            <button id="dMenuBtn" title="More"><i class="material-icons">more_vert</i></button>
+            <div id="dMenu" class="srv-menu">
+              <button id="dFolder"><i class="material-icons">folder</i> Open folder</button>
+              <button id="dDelete"><i class="material-icons">delete</i> Delete server</button>
+            </div>
+          </div>
           <button id="dBack" title="Back"><i class="material-icons">arrow_back</i></button>
         </div>
       </div>
       <div class="srv-tabs">
         <button class="srv-tab active" data-tab="console">Console</button>
-        <button class="srv-tab" data-tab="properties">Properties</button>
+        <button class="srv-tab" data-tab="files">Files</button>
       </div>
       <div class="srv-panel active" data-panel="console">
         <div id="console"></div>
@@ -210,10 +242,20 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           <button id="sendCmdBtn">Send</button>
         </div>
       </div>
-      <div class="srv-panel" data-panel="properties">
-        <textarea id="propsEditor" spellcheck="false"></textarea>
-        <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
-          <button id="savePropsBtn">Save server.properties</button>
+      <div class="srv-panel" data-panel="files">
+        <div id="fileBreadcrumb" style="display:flex; align-items:center; gap:4px; margin-bottom:8px; flex-wrap:wrap; font-size:13px;"></div>
+        <div id="fileBrowser" style="display:flex; gap:12px; flex:1; min-height:0;">
+          <ul id="fileList" style="list-style:none; margin:0; padding:0; flex:0 0 260px; overflow-y:auto; border:1px solid var(--border-dark); border-radius:var(--border-radius); padding:6px;"></ul>
+          <div id="fileEditor" style="flex:1; min-width:0; display:flex; flex-direction:column;">
+            <div id="fileEditorEmpty" style="opacity:0.6; padding:20px; text-align:center;">Select a file to edit</div>
+            <div id="fileEditorInner" style="display:none; flex-direction:column; flex:1; min-height:0;">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                <span id="fileEditorName" style="font-weight:bold; word-break:break-all;"></span>
+                <button id="fileSaveBtn">Save</button>
+              </div>
+              <textarea id="fileEditorArea" spellcheck="false" style="flex:1; width:100%; font-family:monospace; resize:none; margin:0;"></textarea>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -253,9 +295,24 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     let consoleTimer = null;
 
     // ---------- List ----------
-    async function loadServers() {
-      servers = await ipcRenderer.invoke('list-servers') || [];
+    let lastServersJson = '';
+    async function loadServers(force) {
+      const fresh = await ipcRenderer.invoke('list-servers') || [];
+      const json = JSON.stringify(fresh);
+      // Avoid needless re-renders (which re-trigger card hover) on the periodic
+      // refresh when nothing actually changed.
+      if (!force && json === lastServersJson) return;
+      lastServersJson = json;
+      servers = fresh;
       renderServers();
+    }
+
+    function populateServerVersionFilter() {
+      const sel = $('srvVersionFilter');
+      const prev = sel.value;
+      const versions = [...new Set(servers.map(s => s.version).filter(Boolean))];
+      sel.innerHTML = '<option value="">All versions</option>' + versions.map(v => `<option value="${v}">${v}</option>`).join('');
+      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
     }
 
     function renderServers() {
@@ -263,11 +320,14 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       const empty = $('emptyServerState');
       const q = ($('srvSearch').value || '').toLowerCase().trim();
       const typeF = $('srvTypeFilter').value;
+      const versionF = $('srvVersionFilter').value;
       const sort = $('srvSort').value;
+      populateServerVersionFilter();
 
       let arr = servers.slice();
       if (q) arr = arr.filter(s => (s.name || '').toLowerCase().includes(q));
       if (typeF) arr = arr.filter(s => (s.type || '').toLowerCase() === typeF);
+      if (versionF) arr = arr.filter(s => s.version === versionF);
       if (sort === 'name-asc') arr.sort((a, b) => a.name.localeCompare(b.name));
       else if (sort === 'name-desc') arr.sort((a, b) => b.name.localeCompare(a.name));
       else if (sort === 'status') arr.sort((a, b) => (b.status === 'running') - (a.status === 'running'));
@@ -278,10 +338,17 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       arr.forEach(s => {
         const li = document.createElement('li');
         li.className = 'profile-item server-item';
+        const running = s.status === 'running';
 
+        const iconWrap = document.createElement('span');
+        iconWrap.className = 'icon-with-dot';
         const img = document.createElement('img');
         img.src = s.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
-        li.appendChild(img);
+        const dot = document.createElement('span');
+        dot.className = 'status-dot ' + (running ? 'online' : 'offline');
+        dot.title = running ? 'Online' : 'Offline';
+        iconWrap.append(img, dot);
+        li.appendChild(iconWrap);
 
         const info = document.createElement('div');
         info.className = 'profile-info';
@@ -290,7 +357,6 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
         const actions = document.createElement('div');
         actions.className = 'server-actions';
-        const running = s.status === 'running';
         const toggle = document.createElement('button');
         toggle.className = running ? '' : 'play-button';
         toggle.innerHTML = `<i class="material-icons">${running ? 'stop' : 'play_arrow'}</i>`;
@@ -303,23 +369,19 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         actions.append(toggle, restart);
         li.appendChild(actions);
 
-        const dot = document.createElement('span');
-        dot.className = 'status-dot ' + (running ? 'online' : 'offline');
-        dot.title = running ? 'Online' : 'Offline';
-        li.appendChild(dot);
-
         li.onclick = () => openDetail(s);
         list.appendChild(li);
       });
     }
 
-    ['srvSearch', 'srvTypeFilter', 'srvSort'].forEach(id => {
+    ['srvSearch', 'srvTypeFilter', 'srvVersionFilter', 'srvSort'].forEach(id => {
       const el = $(id);
       el.addEventListener('input', renderServers);
       el.addEventListener('change', renderServers);
     });
 
     // ---------- Detail ----------
+    let detailStatusTimer = null;
     async function openDetail(server) {
       selectedServer = server;
       $('serverListView').style.display = 'none';
@@ -328,15 +390,33 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       $('srvDetailIcon').src = server.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
       $('srvDetailName').textContent = server.name;
       $('srvDetailInfo').textContent = `${server.type} ${server.version} • port ${server.port || 25565}`;
-      // Load properties.
-      $('propsEditor').value = await ipcRenderer.invoke('get-server-properties', server.name);
-      // Start console polling.
+      refreshDetailStatus();
       startConsolePolling();
+      // Files tab starts at the server root.
+      loadFiles('');
+      // Keep the toggle button + dot in sync while in detail.
+      clearInterval(detailStatusTimer);
+      detailStatusTimer = setInterval(refreshDetailStatus, 2500);
+    }
+
+    async function refreshDetailStatus() {
+      if (!selectedServer) return;
+      const info = await ipcRenderer.invoke('get-server-info', selectedServer.name);
+      const running = info && info.status === 'running';
+      const dot = $('srvDetailDot');
+      dot.className = 'status-dot ' + (running ? 'online' : 'offline');
+      const t = $('dToggle');
+      t.className = running ? '' : 'play-button';
+      t.title = running ? 'Stop' : 'Start';
+      t.innerHTML = `<i class="material-icons">${running ? 'stop' : 'play_arrow'}</i>`;
+      t.dataset.running = running ? '1' : '0';
     }
 
     function closeDetail() {
       selectedServer = null;
       clearTimeout(consoleTimer);
+      clearInterval(detailStatusTimer);
+      $('dMenu').classList.remove('open');
       $('serverDetail').style.display = 'none';
       $('serverListView').style.display = '';
       $('upnpPanel').style.display = '';
@@ -368,11 +448,17 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     });
 
     $('dBack').onclick = closeDetail;
-    $('dStart').onclick = async () => { await ipcRenderer.invoke('start-server', selectedServer.name); };
-    $('dStop').onclick = async () => { await ipcRenderer.invoke('stop-server', selectedServer.name); };
-    $('dRestart').onclick = async () => { await ipcRenderer.invoke('restart-server', selectedServer.name); };
-    $('dFolder').onclick = () => ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false });
+    $('dToggle').onclick = async () => {
+      const running = $('dToggle').dataset.running === '1';
+      await ipcRenderer.invoke(running ? 'stop-server' : 'start-server', selectedServer.name);
+      setTimeout(refreshDetailStatus, 600);
+    };
+    $('dRestart').onclick = async () => { await ipcRenderer.invoke('restart-server', selectedServer.name); setTimeout(refreshDetailStatus, 600); };
+    $('dMenuBtn').onclick = (e) => { e.stopPropagation(); $('dMenu').classList.toggle('open'); };
+    document.addEventListener('click', () => $('dMenu').classList.remove('open'));
+    $('dFolder').onclick = () => { $('dMenu').classList.remove('open'); ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false }); };
     $('dDelete').onclick = async () => {
+      $('dMenu').classList.remove('open');
       if (!confirm(`Delete server "${selectedServer.name}" and all its files?`)) return;
       await ipcRenderer.invoke('delete-server', selectedServer.name);
       closeDetail();
@@ -384,10 +470,64 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       $('cmdInput').value = '';
     };
     $('cmdInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('sendCmdBtn').click(); });
-    $('savePropsBtn').onclick = async () => {
-      await ipcRenderer.invoke('save-server-properties', selectedServer.name, $('propsEditor').value);
-      $('savePropsBtn').textContent = 'Saved ✓';
-      setTimeout(() => ($('savePropsBtn').textContent = 'Save server.properties'), 1500);
+
+    // ---------- Files explorer ----------
+    let currentDir = '';
+    let currentFile = null;
+    async function loadFiles(rel) {
+      if (!selectedServer) return;
+      currentDir = rel || '';
+      const res = await ipcRenderer.invoke('server-fs:list', { name: selectedServer.name, path: currentDir });
+      // Breadcrumb.
+      const bc = $('fileBreadcrumb');
+      bc.innerHTML = '';
+      const parts = currentDir.split('/').filter(Boolean);
+      const mkCrumb = (label, target) => {
+        const a = document.createElement('a');
+        a.textContent = label; a.style.cssText = 'cursor:pointer;text-decoration:underline;';
+        a.onclick = () => loadFiles(target);
+        return a;
+      };
+      bc.appendChild(mkCrumb(selectedServer.name, ''));
+      let acc = '';
+      parts.forEach(p => { acc = acc ? acc + '/' + p : p; bc.append(' / ', mkCrumb(p, acc)); });
+
+      const ul = $('fileList');
+      ul.innerHTML = '';
+      if (currentDir) {
+        const up = document.createElement('li');
+        up.className = 'file-entry';
+        up.innerHTML = '<i class="material-icons">arrow_upward</i> ..';
+        up.onclick = () => loadFiles(parts.slice(0, -1).join('/'));
+        ul.appendChild(up);
+      }
+      (res.entries || []).forEach(e => {
+        const li = document.createElement('li');
+        li.className = 'file-entry';
+        li.innerHTML = `<i class="material-icons">${e.isDir ? 'folder' : 'description'}</i> <span style="flex:1;word-break:break-all;">${e.name}</span>`;
+        const rowPath = currentDir ? currentDir + '/' + e.name : e.name;
+        li.onclick = () => e.isDir ? loadFiles(rowPath) : openFile(rowPath, e.name);
+        ul.appendChild(li);
+      });
+    }
+
+    async function openFile(rel, name) {
+      const res = await ipcRenderer.invoke('server-fs:read', { name: selectedServer.name, path: rel });
+      $('fileEditorEmpty').style.display = 'none';
+      $('fileEditorInner').style.display = 'flex';
+      $('fileEditorName').textContent = name;
+      if (res.binary) { $('fileEditorArea').value = '(binary file — not editable)'; $('fileEditorArea').disabled = true; currentFile = null; return; }
+      if (res.error) { $('fileEditorArea').value = '(' + res.error + ')'; $('fileEditorArea').disabled = true; currentFile = null; return; }
+      $('fileEditorArea').disabled = false;
+      $('fileEditorArea').value = res.text || '';
+      currentFile = rel;
+    }
+
+    $('fileSaveBtn').onclick = async () => {
+      if (!currentFile) return;
+      await ipcRenderer.invoke('server-fs:write', { name: selectedServer.name, path: currentFile, text: $('fileEditorArea').value });
+      $('fileSaveBtn').textContent = 'Saved ✓';
+      setTimeout(() => ($('fileSaveBtn').textContent = 'Save'), 1400);
     };
 
     // ---------- Create ----------

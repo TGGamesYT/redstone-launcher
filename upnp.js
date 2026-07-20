@@ -18,13 +18,17 @@ function localIPv4() {
 }
 
 // SSDP: find an InternetGatewayDevice and return its description-XML URL.
-function discoverGateway(timeout = 3000) {
+// Bind to the LAN interface so the multicast search leaves the right adapter
+// (common failure on machines with VPN/virtual adapters).
+function discoverGateway(timeout = 5000) {
   return new Promise((resolve, reject) => {
-    const sock = dgram.createSocket("udp4");
+    const sock = dgram.createSocket({ type: "udp4", reuseAddr: true });
+    const local = localIPv4();
     const targets = [
       "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
       "urn:schemas-upnp-org:service:WANIPConnection:1",
       "urn:schemas-upnp-org:service:WANPPPConnection:1",
+      "upnp:rootdevice",
       "ssdp:all",
     ];
     let done = false;
@@ -37,11 +41,11 @@ function discoverGateway(timeout = 3000) {
     sock.on("error", (e) => finish(e));
     sock.on("message", (msg) => {
       const text = msg.toString();
-      if (!/InternetGatewayDevice|WANIPConnection|WANPPPConnection/i.test(text)) return;
+      if (!/InternetGatewayDevice|WANIPConnection|WANPPPConnection|rootdevice/i.test(text)) return;
       const m = text.match(/LOCATION:\s*(\S+)/i);
       if (m) finish(null, m[1].trim());
     });
-    sock.bind(() => {
+    const search = () => {
       for (const st of targets) {
         const payload = Buffer.from(
           "M-SEARCH * HTTP/1.1\r\n" +
@@ -52,8 +56,18 @@ function discoverGateway(timeout = 3000) {
         );
         sock.send(payload, 0, payload.length, 1900, "239.255.255.250");
       }
+    };
+    // Bind to the LAN IP so multicast goes out the correct interface.
+    sock.bind(0, local, () => {
+      try { sock.setMulticastTTL(4); } catch { /* ignore */ }
+      try { sock.setMulticastInterface(local); } catch { /* ignore */ }
+      try { sock.setBroadcast(true); } catch { /* ignore */ }
+      search();
+      // Re-send a couple of times — some routers drop the first probe.
+      setTimeout(() => { if (!done) search(); }, 700);
+      setTimeout(() => { if (!done) search(); }, 1600);
     });
-    setTimeout(() => finish(new Error("No UPnP gateway found (is UPnP enabled on your router?)")), timeout);
+    setTimeout(() => finish(new Error("No UPnP gateway responded (enable UPnP/IGD on your router; some routers call it 'NAT-PMP' or 'Miniupnp')")), timeout);
   });
 }
 

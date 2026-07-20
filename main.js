@@ -2238,6 +2238,11 @@ ipcMain.handle("save-server-properties", (event, id, text) => {
   return serverManager.saveServerProperties(id, text);
 });
 
+ipcMain.handle("server-fs:list", (event, { name, path: rel }) => serverManager.listFiles(name, rel));
+ipcMain.handle("server-fs:read", (event, { name, path: rel }) => serverManager.readFile(name, rel));
+ipcMain.handle("server-fs:write", (event, { name, path: rel, text }) => serverManager.writeFile(name, rel, text));
+ipcMain.handle("server-fs:delete", (event, { name, path: rel }) => serverManager.deleteFile(name, rel));
+
 // ── UPnP auto port-forward (self-hosting) ──
 ipcMain.handle("upnp:open", async (event, { port, description }) => {
   try { return await upnp.openPort(Number(port), "TCP", description || "Redstone Launcher server"); }

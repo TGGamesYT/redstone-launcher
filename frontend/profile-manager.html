@@ -623,6 +623,19 @@
         return true;
       });
       libraryCache = library;
+
+      // Always show the currently-applied skin, even if the library is empty or
+      // doesn't contain it (e.g. it was set elsewhere).
+      const libraryHasActive = activePixelHash && library.some(s => s.pixelHash && s.pixelHash === activePixelHash);
+      if (activeSkinB64 && !libraryHasActive) {
+        const av = activeSkin && activeSkin.variant === "SLIM" ? "slim" : "classic";
+        const preview = createSkinCanvas({ base64: activeSkinB64, variant: av === "slim" ? "SLIM" : "CLASSIC" });
+        const card = createCard(`Current skin (${variantLabel(av)})`, () => selectSkin({ base64: activeSkinB64, variant: av, name: "Current skin", pixelHash: activePixelHash, id: "__active__" }), preview);
+        card.dataset.pixelhash = activePixelHash || "";
+        card.dataset.skinid = "__active__";
+        skinsDiv.appendChild(card);
+      }
+
       library.forEach(skin => {
         const preview = createSkinCanvas({ base64: skin.base64, variant: skin.variant === "slim" ? "SLIM" : "CLASSIC" });
         const card = createCard(`${skin.name} (${variantLabel(skin.variant)})`, () => selectSkin(skin), preview);
@@ -657,7 +670,9 @@
       if (!activeCape) noneCard.classList.add("selected");
       capesDiv.appendChild(noneCard);
 
-      profile.capes.forEach(cape => {
+      // Dedup owned capes by id so the active one doesn't appear twice.
+      const seenCapes = new Set();
+      (profile.capes || []).filter(c => { if (seenCapes.has(c.id)) return false; seenCapes.add(c.id); return true; }).forEach(cape => {
         const preview = createCapeCanvas(cape);
         const card = createCard(
           cape.alias || "Cape",

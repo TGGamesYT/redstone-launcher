@@ -231,6 +231,55 @@ function getServerPort(name) {
   return m ? Number(m[1]) : 25565;
 }
 
+// --- Simple file explorer (scoped to the server's folder) ---
+function safeServerPath(name, rel) {
+  const root = path.resolve(path.join(serversDir, name));
+  const target = path.resolve(path.join(root, rel || ""));
+  if (target !== root && !target.startsWith(root + path.sep)) return null;
+  return target;
+}
+
+function listFiles(name, rel) {
+  const dir = safeServerPath(name, rel);
+  if (!dir || !fs.existsSync(dir)) return { path: rel || "", entries: [] };
+  const stat = fs.statSync(dir);
+  if (!stat.isDirectory()) return { path: rel || "", entries: [] };
+  const entries = fs.readdirSync(dir, { withFileTypes: true }).map(d => {
+    let size = 0;
+    try { size = d.isFile() ? fs.statSync(path.join(dir, d.name)).size : 0; } catch { /* ignore */ }
+    return { name: d.name, isDir: d.isDirectory(), size };
+  });
+  // Folders first, then files, alphabetical.
+  entries.sort((a, b) => (b.isDir - a.isDir) || a.name.localeCompare(b.name));
+  return { path: (rel || "").replace(/\\/g, "/"), entries };
+}
+
+// Read a file's text (returns { text } or { binary:true } for non-text).
+function readFile(name, rel) {
+  const p = safeServerPath(name, rel);
+  if (!p || !fs.existsSync(p) || fs.statSync(p).isDirectory()) return { error: "Not a file" };
+  try {
+    const buf = fs.readFileSync(p);
+    // Heuristic: treat as binary if it has NUL bytes in the first chunk.
+    if (buf.slice(0, 8000).includes(0)) return { binary: true };
+    return { text: buf.toString("utf-8") };
+  } catch (e) { return { error: e.message }; }
+}
+
+function writeFile(name, rel, text) {
+  const p = safeServerPath(name, rel);
+  if (!p) return { error: "Invalid path" };
+  try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text); return { success: true }; }
+  catch (e) { return { error: e.message }; }
+}
+
+function deleteFile(name, rel) {
+  const p = safeServerPath(name, rel);
+  if (!p || p === path.resolve(path.join(serversDir, name))) return { error: "Invalid path" };
+  try { fs.rmSync(p, { recursive: true, force: true }); return { success: true }; }
+  catch (e) { return { error: e.message }; }
+}
+
 // Single-server info incl. live status.
 function getServerInfo(name) {
   const server = servers.get(name);
@@ -258,4 +307,8 @@ export default {
   saveServerProperties,
   getServerPort,
   getServerInfo,
+  listFiles,
+  readFile,
+  writeFile,
+  deleteFile,
 };
