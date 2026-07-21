@@ -1169,6 +1169,63 @@
         const progressFill = progressBox.querySelector(".bar-fill");
         instanceDetail.appendChild(progressBox);
 
+        // LAN → internet sharing. When the running game is opened to LAN we
+        // detect the system message + port and let the user tunnel it through
+        // the Redstone Relay so friends can join over the internet.
+        const lanBar = document.createElement("div");
+        lanBar.style.cssText = "display:none; align-items:center; gap:10px; margin:8px 0; padding:8px 12px; border-radius:var(--border-radius); background:color-mix(in srgb, var(--base-color) 45%, black); border:1px solid var(--secondary-color);";
+        lanBar.innerHTML = `<i class="material-icons" style="font-size:18px;">public</i>
+          <span class="lan-msg" style="flex:1;"></span>
+          <button class="lan-share" style="padding:4px 10px;">Share over internet</button>
+          <button class="lan-copy" style="padding:4px 10px; display:none;">Copy</button>
+          <button class="lan-stop" style="padding:4px 10px; display:none;">Stop</button>`;
+        instanceDetail.appendChild(lanBar);
+        const lanMsg = lanBar.querySelector(".lan-msg");
+        const lanShareBtn = lanBar.querySelector(".lan-share");
+        const lanCopyBtn = lanBar.querySelector(".lan-copy");
+        const lanStopBtn = lanBar.querySelector(".lan-stop");
+        const relayKey = `instance-${profile.id}`;
+        let lanPort = null;
+
+        function showLanShared(address) {
+          lanMsg.innerHTML = `Friends can join at <b>${address}</b>`;
+          lanShareBtn.style.display = "none";
+          lanCopyBtn.style.display = ""; lanStopBtn.style.display = "";
+          lanBar.style.display = "flex";
+        }
+        function showLanAvailable(port) {
+          lanPort = port;
+          lanMsg.textContent = `This world is open to LAN (port ${port}).`;
+          lanShareBtn.style.display = ""; lanCopyBtn.style.display = "none"; lanStopBtn.style.display = "none";
+          lanBar.style.display = "flex";
+        }
+        lanShareBtn.onclick = async () => {
+          if (!lanPort) return;
+          lanShareBtn.textContent = "Connecting…";
+          const res = await ipcRenderer.invoke("relay:open", { key: relayKey, localPort: lanPort });
+          lanShareBtn.textContent = "Share over internet";
+          if (res && res.success) showLanShared(res.address);
+          else alert("Couldn't share over the internet right now. Please try again in a little while.");
+        };
+        lanStopBtn.onclick = async () => { await ipcRenderer.invoke("relay:close", { key: relayKey }); showLanAvailable(lanPort); };
+        lanCopyBtn.onclick = () => { try { navigator.clipboard.writeText(lanMsg.textContent.replace(/^.*join at\s*/i, "").trim()); lanCopyBtn.textContent = "Copied"; setTimeout(() => lanCopyBtn.textContent = "Copy", 1200); } catch { /* ignore */ } };
+
+        // Reflect current state: already sharing? already open to LAN?
+        (async () => {
+          const st = await ipcRenderer.invoke("relay:status", { key: relayKey });
+          if (st && st.active) { const lp = await ipcRenderer.invoke("instance:lan-port", { profileId: profile.id }); lanPort = lp.port || lanPort; showLanShared(st.address); return; }
+          const lp = await ipcRenderer.invoke("instance:lan-port", { profileId: profile.id });
+          if (lp && lp.port) showLanAvailable(lp.port);
+        })();
+
+        // Live updates while this detail is open.
+        if (window.__lanDetectedHandler) ipcRenderer.removeListener("instance-lan-detected", window.__lanDetectedHandler);
+        window.__lanDetectedHandler = (e, d) => { if (String(d.profileId) === String(profile.id)) showLanAvailable(d.port); };
+        ipcRenderer.on("instance-lan-detected", window.__lanDetectedHandler);
+        if (window.__lanClosedHandler) ipcRenderer.removeListener("instance-lan-closed", window.__lanClosedHandler);
+        window.__lanClosedHandler = (e, d) => { if (String(d.profileId) === String(profile.id)) { lanBar.style.display = "none"; lanPort = null; } };
+        ipcRenderer.on("instance-lan-closed", window.__lanClosedHandler);
+
         let progressHideTimer = null;
         // Remove ONLY our previous in-page handler (re-rendering the detail view
         // re-runs this). We must NOT use removeAllListeners('launch-progress')
@@ -1331,7 +1388,7 @@
         tabsRow.className = "instance-tabs-row";
         instanceDetail.appendChild(tabsRow);
 
-        const tabs = ["Logs", "Resourcepacks", "Mods", "Shaderpacks", "Worlds", "Servers", "Screenshots"];
+        const tabs = ["Logs", "Resourcepacks", "Mods", "Shaderpacks", "Worlds", "Servers", "Screenshots", "Files"];
         const tabButtons = {};
         const tabContent = document.createElement("div");
         tabContent.classList.add("instanceView-scrolly");
@@ -1588,7 +1645,7 @@
           // except Mods, which is always shown for modded instances so there's
           // somewhere to install mods into even when empty.
           const isModded = (profile.loader || "vanilla").toLowerCase() !== "vanilla";
-          let alwaysVisible = ["logs", "servers", "worlds"].includes(tName) || (tName === "mods" && isModded);
+          let alwaysVisible = ["logs", "servers", "worlds", "files"].includes(tName) || (tName === "mods" && isModded);
           let exists = alwaysVisible ? true
             : await ipcRenderer.invoke("check-instance-tab", { profileId: profile.id, tab: tName });
           if (!exists && !alwaysVisible) continue;
@@ -1611,6 +1668,7 @@
             tabContent.classList.add("tab-fade-in");
 
             tabContent.classList.remove("logs-active");
+            tabContent.style.height = ""; // reset (the Files tab sets its own)
             tabContent.innerHTML = "Loading...";
             logsEl.style.display = "none";
 
@@ -1940,6 +1998,14 @@
               }
               if (!ensureStillActive()) return;
               tabContent.appendChild(ul);
+
+            } else if (tab.toLowerCase() === "files") {
+              logsEl.style.display = "none";
+              tabContent.innerHTML = "";
+              tabContent.style.height = "calc(100vh - 210px)";
+              // Full instance file manager (edit configs, world .dat files, read
+              // .gz/.zip logs — same editor the server manager uses).
+              window.FileBrowser.mount(tabContent, { channel: "client-fs", idField: "id", id: profile.id, rootLabel: profile.name || "instance" });
             }
           };
           tabsRow.appendChild(btn);
@@ -2255,6 +2321,8 @@
     initVersionSelect();
   </script>
 
+  <script src="filetree.js"></script>
+  <script src="filebrowser.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
 </body>

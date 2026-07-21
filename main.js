@@ -201,7 +201,35 @@ function broadcastLog(profileId, msg) {
   if (!pendingLogs.has(profileId)) pendingLogs.set(profileId, []);
   pendingLogs.get(profileId).push(text);
   scheduleLogFlush();
+
+  detectLanOpen(profileId, text);
 }
+
+// When a running instance is opened to LAN, the game prints a SYSTEM chat line
+// with the port. The wording varies by version, e.g.:
+//   [System] [CHAT] This world is now open to LAN. The port number is [6767]
+//   [System] [CHAT] Local game hosted on port [56400]
+//   [CHAT] Local game hosted on port 61181
+// We surface the port so the instance can be shared over the relay. We require a
+// [CHAT] line WITHOUT a "<player>" marker so we don't trigger on someone typing
+// a lookalike message.
+const lanPorts = new Map(); // profileId -> port
+function detectLanOpen(profileId, text) {
+  try {
+    if (!/\[CHAT\]/i.test(text)) return;
+    if (/<[^>]{1,32}>/.test(text)) return; // player chat has <Name>
+    if (!/(open to LAN|hosted on port|port number is)/i.test(text)) return;
+    const m = text.match(/(?:on port|port number is)\s*\[?\s*(\d{2,5})\b/i);
+    if (!m) return;
+    const port = parseInt(m[1], 10);
+    if (!port) return;
+    lanPorts.set(String(profileId), port);
+    if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('instance-lan-detected', { profileId: String(profileId), port });
+    }
+  } catch { /* ignore */ }
+}
+ipcMain.handle("instance:lan-port", (event, { profileId }) => ({ port: lanPorts.get(String(profileId)) || null }));
 
 // Human-readable label for minecraft-launcher-core progress phases.
 function progressLabel(type) {
@@ -331,6 +359,14 @@ function stopInstance(id, pid = null) {
 // Called whenever an instance exits: refresh presence and, if the launcher
 // window is already closed and nothing is left running, quit.
 function onInstanceExited(profileId) {
+  // Clear any LAN-share state and close the relay tunnel for this instance.
+  lanPorts.delete(String(profileId));
+  const relayKey = `instance-${profileId}`;
+  const s = activeRelays.get(relayKey);
+  if (s) { try { s.close(); } catch { /* ignore */ } activeRelays.delete(relayKey); }
+  if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('instance-lan-closed', { profileId: String(profileId) });
+  }
   updateGamePresence();
   quitIfHeadlessAndIdle();
 }
@@ -2325,23 +2361,28 @@ const RELAY_DEFAULTS = {
   host: process.env.REDSTONE_RELAY_HOST || "redstonemc.net",
   controlPort: parseInt(process.env.REDSTONE_RELAY_PORT || "47238", 10),
 };
-const activeRelays = new Map(); // serverName -> { host, port, close }
+// key -> { host, port, close }. key is a server name or `instance-<id>`.
+const activeRelays = new Map();
 
-ipcMain.handle("relay:open", async (event, { name }) => {
+// Open a relay tunnel to any local port. Server detail passes its server port;
+// an instance opened-to-LAN passes the detected LAN port.
+ipcMain.handle("relay:open", async (event, { key, name, localPort }) => {
+  const k = key || name;
   try {
-    if (activeRelays.has(name)) {
-      const s = activeRelays.get(name);
+    if (activeRelays.has(k)) {
+      const s = activeRelays.get(k);
       return { success: true, host: s.host, port: s.port, address: `${s.host}:${s.port}`, already: true };
     }
-    const localPort = serverManager.getServerPort(name);
+    // Back-compat: if only a server name was given, look up its port.
+    if (!localPort && name) { try { localPort = serverManager.getServerPort(name); } catch { /* ignore */ } }
+    if (!localPort) return { success: false, error: "No local port to share" };
     const token = settings.get("relayToken", "") || process.env.REDSTONE_RELAY_TOKEN || "";
-    // Allow self-signed certs only if the user explicitly opts in (dev/testing).
     const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
     const session = await relayClient.openRelay({
       host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
       token, localPort, rejectUnauthorized,
     });
-    activeRelays.set(name, session);
+    activeRelays.set(k, session);
     return { success: true, host: session.host, port: session.port, address: `${session.host}:${session.port}` };
   } catch (err) {
     console.error("[Relay] open failed:", err);
@@ -2349,14 +2390,16 @@ ipcMain.handle("relay:open", async (event, { name }) => {
   }
 });
 
-ipcMain.handle("relay:close", async (event, { name }) => {
-  const s = activeRelays.get(name);
-  if (s) { try { s.close(); } catch { /* ignore */ } activeRelays.delete(name); }
+ipcMain.handle("relay:close", async (event, { key, name }) => {
+  const k = key || name;
+  const s = activeRelays.get(k);
+  if (s) { try { s.close(); } catch { /* ignore */ } activeRelays.delete(k); }
   return { success: true };
 });
 
-ipcMain.handle("relay:status", async (event, { name }) => {
-  const s = activeRelays.get(name);
+ipcMain.handle("relay:status", async (event, { key, name }) => {
+  const k = key || name;
+  const s = activeRelays.get(k);
   return s ? { active: true, host: s.host, port: s.port, address: `${s.host}:${s.port}` } : { active: false };
 });
 

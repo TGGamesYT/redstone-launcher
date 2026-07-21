@@ -41,8 +41,8 @@ All launcher↔relay traffic is **TLS‑encrypted** and **token‑authenticated*
 | `RELAY_PORT_MIN`      | `40000`                          | Low end of the public port range.                   |
 | `RELAY_PORT_MAX`      | `60000`                          | High end of the public port range.                  |
 | `RELAY_TOKENS`        | *(empty = open)*                 | Comma‑separated accepted tokens. Set to lock down.  |
-| `RELAY_TLS_KEY`       | `/etc/redstone-relay/key.pem`    | TLS private key path.                               |
-| `RELAY_TLS_CERT`      | `/etc/redstone-relay/cert.pem`   | TLS certificate (fullchain) path.                   |
+| `RELAY_TLS_KEY`       | `/etc/letsencrypt/live/<domain>/privkey.pem`   | TLS private key path (certbot default). |
+| `RELAY_TLS_CERT`      | `/etc/letsencrypt/live/<domain>/fullchain.pem` | TLS certificate path (certbot default). |
 | `RELAY_MAX_HOSTS`     | `200`                            | Max simultaneous hosts.                             |
 
 > The launcher connects to `RELAY_CONTROL_PORT` on `redstonemc.net` and sends the
