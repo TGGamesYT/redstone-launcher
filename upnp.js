@@ -6,47 +6,58 @@ import http from "http";
 import os from "os";
 import { URL } from "url";
 
-// Pick the machine's primary LAN IPv4.
-function localIPv4() {
+function log(...a) { try { console.log("[UPnP]", ...a); } catch { /* ignore */ } }
+
+// Every usable (non-internal) IPv4 the machine has. On multi-homed machines
+// (VPN/virtual adapters, multiple NICs) the router is only reachable from the
+// interface actually on its subnet, so we must probe from ALL of them — probing
+// just the "first" address is the #1 reason discovery silently fails.
+function localIPv4List() {
   const ifaces = os.networkInterfaces();
+  const list = [];
   for (const name of Object.keys(ifaces)) {
     for (const i of ifaces[name] || []) {
-      if (i.family === "IPv4" && !i.internal) return i.address;
+      if (i.family === "IPv4" && !i.internal) list.push(i.address);
     }
   }
-  return "127.0.0.1";
+  return list.length ? list : ["0.0.0.0"];
 }
 
+// Best-guess primary LAN IPv4 (prefers common private ranges) for the internal
+// client of a port mapping.
+function localIPv4() {
+  const list = localIPv4List();
+  return list.find(a => /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a)) || list[0];
+}
+
+const SSDP_TARGETS = [
+  "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+  "urn:schemas-upnp-org:service:WANIPConnection:1",
+  "urn:schemas-upnp-org:service:WANPPPConnection:1",
+  "upnp:rootdevice",
+  "ssdp:all",
+];
+
 // SSDP: find an InternetGatewayDevice and return its description-XML URL.
-// Bind to the LAN interface so the multicast search leaves the right adapter
-// (common failure on machines with VPN/virtual adapters).
-function discoverGateway(timeout = 5000) {
+// One socket is bound per local interface so the multicast search leaves every
+// adapter — whichever one is on the router's LAN gets an answer.
+function discoverGateway(timeout = 6000) {
   return new Promise((resolve, reject) => {
-    const sock = dgram.createSocket({ type: "udp4", reuseAddr: true });
-    const local = localIPv4();
-    const targets = [
-      "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
-      "urn:schemas-upnp-org:service:WANIPConnection:1",
-      "urn:schemas-upnp-org:service:WANPPPConnection:1",
-      "upnp:rootdevice",
-      "ssdp:all",
-    ];
+    const addrs = localIPv4List();
+    log("probing gateway on interfaces:", addrs.join(", ") || "(none)");
+    const socks = [];
     let done = false;
+
     const finish = (err, loc) => {
       if (done) return;
       done = true;
-      try { sock.close(); } catch { /* ignore */ }
-      err ? reject(err) : resolve(loc);
+      for (const s of socks) { try { s.close(); } catch { /* ignore */ } }
+      if (err) { log("discovery failed:", err.message); reject(err); }
+      else { log("gateway found at", loc); resolve(loc); }
     };
-    sock.on("error", (e) => finish(e));
-    sock.on("message", (msg) => {
-      const text = msg.toString();
-      if (!/InternetGatewayDevice|WANIPConnection|WANPPPConnection|rootdevice/i.test(text)) return;
-      const m = text.match(/LOCATION:\s*(\S+)/i);
-      if (m) finish(null, m[1].trim());
-    });
-    const search = () => {
-      for (const st of targets) {
+
+    const mkSearch = (sock) => () => {
+      for (const st of SSDP_TARGETS) {
         const payload = Buffer.from(
           "M-SEARCH * HTTP/1.1\r\n" +
           "HOST: 239.255.255.250:1900\r\n" +
@@ -54,20 +65,35 @@ function discoverGateway(timeout = 5000) {
           "MX: 2\r\n" +
           "ST: " + st + "\r\n\r\n"
         );
-        sock.send(payload, 0, payload.length, 1900, "239.255.255.250");
+        try { sock.send(payload, 0, payload.length, 1900, "239.255.255.250"); } catch { /* ignore */ }
       }
     };
-    // Bind to the LAN IP so multicast goes out the correct interface.
-    sock.bind(0, local, () => {
-      try { sock.setMulticastTTL(4); } catch { /* ignore */ }
-      try { sock.setMulticastInterface(local); } catch { /* ignore */ }
-      try { sock.setBroadcast(true); } catch { /* ignore */ }
-      search();
-      // Re-send a couple of times — some routers drop the first probe.
-      setTimeout(() => { if (!done) search(); }, 700);
-      setTimeout(() => { if (!done) search(); }, 1600);
-    });
-    setTimeout(() => finish(new Error("No UPnP gateway responded (enable UPnP/IGD on your router; some routers call it 'NAT-PMP' or 'Miniupnp')")), timeout);
+
+    for (const local of addrs) {
+      const sock = dgram.createSocket({ type: "udp4", reuseAddr: true });
+      socks.push(sock);
+      sock.on("error", () => { try { sock.close(); } catch { /* ignore */ } });
+      sock.on("message", (msg) => {
+        const text = msg.toString();
+        if (!/InternetGatewayDevice|WANIPConnection|WANPPPConnection|rootdevice/i.test(text)) return;
+        const m = text.match(/LOCATION:\s*(\S+)/i);
+        if (m) finish(null, m[1].trim());
+      });
+      try {
+        sock.bind(0, local === "0.0.0.0" ? undefined : local, () => {
+          try { sock.setMulticastTTL(4); } catch { /* ignore */ }
+          if (local !== "0.0.0.0") { try { sock.setMulticastInterface(local); } catch { /* ignore */ } }
+          try { sock.setBroadcast(true); } catch { /* ignore */ }
+          const search = mkSearch(sock);
+          search();
+          // Re-send a couple of times — some routers drop the first probe.
+          setTimeout(() => { if (!done) search(); }, 700);
+          setTimeout(() => { if (!done) search(); }, 1600);
+        });
+      } catch (e) { log("bind failed on", local, e.message); }
+    }
+
+    setTimeout(() => finish(new Error("No UPnP gateway responded. Make sure UPnP/IGD is enabled in your router settings (also called 'NAT-PMP', 'Miniupnp' or 'UPnP IGD'), and that your firewall isn't blocking Redstone Launcher.")), timeout);
   });
 }
 
@@ -141,8 +167,10 @@ function soap(controlURL, serviceType, action, bodyInner) {
 }
 
 export async function openPort(port, protocol = "TCP", description = "Redstone Launcher") {
+  log("openPort", port, protocol);
   const desc = await discoverGateway();
   const { serviceType, controlURL } = await resolveService(desc);
+  log("using service", serviceType, "@", controlURL);
   const internal = localIPv4();
   await soap(controlURL, serviceType, "AddPortMapping",
     "<NewRemoteHost></NewRemoteHost>" +

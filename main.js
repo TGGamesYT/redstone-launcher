@@ -2279,18 +2279,50 @@ ipcMain.handle("server-fs:delete", (event, { name, path: rel }) => serverManager
 
 // ── UPnP auto port-forward (self-hosting) ──
 ipcMain.handle("upnp:open", async (event, { port, description }) => {
-  try { return await upnp.openPort(Number(port), "TCP", description || "Redstone Launcher server"); }
-  catch (err) { return { success: false, error: err.message }; }
+  try {
+    // Open TCP (Minecraft Java) — and UDP too, harmless if unused, needed for
+    // some query/voice mods.
+    const r = await upnp.openPort(Number(port), "TCP", description || "Redstone Launcher server");
+    try { await upnp.openPort(Number(port), "UDP", description || "Redstone Launcher server"); } catch { /* UDP is best-effort */ }
+    return r;
+  } catch (err) { console.error("[UPnP] open failed:", err); return { success: false, error: err.message }; }
 });
 
 ipcMain.handle("upnp:close", async (event, { port }) => {
-  try { return await upnp.closePort(Number(port), "TCP"); }
-  catch (err) { return { success: false, error: err.message }; }
+  try {
+    const r = await upnp.closePort(Number(port), "TCP");
+    try { await upnp.closePort(Number(port), "UDP"); } catch { /* ignore */ }
+    return r;
+  } catch (err) { console.error("[UPnP] close failed:", err); return { success: false, error: err.message }; }
 });
 
+// Public IP lookup: try the router (UPnP) first, then fall back to an external
+// HTTPS service so this always resolves as long as there's internet.
+function fetchPublicIpExternal() {
+  return new Promise((resolve, reject) => {
+    const req = https.get("https://api.ipify.org", { timeout: 6000 }, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        const ip = data.trim();
+        /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) ? resolve(ip) : reject(new Error("Bad response"));
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("Timed out")));
+    req.on("error", reject);
+  });
+}
+
 ipcMain.handle("upnp:externalIp", async () => {
-  try { return { success: true, ip: await upnp.getExternalIP() }; }
-  catch (err) { return { success: false, error: err.message }; }
+  try {
+    const ip = await upnp.getExternalIP();
+    if (ip) return { success: true, ip };
+    throw new Error("empty");
+  } catch (err) {
+    console.warn("[UPnP] router IP lookup failed, using external service:", err.message);
+    try { return { success: true, ip: await fetchPublicIpExternal(), viaExternal: true }; }
+    catch (e2) { return { success: false, error: e2.message }; }
+  }
 });
 
 /* ─────────────── Modrinth ─────────────── */
@@ -3189,9 +3221,9 @@ async function getCurseForgeLoader(loader, version = "1.20.1") {
 }
 // open folder
 
-ipcMain.on('open-folder', (event, { id, isClient }) => {
+ipcMain.on('open-folder', (event, { id, isClient, sub }) => {
   try {
-    const folderPath = path.join(dataDir, isClient ? 'client' : 'servers', String(id));
+    const folderPath = path.join(dataDir, isClient ? 'client' : 'servers', String(id), sub || '');
 
     // Ensure folder exists
     if (!fs.existsSync(folderPath)) {
@@ -3951,11 +3983,16 @@ ipcMain.handle("get-instance-worlds", async (event, { profileId }) => {
   return out;
 });
 
-ipcMain.handle("import-world", async (event, { profileId }) => {
+ipcMain.handle("import-world", async (event, { profileId, mode }) => {
+  // NOTE: Windows/Linux can't show a picker that accepts BOTH a file and a
+  // directory at once (combining openFile+openDirectory silently becomes
+  // directory-only), which is why .zip import "only took folders". So the
+  // caller tells us which kind of picker to show.
+  const wantFolder = mode === "folder";
   const result = await dialog.showOpenDialog({
-    title: "Import a world (folder or .zip)",
-    properties: ["openFile", "openDirectory"],
-    filters: [{ name: "World zip", extensions: ["zip"] }]
+    title: wantFolder ? "Import a world folder" : "Import a world (.zip)",
+    properties: wantFolder ? ["openDirectory"] : ["openFile"],
+    filters: wantFolder ? [] : [{ name: "World zip", extensions: ["zip"] }]
   });
   if (result.canceled || !result.filePaths.length) return { success: false, cancelled: true };
 

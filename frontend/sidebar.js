@@ -238,6 +238,25 @@ function applyModProviderIcon() {
 }
 applyModProviderIcon();
 
+// In-page navigation: when a sidebar link points at the page we're ALREADY on,
+// don't do a full reload — let the page restructure to its list view in place
+// (pages opt in by defining window.showListView). This keeps e.g. clicking
+// "Instances" from an instance detail, or "Server Manager" from a server
+// detail, from flashing/reloading the whole page.
+(function setupSidebarInPageNav() {
+  const here = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
+  document.querySelectorAll('.sidebar a[href]').forEach(a => {
+    const target = (a.getAttribute('href') || '').split('/').pop().toLowerCase();
+    if (!target || target !== here) return;
+    a.addEventListener('click', (e) => {
+      if (typeof window.showListView === 'function') {
+        e.preventDefault();
+        window.showListView();
+      }
+    });
+  });
+})();
+
 // Global loading-screen handling. Any page that includes a
 // `#loading-overlay` element gets the same fade-out once the window finishes
 // loading, so every page shows the launcher splash without duplicating logic.

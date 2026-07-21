@@ -551,6 +551,18 @@
     // Keep the browser back/forward buttons working with the in-page switches.
     window.addEventListener('popstate', () => renderListOrDetail());
 
+    // The sidebar's "Instances" button calls this when we're already on this
+    // page: restructure to the instance LIST in place instead of reloading.
+    // Returns true if it did something (i.e. we were in a detail view).
+    window.showListView = function () {
+      const url = new URL(window.location);
+      if (!url.searchParams.has('i')) return false; // already showing the list
+      url.searchParams.delete('i');
+      history.pushState({}, '', url);
+      renderListOrDetail();
+      return true;
+    };
+
     // Proper display names for the loaders (used for auto-naming).
     const LOADER_DISPLAY = { vanilla: "Vanilla", fabric: "Fabric", quilt: "Quilt", forge: "Forge", neoforge: "NeoForge" };
 
@@ -1138,8 +1150,12 @@
         instanceDetail.appendChild(progressBox);
 
         let progressHideTimer = null;
-        ipcRenderer.removeAllListeners('launch-progress');
-        ipcRenderer.on('launch-progress', (e, data) => {
+        // Remove ONLY our previous in-page handler (re-rendering the detail view
+        // re-runs this). We must NOT use removeAllListeners('launch-progress')
+        // here — that also nuked the sidebar's global top-right toolbar progress
+        // bar, which is why it stopped appearing until a page reload.
+        if (window.__inPageLaunchProgress) ipcRenderer.removeListener('launch-progress', window.__inPageLaunchProgress);
+        window.__inPageLaunchProgress = (e, data) => {
           if (!data || data.profileId !== profile.id) return;
           if (data.done) {
             progressLabel.textContent = data.label || "Ready";
@@ -1156,7 +1172,8 @@
           if (pct !== null && !data.bytes) label += ` (${data.current}/${data.total})`;
           else if (pct !== null) label += ` ${pct}%`;
           progressLabel.textContent = label;
-        });
+        };
+        ipcRenderer.on('launch-progress', window.__inPageLaunchProgress);
 
         // CONTEXT MENU
         const menu = document.createElement("div");
@@ -1547,8 +1564,11 @@
         for (let tab of tabs) {
           const tName = tab.toLowerCase();
           // Logs, Worlds and Servers are always shown (Worlds/Servers have their
-          // own import/add actions). Content tabs only show when non-empty.
-          let alwaysVisible = ["logs", "servers", "worlds"].includes(tName);
+          // own import/add actions). Content tabs only show when non-empty —
+          // except Mods, which is always shown for modded instances so there's
+          // somewhere to install mods into even when empty.
+          const isModded = (profile.loader || "vanilla").toLowerCase() !== "vanilla";
+          let alwaysVisible = ["logs", "servers", "worlds"].includes(tName) || (tName === "mods" && isModded);
           let exists = alwaysVisible ? true
             : await ipcRenderer.invoke("check-instance-tab", { profileId: profile.id, tab: tName });
           if (!exists && !alwaysVisible) continue;
@@ -1664,17 +1684,23 @@
 
                 const bar = document.createElement("div");
                 bar.className = "tab-action-bar";
-                const importBtn = document.createElement("button");
-                importBtn.className = "tab-install-btn";
-                importBtn.textContent = "Import World";
-                importBtn.onclick = async () => {
-                  importBtn.disabled = true;
-                  const res = await ipcRenderer.invoke("import-world", { profileId: profile.id });
-                  importBtn.disabled = false;
-                  if (res && res.error) alert("Import failed: " + res.error);
-                  renderWorlds();
+                // Two explicit pickers: a single dialog can't accept both a
+                // .zip and a folder on Windows/Linux, so we offer each.
+                const mkImport = (label, mode) => {
+                  const btn = document.createElement("button");
+                  btn.className = "tab-install-btn" + (mode === "folder" ? " secondary" : "");
+                  btn.textContent = label;
+                  btn.onclick = async () => {
+                    btn.disabled = true;
+                    const res = await ipcRenderer.invoke("import-world", { profileId: profile.id, mode });
+                    btn.disabled = false;
+                    if (res && res.error) alert("Import failed: " + res.error);
+                    if (res && res.success) renderWorlds();
+                  };
+                  return btn;
                 };
-                bar.appendChild(importBtn);
+                bar.appendChild(mkImport("Import .zip", "zip"));
+                bar.appendChild(mkImport("Import folder", "folder"));
                 const openSaves = document.createElement("button");
                 openSaves.className = "tab-install-btn secondary";
                 openSaves.textContent = "Open Saves Folder";
