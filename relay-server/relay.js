@@ -31,8 +31,9 @@ const PORT_MAX = parseInt(process.env.RELAY_PORT_MAX || "60000", 10);
 // Comma-separated list of accepted tokens. If empty, the relay runs OPEN (any
 // launcher may connect) — fine for personal use, but set tokens to lock it down.
 const TOKENS = (process.env.RELAY_TOKENS || "").split(",").map(s => s.trim()).filter(Boolean);
-const TLS_KEY = process.env.RELAY_TLS_KEY || "/etc/redstone-relay/key.pem";
-const TLS_CERT = process.env.RELAY_TLS_CERT || "/etc/redstone-relay/cert.pem";
+// Default to the standard certbot / Let's Encrypt location for the domain.
+const TLS_KEY = process.env.RELAY_TLS_KEY || `/etc/letsencrypt/live/${DOMAIN}/privkey.pem`;
+const TLS_CERT = process.env.RELAY_TLS_CERT || `/etc/letsencrypt/live/${DOMAIN}/fullchain.pem`;
 const MAX_HOSTS = parseInt(process.env.RELAY_MAX_HOSTS || "200", 10);
 
 // Frame types (control-connection multiplexing protocol).
@@ -83,7 +84,15 @@ function pickPort() {
   });
 }
 
-const tlsOptions = { key: fs.readFileSync(TLS_KEY), cert: fs.readFileSync(TLS_CERT) };
+let tlsOptions;
+try {
+  tlsOptions = { key: fs.readFileSync(TLS_KEY), cert: fs.readFileSync(TLS_CERT) };
+} catch (e) {
+  console.error(`\n[Redstone Relay] Could not read TLS certificate.\n  key : ${TLS_KEY}\n  cert: ${TLS_CERT}\n  (${e.code || e.message})\n\n` +
+    `Get a free cert with certbot, e.g.:\n  sudo certbot certonly --standalone -d ${DOMAIN}\n` +
+    `then it will live at /etc/letsencrypt/live/${DOMAIN}/ . Or point RELAY_TLS_KEY / RELAY_TLS_CERT at your own files.\n`);
+  process.exit(1);
+}
 let hostCount = 0;
 
 const server = tls.createServer(tlsOptions, (sock) => {

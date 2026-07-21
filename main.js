@@ -17,6 +17,7 @@ import { Auth } from 'msmc';
 import serverManager from './serverManager.js';
 import upnp from './upnp.js';
 import relayClient from './relayClient.js';
+import fileManager from './fileManager.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
 import { exec, execSync, spawn } from "child_process";
@@ -2273,15 +2274,26 @@ ipcMain.handle("save-server-properties", (event, id, text) => {
   return serverManager.saveServerProperties(id, text);
 });
 
-ipcMain.handle("server-fs:list", (event, { name, path: rel }) => serverManager.listFiles(name, rel));
-ipcMain.handle("server-fs:read", (event, { name, path: rel }) => serverManager.readFile(name, rel));
-ipcMain.handle("server-fs:write", (event, { name, path: rel, text }) => serverManager.writeFile(name, rel, text));
-ipcMain.handle("server-fs:delete", (event, { name, path: rel }) => serverManager.deleteFile(name, rel));
+// File-manager roots. Servers live under servers/<name>, instances under
+// client/<id>. Both browsers share fileManager (zip/gz aware).
+const serverRoot = (name) => path.join(dataDir, "servers", String(name));
+const clientRoot = (id) => path.join(dataDir, "client", String(id));
 
-// NBT (.dat) editing for the server file manager — parse to editable JSON and
-// write it back as proper NBT (handles gzip'd files like level.dat too).
-ipcMain.handle("server-fs:read-nbt", async (event, { name, path: rel }) => {
-  const p = serverManager.safeServerPath(name, rel);
+ipcMain.handle("server-fs:list", (event, { name, path: rel }) => fileManager.listFiles(serverRoot(name), rel));
+ipcMain.handle("server-fs:read", (event, { name, path: rel }) => fileManager.readFile(serverRoot(name), rel));
+ipcMain.handle("server-fs:write", (event, { name, path: rel, text }) => fileManager.writeFile(serverRoot(name), rel, text));
+ipcMain.handle("server-fs:delete", (event, { name, path: rel }) => fileManager.deleteFile(serverRoot(name), rel));
+
+// Instance (client) file manager — same backend, rooted at the instance folder.
+ipcMain.handle("client-fs:list", (event, { id, path: rel }) => fileManager.listFiles(clientRoot(id), rel));
+ipcMain.handle("client-fs:read", (event, { id, path: rel }) => fileManager.readFile(clientRoot(id), rel));
+ipcMain.handle("client-fs:write", (event, { id, path: rel, text }) => fileManager.writeFile(clientRoot(id), rel, text));
+ipcMain.handle("client-fs:delete", (event, { id, path: rel }) => fileManager.deleteFile(clientRoot(id), rel));
+
+// NBT (.dat) editing, shared by both browsers. Parse to editable JSON and write
+// it back as proper NBT (handles gzip'd files like level.dat too).
+async function readNbtAt(root, rel) {
+  const p = fileManager.safePath(root, rel);
   if (!p || !fs.existsSync(p)) return { error: "Not found" };
   try {
     const buf = fs.readFileSync(p);
@@ -2289,9 +2301,9 @@ ipcMain.handle("server-fs:read-nbt", async (event, { name, path: rel }) => {
     const parsed = await nbt.parse(buf); // auto-detects compression + endianness
     return { json: JSON.stringify(parsed.parsed, null, 2), gzip, type: parsed.type };
   } catch (e) { return { error: e.message }; }
-});
-ipcMain.handle("server-fs:write-nbt", async (event, { name, path: rel, json, gzip, type }) => {
-  const p = serverManager.safeServerPath(name, rel);
+}
+function writeNbtAt(root, rel, json, gzip, type) {
+  const p = fileManager.safePath(root, rel);
   if (!p) return { error: "Invalid path" };
   try {
     const value = JSON.parse(json);
@@ -2300,7 +2312,11 @@ ipcMain.handle("server-fs:write-nbt", async (event, { name, path: rel, json, gzi
     fs.writeFileSync(p, out);
     return { success: true };
   } catch (e) { return { error: e.message }; }
-});
+}
+ipcMain.handle("server-fs:read-nbt", (event, { name, path: rel }) => readNbtAt(serverRoot(name), rel));
+ipcMain.handle("server-fs:write-nbt", (event, { name, path: rel, json, gzip, type }) => writeNbtAt(serverRoot(name), rel, json, gzip, type));
+ipcMain.handle("client-fs:read-nbt", (event, { id, path: rel }) => readNbtAt(clientRoot(id), rel));
+ipcMain.handle("client-fs:write-nbt", (event, { id, path: rel, json, gzip, type }) => writeNbtAt(clientRoot(id), rel, json, gzip, type));
 
 // ── Redstone Relay (NAT traversal without port-forwarding) ──
 // The launcher opens a TLS tunnel to the relay on the VPS; the relay assigns a

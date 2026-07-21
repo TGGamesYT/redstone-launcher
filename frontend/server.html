@@ -24,22 +24,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
     .promain { display: flex; gap: 16px; padding: 0 20px 0 0; }
-    #serverListView { flex: 2; min-width: 0; }
-    #upnpPanel {
-      flex: 0 0 280px;
-      background: var(--menu-bg);
-      border: 1px solid var(--border-dark);
-      border-radius: var(--border-radius);
-      padding: 16px;
-      height: fit-content;
-      margin-top: 8px;
-    }
-    #upnpPanel h3 { margin: 0 0 10px 0; display: flex; align-items: center; gap: 6px; }
-    #upnpPanel .hint { opacity: 0.75; font-size: 12px; margin-bottom: 12px; }
-    #upnpPanel input { width: 100%; margin-bottom: 8px; }
-    #upnpPanel .upnp-actions { display: flex; gap: 8px; }
-    #upnpPanel .upnp-actions button { flex: 1; }
-    #upnpStatus { font-size: 12px; margin-top: 10px; white-space: pre-wrap; word-break: break-word; }
+    #serverListView { flex: 1; min-width: 0; }
 
     /* Search / filter / sort toolbar (mirrors the instances page). */
     #server-search-sort { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
@@ -200,15 +185,6 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <ul id="serversList"></ul>
     </div>
 
-    <!-- RELAY INFO PANEL -->
-    <div id="upnpPanel">
-      <h3><i class="material-icons">public</i> Play with friends</h3>
-      <div class="hint">Open a server and use its <b>⋮ → Share over internet</b> to get a
-        <code>redstonemc.net</code> address friends can join — no port‑forwarding or
-        UPnP needed. Traffic is tunnelled through the Redstone Relay (encrypted).</div>
-      <button id="upnpIp" style="width:100%; margin-top:8px;">Show my public IP</button>
-      <div id="upnpStatus"></div>
-    </div>
 
     <!-- DETAIL VIEW -->
     <div id="serverDetail">
@@ -263,7 +239,12 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <div id="fileBody" style="flex:1; min-height:0; display:flex; flex-direction:column;">
           <ul id="fileList" style="list-style:none; margin:0; padding:6px; flex:1; min-height:0; overflow-y:auto; border:1px solid var(--secondary-color); border-radius:var(--border-radius);"></ul>
           <div id="fileEditorInner" style="display:none; flex-direction:column; flex:1; min-height:0;">
-            <textarea id="fileEditorArea" spellcheck="false" style="flex:1; width:100%; font-family:var(--text-font); resize:none; margin:0; border:1px solid var(--secondary-color); border-radius:var(--border-radius);"></textarea>
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+              <span id="fileEditorName" style="font-weight:bold; word-break:break-all; flex:1;"></span>
+              <button id="fileViewToggle" style="padding:4px 10px; display:none;">Raw JSON</button>
+            </div>
+            <div id="fileTree" style="flex:1; min-height:0; display:none;"></div>
+            <textarea id="fileEditorArea" spellcheck="false" style="flex:1; width:100%; font-family:monospace; resize:none; margin:0; border:1px solid var(--secondary-color); border-radius:var(--border-radius);"></textarea>
             <div id="fileSaveState" style="font-size:12px; opacity:0.7; margin-top:6px; height:16px;"></div>
           </div>
         </div>
@@ -403,7 +384,6 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     async function openDetail(server) {
       selectedServer = server;
       $('serverListView').style.display = 'none';
-      $('upnpPanel').style.display = 'none';
       $('serverDetail').style.display = 'flex';
       $('srvDetailIcon').src = server.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
       $('srvDetailName').textContent = server.name;
@@ -444,7 +424,6 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       $('dMenu').classList.remove('open');
       $('serverDetail').style.display = 'none';
       $('serverListView').style.display = '';
-      $('upnpPanel').style.display = '';
       loadServers();
     }
 
@@ -509,7 +488,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       $('dShare').textContent = 'Connecting…';
       const res = await ipcRenderer.invoke('relay:open', { name: selectedServer.name });
       if (res && res.success) showRelayBanner(res.address);
-      else { $('dShare').textContent = 'Share over internet'; alert('Could not share over the internet:\n' + (res?.error || 'unknown error') + '\n\nMake sure the relay is running on your VPS (see relay-server/README.md).'); }
+      else { $('dShare').textContent = 'Share over internet'; alert("Couldn't share over the internet right now. Please try again in a little while."); }
     };
     $('relayStop').onclick = async () => { await ipcRenderer.invoke('relay:close', { name: selectedServer.name }); hideRelayBanner(); };
     $('relayCopy').onclick = () => { try { navigator.clipboard.writeText($('relayAddr').textContent); $('relayCopy').textContent = 'Copied'; setTimeout(() => ($('relayCopy').textContent = 'Copy'), 1200); } catch { /* ignore */ } };
@@ -579,63 +558,107 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       (res.entries || []).forEach(e => {
         const li = document.createElement('li');
         li.className = 'file-entry';
-        li.innerHTML = `<i class="material-icons">${e.isDir ? 'folder' : 'description'}</i> <span style="flex:1;word-break:break-all;">${e.name}</span>`;
+        const icon = e.isDir ? 'folder' : e.isArchive ? 'folder_zip' : 'description';
+        li.innerHTML = `<i class="material-icons">${icon}</i> <span style="flex:1;word-break:break-all;">${e.name}</span>`;
         const rowPath = sfCurrentDir ? sfCurrentDir + '/' + e.name : e.name;
-        li.onclick = () => e.isDir ? loadFiles(rowPath) : openFile(rowPath, e.name);
+        li.onclick = () => (e.isDir || e.isArchive) ? loadFiles(rowPath) : openFile(rowPath, e.name);
         ul.appendChild(li);
       });
     }
 
-    let sfNbtMode = false;   // editing a .dat as NBT-JSON
-    let sfNbtMeta = null;    // { gzip, type }
-    async function openFile(rel, name) {
-      renderBreadcrumb(sfCurrentDir, name);
-      $('fileList').style.display = 'none';
-      $('fileEditorInner').style.display = 'flex';
-      const area = $('fileEditorArea');
-      const state = $('fileSaveState');
-      state.textContent = '';
-      sfNbtMode = false; sfNbtMeta = null;
+    // File-editor state. sfKind: 'nbt' | 'json' | 'text'. sfView: 'tree' | 'raw'.
+    let sfKind = 'text', sfView = 'tree', sfData = null, sfNbtMeta = null, sfReadOnly = false;
 
-      // .dat / level.dat etc. are NBT — open a friendly JSON editor that saves
-      // back as proper NBT instead of showing "binary, not editable".
-      const isDat = /\.(dat|dat_old)$/i.test(name);
-      if (isDat) {
-        const n = await ipcRenderer.invoke('server-fs:read-nbt', { name: selectedServer.name, path: rel });
-        if (n && !n.error) {
-          area.disabled = false; area.value = n.json; sfCurrentFile = rel;
-          sfNbtMode = true; sfNbtMeta = { gzip: n.gzip, type: n.type };
-          state.textContent = 'NBT (.dat) — edited as JSON, saved back as NBT';
-          return;
-        }
-        // fall through to the raw read if NBT parse failed
-      }
-
-      const res = await ipcRenderer.invoke('server-fs:read', { name: selectedServer.name, path: rel });
-      if (res.binary) { area.value = '(binary file — not editable)'; area.disabled = true; sfCurrentFile = null; return; }
-      if (res.error) { area.value = '(' + res.error + ')'; area.disabled = true; sfCurrentFile = null; return; }
-      area.disabled = false;
-      area.value = res.text || '';
-      sfCurrentFile = rel;
-    }
-
-    // Auto-save (debounced) whenever the editor content changes.
-    $('fileEditorArea').addEventListener('input', () => {
-      if (!sfCurrentFile) return;
+    function scheduleSave() {
+      if (!sfCurrentFile || sfReadOnly) return;
       const state = $('fileSaveState');
       state.textContent = 'Saving…';
       clearTimeout(sfSaveTimer);
       const target = sfCurrentFile;
       sfSaveTimer = setTimeout(async () => {
         let res;
-        if (sfNbtMode) {
-          res = await ipcRenderer.invoke('server-fs:write-nbt', { name: selectedServer.name, path: target, json: $('fileEditorArea').value, gzip: sfNbtMeta.gzip, type: sfNbtMeta.type });
+        if (sfKind === 'nbt') {
+          const json = sfView === 'raw' ? $('fileEditorArea').value : JSON.stringify(sfData);
+          res = await ipcRenderer.invoke('server-fs:write-nbt', { name: selectedServer.name, path: target, json, gzip: sfNbtMeta.gzip, type: sfNbtMeta.type });
+        } else if (sfKind === 'json') {
+          const text = sfView === 'raw' ? $('fileEditorArea').value : JSON.stringify(sfData, null, 2);
+          res = await ipcRenderer.invoke('server-fs:write', { name: selectedServer.name, path: target, text });
         } else {
           res = await ipcRenderer.invoke('server-fs:write', { name: selectedServer.name, path: target, text: $('fileEditorArea').value });
         }
         state.textContent = (res && res.error) ? ('Save failed: ' + res.error) : 'Saved ✓';
       }, 500);
-    });
+    }
+
+    function renderTreeView() {
+      const mode = sfKind === 'nbt' ? 'nbt' : 'json';
+      window.FileTree.render($('fileTree'), sfData, { mode, onChange: scheduleSave });
+    }
+    function showTree() { sfView = 'tree'; $('fileTree').style.display = ''; $('fileEditorArea').style.display = 'none'; $('fileViewToggle').textContent = 'Raw JSON'; renderTreeView(); }
+    function showRaw() {
+      sfView = 'raw';
+      $('fileEditorArea').value = sfKind === 'nbt' ? JSON.stringify(sfData, null, 2) : JSON.stringify(sfData, null, 2);
+      $('fileEditorArea').style.display = ''; $('fileTree').style.display = 'none'; $('fileViewToggle').textContent = 'Tree';
+    }
+    $('fileViewToggle').onclick = () => {
+      if (sfView === 'tree') { showRaw(); }
+      else {
+        try { sfData = JSON.parse($('fileEditorArea').value); showTree(); scheduleSave(); }
+        catch (e) { alert('Invalid JSON: ' + e.message); }
+      }
+    };
+
+    async function openFile(rel, name) {
+      renderBreadcrumb(sfCurrentDir, name);
+      $('fileList').style.display = 'none';
+      $('fileEditorInner').style.display = 'flex';
+      $('fileEditorName').textContent = name;
+      const area = $('fileEditorArea');
+      const state = $('fileSaveState');
+      state.textContent = '';
+      sfCurrentFile = rel; sfData = null; sfNbtMeta = null; sfReadOnly = false;
+      sfKind = 'text'; sfView = 'tree';
+      $('fileViewToggle').style.display = 'none';
+      $('fileTree').style.display = 'none'; area.style.display = ''; area.disabled = false;
+
+      // .dat / level.dat → NBT tree editor (saved back as real NBT).
+      if (/\.(dat|dat_old)$/i.test(name)) {
+        const n = await ipcRenderer.invoke('server-fs:read-nbt', { name: selectedServer.name, path: rel });
+        if (n && !n.error) {
+          sfKind = 'nbt'; sfNbtMeta = { gzip: n.gzip, type: n.type };
+          try { sfData = JSON.parse(n.json); } catch { sfData = {}; }
+          $('fileViewToggle').style.display = '';
+          state.textContent = 'NBT (.dat) — tree edits saved back as NBT';
+          showTree();
+          return;
+        }
+      }
+
+      const res = await ipcRenderer.invoke('server-fs:read', { name: selectedServer.name, path: rel });
+      sfReadOnly = !!res.readOnly;
+      if (res.binary) { area.value = '(binary file — not editable)'; area.disabled = true; sfCurrentFile = null; return; }
+      if (res.error) { area.value = '(' + res.error + ')'; area.disabled = true; sfCurrentFile = null; return; }
+
+      // .json → tree editor by default (toggle to raw). Fall back to text if it
+      // doesn't parse.
+      if (/\.json$/i.test(name) && !sfReadOnly) {
+        try {
+          sfData = JSON.parse(res.text || 'null');
+          sfKind = 'json';
+          $('fileViewToggle').style.display = '';
+          showTree();
+          return;
+        } catch { /* not valid JSON — plain text */ }
+      }
+
+      sfKind = 'text';
+      area.disabled = sfReadOnly;
+      area.value = res.text || '';
+      state.textContent = sfReadOnly ? '(read-only — inside archive / compressed)' : '';
+    }
+
+    // Plain-text + raw-view auto-save.
+    $('fileEditorArea').addEventListener('input', scheduleSave);
 
     // ---------- Server mods (shown for modded server types) ----------
     async function loadServerMods() {
@@ -709,13 +732,6 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     }
     initVersionSelect();
 
-    // ---------- Public IP helper ----------
-    $('upnpIp').onclick = async () => {
-      $('upnpStatus').textContent = 'Looking up…';
-      const res = await ipcRenderer.invoke('upnp:externalIp');
-      $('upnpStatus').textContent = res.success ? `Your public IP: ${res.ip}` : `❌ ${res.error}`;
-    };
-
     // ---------- Init + periodic status refresh ----------
     loadServers();
     setInterval(() => { if (!selectedServer) loadServers(); }, 4000);
@@ -723,6 +739,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     function updatePresence(details, state = 'Idle') { ipcRenderer.send('update-discord-presence', { details, state }); }
     updatePresence('Managing servers');
   </script>
+  <script src="filetree.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
 </body>
