@@ -16,6 +16,7 @@ import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
 import serverManager from './serverManager.js';
 import upnp from './upnp.js';
+import relayClient from './relayClient.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
 import { exec, execSync, spawn } from "child_process";
@@ -2276,6 +2277,72 @@ ipcMain.handle("server-fs:list", (event, { name, path: rel }) => serverManager.l
 ipcMain.handle("server-fs:read", (event, { name, path: rel }) => serverManager.readFile(name, rel));
 ipcMain.handle("server-fs:write", (event, { name, path: rel, text }) => serverManager.writeFile(name, rel, text));
 ipcMain.handle("server-fs:delete", (event, { name, path: rel }) => serverManager.deleteFile(name, rel));
+
+// NBT (.dat) editing for the server file manager — parse to editable JSON and
+// write it back as proper NBT (handles gzip'd files like level.dat too).
+ipcMain.handle("server-fs:read-nbt", async (event, { name, path: rel }) => {
+  const p = serverManager.safeServerPath(name, rel);
+  if (!p || !fs.existsSync(p)) return { error: "Not found" };
+  try {
+    const buf = fs.readFileSync(p);
+    const gzip = buf.length > 1 && buf[0] === 0x1f && buf[1] === 0x8b;
+    const parsed = await nbt.parse(buf); // auto-detects compression + endianness
+    return { json: JSON.stringify(parsed.parsed, null, 2), gzip, type: parsed.type };
+  } catch (e) { return { error: e.message }; }
+});
+ipcMain.handle("server-fs:write-nbt", async (event, { name, path: rel, json, gzip, type }) => {
+  const p = serverManager.safeServerPath(name, rel);
+  if (!p) return { error: "Invalid path" };
+  try {
+    const value = JSON.parse(json);
+    let out = nbt.writeUncompressed(value, type || "big");
+    if (gzip) out = zlib.gzipSync(out);
+    fs.writeFileSync(p, out);
+    return { success: true };
+  } catch (e) { return { error: e.message }; }
+});
+
+// ── Redstone Relay (NAT traversal without port-forwarding) ──
+// The launcher opens a TLS tunnel to the relay on the VPS; the relay assigns a
+// unique public port and players join at redstonemc.net:<port>.
+const RELAY_DEFAULTS = {
+  host: process.env.REDSTONE_RELAY_HOST || "redstonemc.net",
+  controlPort: parseInt(process.env.REDSTONE_RELAY_PORT || "47238", 10),
+};
+const activeRelays = new Map(); // serverName -> { host, port, close }
+
+ipcMain.handle("relay:open", async (event, { name }) => {
+  try {
+    if (activeRelays.has(name)) {
+      const s = activeRelays.get(name);
+      return { success: true, host: s.host, port: s.port, address: `${s.host}:${s.port}`, already: true };
+    }
+    const localPort = serverManager.getServerPort(name);
+    const token = settings.get("relayToken", "") || process.env.REDSTONE_RELAY_TOKEN || "";
+    // Allow self-signed certs only if the user explicitly opts in (dev/testing).
+    const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
+    const session = await relayClient.openRelay({
+      host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+      token, localPort, rejectUnauthorized,
+    });
+    activeRelays.set(name, session);
+    return { success: true, host: session.host, port: session.port, address: `${session.host}:${session.port}` };
+  } catch (err) {
+    console.error("[Relay] open failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("relay:close", async (event, { name }) => {
+  const s = activeRelays.get(name);
+  if (s) { try { s.close(); } catch { /* ignore */ } activeRelays.delete(name); }
+  return { success: true };
+});
+
+ipcMain.handle("relay:status", async (event, { name }) => {
+  const s = activeRelays.get(name);
+  return s ? { active: true, host: s.host, port: s.port, address: `${s.host}:${s.port}` } : { active: false };
+});
 
 // ── UPnP auto port-forward (self-hosting) ──
 ipcMain.handle("upnp:open", async (event, { port, description }) => {

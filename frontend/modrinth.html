@@ -201,8 +201,10 @@
     const mrParams = new URLSearchParams(window.location.search);
     const installMode = mrParams.get('install') === '1';
     const installType = mrParams.get('type');          // mod | resourcepack | shader
+    const _installServerId = mrParams.get('serverId'); // present when installing into a server
     const installInstance = installMode ? {
-      id: mrParams.get('instanceId'),
+      id: _installServerId || mrParams.get('instanceId'),
+      isServer: !!_installServerId,
       loader: mrParams.get('loader') || 'vanilla',
       version: mrParams.get('version') || '',
       name: mrParams.get('name') || ''
@@ -234,7 +236,7 @@
         const file = v && ((v.files || []).find(f => f.primary) || (v.files || [])[0]);
         if (!file) { btn.textContent = "Unavailable"; return; }
         const result = await ipcRenderer.invoke("mod-download", {
-          server: false,
+          server: !!installInstance.isServer,
           id: installInstance.id,
           fileUrl: file.url,
           projectType: installType

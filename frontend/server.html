@@ -200,16 +200,12 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <ul id="serversList"></ul>
     </div>
 
-    <!-- UPnP PANEL -->
+    <!-- RELAY INFO PANEL -->
     <div id="upnpPanel">
-      <h3><i class="material-icons">router</i> UPnP Port Forward</h3>
-      <div class="hint">Auto-open a port on your router so friends can join over the internet. Requires UPnP enabled on your router.</div>
-      <label style="font-size:13px;">Port</label>
-      <input id="upnpPort" type="number" value="25565" min="1" max="65535" />
-      <div class="upnp-actions">
-        <button id="upnpOpen">Open</button>
-        <button id="upnpClose">Close</button>
-      </div>
+      <h3><i class="material-icons">public</i> Play with friends</h3>
+      <div class="hint">Open a server and use its <b>⋮ → Share over internet</b> to get a
+        <code>redstonemc.net</code> address friends can join — no port‑forwarding or
+        UPnP needed. Traffic is tunnelled through the Redstone Relay (encrypted).</div>
       <button id="upnpIp" style="width:100%; margin-top:8px;">Show my public IP</button>
       <div id="upnpStatus"></div>
     </div>
@@ -232,12 +228,20 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           <div class="srv-menu-wrap">
             <button id="dMenuBtn" title="More"><i class="material-icons">more_vert</i></button>
             <div id="dMenu" class="srv-menu">
+              <div class="menu-item" id="dShare">Share over internet</div>
               <div class="menu-item" id="dRestart">Restart</div>
               <div class="menu-item" id="dFolder">Open folder</div>
               <div class="menu-item" id="dDelete">Delete server</div>
             </div>
           </div>
         </div>
+      </div>
+      <!-- Relay sharing banner (shown while the server is shared over the internet). -->
+      <div id="relayBanner" style="display:none; align-items:center; gap:10px; margin:0 0 10px 0; padding:8px 12px; border-radius:var(--border-radius); background:color-mix(in srgb, var(--base-color) 45%, black); border:1px solid var(--secondary-color);">
+        <i class="material-icons" style="font-size:18px;">public</i>
+        <span style="flex:1;">Friends can join at <b><span id="relayAddr"></span></b></span>
+        <button id="relayCopy" style="padding:4px 10px;">Copy</button>
+        <button id="relayStop" style="padding:4px 10px;">Stop</button>
       </div>
       <div class="srv-tabs">
         <button class="srv-tab active" data-tab="console">Console</button>
@@ -267,6 +271,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
       <div class="srv-panel" data-panel="mods">
         <div class="tab-action-bar" style="display:flex; gap:8px; margin-bottom:10px;">
+          <button id="srvInstallMods"><i class="material-icons" style="font-size:16px;vertical-align:middle;">add</i> Install Mods</button>
           <button id="srvOpenModsFolder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder</i> Open mods folder</button>
         </div>
         <ul id="srvModsList" style="list-style:none; margin:0; padding:0; flex:1; min-height:0; overflow-y:auto;"></ul>
@@ -412,6 +417,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       startConsolePolling();
       // Files tab starts at the server root.
       loadFiles('');
+      // Reflect any existing relay-sharing session for this server.
+      refreshRelayStatus();
       // Keep the toggle button + dot in sync while in detail.
       clearInterval(detailStatusTimer);
       detailStatusTimer = setInterval(refreshDetailStatus, 2500);
@@ -477,8 +484,35 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       await ipcRenderer.invoke(running ? 'stop-server' : 'start-server', selectedServer.name);
       setTimeout(refreshDetailStatus, 600);
     };
-    $('dRestart').onclick = async () => { await ipcRenderer.invoke('restart-server', selectedServer.name); setTimeout(refreshDetailStatus, 600); };
+    $('dRestart').onclick = async () => { $('dMenu').classList.remove('open'); await ipcRenderer.invoke('restart-server', selectedServer.name); setTimeout(refreshDetailStatus, 600); };
     $('dMenuBtn').onclick = (e) => { e.stopPropagation(); $('dMenu').classList.toggle('open'); };
+
+    // ---------- Relay sharing (join over the internet, no port-forwarding) ----------
+    function showRelayBanner(address) {
+      $('relayAddr').textContent = address;
+      $('relayBanner').style.display = 'flex';
+      $('dShare').textContent = 'Stop sharing';
+    }
+    function hideRelayBanner() {
+      $('relayBanner').style.display = 'none';
+      $('dShare').textContent = 'Share over internet';
+    }
+    async function refreshRelayStatus() {
+      if (!selectedServer) return;
+      const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
+      if (st && st.active) showRelayBanner(st.address); else hideRelayBanner();
+    }
+    $('dShare').onclick = async () => {
+      $('dMenu').classList.remove('open');
+      const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
+      if (st && st.active) { await ipcRenderer.invoke('relay:close', { name: selectedServer.name }); hideRelayBanner(); return; }
+      $('dShare').textContent = 'Connecting…';
+      const res = await ipcRenderer.invoke('relay:open', { name: selectedServer.name });
+      if (res && res.success) showRelayBanner(res.address);
+      else { $('dShare').textContent = 'Share over internet'; alert('Could not share over the internet:\n' + (res?.error || 'unknown error') + '\n\nMake sure the relay is running on your VPS (see relay-server/README.md).'); }
+    };
+    $('relayStop').onclick = async () => { await ipcRenderer.invoke('relay:close', { name: selectedServer.name }); hideRelayBanner(); };
+    $('relayCopy').onclick = () => { try { navigator.clipboard.writeText($('relayAddr').textContent); $('relayCopy').textContent = 'Copied'; setTimeout(() => ($('relayCopy').textContent = 'Copy'), 1200); } catch { /* ignore */ } };
     document.addEventListener('click', () => $('dMenu').classList.remove('open'));
     $('dFolder').onclick = () => { $('dMenu').classList.remove('open'); ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false }); };
     $('dDelete').onclick = async () => {
@@ -552,14 +586,32 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       });
     }
 
+    let sfNbtMode = false;   // editing a .dat as NBT-JSON
+    let sfNbtMeta = null;    // { gzip, type }
     async function openFile(rel, name) {
-      const res = await ipcRenderer.invoke('server-fs:read', { name: selectedServer.name, path: rel });
       renderBreadcrumb(sfCurrentDir, name);
       $('fileList').style.display = 'none';
       $('fileEditorInner').style.display = 'flex';
       const area = $('fileEditorArea');
       const state = $('fileSaveState');
       state.textContent = '';
+      sfNbtMode = false; sfNbtMeta = null;
+
+      // .dat / level.dat etc. are NBT — open a friendly JSON editor that saves
+      // back as proper NBT instead of showing "binary, not editable".
+      const isDat = /\.(dat|dat_old)$/i.test(name);
+      if (isDat) {
+        const n = await ipcRenderer.invoke('server-fs:read-nbt', { name: selectedServer.name, path: rel });
+        if (n && !n.error) {
+          area.disabled = false; area.value = n.json; sfCurrentFile = rel;
+          sfNbtMode = true; sfNbtMeta = { gzip: n.gzip, type: n.type };
+          state.textContent = 'NBT (.dat) — edited as JSON, saved back as NBT';
+          return;
+        }
+        // fall through to the raw read if NBT parse failed
+      }
+
+      const res = await ipcRenderer.invoke('server-fs:read', { name: selectedServer.name, path: rel });
       if (res.binary) { area.value = '(binary file — not editable)'; area.disabled = true; sfCurrentFile = null; return; }
       if (res.error) { area.value = '(' + res.error + ')'; area.disabled = true; sfCurrentFile = null; return; }
       area.disabled = false;
@@ -575,7 +627,12 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       clearTimeout(sfSaveTimer);
       const target = sfCurrentFile;
       sfSaveTimer = setTimeout(async () => {
-        const res = await ipcRenderer.invoke('server-fs:write', { name: selectedServer.name, path: target, text: $('fileEditorArea').value });
+        let res;
+        if (sfNbtMode) {
+          res = await ipcRenderer.invoke('server-fs:write-nbt', { name: selectedServer.name, path: target, json: $('fileEditorArea').value, gzip: sfNbtMeta.gzip, type: sfNbtMeta.type });
+        } else {
+          res = await ipcRenderer.invoke('server-fs:write', { name: selectedServer.name, path: target, text: $('fileEditorArea').value });
+        }
         state.textContent = (res && res.error) ? ('Save failed: ' + res.error) : 'Saved ✓';
       }, 500);
     });
@@ -614,6 +671,13 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       });
     }
     $('srvOpenModsFolder').onclick = () => ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false, sub: 'mods' });
+    $('srvInstallMods').onclick = () => {
+      const params = new URLSearchParams({
+        install: '1', type: 'mod', serverId: selectedServer.name,
+        loader: (selectedServer.type || 'fabric'), version: selectedServer.version || '', name: selectedServer.name || ''
+      });
+      window.location.href = `modrinth.html?${params.toString()}`;
+    };
 
     // ---------- Create ----------
     $('addServerBtn').onclick = () => $('createServerModal').classList.add('active');
@@ -645,21 +709,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     }
     initVersionSelect();
 
-    // ---------- UPnP ----------
-    $('upnpOpen').onclick = async () => {
-      const port = $('upnpPort').value;
-      $('upnpStatus').textContent = 'Opening port…';
-      const res = await ipcRenderer.invoke('upnp:open', { port });
-      $('upnpStatus').textContent = res.success
-        ? `✅ Port ${res.port} forwarded to ${res.internal}` + (res.externalIP ? `\nJoin at: ${res.externalIP}:${res.port}` : '')
-        : `❌ ${res.error}`;
-    };
-    $('upnpClose').onclick = async () => {
-      const port = $('upnpPort').value;
-      $('upnpStatus').textContent = 'Closing port…';
-      const res = await ipcRenderer.invoke('upnp:close', { port });
-      $('upnpStatus').textContent = res.success ? `✅ Port ${res.port} closed` : `❌ ${res.error}`;
-    };
+    // ---------- Public IP helper ----------
     $('upnpIp').onclick = async () => {
       $('upnpStatus').textContent = 'Looking up…';
       const res = await ipcRenderer.invoke('upnp:externalIp');

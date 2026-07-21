@@ -311,4 +311,5 @@ export default {
   readFile,
   writeFile,
   deleteFile,
+  safeServerPath,
 };
