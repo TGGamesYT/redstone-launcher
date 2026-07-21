@@ -79,24 +79,21 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       width: 36px; height: 36px; padding: 0; border-radius: var(--border-radius);
     }
 
-    /* 3-dot dropdown menu — matches the instances page context menu. */
+    /* 3-dot dropdown menu — identical to the instances page context menu
+       (flat, no icons, no bright hover highlight). */
     .srv-menu-wrap { position: relative; }
     .srv-menu {
       display: none; position: absolute; right: 0; top: 42px; z-index: 50;
       background: var(--base-color); border: 1px solid var(--secondary-color);
-      border-radius: var(--border-radius); padding: 4px 0; min-width: 160px; overflow: hidden;
+      border-radius: var(--border-radius); padding: 4px 0; min-width: 150px;
     }
     .srv-menu.open { display: block; }
-    .srv-menu button {
-      display: flex; align-items: center; gap: 8px; width: 100%; height: auto;
-      justify-content: flex-start; padding: 6px 12px; border-radius: 0; background: none;
-      border: none; box-shadow: none; text-transform: none; font-weight: 400;
+    .srv-menu .menu-item {
+      padding: 6px 12px; cursor: pointer; color: var(--text-color); font-family: var(--text-font); font-size: 13px;
     }
-    .srv-menu button:hover { background: var(--third-color); }
-    .srv-menu .material-icons { font-size: 18px; }
 
-    /* Detail view — bounded so the console + command row always fit. */
-    #serverDetail { display: none; flex-direction: column; padding: 8px 20px 0 0; height: calc(100vh - 110px); }
+    /* Detail view — fills the content area (was collapsing to ~1/3 width). */
+    #serverDetail { display: none; flex: 1; min-width: 0; flex-direction: column; padding: 8px 20px 0 0; height: calc(100vh - 110px); }
     .srv-top-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
     .srv-top-row img { width: 64px; height: 64px; border-radius: 8px; }
     .srv-identity { display: flex; align-items: center; gap: 12px; }
@@ -232,12 +229,12 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         </div>
         <div class="server-actions">
           <button id="dToggle" class="play-button" title="Start"><i class="material-icons">play_arrow</i></button>
-          <button id="dRestart" title="Restart"><i class="material-icons">restart_alt</i></button>
           <div class="srv-menu-wrap">
             <button id="dMenuBtn" title="More"><i class="material-icons">more_vert</i></button>
             <div id="dMenu" class="srv-menu">
-              <button id="dFolder"><i class="material-icons">folder</i> Open folder</button>
-              <button id="dDelete"><i class="material-icons">delete</i> Delete server</button>
+              <div class="menu-item" id="dRestart">Restart</div>
+              <div class="menu-item" id="dFolder">Open folder</div>
+              <div class="menu-item" id="dDelete">Delete server</div>
             </div>
           </div>
         </div>
@@ -502,9 +499,9 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     // The folder listing and the file editor occupy the SAME area: browsing a
     // folder shows the list; opening a file swaps the same area to a textarea
     // that auto-saves. The breadcrumb is the way back out of a file.
-    let currentDir = '';
-    let currentFile = null;
-    let saveTimer = null;
+    let sfCurrentDir = '';
+    let sfCurrentFile = null;
+    let sfSaveTimer = null;
 
     function renderBreadcrumb(dir, fileName) {
       const bc = $('fileBreadcrumb');
@@ -527,18 +524,18 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
     async function loadFiles(rel) {
       if (!selectedServer) return;
-      currentDir = rel || '';
-      currentFile = null;
-      clearTimeout(saveTimer);
+      sfCurrentDir = rel || '';
+      sfCurrentFile = null;
+      clearTimeout(sfSaveTimer);
       // Back to folder view.
       $('fileList').style.display = '';
       $('fileEditorInner').style.display = 'none';
-      renderBreadcrumb(currentDir, null);
-      const res = await ipcRenderer.invoke('server-fs:list', { name: selectedServer.name, path: currentDir });
-      const parts = currentDir.split('/').filter(Boolean);
+      renderBreadcrumb(sfCurrentDir, null);
+      const res = await ipcRenderer.invoke('server-fs:list', { name: selectedServer.name, path: sfCurrentDir });
+      const parts = sfCurrentDir.split('/').filter(Boolean);
       const ul = $('fileList');
       ul.innerHTML = '';
-      if (currentDir) {
+      if (sfCurrentDir) {
         const up = document.createElement('li');
         up.className = 'file-entry';
         up.innerHTML = '<i class="material-icons">arrow_upward</i> ..';
@@ -549,7 +546,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         const li = document.createElement('li');
         li.className = 'file-entry';
         li.innerHTML = `<i class="material-icons">${e.isDir ? 'folder' : 'description'}</i> <span style="flex:1;word-break:break-all;">${e.name}</span>`;
-        const rowPath = currentDir ? currentDir + '/' + e.name : e.name;
+        const rowPath = sfCurrentDir ? sfCurrentDir + '/' + e.name : e.name;
         li.onclick = () => e.isDir ? loadFiles(rowPath) : openFile(rowPath, e.name);
         ul.appendChild(li);
       });
@@ -557,27 +554,27 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
     async function openFile(rel, name) {
       const res = await ipcRenderer.invoke('server-fs:read', { name: selectedServer.name, path: rel });
-      renderBreadcrumb(currentDir, name);
+      renderBreadcrumb(sfCurrentDir, name);
       $('fileList').style.display = 'none';
       $('fileEditorInner').style.display = 'flex';
       const area = $('fileEditorArea');
       const state = $('fileSaveState');
       state.textContent = '';
-      if (res.binary) { area.value = '(binary file — not editable)'; area.disabled = true; currentFile = null; return; }
-      if (res.error) { area.value = '(' + res.error + ')'; area.disabled = true; currentFile = null; return; }
+      if (res.binary) { area.value = '(binary file — not editable)'; area.disabled = true; sfCurrentFile = null; return; }
+      if (res.error) { area.value = '(' + res.error + ')'; area.disabled = true; sfCurrentFile = null; return; }
       area.disabled = false;
       area.value = res.text || '';
-      currentFile = rel;
+      sfCurrentFile = rel;
     }
 
     // Auto-save (debounced) whenever the editor content changes.
     $('fileEditorArea').addEventListener('input', () => {
-      if (!currentFile) return;
+      if (!sfCurrentFile) return;
       const state = $('fileSaveState');
       state.textContent = 'Saving…';
-      clearTimeout(saveTimer);
-      const target = currentFile;
-      saveTimer = setTimeout(async () => {
+      clearTimeout(sfSaveTimer);
+      const target = sfCurrentFile;
+      sfSaveTimer = setTimeout(async () => {
         const res = await ipcRenderer.invoke('server-fs:write', { name: selectedServer.name, path: target, text: $('fileEditorArea').value });
         state.textContent = (res && res.error) ? ('Save failed: ' + res.error) : 'Saved ✓';
       }, 500);

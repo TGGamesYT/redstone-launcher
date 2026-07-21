@@ -1046,35 +1046,55 @@
         right.style.paddingRight = "20px"
         topRow.appendChild(right);
 
-        // Play button
+        // Play / Stop button — reflects the instance's ACTUAL running state
+        // (polled), so once the game is up (including quick-play launches) it
+        // flips to a Stop button with a square icon instead of staying "Play".
         const playBtn = document.createElement("button");
         playBtn.className = "detail-play-btn";
         playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
         playBtn.title = "Launch Profile";
-        let isLaunching = false;
-        playBtn.onclick = () => {
-          if (!selectedPlayerId) return (playBtn.innerHTML = "Select a player first!");
-          if (isLaunching) {
-            playBtn.innerHTML = "Launching...";
+        right.appendChild(playBtn);
+
+        let playState = "idle"; // idle | launching | running
+        function setPlay(state, pids) {
+          playState = state;
+          if (state === "running") {
+            playBtn.innerHTML = `<i class="material-icons">stop</i> Stop`;
+            playBtn.title = "Stop";
+            playBtn.disabled = false; playBtn.style.opacity = "1"; playBtn.style.cursor = "pointer";
+            playBtn._pids = pids || [];
+          } else if (state === "launching") {
+            playBtn.innerHTML = `<i class="material-icons">hourglass_top</i> Launching...`;
+            playBtn.disabled = true; playBtn.style.opacity = "0.6"; playBtn.style.cursor = "not-allowed";
+          } else {
+            playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
+            playBtn.title = "Launch Profile";
+            playBtn.disabled = false; playBtn.style.opacity = "1"; playBtn.style.cursor = "pointer";
+          }
+        }
+        async function refreshPlayState() {
+          const running = await ipcRenderer.invoke("get-running-instances");
+          const mine = (running || []).filter(r => String(r.id) === String(profile.id));
+          if (mine.length) setPlay("running", mine.map(m => m.pid));
+          else if (playState !== "launching") setPlay("idle");
+        }
+        playBtn.onclick = async () => {
+          if (playState === "running") {
+            for (const pid of (playBtn._pids || [])) await ipcRenderer.invoke("stop-instance-by-pid", pid);
+            setTimeout(refreshPlayState, 500);
             return;
           }
-          isLaunching = true;
-          playBtn.disabled = true;
-          playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Launching...`;
-          playBtn.style.opacity = "0.6";
-          playBtn.style.cursor = "not-allowed";
+          if (playState === "launching") return;
+          if (!selectedPlayerId) { playBtn.innerHTML = "Select a player first!"; return; }
+          setPlay("launching");
           ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId });
-          
-          // Re-enable button after 30 seconds timeout (in case something goes wrong)
-          setTimeout(() => {
-            isLaunching = false;
-            playBtn.disabled = false;
-            playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
-            playBtn.style.opacity = "1";
-            playBtn.style.cursor = "pointer";
-          }, 30000);
+          // Safety net: if it never shows up as running, fall back to idle.
+          setTimeout(() => { if (playState === "launching") refreshPlayState(); }, 60000);
         };
-        right.appendChild(playBtn);
+        // Poll running state while this detail is open (single shared timer).
+        clearInterval(window.__playPollTimer);
+        refreshPlayState();
+        window.__playPollTimer = setInterval(refreshPlayState, 2000);
 
         // Edit button
         const editBtn = document.createElement("button");
