@@ -1669,6 +1669,7 @@
 
             tabContent.classList.remove("logs-active");
             tabContent.style.height = ""; // reset (the Files tab sets its own)
+            clearInterval(window.__logTailTimer); // stop log tailing from a prior Logs view
             tabContent.innerHTML = "Loading...";
             logsEl.style.display = "none";
 
@@ -1708,14 +1709,34 @@
                 logsEl.scrollTop = logsEl.scrollHeight;
               });
 
+              let gotLiveLog = false;
               ipcRenderer.removeAllListeners('launcher-log');
               ipcRenderer.on('launcher-log', (event, data) => {
                 if (!ensureStillActive()) return;
                 // Strictly this instance's logs.
                 if (data && String(data.profileId) === selectedLogId) {
+                  gotLiveLog = true;
                   appendLine(data.msg);
                 }
               });
+
+              // If the launcher was restarted while the game is still running,
+              // there's no live stdout stream — poll the game's latest.log so the
+              // console keeps updating. Skips itself once live logs arrive.
+              clearInterval(window.__logTailTimer);
+              window.__logTailTimer = setInterval(async () => {
+                if (gotLiveLog || !ensureStillActive()) return;
+                const running = (await ipcRenderer.invoke('get-running-instances') || []).some(r => String(r.id) === selectedLogId);
+                if (!running || gotLiveLog) return;
+                const hist = await ipcRenderer.invoke('get-instance-logs', profile.id);
+                if (!ensureStillActive() || gotLiveLog) return;
+                const text = (Array.isArray(hist) ? hist : []).join("\n") + "\n";
+                if (text.length !== logsEl.textContent.length) {
+                  const stick = isAtBottom();
+                  logsEl.textContent = text;
+                  if (stick) logsEl.scrollTop = logsEl.scrollHeight;
+                }
+              }, 2000);
               ipcRenderer.removeAllListeners('launch-error');
               ipcRenderer.on('launch-error', (event, data) => {
                 if (!ensureStillActive()) return;
