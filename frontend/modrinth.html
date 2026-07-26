@@ -639,11 +639,14 @@
       }
     }
 
-    // Search handler
+    // Search handler (persist the query so returning to the browser re-applies it)
     searchInput.oninput = () => {
       currentPage = 1;
+      try { localStorage.setItem('mb_search', searchInput.value); } catch { /* ignore */ }
       loadProjects();
     };
+    // Restore the last query on load.
+    if (!installMode) { try { const s = localStorage.getItem('mb_search'); if (s) searchInput.value = s; } catch { /* ignore */ } }
 
     // Type change & refresh
     apiSelector.onchange = () => { currentPage = 1; loadProjects(); };
@@ -1050,7 +1053,9 @@
         loadTopProjects();
       });
     });
-    loadTopProjects();
+    // Apply the restored search + filters on first load (was loadTopProjects(),
+    // which ignored the saved query/filters so "back" showed defaults).
+    loadProjects();
     function updatePresence(details, state = "Idle") {
       ipcRenderer.send('update-discord-presence', { details, state });
     }

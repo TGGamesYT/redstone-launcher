@@ -209,7 +209,10 @@
 .mainModView-scrolly {
   height: calc(100vh - 170px);
   overflow-y: auto;
-  padding: 0px;
+  /* Bottom padding so the last cards (and pagination) aren't cut off / hidden
+     under the window edge when scrolled all the way down. */
+  padding: 0 0 90px 0;
+  box-sizing: border-box;
 }
 
 /* Sticky section headers */
