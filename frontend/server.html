@@ -298,6 +298,34 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     </div>
   </div>
 
+  <!-- Share over internet modal -->
+  <div id="shareModal" class="modal-overlay">
+    <div class="modal-content" style="max-width:440px;">
+      <div class="modal-header"><h2>Share over the internet</h2>
+        <button class="modal-close" onclick="document.getElementById('shareModal').classList.remove('active');">✕</button>
+      </div>
+      <div class="modal-section">
+        <label>Method</label>
+        <label class="inline-check"><input type="radio" name="shareMethod" value="ice" checked /> Redstone Relay (ICE — no port forwarding)</label>
+        <label class="inline-check"><input type="radio" name="shareMethod" value="upnp" /> UPnP (map a port on your router to your IP)</label>
+      </div>
+      <div id="shareIceFields">
+        <div class="modal-section"><label>Account</label><select id="shareAccount"></select></div>
+        <div class="modal-section"><label>Address</label>
+          <div style="display:flex;align-items:center;gap:4px;">
+            <input id="shareSub" style="flex:1;" placeholder="name" />
+            <span id="shareDomainSuffix" style="opacity:0.8;white-space:nowrap;">.redstonemc.net</span>
+          </div>
+          <div style="font-size:12px;opacity:0.7;margin-top:4px;">Friends join at <b><span id="sharePreview"></span></b></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="shareGo">Share</button>
+        <button onclick="document.getElementById('shareModal').classList.remove('active');">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const { ipcRenderer } = require('electron');
     const $ = (id) => document.getElementById(id);
@@ -507,15 +535,48 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
       if (st && st.active) showRelayBanner(st.address); else hideRelayBanner();
     }
-    $('dShare').onclick = async () => {
+    async function openShareModal() {
       $('dMenu').classList.remove('open');
       const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
       if (st && st.active) { await ipcRenderer.invoke('relay:close', { name: selectedServer.name }); hideRelayBanner(); return; }
-      $('dShare').textContent = 'Connecting…';
-      const res = await ipcRenderer.invoke('relay:open', { name: selectedServer.name });
-      if (res && res.success) showRelayBanner(res.address);
-      else { $('dShare').textContent = 'Share over internet'; alert("Couldn't share over the internet right now. Please try again in a little while."); }
+      const accounts = await ipcRenderer.invoke('relay:accounts');
+      const domain = await ipcRenderer.invoke('relay:domain');
+      $('shareDomainSuffix').textContent = '.' + domain;
+      if (!accounts.length) { alert('Sharing over the internet needs a premium Minecraft account. Add one in the Login page first.'); return; }
+      const sel = $('shareAccount');
+      sel.innerHTML = accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+      const uname = accounts[0].name.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+      const svr = (selectedServer.name || 'server').toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+      const updateSub = () => {
+        const a = accounts.find(x => x.id === sel.value) || accounts[0];
+        const u = a.name.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+        $('shareSub').value = `${svr}.${u}`;
+        $('sharePreview').textContent = `${$('shareSub').value}.${domain}:25565`;
+      };
+      $('shareSub').oninput = () => { $('sharePreview').textContent = `${$('shareSub').value}.${domain}:25565`; };
+      sel.onchange = updateSub;
+      updateSub();
+      $('shareModal').classList.add('active');
+    }
+    $('shareGo').onclick = async () => {
+      const method = [...document.querySelectorAll('input[name="shareMethod"]')].find(r => r.checked)?.value || 'ice';
+      $('shareGo').disabled = true; $('shareGo').textContent = 'Connecting…';
+      try {
+        if (method === 'upnp') {
+          const res = await ipcRenderer.invoke('upnp:open', { port: selectedServer.port || 25565 });
+          if (res && res.success) { showRelayBanner((res.externalIP || 'your-ip') + ':' + (res.port || selectedServer.port || 25565)); $('shareModal').classList.remove('active'); }
+          else alert('UPnP failed: ' + (res?.error || 'unknown') + '\nYour router may not have UPnP enabled — try the Relay method.');
+        } else {
+          const res = await ipcRenderer.invoke('relay:open', { name: selectedServer.name, subdomain: $('shareSub').value.trim(), accountId: $('shareAccount').value });
+          if (res && res.success) { showRelayBanner(res.address); $('shareModal').classList.remove('active'); }
+          else alert("Couldn't share: " + (res?.error || 'unknown error'));
+        }
+      } finally { $('shareGo').disabled = false; $('shareGo').textContent = 'Share'; }
     };
+    document.querySelectorAll('input[name="shareMethod"]').forEach(r => r.addEventListener('change', () => {
+      $('shareIceFields').style.display = document.querySelector('input[name="shareMethod"]:checked').value === 'ice' ? '' : 'none';
+    }));
+    $('dShare').onclick = openShareModal;
     $('relayStop').onclick = async () => { await ipcRenderer.invoke('relay:close', { name: selectedServer.name }); hideRelayBanner(); };
     $('relayCopy').onclick = () => { try { navigator.clipboard.writeText($('relayAddr').textContent); $('relayCopy').textContent = 'Copied'; setTimeout(() => ($('relayCopy').textContent = 'Copy'), 1200); } catch { /* ignore */ } };
     document.addEventListener('click', () => $('dMenu').classList.remove('open'));

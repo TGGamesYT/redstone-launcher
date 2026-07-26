@@ -1201,11 +1201,15 @@
         }
         lanShareBtn.onclick = async () => {
           if (!lanPort) return;
+          const accounts = await ipcRenderer.invoke("relay:accounts");
+          if (!accounts.length) { alert("Sharing over the internet needs a premium Minecraft account. Add one in the Login page first."); return; }
+          const u = accounts[0].name.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+          const inst = (profile.name || "instance").toLowerCase().replace(/[^a-z0-9-]+/g, "-");
           lanShareBtn.textContent = "Connecting…";
-          const res = await ipcRenderer.invoke("relay:open", { key: relayKey, localPort: lanPort });
+          const res = await ipcRenderer.invoke("relay:open", { key: relayKey, localPort: lanPort, subdomain: `${inst}.${u}`, accountId: accounts[0].id });
           lanShareBtn.textContent = "Share over internet";
           if (res && res.success) showLanShared(res.address);
-          else alert("Couldn't share over the internet right now. Please try again in a little while.");
+          else alert("Couldn't share: " + (res?.error || "unknown error"));
         };
         lanStopBtn.onclick = async () => { await ipcRenderer.invoke("relay:close", { key: relayKey }); showLanAvailable(lanPort); };
         lanCopyBtn.onclick = () => { try { navigator.clipboard.writeText(lanMsg.textContent.replace(/^.*join at\s*/i, "").trim()); lanCopyBtn.textContent = "Copied"; setTimeout(() => lanCopyBtn.textContent = "Copy", 1200); } catch { /* ignore */ } };

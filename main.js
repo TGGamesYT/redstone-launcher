@@ -2403,29 +2403,48 @@ const RELAY_DEFAULTS = {
   host: process.env.REDSTONE_RELAY_HOST || "redstonemc.net",
   controlPort: parseInt(process.env.REDSTONE_RELAY_PORT || "47238", 10),
 };
-// key -> { host, port, close }. key is a server name or `instance-<id>`.
+// key -> { address, port, close }. key is a server name or `instance-<id>`.
 const activeRelays = new Map();
+const DOMAIN_BASE = process.env.REDSTONE_RELAY_HOST || "redstonemc.net";
 
-// Open a relay tunnel to any local port. Server detail passes its server port;
-// an instance opened-to-LAN passes the detected LAN port.
-ipcMain.handle("relay:open", async (event, { key, name, localPort }) => {
+// Premium (Microsoft) accounts usable for relay auth.
+function premiumAccounts() {
+  return loadPlayers()
+    .filter(p => p.type === "microsoft" && p.auth && p.auth.access_token && p.auth.access_token !== "0")
+    .map(p => ({ id: p.id, name: p.auth.name || p.username, uuid: p.auth.uuid }));
+}
+ipcMain.handle("relay:accounts", () => premiumAccounts());
+ipcMain.handle("relay:domain", () => DOMAIN_BASE);
+
+// Sanitize a label for use as a subdomain component.
+function subLabel(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40); }
+
+// Open an ICE relay tunnel. Requires a verified premium account and a subdomain
+// under <username>.redstonemc.net (admins can use anything).
+ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, accountId }) => {
   const k = key || name;
   try {
     if (activeRelays.has(k)) {
       const s = activeRelays.get(k);
-      return { success: true, host: s.host, port: s.port, address: `${s.host}:${s.port}`, already: true };
+      return { success: true, address: s.address, port: s.port, already: true };
     }
-    // Back-compat: if only a server name was given, look up its port.
     if (!localPort && name) { try { localPort = serverManager.getServerPort(name); } catch { /* ignore */ } }
     if (!localPort) return { success: false, error: "No local port to share" };
-    const token = settings.get("relayToken", "") || process.env.REDSTONE_RELAY_TOKEN || "";
+
+    const accounts = premiumAccounts();
+    if (!accounts.length) return { success: false, error: "Sharing over the internet needs a premium Minecraft account. Add one in the Login page first." };
+    const players = loadPlayers();
+    const chosen = players.find(p => p.id === accountId && p.type === "microsoft") || players.find(p => p.type === "microsoft" && p.auth?.access_token && p.auth.access_token !== "0");
+    const account = { accessToken: chosen.auth.access_token, uuid: chosen.auth.uuid, name: chosen.auth.name || chosen.username };
+
+    const sub = subdomain || subLabel(account.name);
     const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
     const session = await relayClient.openRelay({
       host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
-      token, localPort, rejectUnauthorized,
+      subdomain: sub, localPort, account, rejectUnauthorized,
     });
     activeRelays.set(k, session);
-    return { success: true, host: session.host, port: session.port, address: `${session.host}:${session.port}` };
+    return { success: true, address: session.address ? `${session.address}:${session.port}` : null, port: session.port };
   } catch (err) {
     console.error("[Relay] open failed:", err);
     return { success: false, error: err.message };
@@ -2442,7 +2461,7 @@ ipcMain.handle("relay:close", async (event, { key, name }) => {
 ipcMain.handle("relay:status", async (event, { key, name }) => {
   const k = key || name;
   const s = activeRelays.get(k);
-  return s ? { active: true, host: s.host, port: s.port, address: `${s.host}:${s.port}` } : { active: false };
+  return s ? { active: true, address: s.address ? `${s.address}:${s.port}` : null, port: s.port } : { active: false };
 });
 
 // ── UPnP auto port-forward (self-hosting) ──
