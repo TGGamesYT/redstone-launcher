@@ -39,7 +39,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     }
     .add-server-btn:hover { background: var(--third-color); }
 
-    #serversList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+    #serversList { list-style: none; padding: 0 4px 0 0; margin: 0; display: flex; flex-direction: column; gap: 8px;
+      max-height: calc(100vh - 190px); overflow-y: auto; }
 
     /* Status dot sits on the bottom-right of the server ICON. The wrapper must
        hug the image exactly — the global `.profile-item span { flex:1 }` rule
@@ -111,6 +112,9 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     }
     .file-entry:hover { background: var(--menu-hover-bg); }
     .file-entry .material-icons { font-size: 18px; }
+    .file-entry .file-act { font-size: 16px; opacity: 0; cursor: pointer; padding: 2px; border-radius: 4px; }
+    .file-entry:hover .file-act { opacity: 0.7; }
+    .file-entry .file-act:hover { opacity: 1; background: rgba(0,0,0,0.25); }
     .inline-check { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 6px 0; cursor: pointer; white-space: nowrap; }
     .inline-check input { width: auto; margin: 0; }
   </style>
@@ -201,11 +205,12 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         </div>
         <div class="server-actions">
           <button id="dToggle" class="play-button" title="Start"><i class="material-icons">play_arrow</i></button>
+          <button id="dRestart" title="Restart"><i class="material-icons">restart_alt</i></button>
+          <button id="dEdit" title="Edit server"><i class="material-icons">edit</i></button>
           <div class="srv-menu-wrap">
             <button id="dMenuBtn" title="More"><i class="material-icons">more_vert</i></button>
             <div id="dMenu" class="srv-menu">
               <div class="menu-item" id="dShare">Share over internet</div>
-              <div class="menu-item" id="dRestart">Restart</div>
               <div class="menu-item" id="dFolder">Open folder</div>
               <div class="menu-item" id="dDelete">Delete server</div>
             </div>
@@ -232,6 +237,11 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         </div>
       </div>
       <div class="srv-panel" data-panel="files">
+        <div class="tab-action-bar" style="display:flex; gap:6px; margin-bottom:8px;">
+          <button id="fbOpenExplorer" title="Open in file explorer"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder_open</i></button>
+          <button id="fbNewFile" title="New file"><i class="material-icons" style="font-size:16px;vertical-align:middle;">note_add</i></button>
+          <button id="fbNewFolder" title="New folder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">create_new_folder</i></button>
+        </div>
         <div id="fileBreadcrumb" style="display:flex; align-items:center; gap:4px; margin-bottom:8px; flex-wrap:wrap; font-size:13px;"></div>
         <!-- Folder listing and the file editor share the SAME full-width area:
              browsing a folder shows the list here; opening a file swaps the same
@@ -260,24 +270,27 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     </div>
   </div>
 
-  <!-- Create modal -->
+  <!-- Create / edit modal -->
   <div id="createServerModal" class="modal-overlay">
     <div class="modal-content">
-      <div class="modal-header"><h2>Create Server</h2>
+      <div class="modal-header"><h2 id="srvModalTitle">Create Server</h2>
         <button class="modal-close" onclick="document.getElementById('createServerModal').classList.remove('active');">✕</button>
       </div>
-      <div class="modal-section"><label>Server Name</label><input id="srvName" placeholder="My Server" /></div>
-      <div class="form-row">
-        <div class="modal-section" style="flex:1;"><label>Version</label><select id="srvVersion"></select></div>
-        <label class="inline-check"><input type="checkbox" id="showAllVersions" /> Show all</label>
-      </div>
+      <div class="modal-section"><label>Server Name</label><input id="srvName" placeholder="Auto (Type + version)" /></div>
       <div class="modal-section"><label>Type</label>
         <select id="srvType">
           <option value="vanilla">Vanilla</option>
           <option value="paper">Paper</option>
+          <option value="purpur">Purpur</option>
+          <option value="folia">Folia</option>
           <option value="fabric">Fabric</option>
         </select>
       </div>
+      <div class="form-row">
+        <div class="modal-section" style="flex:1;"><label>Version</label><select id="srvVersion"></select></div>
+        <label class="inline-check"><input type="checkbox" id="showAllVersions" /> Show all (snapshots)</label>
+      </div>
+      <div class="modal-section"><label>Extra Java args (optional)</label><input id="srvLaunchArgs" placeholder="-XX:+UseG1GC …" /></div>
       <div class="modal-actions">
         <button id="createServerBtn">Create</button>
         <button id="cancelCreate" onclick="document.getElementById('createServerModal').classList.remove('active');">Cancel</button>
@@ -360,7 +373,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         toggle.className = running ? '' : 'play-button';
         toggle.innerHTML = `<i class="material-icons">${running ? 'stop' : 'play_arrow'}</i>`;
         toggle.title = running ? 'Stop' : 'Start';
-        toggle.onclick = async (e) => { e.stopPropagation(); await ipcRenderer.invoke(running ? 'stop-server' : 'start-server', s.name); setTimeout(loadServers, 600); };
+        toggle.onclick = async (e) => { e.stopPropagation(); if (running) await ipcRenderer.invoke('stop-server', s.name); else await startServerChecked(s.name); setTimeout(loadServers, 600); };
         const restart = document.createElement('button');
         restart.innerHTML = `<i class="material-icons">restart_alt</i>`;
         restart.title = 'Restart';
@@ -458,12 +471,25 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     document.querySelectorAll('.srv-tab').forEach(tab => {
       tab.onclick = () => selectTab(tab.dataset.tab);
     });
+    // Start a server, prompting for the Mojang EULA on first launch.
+    async function startServerChecked(name) {
+      const e = await ipcRenderer.invoke('server-eula:get', name);
+      if (!e.accepted) {
+        const ok = confirm("Before running a Minecraft server you must accept the Minecraft EULA (https://aka.ms/MinecraftEULA).\n\nClick OK to accept and start the server.");
+        if (!ok) return false;
+        await ipcRenderer.invoke('server-eula:accept', name);
+      }
+      await ipcRenderer.invoke('start-server', name);
+      return true;
+    }
     $('dToggle').onclick = async () => {
       const running = $('dToggle').dataset.running === '1';
-      await ipcRenderer.invoke(running ? 'stop-server' : 'start-server', selectedServer.name);
+      if (running) await ipcRenderer.invoke('stop-server', selectedServer.name);
+      else await startServerChecked(selectedServer.name);
       setTimeout(refreshDetailStatus, 600);
     };
-    $('dRestart').onclick = async () => { $('dMenu').classList.remove('open'); await ipcRenderer.invoke('restart-server', selectedServer.name); setTimeout(refreshDetailStatus, 600); };
+    $('dRestart').onclick = async () => { await ipcRenderer.invoke('restart-server', selectedServer.name); setTimeout(refreshDetailStatus, 600); };
+    $('dEdit').onclick = () => openServerModal(selectedServer);
     $('dMenuBtn').onclick = (e) => { e.stopPropagation(); $('dMenu').classList.toggle('open'); };
 
     // ---------- Relay sharing (join over the internet, no port-forwarding) ----------
@@ -559,8 +585,15 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         const li = document.createElement('li');
         li.className = 'file-entry';
         const icon = e.isDir ? 'folder' : e.isArchive ? 'folder_zip' : 'description';
-        li.innerHTML = `<i class="material-icons">${icon}</i> <span style="flex:1;word-break:break-all;">${e.name}</span>`;
         const rowPath = sfCurrentDir ? sfCurrentDir + '/' + e.name : e.name;
+        li.innerHTML = `<i class="material-icons">${icon}</i> <span style="flex:1;word-break:break-all;">${e.name}</span>`;
+        if (!e.isArchive) {
+          const copyBtn = document.createElement('i'); copyBtn.className = 'material-icons file-act'; copyBtn.textContent = 'content_copy'; copyBtn.title = 'Duplicate';
+          copyBtn.onclick = async (ev) => { ev.stopPropagation(); await ipcRenderer.invoke('server-fs:copy', { name: selectedServer.name, path: rowPath }); loadFiles(sfCurrentDir); };
+          const delBtn = document.createElement('i'); delBtn.className = 'material-icons file-act'; delBtn.textContent = 'delete'; delBtn.title = 'Delete';
+          delBtn.onclick = async (ev) => { ev.stopPropagation(); if (!confirm(`Delete "${e.name}"?`)) return; await ipcRenderer.invoke('server-fs:delete', { name: selectedServer.name, path: rowPath }); loadFiles(sfCurrentDir); };
+          li.append(copyBtn, delBtn);
+        }
         li.onclick = () => (e.isDir || e.isArchive) ? loadFiles(rowPath) : openFile(rowPath, e.name);
         ul.appendChild(li);
       });
@@ -660,6 +693,19 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     // Plain-text + raw-view auto-save.
     $('fileEditorArea').addEventListener('input', scheduleSave);
 
+    // File-manager toolbar actions.
+    $('fbOpenExplorer').onclick = () => ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false, sub: sfCurrentDir });
+    $('fbNewFile').onclick = async () => {
+      const nm = prompt('New file name:'); if (!nm) return;
+      const r = await ipcRenderer.invoke('server-fs:newfile', { name: selectedServer.name, path: sfCurrentDir, file: nm });
+      if (r && r.error) alert(r.error); else loadFiles(sfCurrentDir);
+    };
+    $('fbNewFolder').onclick = async () => {
+      const nm = prompt('New folder name:'); if (!nm) return;
+      const r = await ipcRenderer.invoke('server-fs:mkdir', { name: selectedServer.name, path: sfCurrentDir, folder: nm });
+      if (r && r.error) alert(r.error); else loadFiles(sfCurrentDir);
+    };
+
     // ---------- Server mods (shown for modded server types) ----------
     async function loadServerMods() {
       if (!selectedServer) return;
@@ -702,22 +748,53 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       window.location.href = `modrinth.html?${params.toString()}`;
     };
 
-    // ---------- Create ----------
-    $('addServerBtn').onclick = () => $('createServerModal').classList.add('active');
+    // ---------- Create / edit ----------
+    let editingServer = null; // null = create mode; otherwise the server being edited
+    function openServerModal(server) {
+      editingServer = server || null;
+      $('srvModalTitle').textContent = server ? 'Edit Server' : 'Create Server';
+      $('createServerBtn').textContent = server ? 'Save' : 'Create';
+      $('srvName').value = server ? server.name : '';
+      $('srvType').value = (server && server.type) || 'vanilla';
+      $('srvLaunchArgs').value = (server && server.launchArgs) || '';
+      // Ensure the requested version is selectable, then select it.
+      if (server && server.version) {
+        if (![...$('srvVersion').options].some(o => o.value === server.version)) {
+          const o = document.createElement('option'); o.value = server.version; o.textContent = server.version;
+          $('srvVersion').insertBefore(o, $('srvVersion').firstChild);
+        }
+        $('srvVersion').value = server.version;
+      }
+      $('dMenu').classList.remove('open');
+      $('createServerModal').classList.add('active');
+    }
+    $('addServerBtn').onclick = () => openServerModal(null);
     $('createServerBtn').onclick = async () => {
-      const name = ($('srvName').value.trim()) || `Server-${Date.now()}`;
-      const version = $('srvVersion').value.trim() || '1.20.1';
       const type = $('srvType').value;
-      const btn = $('createServerBtn'); btn.disabled = true; btn.textContent = 'Creating…';
+      const version = $('srvVersion').value.trim() || '1.20.1';
+      // Auto-name (like instances): Type + version when left blank.
+      const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);
+      const name = ($('srvName').value.trim()) || `${typeLabel} ${version}`;
+      const launchArgs = $('srvLaunchArgs').value.trim();
+      const btn = $('createServerBtn'); const wasEdit = !!editingServer;
+      btn.disabled = true; btn.textContent = wasEdit ? 'Saving…' : 'Creating…';
       try {
-        await ipcRenderer.invoke('make-server', { name, version, type });
-        $('createServerModal').classList.remove('active');
-        await loadServers();
-      } catch (e) { alert('Failed to create server: ' + (e.message || e)); }
-      finally { btn.disabled = false; btn.textContent = 'Create'; }
+        if (wasEdit) {
+          const res = await ipcRenderer.invoke('edit-server', { name: editingServer.name, newName: name, version, type, launchArgs });
+          if (res && res.error) throw new Error(res.error);
+          $('createServerModal').classList.remove('active');
+          selectedServer = null;
+          closeDetail();
+        } else {
+          await ipcRenderer.invoke('make-server', { name, version, type, launchArgs });
+          $('createServerModal').classList.remove('active');
+          await loadServers();
+        }
+      } catch (e) { alert((wasEdit ? 'Failed to edit server: ' : 'Failed to create server: ') + (e.message || e)); }
+      finally { btn.disabled = false; btn.textContent = wasEdit ? 'Save' : 'Create'; editingServer = null; }
     };
 
-    // Version dropdown.
+    // Version dropdown (piston-meta order; snapshots behind "Show all").
     async function initVersionSelect() {
       const versions = (await (await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json')).json()).versions;
       const sel = $('srvVersion');

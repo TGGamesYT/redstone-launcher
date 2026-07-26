@@ -238,6 +238,19 @@ function applyModProviderIcon() {
 }
 applyModProviderIcon();
 
+// Don't let a text-selection drag that ENDS on a modal backdrop close the modal.
+// Modal close handlers fire on click when e.target === overlay; if the drag
+// started elsewhere (selecting text inside the modal) we swallow that click.
+(function preventDragCloseOnModals() {
+  let downTarget = null;
+  document.addEventListener('mousedown', (e) => { downTarget = e.target; }, true);
+  document.addEventListener('click', (e) => {
+    if (!downTarget || downTarget === e.target) return;
+    const cn = (e.target && typeof e.target.className === 'string') ? e.target.className : '';
+    if (/overlay|modal|backdrop/i.test(cn)) { e.stopPropagation(); }
+  }, true);
+})();
+
 // In-page navigation: when a sidebar link points at the page we're ALREADY on,
 // don't do a full reload — let the page restructure to its list view in place
 // (pages opt in by defining window.showListView). This keeps e.g. clicking

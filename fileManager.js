@@ -123,4 +123,35 @@ export function deleteFile(root, rel) {
   catch (e) { return { error: e.message }; }
 }
 
-export default { safePath, listFiles, readFile, writeFile, deleteFile };
+// Create a new empty file (rel = dir, name = filename).
+export function newFile(root, dirRel, name) {
+  const p = safePath(root, path.join(dirRel || "", name || ""));
+  if (!p || !name) return { error: "Invalid path" };
+  if (fs.existsSync(p)) return { error: "Already exists" };
+  try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, ""); return { success: true }; }
+  catch (e) { return { error: e.message }; }
+}
+
+export function newFolder(root, dirRel, name) {
+  const p = safePath(root, path.join(dirRel || "", name || ""));
+  if (!p || !name) return { error: "Invalid path" };
+  if (fs.existsSync(p)) return { error: "Already exists" };
+  try { fs.mkdirSync(p, { recursive: true }); return { success: true }; }
+  catch (e) { return { error: e.message }; }
+}
+
+// Duplicate a file/folder next to itself ("name" -> "name copy").
+export function copyEntry(root, rel) {
+  if (resolveArchive(root, rel)) return { error: "Files inside archives are read-only" };
+  const p = safePath(root, rel);
+  if (!p || p === path.resolve(root) || !fs.existsSync(p)) return { error: "Invalid path" };
+  try {
+    const dir = path.dirname(p), ext = path.extname(p), base = path.basename(p, ext);
+    let dest = path.join(dir, `${base} copy${ext}`), n = 2;
+    while (fs.existsSync(dest)) dest = path.join(dir, `${base} copy ${n++}${ext}`);
+    fs.cpSync(p, dest, { recursive: true });
+    return { success: true };
+  } catch (e) { return { error: e.message }; }
+}
+
+export default { safePath, listFiles, readFile, writeFile, deleteFile, newFile, newFolder, copyEntry };

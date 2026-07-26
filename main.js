@@ -2270,16 +2270,51 @@ ipcMain.handle("make-server", async (event, params) => {
   return await serverManager.makeServer(params);
 });
 
-ipcMain.handle("start-server", (event, id) => {
-  return serverManager.startServer(id, settings);
+ipcMain.handle("edit-server", async (event, { name, ...changes }) => {
+  try { return await serverManager.editServer(name, changes); }
+  catch (err) { return { success: false, error: err.message }; }
+});
+
+// Resolve the correct Java for a server's MC version (downloads if needed),
+// falling back to system java. Fixes crashes like a 26.x/Fabric server needing
+// Java 25 while the system only has 23.
+async function resolveServerJava(id) {
+  try {
+    const info = serverManager.getServerInfo(id);
+    if (info && info.version) return await getJavaForMinecraft(info.version);
+  } catch (e) { console.warn("[Server] Java resolve failed, using system java:", e.message); }
+  return "java";
+}
+
+ipcMain.handle("start-server", async (event, id) => {
+  const java = await resolveServerJava(id);
+  return serverManager.startServer(id, settings, java);
 });
 
 ipcMain.handle("stop-server", (event, id) => {
   return serverManager.stopServer(id);
 });
 
-ipcMain.handle("restart-server", (event, id) => {
-  return serverManager.restartServer(id, settings);
+ipcMain.handle("restart-server", async (event, id) => {
+  const java = await resolveServerJava(id);
+  return serverManager.restartServer(id, settings, java);
+});
+
+// EULA state (prompt on first launch instead of silently accepting).
+ipcMain.handle("server-eula:get", (event, id) => {
+  try {
+    const p = path.join(dataDir, "servers", String(id), "eula.txt");
+    if (!fs.existsSync(p)) return { accepted: false };
+    return { accepted: /eula\s*=\s*true/i.test(fs.readFileSync(p, "utf8")) };
+  } catch { return { accepted: false }; }
+});
+ipcMain.handle("server-eula:accept", (event, id) => {
+  try {
+    const dir = path.join(dataDir, "servers", String(id));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "eula.txt"), "eula=true\n");
+    return { success: true };
+  } catch (e) { return { success: false, error: e.message }; }
 });
 
 ipcMain.handle("list-servers", () => {
@@ -2320,11 +2355,18 @@ ipcMain.handle("server-fs:read", (event, { name, path: rel }) => fileManager.rea
 ipcMain.handle("server-fs:write", (event, { name, path: rel, text }) => fileManager.writeFile(serverRoot(name), rel, text));
 ipcMain.handle("server-fs:delete", (event, { name, path: rel }) => fileManager.deleteFile(serverRoot(name), rel));
 
+ipcMain.handle("server-fs:mkdir", (event, { name, path: rel, folder }) => fileManager.newFolder(serverRoot(name), rel, folder));
+ipcMain.handle("server-fs:newfile", (event, { name, path: rel, file }) => fileManager.newFile(serverRoot(name), rel, file));
+ipcMain.handle("server-fs:copy", (event, { name, path: rel }) => fileManager.copyEntry(serverRoot(name), rel));
+
 // Instance (client) file manager — same backend, rooted at the instance folder.
 ipcMain.handle("client-fs:list", (event, { id, path: rel }) => fileManager.listFiles(clientRoot(id), rel));
 ipcMain.handle("client-fs:read", (event, { id, path: rel }) => fileManager.readFile(clientRoot(id), rel));
 ipcMain.handle("client-fs:write", (event, { id, path: rel, text }) => fileManager.writeFile(clientRoot(id), rel, text));
 ipcMain.handle("client-fs:delete", (event, { id, path: rel }) => fileManager.deleteFile(clientRoot(id), rel));
+ipcMain.handle("client-fs:mkdir", (event, { id, path: rel, folder }) => fileManager.newFolder(clientRoot(id), rel, folder));
+ipcMain.handle("client-fs:newfile", (event, { id, path: rel, file }) => fileManager.newFile(clientRoot(id), rel, file));
+ipcMain.handle("client-fs:copy", (event, { id, path: rel }) => fileManager.copyEntry(clientRoot(id), rel));
 
 // NBT (.dat) editing, shared by both browsers. Parse to editable JSON and write
 // it back as proper NBT (handles gzip'd files like level.dat too).

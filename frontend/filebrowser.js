@@ -5,14 +5,33 @@
 (function () {
   const { ipcRenderer } = require('electron');
 
+  function ensureStyle() {
+    if (document.getElementById('fb-style')) return;
+    const s = document.createElement('style'); s.id = 'fb-style';
+    s.textContent = `
+      .file-entry { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:var(--border-radius); cursor:pointer; font-size:13px; }
+      .file-entry:hover { background: var(--menu-hover-bg); }
+      .file-entry .material-icons { font-size:18px; }
+      .file-entry .file-act { font-size:16px; opacity:0; cursor:pointer; padding:2px; border-radius:4px; }
+      .file-entry:hover .file-act { opacity:0.7; }
+      .file-entry .file-act:hover { opacity:1; background:rgba(0,0,0,0.25); }`;
+    document.head.appendChild(s);
+  }
+
   window.FileBrowser = {
     // opts: { channel:'client-fs'|'server-fs', idField:'id'|'name', id }
     mount(container, opts) {
+      ensureStyle();
       const chan = opts.channel, idField = opts.idField, idVal = opts.id;
       const arg = (extra) => Object.assign({ [idField]: idVal, [(chan === 'client-fs' ? 'id' : 'name')]: idVal }, extra);
 
       container.innerHTML = `
         <div style="display:flex; flex-direction:column; height:100%; min-height:0;">
+          <div class="tab-action-bar" style="display:flex; gap:6px; margin-bottom:8px;">
+            <button class="fb-explorer" title="Open in file explorer"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder_open</i></button>
+            <button class="fb-newfile" title="New file"><i class="material-icons" style="font-size:16px;vertical-align:middle;">note_add</i></button>
+            <button class="fb-newfolder" title="New folder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">create_new_folder</i></button>
+          </div>
           <div class="fb-breadcrumb" style="display:flex; align-items:center; gap:4px; margin-bottom:8px; flex-wrap:wrap; font-size:13px;"></div>
           <div style="flex:1; min-height:0; display:flex; flex-direction:column;">
             <ul class="fb-list" style="list-style:none; margin:0; padding:6px; flex:1; min-height:0; overflow-y:auto; border:1px solid var(--secondary-color); border-radius:var(--border-radius);"></ul>
@@ -67,12 +86,34 @@
           const li = document.createElement('li');
           li.className = 'file-entry';
           const icon = e.isDir ? 'folder' : e.isArchive ? 'folder_zip' : 'description';
-          li.innerHTML = `<i class="material-icons">${icon}</i> <span style="flex:1;word-break:break-all;">${e.name}</span>`;
           const rowPath = curDir ? curDir + '/' + e.name : e.name;
+          li.innerHTML = `<i class="material-icons">${icon}</i> <span style="flex:1;word-break:break-all;">${e.name}</span>`;
+          if (!e.isArchive) {
+            const cp = document.createElement('i'); cp.className = 'material-icons file-act'; cp.textContent = 'content_copy'; cp.title = 'Duplicate';
+            cp.onclick = async (ev) => { ev.stopPropagation(); await ipcRenderer.invoke(chan + ':copy', arg({ path: rowPath })); loadDir(curDir); };
+            const dl = document.createElement('i'); dl.className = 'material-icons file-act'; dl.textContent = 'delete'; dl.title = 'Delete';
+            dl.onclick = async (ev) => { ev.stopPropagation(); if (!confirm(`Delete "${e.name}"?`)) return; await ipcRenderer.invoke(chan + ':delete', arg({ path: rowPath })); loadDir(curDir); };
+            li.append(cp, dl);
+          }
           li.onclick = () => (e.isDir || e.isArchive) ? loadDir(rowPath) : openFile(rowPath, e.name);
           list.appendChild(li);
         });
       }
+
+      container.querySelector('.fb-explorer').onclick = () => {
+        if (chan === 'client-fs') ipcRenderer.send('open-instance-folder', { profileId: idVal, sub: curDir });
+        else ipcRenderer.send('open-folder', { id: idVal, isClient: false, sub: curDir });
+      };
+      container.querySelector('.fb-newfile').onclick = async () => {
+        const nm = prompt('New file name:'); if (!nm) return;
+        const r = await ipcRenderer.invoke(chan + ':newfile', arg({ path: curDir, file: nm }));
+        if (r && r.error) alert(r.error); else loadDir(curDir);
+      };
+      container.querySelector('.fb-newfolder').onclick = async () => {
+        const nm = prompt('New folder name:'); if (!nm) return;
+        const r = await ipcRenderer.invoke(chan + ':mkdir', arg({ path: curDir, folder: nm }));
+        if (r && r.error) alert(r.error); else loadDir(curDir);
+      };
 
       function scheduleSave() {
         if (!curFile || readOnly) return;

@@ -59,47 +59,57 @@ function fetchLatestFabricLoader() {
   });
 }
 
-// --- Create a server ---
-async function makeServer({ name, version, type }) {
-  const serverDir = path.join(serversDir, name);
-  fs.mkdirSync(serverDir, { recursive: true });
-
-  let jarUrl;
-
-  switch (type.toLowerCase()) {
+// Resolve the download URL for a given server software + MC version.
+async function resolveJarUrl(version, type) {
+  switch ((type || "").toLowerCase()) {
     case "vanilla": {
       const manifest = await fetchJson("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json");
       const entry = manifest.versions.find(v => v.id === version);
       if (!entry) throw new Error(`Vanilla version ${version} not found`);
       const metadata = await fetchJson(entry.url);
-      jarUrl = metadata.downloads.server.url;
-      break;
+      return metadata.downloads.server.url;
     }
-    case "paper": {
-      const versionInfo = await fetchJson(`https://api.papermc.io/v2/projects/paper/versions/${version}`);
+    case "paper":
+    case "folia":
+    case "velocity":
+    case "waterfall": {
+      const proj = type.toLowerCase();
+      const versionInfo = await fetchJson(`https://api.papermc.io/v2/projects/${proj}/versions/${version}`);
       const latestBuild = Math.max(...versionInfo.builds);
-      const buildInfo = await fetchJson(`https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${latestBuild}`);
+      const buildInfo = await fetchJson(`https://api.papermc.io/v2/projects/${proj}/versions/${version}/builds/${latestBuild}`);
       const fileName = buildInfo.downloads.application.name;
-      jarUrl = `https://api.papermc.io/v2/projects/paper/versions/${version}/builds/${latestBuild}/downloads/${fileName}`;
-      break;
+      return `https://api.papermc.io/v2/projects/${proj}/versions/${version}/builds/${latestBuild}/downloads/${fileName}`;
+    }
+    case "purpur": {
+      // Purpur exposes a "latest" build alias.
+      return `https://api.purpurmc.org/v2/purpur/${version}/latest/download`;
     }
     case "fabric": {
-      const loaderVer = await fetchLatestFabricLoader()
-      jarUrl = `https://meta.fabricmc.net/v2/versions/loader/${version}/${loaderVer}/1.1.0/server/jar`;
-      break;
+      const loaderVer = await fetchLatestFabricLoader();
+      return `https://meta.fabricmc.net/v2/versions/loader/${version}/${loaderVer}/1.1.0/server/jar`;
     }
     default:
       throw new Error("Unknown server type " + type);
   }
+}
 
+// --- Create a server ---
+async function makeServer({ name, version, type, launchArgs }) {
+  const serverDir = path.join(serversDir, name);
+  fs.mkdirSync(serverDir, { recursive: true });
+
+  const jarUrl = await resolveJarUrl(version, type);
   const jarPath = path.join(serverDir, "server.jar");
   await download(jarUrl, jarPath);
 
-  fs.writeFileSync(path.join(serverDir, "eula.txt"), "eula=true\n");
-  fs.writeFileSync(path.join(serverDir, "server.properties"), `motd=${name}\nserver-port=25565\n`);
+  // Leave the EULA UNaccepted — the launcher prompts the user on first launch.
+  fs.writeFileSync(path.join(serverDir, "eula.txt"), "eula=false\n");
+  if (!fs.existsSync(path.join(serverDir, "server.properties"))) {
+    fs.writeFileSync(path.join(serverDir, "server.properties"), `motd=${name}\nserver-port=25565\n`);
+  }
 
   // Save metadata
-  const serverInfo = { name, version, type };
+  const serverInfo = { name, version, type, launchArgs: launchArgs || "" };
   fs.writeFileSync(path.join(serverDir, "serverinfo.json"), JSON.stringify(serverInfo, null, 2));
 
   const serverObj = { ...serverInfo, dir: serverDir, status: "stopped", process: null, logs: [] };
@@ -107,8 +117,42 @@ async function makeServer({ name, version, type }) {
   return serverObj;
 }
 
+// --- Edit a server (rename, change version/type, launch args) ---
+async function editServer(name, { newName, version, type, launchArgs }) {
+  const dir = path.join(serversDir, name);
+  const infoPath = path.join(dir, "serverinfo.json");
+  if (!fs.existsSync(infoPath)) throw new Error("Server not found");
+  const info = JSON.parse(fs.readFileSync(infoPath, "utf-8"));
+  if (servers.get(name)?.process) throw new Error("Stop the server before editing it");
+
+  const changedJar = (version && version !== info.version) || (type && type.toLowerCase() !== (info.type || "").toLowerCase());
+  if (version) info.version = version;
+  if (type) info.type = type;
+  if (launchArgs !== undefined) info.launchArgs = launchArgs;
+
+  if (changedJar) {
+    const jarUrl = await resolveJarUrl(info.version, info.type);
+    await download(jarUrl, path.join(dir, "server.jar"));
+  }
+  fs.writeFileSync(infoPath, JSON.stringify(info, null, 2));
+
+  let finalDir = dir, finalName = name;
+  if (newName && newName !== name) {
+    const target = path.join(serversDir, newName);
+    if (fs.existsSync(target)) throw new Error("A server with that name already exists");
+    fs.renameSync(dir, target);
+    info.name = newName;
+    fs.writeFileSync(path.join(target, "serverinfo.json"), JSON.stringify(info, null, 2));
+    servers.delete(name);
+    finalDir = target; finalName = newName;
+  }
+  const serverObj = { ...info, name: finalName, dir: finalDir, status: "stopped", process: null, logs: [] };
+  servers.set(finalName, serverObj);
+  return { success: true, name: finalName };
+}
+
 // --- Server Lifecycle ---
-function startServer(name, settings) {
+function startServer(name, settings, javaPath) {
   // Accept a number or a "1024m"/"1024" string; emit a clean "-Xms1024m".
   const ramMB = (key, def) => {
     let v = settings ? settings.get(key, def) : def;
@@ -124,7 +168,11 @@ function startServer(name, settings) {
   const jarPath = path.join(server.dir, "server.jar");
   if (!fs.existsSync(jarPath)) throw new Error("Server jar missing");
 
-  const proc = spawn("java", ["-Xms" + minRam, "-Xmx" + maxRam, "-jar", jarPath, "nogui"], { cwd: server.dir });
+  // Use the launcher-resolved Java (correct major version for this MC version);
+  // fall back to system "java" only if none was provided.
+  const java = javaPath || "java";
+  const extraArgs = server.launchArgs ? String(server.launchArgs).split(/\s+/).filter(Boolean) : [];
+  const proc = spawn(java, ["-Xms" + minRam, "-Xmx" + maxRam, ...extraArgs, "-jar", jarPath, "nogui"], { cwd: server.dir });
 
   server.process = proc;
   server.status = "running";
@@ -153,10 +201,10 @@ function stopServer(name) {
   server.process.stdin.write("stop\n");
 }
 
-function restartServer(name, settings) {
+function restartServer(name, settings, javaPath) {
   const server = servers.get(name);
   if (server?.process) stopServer(name);
-  setTimeout(() => startServer(name, settings), 5000);
+  setTimeout(() => startServer(name, settings, javaPath), 5000);
 }
 
 function sendServerCommand(name, cmd) {
@@ -296,6 +344,7 @@ function getServerInfo(name) {
 
 export default {
   makeServer,
+  editServer,
   startServer,
   stopServer,
   restartServer,
