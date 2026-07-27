@@ -122,6 +122,33 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     const { ipcRenderer, shell } = require('electron');
 const resultsList = document.getElementById('projectDescription');
 
+// YouTube (and other) <iframe> embeds fail inside Electron file:// pages (null
+// origin -> "Error 153"), so convert them into clickable thumbnails that open
+// in the system browser instead.
+function fixEmbeds(root) {
+  root.querySelectorAll('iframe').forEach(f => {
+    const src = f.getAttribute('src') || '';
+    const yt = src.match(/(?:youtube(?:-nocookie)?\.com\/embed\/|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+    const wrap = document.createElement('div');
+    if (yt) {
+      const url = `https://www.youtube.com/watch?v=${yt[1]}`;
+      wrap.style.cssText = 'position:relative;max-width:100%;width:480px;cursor:pointer;margin:10px 0;';
+      wrap.innerHTML = `<img src="https://img.youtube.com/vi/${yt[1]}/hqdefault.jpg" style="width:100%;border-radius:8px;display:block;" />
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+          <div style="background:rgba(0,0,0,0.65);border-radius:50%;width:56px;height:56px;display:flex;align-items:center;justify-content:center;font-size:26px;color:#fff;">▶</div>
+        </div>`;
+      wrap.title = 'Watch on YouTube';
+      wrap.onclick = () => shell.openExternal(url);
+    } else {
+      const a = document.createElement('a');
+      a.textContent = 'Open embedded content ↗'; a.style.cursor = 'pointer';
+      a.onclick = () => shell.openExternal(src);
+      wrap.appendChild(a);
+    }
+    f.replaceWith(wrap);
+  });
+}
+
 // Ensure marked.js is available before we parse markdown (its <script> tag is
 // at the bottom of the page and may not have run yet on the first render).
 function ensureMarked() {
@@ -209,6 +236,7 @@ try {
     const descEl = document.getElementById("projectDescription");
     descEl.innerHTML = html;
     descEl.classList.add("projectView-scrolly")
+    fixEmbeds(descEl);
 
     // Make sure anchors open in the system browser
     descEl.querySelectorAll("a").forEach(a => {

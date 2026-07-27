@@ -2267,11 +2267,18 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
 //shi
 
 ipcMain.handle("make-server", async (event, params) => {
-  return await serverManager.makeServer(params);
+  // Forge/NeoForge run an installer with Java, so resolve the right JDK first.
+  let java = "java";
+  try { if (params && params.version) java = await getJavaForMinecraft(params.version); } catch { /* fall back to system java */ }
+  return await serverManager.makeServer(params, java);
 });
 
 ipcMain.handle("edit-server", async (event, { name, ...changes }) => {
-  try { return await serverManager.editServer(name, changes); }
+  try {
+    let java = "java";
+    try { if (changes.version) java = await getJavaForMinecraft(changes.version); } catch { /* system java */ }
+    return await serverManager.editServer(name, changes, java);
+  }
   catch (err) { return { success: false, error: err.message }; }
 });
 

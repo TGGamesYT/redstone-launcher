@@ -93,14 +93,87 @@ async function resolveJarUrl(version, type) {
   }
 }
 
+function fetchText(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => { let d = ""; res.on("data", c => d += c); res.on("end", () => resolve(d)); }).on("error", reject);
+  });
+}
+
+// Latest Forge build for an MC version (recommended, else latest).
+async function resolveForgeVersion(mc) {
+  const promo = await fetchJson("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json");
+  const p = promo.promos || {};
+  return p[`${mc}-recommended`] || p[`${mc}-latest`] || null;
+}
+// Latest NeoForge build for an MC version. NeoForge versions look like
+// 21.1.x for MC 1.21.1, 20.4.x for 1.20.4, etc.
+async function resolveNeoForgeVersion(mc) {
+  const xml = await fetchText("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml");
+  const all = [...xml.matchAll(/<version>([^<]+)<\/version>/g)].map(m => m[1]);
+  const m = mc.match(/^1\.(\d+)(?:\.(\d+))?$/);
+  if (!m) return all[all.length - 1] || null;
+  const prefix = `${m[1]}.${m[2] || 0}.`;
+  const matching = all.filter(v => v.startsWith(prefix));
+  return matching.length ? matching[matching.length - 1] : null;
+}
+
+// Run a modded-server installer and wait for it to finish.
+function runInstaller(java, cwd, installerName, args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(java, ["-jar", installerName, ...args], { cwd });
+    let out = "";
+    proc.stdout.on("data", d => out += d);
+    proc.stderr.on("data", d => out += d);
+    proc.on("error", reject);
+    proc.on("close", (code) => code === 0 ? resolve(out) : reject(new Error("Installer exited " + code + "\n" + out.slice(-500))));
+  });
+}
+
+// Find a Forge/NeoForge launch args file directory (contains unix_args.txt).
+function findArgFileDir(root) {
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) stack.push(full);
+      else if (e.name === "unix_args.txt" || e.name === "win_args.txt") return path.relative(root, dir).replace(/\\/g, "/");
+    }
+  }
+  return null;
+}
+
+// Provision a server's files. Returns extra serverInfo fields (launch metadata).
+async function provisionServer(serverDir, version, type, javaPath) {
+  const t = (type || "").toLowerCase();
+  if (t === "forge" || t === "neoforge") {
+    const isNeo = t === "neoforge";
+    const build = isNeo ? await resolveNeoForgeVersion(version) : await resolveForgeVersion(version);
+    if (!build) throw new Error(`No ${type} build found for Minecraft ${version}`);
+    const installerName = "installer.jar";
+    const url = isNeo
+      ? `https://maven.neoforged.net/releases/net/neoforged/neoforge/${build}/neoforge-${build}-installer.jar`
+      : `https://maven.minecraftforge.net/net/minecraftforge/forge/${version}-${build}/forge-${version}-${build}-installer.jar`;
+    await download(url, path.join(serverDir, installerName));
+    await runInstaller(javaPath || "java", serverDir, installerName, ["--installServer"]);
+    const argDir = findArgFileDir(path.join(serverDir, "libraries")) || findArgFileDir(serverDir);
+    if (!argDir) throw new Error(`${type} installed but no launch args file was produced`);
+    return { launchType: "argfile", argFileDir: argDir.startsWith("libraries") ? argDir : path.join("libraries", argDir), buildVersion: build };
+  }
+  // Everything else is a single runnable jar.
+  const jarUrl = await resolveJarUrl(version, type);
+  await download(jarUrl, path.join(serverDir, "server.jar"));
+  return { launchType: "jar" };
+}
+
 // --- Create a server ---
-async function makeServer({ name, version, type, launchArgs }) {
+async function makeServer({ name, version, type, launchArgs }, javaPath) {
   const serverDir = path.join(serversDir, name);
   fs.mkdirSync(serverDir, { recursive: true });
 
-  const jarUrl = await resolveJarUrl(version, type);
-  const jarPath = path.join(serverDir, "server.jar");
-  await download(jarUrl, jarPath);
+  const launchMeta = await provisionServer(serverDir, version, type, javaPath);
 
   // Leave the EULA UNaccepted — the launcher prompts the user on first launch.
   fs.writeFileSync(path.join(serverDir, "eula.txt"), "eula=false\n");
@@ -109,7 +182,7 @@ async function makeServer({ name, version, type, launchArgs }) {
   }
 
   // Save metadata
-  const serverInfo = { name, version, type, launchArgs: launchArgs || "" };
+  const serverInfo = { name, version, type, launchArgs: launchArgs || "", ...launchMeta };
   fs.writeFileSync(path.join(serverDir, "serverinfo.json"), JSON.stringify(serverInfo, null, 2));
 
   const serverObj = { ...serverInfo, dir: serverDir, status: "stopped", process: null, logs: [] };
@@ -118,7 +191,7 @@ async function makeServer({ name, version, type, launchArgs }) {
 }
 
 // --- Edit a server (rename, change version/type, launch args) ---
-async function editServer(name, { newName, version, type, launchArgs }) {
+async function editServer(name, { newName, version, type, launchArgs }, javaPath) {
   const dir = path.join(serversDir, name);
   const infoPath = path.join(dir, "serverinfo.json");
   if (!fs.existsSync(infoPath)) throw new Error("Server not found");
@@ -131,8 +204,8 @@ async function editServer(name, { newName, version, type, launchArgs }) {
   if (launchArgs !== undefined) info.launchArgs = launchArgs;
 
   if (changedJar) {
-    const jarUrl = await resolveJarUrl(info.version, info.type);
-    await download(jarUrl, path.join(dir, "server.jar"));
+    const meta = await provisionServer(dir, info.version, info.type, javaPath);
+    Object.assign(info, { launchType: undefined, argFileDir: undefined, buildVersion: undefined }, meta);
   }
   fs.writeFileSync(infoPath, JSON.stringify(info, null, 2));
 
@@ -165,14 +238,23 @@ function startServer(name, settings, javaPath) {
   if (!server) throw new Error("Server not found");
   if (server.process) return; // already running
 
-  const jarPath = path.join(server.dir, "server.jar");
-  if (!fs.existsSync(jarPath)) throw new Error("Server jar missing");
-
   // Use the launcher-resolved Java (correct major version for this MC version);
   // fall back to system "java" only if none was provided.
   const java = javaPath || "java";
   const extraArgs = server.launchArgs ? String(server.launchArgs).split(/\s+/).filter(Boolean) : [];
-  const proc = spawn(java, ["-Xms" + minRam, "-Xmx" + maxRam, ...extraArgs, "-jar", jarPath, "nogui"], { cwd: server.dir });
+
+  let jvmArgs;
+  if (server.launchType === "argfile" && server.argFileDir) {
+    // Forge / NeoForge: launch via the generated @args file (classpath etc.).
+    const argFile = path.join(server.argFileDir, process.platform === "win32" ? "win_args.txt" : "unix_args.txt");
+    if (!fs.existsSync(path.join(server.dir, argFile))) throw new Error("Server launch args file missing (reinstall the server)");
+    jvmArgs = ["-Xms" + minRam, "-Xmx" + maxRam, ...extraArgs, "@" + argFile, "nogui"];
+  } else {
+    const jarPath = path.join(server.dir, "server.jar");
+    if (!fs.existsSync(jarPath)) throw new Error("Server jar missing");
+    jvmArgs = ["-Xms" + minRam, "-Xmx" + maxRam, ...extraArgs, "-jar", jarPath, "nogui"];
+  }
+  const proc = spawn(java, jvmArgs, { cwd: server.dir });
 
   server.process = proc;
   server.status = "running";
