@@ -716,12 +716,15 @@
       if (pendingSelection && pendingSelection.id != null) {
         match = cards.find(c => c.dataset.skinid === String(pendingSelection.id));
       }
+      // Prefer the card matching the skin that's ACTUALLY active now (by pixel
+      // hash) — so if the skin was changed elsewhere, the outline follows the
+      // real current skin instead of the launcher's stale last-applied one.
+      if (!match && activePixelHash) {
+        match = cards.find(c => c.dataset.pixelhash && c.dataset.pixelhash === activePixelHash);
+      }
       if (!match) {
         const appliedId = localStorage.getItem('appliedSkin_' + (currentUuid || ''));
         if (appliedId) match = cards.find(c => c.dataset.skinid === appliedId);
-      }
-      if (!match && activePixelHash) {
-        match = cards.find(c => c.dataset.pixelhash && c.dataset.pixelhash === activePixelHash);
       }
       if (match) match.classList.add("selected");
       updateApplyButton();

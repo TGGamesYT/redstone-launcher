@@ -571,6 +571,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       sel.onchange = updateSub;
       updateSub();
       $('shareModal').classList.add('active');
+      setTimeout(() => $('shareSub').focus(), 60);
     }
     $('shareGo').onclick = async () => {
       $('shareGo').disabled = true; $('shareGo').textContent = 'Connecting…';
@@ -832,6 +833,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       }
       $('dMenu').classList.remove('open');
       $('createServerModal').classList.add('active');
+      setTimeout(() => $('srvName').focus(), 60);
     }
     $('addServerBtn').onclick = () => openServerModal(null);
     $('createServerBtn').onclick = async () => {
