@@ -28,9 +28,11 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
     /* Search / filter / sort toolbar (mirrors the instances page). */
     #server-search-sort { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
-    #server-search-sort .ss-row { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
+    #server-search-sort .ss-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     #server-search-sort input, #server-search-sort select, #server-search-sort .add-server-btn {
-      height: 42px; margin-bottom: 0; box-sizing: border-box;
+      /* width:auto so the flex sizing wins over the global `select{width:100%}`
+         (which was forcing every control full-width and wrapping to 3 lines). */
+      height: 42px; margin-bottom: 0; box-sizing: border-box; width: auto; min-width: 0;
     }
     .add-server-btn {
       width: 42px; flex: 0 0 42px; display: inline-flex; align-items: center; justify-content: center;
@@ -313,7 +315,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       </div>
       <div style="font-size:12px;opacity:0.75;margin-bottom:10px;">Connects through the Redstone Relay (works behind any NAT) and automatically also tries a direct UPnP path if your router supports it.</div>
       <div id="shareIceFields">
-        <div class="modal-section"><label>Account</label><select id="shareAccount"></select></div>
+        <div class="modal-section" id="shareAccountSection"><label>Account</label><select id="shareAccount"></select></div>
         <div class="modal-section"><label>Address</label>
           <div style="display:flex;align-items:center;gap:4px;">
             <input id="shareSub" style="flex:1;" placeholder="name" />
@@ -549,34 +551,46 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
       if (st && st.active) showRelayBanner(st.address, st.directAddress); else hideRelayBanner();
     }
+    const subLabel = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    let shareAccounts = [], shareDomain = 'redstonemc.net';
+    function shareAccount() { return shareAccounts.find(x => x.id === $('shareAccount').value) || shareAccounts[0]; }
+    function fullSubdomain() {
+      const a = shareAccount(); if (!a) return '';
+      const uname = subLabel(a.name), text = subLabel($('shareSub').value);
+      if (a.isAdmin) return text || uname;              // admins: anything (or their name)
+      return text ? `${text}.${uname}` : uname;         // else: <text>.<username> or <username>
+    }
+    function updateSharePreview() {
+      const a = shareAccount(); if (!a) return;
+      const uname = subLabel(a.name);
+      // Suffix reflects what the user actually controls.
+      $('shareDomainSuffix').textContent = a.isAdmin ? `.${shareDomain}` : `.${uname}.${shareDomain}`;
+      $('sharePreview').textContent = `${fullSubdomain()}.${shareDomain}`; // relay port is 25565 → not shown
+    }
     async function openShareModal() {
       $('dMenu').classList.remove('open');
       const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
       if (st && st.active) { await ipcRenderer.invoke('relay:close', { name: selectedServer.name }); hideRelayBanner(); return; }
-      const accounts = await ipcRenderer.invoke('relay:accounts');
-      const domain = await ipcRenderer.invoke('relay:domain');
-      $('shareDomainSuffix').textContent = '.' + domain;
-      if (!accounts.length) { alert('Sharing over the internet needs a premium Minecraft account. Add one in the Login page first.'); return; }
+      shareAccounts = await ipcRenderer.invoke('relay:accounts');
+      shareDomain = await ipcRenderer.invoke('relay:domain');
+      if (!shareAccounts.length) { alert('Sharing over the internet needs a premium Minecraft account. Add one in the Login page first.'); return; }
       const sel = $('shareAccount');
-      sel.innerHTML = accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
-      const uname = accounts[0].name.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-      const svr = (selectedServer.name || 'server').toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-      const updateSub = () => {
-        const a = accounts.find(x => x.id === sel.value) || accounts[0];
-        const u = a.name.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-        $('shareSub').value = `${svr}.${u}`;
-        $('sharePreview').textContent = `${$('shareSub').value}.${domain}:25565`;
-      };
-      $('shareSub').oninput = () => { $('sharePreview').textContent = `${$('shareSub').value}.${domain}:25565`; };
-      sel.onchange = updateSub;
-      updateSub();
+      sel.innerHTML = shareAccounts.map(a => `<option value="${a.id}">${a.name}${a.isAdmin ? ' (admin)' : ''}</option>`).join('');
+      $('shareAccountSection').style.display = shareAccounts.length > 1 ? '' : 'none';
+      // Default the text field to the server name; for non-admins it becomes
+      // <server>.<username>, for admins <server>.
+      const a0 = shareAccount();
+      $('shareSub').value = a0 && a0.isAdmin ? `${subLabel(selectedServer.name)}.${subLabel(a0.name)}` : subLabel(selectedServer.name);
+      $('shareSub').oninput = updateSharePreview;
+      sel.onchange = () => { const a = shareAccount(); $('shareSub').value = a && a.isAdmin ? `${subLabel(selectedServer.name)}.${subLabel(a.name)}` : subLabel(selectedServer.name); updateSharePreview(); };
+      updateSharePreview();
       $('shareModal').classList.add('active');
       setTimeout(() => $('shareSub').focus(), 60);
     }
     $('shareGo').onclick = async () => {
       $('shareGo').disabled = true; $('shareGo').textContent = 'Connecting…';
       try {
-        const res = await ipcRenderer.invoke('relay:open', { name: selectedServer.name, subdomain: $('shareSub').value.trim(), accountId: $('shareAccount').value });
+        const res = await ipcRenderer.invoke('relay:open', { name: selectedServer.name, subdomain: fullSubdomain(), accountId: $('shareAccount').value });
         if (res && res.success) { showRelayBanner(res.address, res.directAddress); $('shareModal').classList.remove('active'); }
         else alert("Couldn't share: " + (res?.error || 'unknown error'));
       } finally { $('shareGo').disabled = false; $('shareGo').textContent = 'Share'; }

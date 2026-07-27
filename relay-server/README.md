@@ -39,8 +39,20 @@ ranges, so it plays nicely with your existing nginx/UFW setup.
 | `RELAY_TLS_KEY`      | `/etc/letsencrypt/live/<domain>/privkey.pem`   | TLS key (certbot default).               |
 | `RELAY_TLS_CERT`     | `/etc/letsencrypt/live/<domain>/fullchain.pem` | TLS cert (certbot default).              |
 | `RELAY_OFFLINE_ICON` | `./offline-icon.png`                           | 64×64 PNG shown for offline/missing servers. |
-| `RELAY_ADMINS`       | `./admins.json`                                | `{ "uuids": ["<undashed-uuid>", …] }`    |
+| `RELAY_ADMINS`       | `./admins.json`                                | `{ "uuids": ["<uuid>", …] }` (dashes optional) |
 | `RELAY_STATE`        | `./relay-state.json`                           | Tracks recently-used subdomains.         |
+| `CF_API_TOKEN`       | *(unset = relay-only)*                         | Cloudflare API token (DNS edit on the zone) for the direct path. |
+| `CF_ZONE_ID`         | *(unset)*                                      | Cloudflare zone id for `redstonemc.net`. |
+
+### Direct path (recommended — avoids relaying game traffic)
+
+By default the relay tunnels all Minecraft traffic through the VPS, which adds
+latency. If you set `CF_API_TOKEN` + `CF_ZONE_ID`, then whenever a host's router
+supports UPnP the relay points `<sub>.redstonemc.net`'s **A record straight at
+the host's public IP** (TTL 60, DNS-only). Players then connect **directly** to
+the host — no relay hop — while the relay tunnel stays registered as a fallback
+for anyone with stale/wildcard DNS. When the host stops sharing, the record is
+removed and the wildcard (→ VPS, offline placeholder) takes over again.
 
 Drop your Velocity `server-icon.png` in as `offline-icon.png` for the placeholder.
 

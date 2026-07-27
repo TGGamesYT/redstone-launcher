@@ -1,4 +1,10 @@
 {
-  "_comment": "Undashed Minecraft account UUIDs allowed to claim ANY subdomain under the base domain (for admin/testing).",
-  "uuids": []
+  "_comment": "Minecraft account UUIDs allowed to claim ANY subdomain under the base domain (admin/testing). Dashes optional.",
+  "uuids": [
+    "52af5540-dd18-4ad9-9acb-50eb11531180",
+    "9c1bd0aa-5bb6-4b31-b994-3dfd9408b8b5",
+    "f06d927e-d6cf-48b8-ba61-588866b610c0",
+    "20bbb23e-2f22-46ba-b201-c6bd435b445b",
+    "b87f3bbb-ee4e-457e-b5ed-e485b813a0c5"
+  ]
 }

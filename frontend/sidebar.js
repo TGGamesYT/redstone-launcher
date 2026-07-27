@@ -340,7 +340,7 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
     bar.innerHTML = '<span class="tp-label"></span><span class="tp-track"><span class="tp-fill"></span></span>';
     label = bar.querySelector('.tp-label');
     fill = bar.querySelector('.tp-fill');
-    container.appendChild(bar);
+    container.insertBefore(bar, container.firstChild); // to the LEFT of the running-instance label
   }
   ipcRenderer.on('launch-progress', (e, data) => {
     if (!data) return;

@@ -2420,11 +2420,21 @@ const RELAY_DEFAULTS = {
 const activeRelays = new Map();
 const DOMAIN_BASE = process.env.REDSTONE_RELAY_HOST || "redstonemc.net";
 
+// UUIDs allowed to claim any subdomain (mirrors relay-server/admins.json).
+const RELAY_ADMIN_UUIDS = new Set([
+  "52af5540-dd18-4ad9-9acb-50eb11531180",
+  "9c1bd0aa-5bb6-4b31-b994-3dfd9408b8b5",
+  "f06d927e-d6cf-48b8-ba61-588866b610c0",
+  "20bbb23e-2f22-46ba-b201-c6bd435b445b",
+  "b87f3bbb-ee4e-457e-b5ed-e485b813a0c5",
+].map(u => u.replace(/-/g, "").toLowerCase()));
+const isAdminUuid = (uuid) => RELAY_ADMIN_UUIDS.has(String(uuid || "").replace(/-/g, "").toLowerCase());
+
 // Premium (Microsoft) accounts usable for relay auth.
 function premiumAccounts() {
   return loadPlayers()
     .filter(p => p.type === "microsoft" && p.auth && p.auth.access_token && p.auth.access_token !== "0")
-    .map(p => ({ id: p.id, name: p.auth.name || p.username, uuid: p.auth.uuid }));
+    .map(p => ({ id: p.id, name: p.auth.name || p.username, uuid: p.auth.uuid, isAdmin: isAdminUuid(p.auth.uuid) }));
 }
 ipcMain.handle("relay:accounts", () => premiumAccounts());
 ipcMain.handle("relay:domain", () => DOMAIN_BASE);
@@ -2452,23 +2462,27 @@ ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, ac
 
     const sub = subdomain || subLabel(account.name);
     const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
-    const session = await relayClient.openRelay({
-      host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
-      subdomain: sub, localPort, account, rejectUnauthorized,
-    });
-    // ICE gathers every candidate: the relay (TURN) is the reliable path that
-    // always works; additionally try a UPnP port-mapping (a direct candidate)
-    // so friends on a UPnP-capable network can connect straight to the host's
-    // public IP without the relay hop. Best-effort — no error if it fails.
-    let directAddress = null;
+
+    // ICE gathers every candidate FIRST: try a UPnP port-mapping so we can hand
+    // the relay a direct public endpoint. When that works, the relay points DNS
+    // straight at the host and game traffic bypasses the relay hop entirely; the
+    // relay tunnel then only serves as a fallback. Best-effort.
+    let directIp = null, directAddress = null;
     try {
       const up = await upnp.openPort(Number(localPort), "TCP", "Redstone Launcher");
-      if (up && up.success && up.externalIP) directAddress = `${up.externalIP}:${localPort}`;
+      if (up && up.success && up.externalIP) { directIp = up.externalIP; directAddress = Number(localPort) === 25565 ? up.externalIP : `${up.externalIP}:${localPort}`; }
     } catch (e) { console.warn("[Relay] UPnP candidate unavailable:", e.message); }
 
+    const session = await relayClient.openRelay({
+      host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+      subdomain: sub, localPort, account, directIp, rejectUnauthorized,
+    });
+
     if (!session.address || !session.port) { try { session.close(); } catch { /* ignore */ } return { success: false, error: "The relay didn't return a join address (is the relay server running?)" }; }
-    activeRelays.set(k, { ...session, directAddress, localPort, upnpMapped: !!directAddress });
-    return { success: true, address: `${session.address}:${session.port}`, port: session.port, directAddress };
+    // Minecraft's default port (25565) is implied — don't show it.
+    const shownAddr = session.port === 25565 ? session.address : `${session.address}:${session.port}`;
+    activeRelays.set(k, { ...session, shownAddr, directAddress, localPort, upnpMapped: !!directIp });
+    return { success: true, address: shownAddr, port: session.port, directAddress };
   } catch (err) {
     console.error("[Relay] open failed:", err);
     return { success: false, error: err.message };
@@ -2489,7 +2503,7 @@ ipcMain.handle("relay:close", async (event, { key, name }) => {
 ipcMain.handle("relay:status", async (event, { key, name }) => {
   const k = key || name;
   const s = activeRelays.get(k);
-  return s ? { active: true, address: s.address ? `${s.address}:${s.port}` : null, port: s.port, directAddress: s.directAddress || null } : { active: false };
+  return s ? { active: true, address: s.shownAddr || s.address, port: s.port, directAddress: s.directAddress || null } : { active: false };
 });
 
 // ── UPnP auto port-forward (self-hosting) ──

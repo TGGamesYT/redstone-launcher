@@ -38,7 +38,37 @@ const RECENT_MS = 30 * 24 * 60 * 60 * 1000; // "used in the last month"
 function log(...a) { console.log(new Date().toISOString(), ...a); }
 
 // ───────────────────────── control mux protocol ─────────────────────────
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11 };
+
+// Cloudflare DNS (optional). When a host reports a working UPnP public endpoint,
+// we point <sub>.redstonemc.net straight at the host's IP so players connect
+// DIRECTLY (no relay hop, no latency penalty). Without it, the wildcard record
+// keeps *.redstonemc.net on the VPS and the relay tunnel carries the traffic.
+const CF = {
+  token: process.env.CF_API_TOKEN || "",
+  zone: process.env.CF_ZONE_ID || "",
+  get enabled() { return !!(this.token && this.zone); },
+};
+function cfRequest(method, apiPath, body) {
+  return new Promise((resolve, reject) => {
+    const data = body ? JSON.stringify(body) : null;
+    const req = https.request({
+      host: "api.cloudflare.com", path: "/client/v4" + apiPath, method,
+      headers: { "Authorization": `Bearer ${CF.token}`, "Content-Type": "application/json", ...(data ? { "Content-Length": Buffer.byteLength(data) } : {}) },
+    }, (res) => { let d = ""; res.on("data", c => d += c); res.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } }); });
+    req.on("error", reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+async function cfPointDirect(sub, ip) {
+  const name = `${sub}.${DOMAIN}`;
+  const existing = await cfRequest("GET", `/zones/${CF.zone}/dns_records?type=A&name=${encodeURIComponent(name)}`);
+  for (const r of (existing?.result || [])) { try { await cfRequest("DELETE", `/zones/${CF.zone}/dns_records/${r.id}`); } catch { /* ignore */ } }
+  const res = await cfRequest("POST", `/zones/${CF.zone}/dns_records`, { type: "A", name, content: ip, ttl: 60, proxied: false });
+  return res?.result?.id || null;
+}
+async function cfRemoveDirect(id) { try { await cfRequest("DELETE", `/zones/${CF.zone}/dns_records/${id}`); } catch { /* ignore */ } }
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
   const buf = Buffer.allocUnsafe(9 + len);
@@ -230,11 +260,20 @@ const control = tls.createServer(tlsOptions, (sock) => {
     if (type === T.DATA) { const p = state.streams.get(streamId); if (p) { try { p.write(payload); } catch { /* ignore */ } } }
     else if (type === T.CLOSE) { const p = state.streams.get(streamId); if (p) { state.streams.delete(streamId); try { p.end(); } catch { /* ignore */ } } }
     else if (type === T.PING) send(T.PONG, 0, null);
+    else if (type === T.DIRECT) {
+      // Host has a public (UPnP) endpoint — point DNS straight at it so players
+      // connect directly instead of through the relay.
+      let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      if (info.ip && CF.enabled && state.sub) {
+        cfPointDirect(state.sub, info.ip).then(id => { state.cfRecordId = id; if (id) log("direct DNS", `${state.sub}.${DOMAIN} -> ${info.ip}`); }).catch(e => log("cf error", e.message));
+      }
+    }
   });
 
   sock.on("data", decode);
   sock.on("close", () => {
     if (state.sub && hosts.get(state.sub)?.send === send) { hosts.delete(state.sub); recentSubs[state.sub] = Date.now(); saveState(); log("unregistered", state.sub); }
+    if (state.cfRecordId) cfRemoveDirect(state.cfRecordId); // restore wildcard -> VPS
     for (const p of state.streams.values()) { try { p.destroy(); } catch { /* ignore */ } }
   });
   sock.on("error", () => {});

@@ -5,7 +5,7 @@ import net from "net";
 import tls from "tls";
 import https from "https";
 
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11 };
 
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
@@ -44,7 +44,7 @@ function mojangJoin(accessToken, uuid, serverId) {
 
 // Open a relay session. Resolves { address, port, close() }.
 //   account: { accessToken, uuid, name }  (a verified premium account)
-export function openRelay({ host, controlPort, subdomain, localPort, account, rejectUnauthorized = true }) {
+export function openRelay({ host, controlPort, subdomain, localPort, account, directIp, rejectUnauthorized = true }) {
   return new Promise((resolve, reject) => {
     const streams = new Map();
     let settled = false, keepalive = null;
@@ -64,6 +64,9 @@ export function openRelay({ host, controlPort, subdomain, localPort, account, re
         let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
         if (!info.address || !info.port) { if (!settled) reject(new Error("Relay did not assign an address")); try { sock.end(); } catch { /* ignore */ } return; }
         settled = true;
+        // If we have a public (UPnP) IP, ask the relay to point DNS directly at
+        // us so players bypass the relay hop entirely.
+        if (directIp) send(T.DIRECT, 0, Buffer.from(JSON.stringify({ ip: directIp, port: localPort })));
         keepalive = setInterval(() => send(T.PING, 0, null), 20000);
         resolve({ address: info.address, port: info.port, close: () => { if (keepalive) clearInterval(keepalive); try { sock.end(); } catch { /* ignore */ } } });
       } else if (type === T.ERROR) {
