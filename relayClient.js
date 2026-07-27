@@ -62,6 +62,7 @@ export function openRelay({ host, controlPort, subdomain, localPort, account, re
         send(T.AUTH, 0, Buffer.from(JSON.stringify({ username: account.name, uuid: account.uuid })));
       } else if (type === T.WELCOME) {
         let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        if (!info.address || !info.port) { if (!settled) reject(new Error("Relay did not assign an address")); try { sock.end(); } catch { /* ignore */ } return; }
         settled = true;
         keepalive = setInterval(() => send(T.PING, 0, null), 20000);
         resolve({ address: info.address, port: info.port, close: () => { if (keepalive) clearInterval(keepalive); try { sock.end(); } catch { /* ignore */ } } });

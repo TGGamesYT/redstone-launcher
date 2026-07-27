@@ -2070,24 +2070,30 @@ async function getJavaForMinecraft(mcVersion) {
     throw new Error(`No compatible Java ${javaVersion} found on your system, and auto-download is disabled in settings.`);
   }
 
-  // 🔟 Fetch Adoptium API JSON
-  const apiUrl = `https://api.adoptium.net/v3/assets/latest/${javaVersion}/hotspot?architecture=${arch}&os=${osName}&image_type=jre&release_type=ga`;
-  const apiData = await new Promise((resolve, reject) => {
-    https.get(apiUrl, (res) => {
-      let data = "";
-      res.on("data", chunk => data += chunk);
-      res.on("end", () => resolve(JSON.parse(data)));
-      res.on("error", reject);
-    });
+  // 🔟 Fetch Adoptium API JSON. Try GA first, then early-access; and JRE first,
+  // then JDK — so a brand-new major (e.g. Java 25 before a JRE/GA build exists)
+  // still resolves instead of falling back to an incompatible system Java.
+  const fetchAdoptium = (url) => new Promise((resolve) => {
+    https.get(url, (res) => {
+      let data = ""; res.on("data", c => data += c);
+      res.on("end", () => { try { resolve(JSON.parse(data)); } catch { resolve(null); } });
+      res.on("error", () => resolve(null));
+    }).on("error", () => resolve(null));
   });
-
-  if (!apiData[0]?.binary?.package?.link) {
-    devtoolsLog(apiData);
-    devtoolsLog("Failed to find Java download link in Adoptium API response.")
-    throw new Error("Failed to find Java download link in Adoptium API response.");
+  let downloadUrl = null;
+  outer:
+  for (const releaseType of ["ga", "ea"]) {
+    for (const imageType of ["jre", "jdk"]) {
+      const url = `https://api.adoptium.net/v3/assets/latest/${javaVersion}/hotspot?architecture=${arch}&os=${osName}&image_type=${imageType}&release_type=${releaseType}`;
+      const apiData = await fetchAdoptium(url);
+      const link = Array.isArray(apiData) && apiData[0]?.binary?.package?.link;
+      if (link) { downloadUrl = link; devtoolsLog(`[Java] Using Adoptium ${imageType}/${releaseType} for Java ${javaVersion}`); break outer; }
+    }
+  }
+  if (!downloadUrl) {
+    throw new Error(`Could not find a downloadable Java ${javaVersion} build (Adoptium had no ga/ea jre/jdk).`);
   }
 
-  const downloadUrl = apiData[0].binary.package.link;
   const tmpZip = path.join(os.tmpdir(), `java${javaVersion}.zip`);
 
   // 10️⃣ Download
@@ -2460,8 +2466,9 @@ ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, ac
       if (up && up.success && up.externalIP) directAddress = `${up.externalIP}:${localPort}`;
     } catch (e) { console.warn("[Relay] UPnP candidate unavailable:", e.message); }
 
+    if (!session.address || !session.port) { try { session.close(); } catch { /* ignore */ } return { success: false, error: "The relay didn't return a join address (is the relay server running?)" }; }
     activeRelays.set(k, { ...session, directAddress, localPort, upnpMapped: !!directAddress });
-    return { success: true, address: session.address ? `${session.address}:${session.port}` : null, port: session.port, directAddress };
+    return { success: true, address: `${session.address}:${session.port}`, port: session.port, directAddress };
   } catch (err) {
     console.error("[Relay] open failed:", err);
     return { success: false, error: err.message };

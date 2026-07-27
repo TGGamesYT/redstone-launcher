@@ -67,6 +67,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   .download-btn:hover {
     background: var(--third-color);
   }
+  .description img { max-width: 100%; height: auto; border-radius: 6px; }
+  .description iframe, .description video { max-width: 100%; }
   .mp-tabs button.srv-tab {
     background: var(--menu-bg); color: var(--text-color); border: none;
     border-radius: var(--border-radius); padding: 6px 14px; cursor: pointer;
@@ -192,6 +194,8 @@ async function fetchServers() {
 }
 
 function formatNumber(num) {
+  num = Number(num);
+  if (!Number.isFinite(num)) return "0"; // guard undefined/null (e.g. opened from an instance tab)
   if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
   if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
   return num.toString();

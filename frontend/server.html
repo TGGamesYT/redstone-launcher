@@ -24,7 +24,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
     .promain { display: flex; gap: 16px; padding: 0 20px 0 0; }
-    #serverListView { flex: 1; min-width: 0; }
+    #serverListView { flex: 1; min-width: 0; display: flex; flex-direction: column; height: calc(100vh - 120px); }
 
     /* Search / filter / sort toolbar (mirrors the instances page). */
     #server-search-sort { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
@@ -40,7 +40,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     .add-server-btn:hover { background: var(--third-color); }
 
     #serversList { list-style: none; padding: 0 4px 0 0; margin: 0; display: flex; flex-direction: column; gap: 8px;
-      max-height: calc(100vh - 190px); overflow-y: auto; }
+      flex: 1; min-height: 0; overflow-y: auto; }
 
     /* Status dot sits on the bottom-right of the server ICON. The wrapper must
        hug the image exactly — the global `.profile-item span { flex:1 }` rule
@@ -170,9 +170,14 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
             <option value="">All types</option>
             <option value="vanilla">Vanilla</option>
             <option value="paper">Paper</option>
+            <option value="purpur">Purpur</option>
+            <option value="folia">Folia</option>
             <option value="fabric">Fabric</option>
+            <option value="forge">Forge</option>
+            <option value="neoforge">NeoForge</option>
           </select>
-          <select id="srvVersionFilter" style="flex:1; min-width:120px;"><option value="">All versions</option></select>
+          <select id="srvVersionFilter" style="flex:0 0 auto; min-width:120px;"><option value="">All versions</option></select>
+          <label class="inline-check" style="white-space:nowrap;"><input type="checkbox" id="srvShowSnapshots" /> Snapshots</label>
           <select id="srvSort" style="flex:1; min-width:150px;">
             <option value="name-asc">Sort: Name (A→Z)</option>
             <option value="name-desc">Sort: Name (Z→A)</option>
@@ -345,10 +350,21 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       renderServers();
     }
 
+    // Piston-meta ordering + release/snapshot type, populated by initVersionSelect.
+    let pistonOrder = new Map(), pistonType = new Map();
+    function isSnapshotVersion(v) {
+      const t = pistonType.get(v);
+      if (t) return t !== 'release';
+      return !/^\d+\.\d+(\.\d+)?$/.test(v); // fallback heuristic
+    }
     function populateServerVersionFilter() {
       const sel = $('srvVersionFilter');
       const prev = sel.value;
-      const versions = [...new Set(servers.map(s => s.version).filter(Boolean))];
+      const showSnap = $('srvShowSnapshots').checked;
+      let versions = [...new Set(servers.map(s => s.version).filter(Boolean))];
+      if (!showSnap) versions = versions.filter(v => !isSnapshotVersion(v));
+      // Order by piston-meta index (unknowns last).
+      versions.sort((a, b) => (pistonOrder.has(a) ? pistonOrder.get(a) : 1e9) - (pistonOrder.has(b) ? pistonOrder.get(b) : 1e9));
       sel.innerHTML = '<option value="">All versions</option>' + versions.map(v => `<option value="${v}">${v}</option>`).join('');
       if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
     }
@@ -412,7 +428,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       });
     }
 
-    ['srvSearch', 'srvTypeFilter', 'srvVersionFilter', 'srvSort'].forEach(id => {
+    ['srvSearch', 'srvTypeFilter', 'srvVersionFilter', 'srvSort', 'srvShowSnapshots'].forEach(id => {
       const el = $(id);
       el.addEventListener('input', renderServers);
       el.addEventListener('change', renderServers);
@@ -846,6 +862,9 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     // Version dropdown (piston-meta order; snapshots behind "Show all").
     async function initVersionSelect() {
       const versions = (await (await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json')).json()).versions;
+      // Record manifest order + type so the list filter can order/hide snapshots.
+      versions.forEach((v, i) => { pistonOrder.set(v.id, i); pistonType.set(v.id, v.type); });
+      renderServers();
       const sel = $('srvVersion');
       const fill = (showAll) => {
         sel.innerHTML = '';

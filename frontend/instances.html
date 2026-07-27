@@ -2338,6 +2338,9 @@
     async function initVersionSelect() {
       await fetchVersions();
       applyVersionMode();
+      // The list filter may have rendered before the manifest loaded (leaving it
+      // in the unordered fallback) — re-populate it now that we have piston order.
+      if (typeof populateVersionFilter === 'function') populateVersionFilter();
       document.getElementById('showAllVersions').addEventListener('change', applyVersionMode);
       document.getElementById('alwaysUpdate').addEventListener('change', applyVersionMode);
     }

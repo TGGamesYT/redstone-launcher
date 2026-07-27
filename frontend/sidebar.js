@@ -239,15 +239,20 @@ function applyModProviderIcon() {
 applyModProviderIcon();
 
 // Don't let a text-selection drag that ENDS on a modal backdrop close the modal.
-// Modal close handlers fire on click when e.target === overlay; if the drag
-// started elsewhere (selecting text inside the modal) we swallow that click.
+// Modal close handlers fire on click when e.target === overlay; when the drag
+// STARTED on an element *inside* that overlay (selecting text in the modal) the
+// click's target becomes the common ancestor (the overlay), which would close
+// it. We detect that (mouseup target contains the mousedown target) and swallow
+// the click. Works for every modal regardless of its classes/ids.
 (function preventDragCloseOnModals() {
   let downTarget = null;
   document.addEventListener('mousedown', (e) => { downTarget = e.target; }, true);
   document.addEventListener('click', (e) => {
     if (!downTarget || downTarget === e.target) return;
-    const cn = (e.target && typeof e.target.className === 'string') ? e.target.className : '';
-    if (/overlay|modal|backdrop/i.test(cn)) { e.stopPropagation(); }
+    if (e.target && e.target.contains && e.target.contains(downTarget)) {
+      e.stopPropagation();
+    }
+    downTarget = null;
   }, true);
 })();
 
@@ -322,6 +327,11 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
 (function setupToolbarProgress() {
   const container = document.getElementById('instance-processes');
   if (!container) return;
+  // Lay the progress bar and the running-instance label out in a single row,
+  // vertically centred — otherwise they stack and drift out of the toolbar.
+  container.style.display = 'flex';
+  container.style.alignItems = 'center';
+  container.style.gap = '10px';
   let bar = null, label = null, fill = null, hideTimer = null;
   function ensureBar() {
     if (bar) return;
