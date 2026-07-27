@@ -67,6 +67,12 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   .download-btn:hover {
     background: var(--third-color);
   }
+  .mp-tabs button.srv-tab {
+    background: var(--menu-bg); color: var(--text-color); border: none;
+    border-radius: var(--border-radius); padding: 6px 14px; cursor: pointer;
+    font-family: var(--text-font); text-transform: none;
+  }
+  .mp-tabs button.srv-tab.active { background: var(--base-color); }
   .description {
     background: var(--very-dark);
     border-radius: var(--border-radius);
@@ -115,7 +121,11 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 </div>
   <div id="project-container" class="project-container">
     <div id="projectHeader" class="project-header"></div>
+    <div id="projectTabs" class="mp-tabs" style="display:flex;gap:6px;margin:10px 0;flex-wrap:wrap;"></div>
     <div id="projectDescription" class="description"></div>
+    <div id="projectGallery" class="description" style="display:none;"></div>
+    <div id="projectChangelog" class="description" style="display:none;"></div>
+    <div id="projectVersions" class="description" style="display:none;"></div>
   </div>
 
 <script>
@@ -253,10 +263,69 @@ try {
     // Download button behaviour — pick a reasonable file if present
     const downloadBtn = document.getElementById("downloadProjectBtn");
     downloadBtn.onclick = () => openInstallScreen(mod);
+
+    // Build the Description / Gallery / Changelog / Versions tabs.
+    setupProjectTabs(full).catch(e => console.error("tabs", e));
   } catch (err) {
     document.getElementById("projectDescription").innerText = "Failed to load project details.";
     console.error("Failed to fetch project details", err);
   }
+}
+
+// Tabs across the top of a project page. Only shows tabs that have content.
+async function setupProjectTabs(full) {
+  const panels = {
+    description: document.getElementById("projectDescription"),
+    gallery: document.getElementById("projectGallery"),
+    changelog: document.getElementById("projectChangelog"),
+    versions: document.getElementById("projectVersions"),
+  };
+  const tabsEl = document.getElementById("projectTabs");
+  const avail = ["description"];
+
+  // Gallery
+  if (Array.isArray(full.gallery) && full.gallery.length) {
+    avail.push("gallery");
+    panels.gallery.innerHTML = full.gallery
+      .sort((a, b) => (b.featured === true) - (a.featured === true) || (a.ordering || 0) - (b.ordering || 0))
+      .map(g => `<figure style="margin:0 0 16px 0;"><img src="${g.url}" style="max-width:100%;border-radius:8px;display:block;" />${g.title ? `<figcaption style="opacity:0.8;margin-top:4px;">${g.title}</figcaption>` : ""}</figure>`).join("");
+  }
+
+  // Versions + Changelog (both come from the version list).
+  try {
+    const versions = await fetch(`https://api.modrinth.com/v2/project/${full.id || full.slug}/version`).then(r => r.json());
+    if (Array.isArray(versions) && versions.length) {
+      versions.sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
+      avail.push("versions");
+      panels.versions.innerHTML = versions.map(v => `
+        <div style="border:1px solid var(--secondary-color);border-radius:8px;padding:10px;margin-bottom:8px;">
+          <div style="font-weight:bold;">${v.name || v.version_number} <span style="opacity:0.6;font-weight:normal;">${v.version_type || ""}</span></div>
+          <div style="opacity:0.8;font-size:0.9em;">MC ${(v.game_versions || []).join(", ")} • ${(v.loaders || []).join(", ")} • ${new Date(v.date_published).toLocaleDateString()} • ${(v.downloads || 0).toLocaleString()} downloads</div>
+        </div>`).join("");
+      const withLogs = versions.filter(v => v.changelog && v.changelog.trim());
+      if (withLogs.length) {
+        avail.push("changelog");
+        await ensureMarked();
+        panels.changelog.innerHTML = withLogs.map(v =>
+          `<h3 style="margin:14px 0 4px;">${v.name || v.version_number}</h3><div>${window.marked ? marked.parse(v.changelog) : v.changelog}</div>`).join("");
+        fixEmbeds(panels.changelog);
+      }
+    }
+  } catch (e) { console.error("versions", e); }
+
+  const label = { description: "Description", gallery: "Gallery", changelog: "Changelog", versions: "Versions" };
+  const show = (name) => {
+    Object.entries(panels).forEach(([k, el]) => { el.style.display = k === name ? "" : "none"; });
+    tabsEl.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  };
+  tabsEl.innerHTML = "";
+  avail.forEach(name => {
+    const b = document.createElement("button");
+    b.className = "srv-tab" + (name === "description" ? " active" : "");
+    b.dataset.tab = name; b.textContent = label[name];
+    b.onclick = () => show(name);
+    tabsEl.appendChild(b);
+  });
 }
 
 async function openInstallScreen(mod) {

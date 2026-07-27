@@ -33,6 +33,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 .download-btn { background: var(--base-color); border: none; border-radius: var(--border-radius); color: var(--text-color); padding: 10px 15px; cursor: pointer; }
 .download-btn:hover { background: var(--third-color); }
 .description { background: var(--very-dark); border-radius: var(--border-radius); padding: 15px; line-height: 1.5; }
+.mp-tabs button.srv-tab { background: var(--menu-bg); color: var(--text-color); border: none; border-radius: var(--border-radius); padding: 6px 14px; cursor: pointer; font-family: var(--text-font); text-transform: none; }
+.mp-tabs button.srv-tab.active { background: var(--base-color); }
 </style>
 </head>
 <body>
@@ -75,13 +77,43 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 </div>
   <div id="project-container" class="project-container">
     <div id="projectHeader" class="project-header"></div>
+    <div id="projectTabs" class="mp-tabs" style="display:flex;gap:6px;margin:10px 0;flex-wrap:wrap;"></div>
     <div id="projectDescription" class="description"></div>
+    <div id="projectGallery" class="description" style="display:none;"></div>
   </div>
 
 <script>
 const { ipcRenderer, shell } = require('electron');
 let profiles = [];
 let servers = [];
+
+// Description / Gallery tabs (whatever CurseForge exposes).
+function setupCfTabs(proj) {
+  const desc = document.getElementById("projectDescription");
+  const gallery = document.getElementById("projectGallery");
+  const tabsEl = document.getElementById("projectTabs");
+  const shots = Array.isArray(proj.screenshots) ? proj.screenshots : [];
+  const avail = ["description"];
+  if (shots.length) {
+    avail.push("gallery");
+    gallery.innerHTML = shots.map(s => `<figure style="margin:0 0 16px 0;"><img src="${s.url || s.thumbnailUrl}" style="max-width:100%;border-radius:8px;display:block;" />${s.title ? `<figcaption style="opacity:0.8;margin-top:4px;">${s.title}</figcaption>` : ""}</figure>`).join("");
+  }
+  if (avail.length < 2) { tabsEl.style.display = "none"; return; }
+  const label = { description: "Description", gallery: "Gallery" };
+  const panels = { description: desc, gallery };
+  const show = (name) => {
+    Object.entries(panels).forEach(([k, el]) => { el.style.display = k === name ? "" : "none"; });
+    tabsEl.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  };
+  tabsEl.innerHTML = "";
+  avail.forEach(name => {
+    const b = document.createElement("button");
+    b.className = "srv-tab" + (name === "description" ? " active" : "");
+    b.dataset.tab = name; b.textContent = label[name];
+    b.onclick = () => show(name);
+    tabsEl.appendChild(b);
+  });
+}
 
 // Convert broken <iframe> embeds (YouTube fails with a null file:// origin) into
 // clickable thumbnails that open in the system browser.
@@ -150,6 +182,7 @@ async function loadProjectDetails() {
   } catch {
     descEl.innerHTML = "Failed to load description.";
   }
+  setupCfTabs(proj);
 
   document.getElementById("downloadProjectBtn").onclick = () => openInstallScreenCF(proj);
 }
