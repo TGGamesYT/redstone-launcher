@@ -304,11 +304,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <div class="modal-header"><h2>Share over the internet</h2>
         <button class="modal-close" onclick="document.getElementById('shareModal').classList.remove('active');">✕</button>
       </div>
-      <div class="modal-section">
-        <label>Method</label>
-        <label class="inline-check"><input type="radio" name="shareMethod" value="ice" checked /> Redstone Relay (ICE — no port forwarding)</label>
-        <label class="inline-check"><input type="radio" name="shareMethod" value="upnp" /> UPnP (map a port on your router to your IP)</label>
-      </div>
+      <div style="font-size:12px;opacity:0.75;margin-bottom:10px;">Connects through the Redstone Relay (works behind any NAT) and automatically also tries a direct UPnP path if your router supports it.</div>
       <div id="shareIceFields">
         <div class="modal-section"><label>Account</label><select id="shareAccount"></select></div>
         <div class="modal-section"><label>Address</label>
@@ -521,8 +517,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     $('dMenuBtn').onclick = (e) => { e.stopPropagation(); $('dMenu').classList.toggle('open'); };
 
     // ---------- Relay sharing (join over the internet, no port-forwarding) ----------
-    function showRelayBanner(address) {
-      $('relayAddr').textContent = address;
+    function showRelayBanner(address, directAddress) {
+      $('relayAddr').textContent = address + (directAddress ? `  (or directly: ${directAddress})` : '');
       $('relayBanner').style.display = 'flex';
       $('dShare').textContent = 'Stop sharing';
     }
@@ -533,7 +529,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     async function refreshRelayStatus() {
       if (!selectedServer) return;
       const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
-      if (st && st.active) showRelayBanner(st.address); else hideRelayBanner();
+      if (st && st.active) showRelayBanner(st.address, st.directAddress); else hideRelayBanner();
     }
     async function openShareModal() {
       $('dMenu').classList.remove('open');
@@ -559,26 +555,16 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       $('shareModal').classList.add('active');
     }
     $('shareGo').onclick = async () => {
-      const method = [...document.querySelectorAll('input[name="shareMethod"]')].find(r => r.checked)?.value || 'ice';
       $('shareGo').disabled = true; $('shareGo').textContent = 'Connecting…';
       try {
-        if (method === 'upnp') {
-          const res = await ipcRenderer.invoke('upnp:open', { port: selectedServer.port || 25565 });
-          if (res && res.success) { showRelayBanner((res.externalIP || 'your-ip') + ':' + (res.port || selectedServer.port || 25565)); $('shareModal').classList.remove('active'); }
-          else alert('UPnP failed: ' + (res?.error || 'unknown') + '\nYour router may not have UPnP enabled — try the Relay method.');
-        } else {
-          const res = await ipcRenderer.invoke('relay:open', { name: selectedServer.name, subdomain: $('shareSub').value.trim(), accountId: $('shareAccount').value });
-          if (res && res.success) { showRelayBanner(res.address); $('shareModal').classList.remove('active'); }
-          else alert("Couldn't share: " + (res?.error || 'unknown error'));
-        }
+        const res = await ipcRenderer.invoke('relay:open', { name: selectedServer.name, subdomain: $('shareSub').value.trim(), accountId: $('shareAccount').value });
+        if (res && res.success) { showRelayBanner(res.address, res.directAddress); $('shareModal').classList.remove('active'); }
+        else alert("Couldn't share: " + (res?.error || 'unknown error'));
       } finally { $('shareGo').disabled = false; $('shareGo').textContent = 'Share'; }
     };
-    document.querySelectorAll('input[name="shareMethod"]').forEach(r => r.addEventListener('change', () => {
-      $('shareIceFields').style.display = document.querySelector('input[name="shareMethod"]:checked').value === 'ice' ? '' : 'none';
-    }));
     $('dShare').onclick = openShareModal;
     $('relayStop').onclick = async () => { await ipcRenderer.invoke('relay:close', { name: selectedServer.name }); hideRelayBanner(); };
-    $('relayCopy').onclick = () => { try { navigator.clipboard.writeText($('relayAddr').textContent); $('relayCopy').textContent = 'Copied'; setTimeout(() => ($('relayCopy').textContent = 'Copy'), 1200); } catch { /* ignore */ } };
+    $('relayCopy').onclick = () => { try { navigator.clipboard.writeText($('relayAddr').textContent.split('  (')[0]); $('relayCopy').textContent = 'Copied'; setTimeout(() => ($('relayCopy').textContent = 'Copy'), 1200); } catch { /* ignore */ } };
     document.addEventListener('click', () => $('dMenu').classList.remove('open'));
     $('dFolder').onclick = () => { $('dMenu').classList.remove('open'); ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false }); };
     $('dDelete').onclick = async () => {

@@ -2443,8 +2443,18 @@ ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, ac
       host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
       subdomain: sub, localPort, account, rejectUnauthorized,
     });
-    activeRelays.set(k, session);
-    return { success: true, address: session.address ? `${session.address}:${session.port}` : null, port: session.port };
+    // ICE gathers every candidate: the relay (TURN) is the reliable path that
+    // always works; additionally try a UPnP port-mapping (a direct candidate)
+    // so friends on a UPnP-capable network can connect straight to the host's
+    // public IP without the relay hop. Best-effort — no error if it fails.
+    let directAddress = null;
+    try {
+      const up = await upnp.openPort(Number(localPort), "TCP", "Redstone Launcher");
+      if (up && up.success && up.externalIP) directAddress = `${up.externalIP}:${localPort}`;
+    } catch (e) { console.warn("[Relay] UPnP candidate unavailable:", e.message); }
+
+    activeRelays.set(k, { ...session, directAddress, localPort, upnpMapped: !!directAddress });
+    return { success: true, address: session.address ? `${session.address}:${session.port}` : null, port: session.port, directAddress };
   } catch (err) {
     console.error("[Relay] open failed:", err);
     return { success: false, error: err.message };
@@ -2454,14 +2464,18 @@ ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, ac
 ipcMain.handle("relay:close", async (event, { key, name }) => {
   const k = key || name;
   const s = activeRelays.get(k);
-  if (s) { try { s.close(); } catch { /* ignore */ } activeRelays.delete(k); }
+  if (s) {
+    try { s.close(); } catch { /* ignore */ }
+    if (s.upnpMapped) { try { await upnp.closePort(Number(s.localPort)); } catch { /* ignore */ } }
+    activeRelays.delete(k);
+  }
   return { success: true };
 });
 
 ipcMain.handle("relay:status", async (event, { key, name }) => {
   const k = key || name;
   const s = activeRelays.get(k);
-  return s ? { active: true, address: s.address ? `${s.address}:${s.port}` : null, port: s.port } : { active: false };
+  return s ? { active: true, address: s.address ? `${s.address}:${s.port}` : null, port: s.port, directAddress: s.directAddress || null } : { active: false };
 });
 
 // ── UPnP auto port-forward (self-hosting) ──
