@@ -41,18 +41,34 @@ ranges, so it plays nicely with your existing nginx/UFW setup.
 | `RELAY_OFFLINE_ICON` | `./offline-icon.png`                           | 64×64 PNG shown for offline/missing servers. |
 | `RELAY_ADMINS`       | `./admins.json`                                | `{ "uuids": ["<uuid>", …] }` (dashes optional) |
 | `RELAY_STATE`        | `./relay-state.json`                           | Tracks recently-used subdomains.         |
-| `CF_API_TOKEN`       | *(unset = relay-only)*                         | Cloudflare API token (DNS edit on the zone) for the direct path. |
-| `CF_ZONE_ID`         | *(unset)*                                      | Cloudflare zone id for `redstonemc.net`. |
+| `CF_API_TOKEN`       | *(unset = relay-only)*                         | Cloudflare API token with **Zone → DNS → Edit** on every domain you want to offer. The token's zones are what admins may pick from. |
 
 ### Direct path (recommended — avoids relaying game traffic)
 
 By default the relay tunnels all Minecraft traffic through the VPS, which adds
-latency. If you set `CF_API_TOKEN` + `CF_ZONE_ID`, then whenever a host's router
-supports UPnP the relay points `<sub>.redstonemc.net`'s **A record straight at
-the host's public IP** (TTL 60, DNS-only). Players then connect **directly** to
-the host — no relay hop — while the relay tunnel stays registered as a fallback
-for anyone with stale/wildcard DNS. When the host stops sharing, the record is
-removed and the wildcard (→ VPS, offline placeholder) takes over again.
+latency. If you set `CF_API_TOKEN`, then whenever a host's router supports UPnP
+the relay points the chosen hostname's **A record straight at the host's public
+IP** (TTL 60, DNS-only). Players then connect **directly** to the host — no relay
+hop — while the relay tunnel stays registered as a fallback for anyone with
+stale/wildcard DNS. When the host stops sharing, the record is removed.
+
+### Admins & multiple domains
+
+Accounts whose (Mojang-verified) UUID is in `admins.json` may claim **any**
+subdomain, and may pick **any domain the Cloudflare token controls** (the app
+shows them a domain dropdown fetched live from the relay). Non-`redstonemc.net`
+domains have no wildcard→VPS record, so they only work via the direct (UPnP) path.
+Everyone else is limited to `<username>.redstonemc.net` / `<x>.<username>.redstonemc.net`.
+
+> Admin status is decided **only** from the Mojang `hasJoined` result on the
+> relay — never from anything the launcher sends — so a modified client can't
+> impersonate an admin UUID.
+
+### Offline server icon
+
+Drop your Velocity `server-icon.png` (a 64×64 PNG) in as `offline-icon.png`
+(or point `RELAY_OFFLINE_ICON` at it). It's shown in the server list for
+offline/unknown addresses and is hot-reloaded when the file changes.
 
 Drop your Velocity `server-icon.png` in as `offline-icon.png` for the placeholder.
 

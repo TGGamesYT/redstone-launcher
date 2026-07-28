@@ -2420,23 +2420,31 @@ const RELAY_DEFAULTS = {
 const activeRelays = new Map();
 const DOMAIN_BASE = process.env.REDSTONE_RELAY_HOST || "redstonemc.net";
 
-// UUIDs allowed to claim any subdomain (mirrors relay-server/admins.json).
-const RELAY_ADMIN_UUIDS = new Set([
-  "52af5540-dd18-4ad9-9acb-50eb11531180",
-  "9c1bd0aa-5bb6-4b31-b994-3dfd9408b8b5",
-  "f06d927e-d6cf-48b8-ba61-588866b610c0",
-  "20bbb23e-2f22-46ba-b201-c6bd435b445b",
-  "b87f3bbb-ee4e-457e-b5ed-e485b813a0c5",
-].map(u => u.replace(/-/g, "").toLowerCase()));
-const isAdminUuid = (uuid) => RELAY_ADMIN_UUIDS.has(String(uuid || "").replace(/-/g, "").toLowerCase());
-
-// Premium (Microsoft) accounts usable for relay auth.
+// Premium (Microsoft) accounts usable for relay auth. Admin status is NOT
+// decided here — the relay derives it from the Mojang-verified UUID, so a
+// modified launcher can't fake it.
 function premiumAccounts() {
   return loadPlayers()
     .filter(p => p.type === "microsoft" && p.auth && p.auth.access_token && p.auth.access_token !== "0")
-    .map(p => ({ id: p.id, name: p.auth.name || p.username, uuid: p.auth.uuid, isAdmin: isAdminUuid(p.auth.uuid) }));
+    .map(p => ({ id: p.id, name: p.auth.name || p.username, uuid: p.auth.uuid }));
+}
+function accountCredsById(accountId) {
+  const players = loadPlayers();
+  const p = players.find(x => x.id === accountId && x.type === "microsoft") || players.find(x => x.type === "microsoft" && x.auth?.access_token && x.auth.access_token !== "0");
+  return p ? { accessToken: p.auth.access_token, uuid: p.auth.uuid, name: p.auth.name || p.username } : null;
 }
 ipcMain.handle("relay:accounts", () => premiumAccounts());
+
+// Ask the relay whether this account is an admin + which domains it may use (for
+// the share modal's styling). The relay is the sole authority.
+ipcMain.handle("relay:adminInfo", async (event, { accountId }) => {
+  try {
+    const account = accountCredsById(accountId);
+    if (!account) return { isAdmin: false, domains: [] };
+    const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
+    return await relayClient.queryRelay({ host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort, account, rejectUnauthorized });
+  } catch (err) { return { isAdmin: false, domains: [], error: err.message }; }
+});
 ipcMain.handle("relay:domain", () => DOMAIN_BASE);
 
 // Sanitize a label for use as a subdomain component.
@@ -2444,21 +2452,18 @@ function subLabel(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9-]+
 
 // Open an ICE relay tunnel. Requires a verified premium account and a subdomain
 // under <username>.redstonemc.net (admins can use anything).
-ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, accountId }) => {
+ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, domain, accountId }) => {
   const k = key || name;
   try {
     if (activeRelays.has(k)) {
       const s = activeRelays.get(k);
-      return { success: true, address: s.address, port: s.port, already: true };
+      return { success: true, address: s.shownAddr || s.address, port: s.port, already: true };
     }
     if (!localPort && name) { try { localPort = serverManager.getServerPort(name); } catch { /* ignore */ } }
     if (!localPort) return { success: false, error: "No local port to share" };
 
-    const accounts = premiumAccounts();
-    if (!accounts.length) return { success: false, error: "Sharing over the internet needs a premium Minecraft account. Add one in the Login page first." };
-    const players = loadPlayers();
-    const chosen = players.find(p => p.id === accountId && p.type === "microsoft") || players.find(p => p.type === "microsoft" && p.auth?.access_token && p.auth.access_token !== "0");
-    const account = { accessToken: chosen.auth.access_token, uuid: chosen.auth.uuid, name: chosen.auth.name || chosen.username };
+    const account = accountCredsById(accountId);
+    if (!account) return { success: false, error: "Sharing over the internet needs a premium Minecraft account. Add one in the Login page first." };
 
     const sub = subdomain || subLabel(account.name);
     const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
@@ -2475,7 +2480,7 @@ ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, ac
 
     const session = await relayClient.openRelay({
       host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
-      subdomain: sub, localPort, account, directIp, rejectUnauthorized,
+      subdomain: sub, domain: domain || DOMAIN_BASE, localPort, account, directIp, rejectUnauthorized,
     });
 
     if (!session.address || !session.port) { try { session.close(); } catch { /* ignore */ } return { success: false, error: "The relay didn't return a join address (is the relay server running?)" }; }

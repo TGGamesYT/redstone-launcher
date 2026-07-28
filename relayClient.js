@@ -5,7 +5,7 @@ import net from "net";
 import tls from "tls";
 import https from "https";
 
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12 };
 
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
@@ -42,15 +42,44 @@ function mojangJoin(accessToken, uuid, serverId) {
   });
 }
 
+// Ask the relay whether an account is an admin and which domains it may use.
+// Resolves { isAdmin, domains }. Does a full Mojang challenge (no registration).
+export function queryRelay({ host, controlPort, account, rejectUnauthorized = true }) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const sock = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () =>
+      sock.write(encodeFrame(T.HELLO, 0, Buffer.from(JSON.stringify({ queryDomains: true })))));
+    const send = (t, s, p) => { try { sock.write(encodeFrame(t, s, p)); } catch { /* ignore */ } };
+    const decode = createDecoder(async (type, streamId, payload) => {
+      if (type === T.CHALLENGE) {
+        let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        const ok = await mojangJoin(account.accessToken, account.uuid, info.serverId);
+        if (!ok) { done = true; reject(new Error("Could not verify your Minecraft account")); try { sock.end(); } catch { /* ignore */ } return; }
+        send(T.AUTH, 0, Buffer.from(JSON.stringify({ username: account.name })));
+      } else if (type === T.DOMAINS) {
+        done = true; let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        resolve({ isAdmin: !!info.isAdmin, domains: info.domains || [] });
+        try { sock.end(); } catch { /* ignore */ }
+      } else if (type === T.ERROR) {
+        let m = "relay error"; try { m = JSON.parse(payload.toString()).message; } catch { /* ignore */ }
+        if (!done) { done = true; reject(new Error(m)); }
+      }
+    });
+    sock.on("data", decode);
+    sock.on("error", (e) => { if (!done) { done = true; reject(e); } });
+    sock.setTimeout(20000, () => { if (!done) { done = true; sock.destroy(); reject(new Error("Relay timed out")); } });
+  });
+}
+
 // Open a relay session. Resolves { address, port, close() }.
 //   account: { accessToken, uuid, name }  (a verified premium account)
-export function openRelay({ host, controlPort, subdomain, localPort, account, directIp, rejectUnauthorized = true }) {
+export function openRelay({ host, controlPort, subdomain, domain, localPort, account, directIp, rejectUnauthorized = true }) {
   return new Promise((resolve, reject) => {
     const streams = new Map();
     let settled = false, keepalive = null;
 
     const sock = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () => {
-      sock.write(encodeFrame(T.HELLO, 0, Buffer.from(JSON.stringify({ subdomain, localPort }))));
+      sock.write(encodeFrame(T.HELLO, 0, Buffer.from(JSON.stringify({ subdomain, domain, localPort }))));
     });
     const send = (type, streamId, payload) => { try { sock.write(encodeFrame(type, streamId, payload)); } catch { /* ignore */ } };
 
@@ -96,4 +125,4 @@ export function openRelay({ host, controlPort, subdomain, localPort, account, di
   });
 }
 
-export default { openRelay };
+export default { openRelay, queryRelay };

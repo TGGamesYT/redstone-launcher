@@ -38,7 +38,7 @@ const RECENT_MS = 30 * 24 * 60 * 60 * 1000; // "used in the last month"
 function log(...a) { console.log(new Date().toISOString(), ...a); }
 
 // ───────────────────────── control mux protocol ─────────────────────────
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12 };
 
 // Cloudflare DNS (optional). When a host reports a working UPnP public endpoint,
 // we point <sub>.redstonemc.net straight at the host's IP so players connect
@@ -46,8 +46,7 @@ const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA
 // keeps *.redstonemc.net on the VPS and the relay tunnel carries the traffic.
 const CF = {
   token: process.env.CF_API_TOKEN || "",
-  zone: process.env.CF_ZONE_ID || "",
-  get enabled() { return !!(this.token && this.zone); },
+  get enabled() { return !!this.token; },
 };
 function cfRequest(method, apiPath, body) {
   return new Promise((resolve, reject) => {
@@ -61,14 +60,29 @@ function cfRequest(method, apiPath, body) {
     req.end();
   });
 }
-async function cfPointDirect(sub, ip) {
-  const name = `${sub}.${DOMAIN}`;
-  const existing = await cfRequest("GET", `/zones/${CF.zone}/dns_records?type=A&name=${encodeURIComponent(name)}`);
-  for (const r of (existing?.result || [])) { try { await cfRequest("DELETE", `/zones/${CF.zone}/dns_records/${r.id}`); } catch { /* ignore */ } }
-  const res = await cfRequest("POST", `/zones/${CF.zone}/dns_records`, { type: "A", name, content: ip, ttl: 60, proxied: false });
-  return res?.result?.id || null;
+// Zones (domains) the token is allowed to edit — cached briefly.
+let cfZonesCache = null, cfZonesAt = 0;
+async function cfListZones() {
+  if (!CF.enabled) return [];
+  if (cfZonesCache && Date.now() - cfZonesAt < 300000) return cfZonesCache;
+  const res = await cfRequest("GET", "/zones?per_page=50&status=active");
+  cfZonesCache = (res?.result || []).map(z => ({ id: z.id, name: z.name }));
+  cfZonesAt = Date.now();
+  return cfZonesCache;
 }
-async function cfRemoveDirect(id) { try { await cfRequest("DELETE", `/zones/${CF.zone}/dns_records/${id}`); } catch { /* ignore */ } }
+async function cfZoneIdFor(domain) {
+  return (await cfListZones()).find(z => z.name === domain)?.id || null;
+}
+// Point a full hostname's A record at an IP (in whichever zone owns it).
+async function cfPointDirect(fullHost, domain, ip) {
+  const zoneId = await cfZoneIdFor(domain);
+  if (!zoneId) return null;
+  const existing = await cfRequest("GET", `/zones/${zoneId}/dns_records?type=A&name=${encodeURIComponent(fullHost)}`);
+  for (const r of (existing?.result || [])) { try { await cfRequest("DELETE", `/zones/${zoneId}/dns_records/${r.id}`); } catch { /* ignore */ } }
+  const res = await cfRequest("POST", `/zones/${zoneId}/dns_records`, { type: "A", name: fullHost, content: ip, ttl: 60, proxied: false });
+  return res?.result?.id ? { id: res.result.id, zoneId } : null;
+}
+async function cfRemoveDirect(rec) { if (!rec) return; try { await cfRequest("DELETE", `/zones/${rec.zoneId}/dns_records/${rec.id}`); } catch { /* ignore */ } }
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
   const buf = Buffer.allocUnsafe(9 + len);
@@ -134,24 +148,38 @@ function parseHandshake(buf) {
   return { protocol: proto.value, address, nextState: nextState.value, consumed: total };
 }
 
-// <sub>.redstonemc.net  ->  "sub" (also strips Forge's \0FML\0 handshake tag).
-function subdomainFromAddress(address) {
-  let host = (address || "").split("\0")[0].toLowerCase().trim();
-  if (host.endsWith("." + DOMAIN)) return host.slice(0, -("." + DOMAIN).length);
-  if (host === DOMAIN) return "";
-  return host; // direct-IP / unknown
+// Full hostname the client connected to (strips Forge's \0FML\0 handshake tag).
+// Hosts are keyed by this so we can route multiple domains, not just the primary.
+function hostFromAddress(address) {
+  return (address || "").split("\0")[0].toLowerCase().trim();
 }
 
 // ───────────────────────── offline placeholder ──────────────────────────
-let offlineIconData = null;
-try { if (fs.existsSync(OFFLINE_ICON)) offlineIconData = "data:image/png;base64," + fs.readFileSync(OFFLINE_ICON).toString("base64"); } catch { /* ignore */ }
+// Load the server-list favicon lazily + cache by mtime so you can drop in / swap
+// the Velocity server-icon.png without restarting. Minecraft only accepts a
+// 64×64 PNG data URI, so we validate the PNG signature.
+let _iconCache = { mtime: 0, data: null };
+function offlineIcon() {
+  try {
+    if (!fs.existsSync(OFFLINE_ICON)) return null;
+    const st = fs.statSync(OFFLINE_ICON);
+    if (st.mtimeMs !== _iconCache.mtime) {
+      const buf = fs.readFileSync(OFFLINE_ICON);
+      const isPng = buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+      _iconCache = { mtime: st.mtimeMs, data: isPng ? "data:image/png;base64," + buf.toString("base64") : null };
+      if (!isPng) log("offline icon is not a PNG, ignoring:", OFFLINE_ICON);
+    }
+    return _iconCache.data;
+  } catch { return null; }
+}
 
 function statusJson(kind) {
   const description = kind === "offline"
     ? { text: "Offline\n", extra: [{ text: "redstone-launcher.com", color: "gray" }] }
     : { text: "This server doesn't exist\n", extra: [{ text: "redstone-launcher.com", color: "gray" }] };
   const obj = { version: { name: "Redstone", protocol: -1 }, players: { max: 0, online: 0, sample: [] }, description };
-  if (offlineIconData) obj.favicon = offlineIconData;
+  const icon = offlineIcon();
+  if (icon) obj.favicon = icon;
   return JSON.stringify(obj);
 }
 
@@ -208,11 +236,12 @@ function hasJoined(username, serverId) {
   });
 }
 
-// subdomain -> { sock, send, streams, nextStream }
+// full hostname -> { send, streams, nextStream }
 const hosts = new Map();
 
-function subdomainAllowed(requested, username, uuid) {
-  if (adminUuids.has(uuid)) return true;
+// Non-admins may only claim <username>.DOMAIN or <label>.<username>.DOMAIN. The
+// `username` here is the Mojang-VERIFIED profile name (never client-supplied).
+function nonAdminSubAllowed(requested, username) {
   const u = username.toLowerCase();
   const labels = requested.split(".");
   return requested === u || (labels.length >= 2 && labels[labels.length - 1] === u);
@@ -227,33 +256,57 @@ catch (e) {
 }
 
 const control = tls.createServer(tlsOptions, (sock) => {
-  const state = { authed: false, sub: null, streams: new Map(), nextStream: 1, serverId: null, want: null, localPort: null };
+  const state = { authed: false, host: null, domain: DOMAIN, streams: new Map(), nextStream: 1, serverId: null, want: null, wantDomain: DOMAIN, localPort: null, queryDomains: false };
   const send = (type, streamId, payload) => { try { sock.write(encodeFrame(type, streamId, payload)); } catch { /* ignore */ } };
 
   const decode = createDecoder(async (type, streamId, payload) => {
     if (type === T.HELLO) {
       let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
-      state.want = String(info.subdomain || "").toLowerCase();
+      state.want = String(info.subdomain || "").toLowerCase().trim();
+      state.wantDomain = String(info.domain || DOMAIN).toLowerCase().trim();
       state.localPort = info.localPort;
+      state.queryDomains = !!info.queryDomains;
       state.serverId = crypto.randomBytes(16).toString("hex");
       send(T.CHALLENGE, 0, Buffer.from(JSON.stringify({ serverId: state.serverId })));
       return;
     }
     if (type === T.AUTH) {
       let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      // SECURITY: identity is established ONLY by Mojang's hasJoined for the
+      // per-connection random serverId. The resulting profile.id is the sole
+      // source of truth — nothing the client sends (uuid, "isAdmin", …) is
+      // trusted. A modified app cannot forge another account's session.
       const profile = await hasJoined(info.username || "", state.serverId || "");
       if (!profile || !profile.id) { send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: "Premium verification failed" }))); return sock.destroy(); }
       const uuid = String(profile.id).replace(/-/g, "").toLowerCase();
-      if (info.uuid && String(info.uuid).replace(/-/g, "").toLowerCase() !== uuid) { send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: "Account mismatch" }))); return sock.destroy(); }
-      if (!subdomainAllowed(state.want, profile.name, uuid)) {
-        send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: `You can only use <name>.${profile.name}.${DOMAIN} or ${profile.name}.${DOMAIN}` }))); return sock.destroy();
+      const isAdmin = adminUuids.has(uuid);
+
+      // Admin-only: just querying which domains they may use (for the dropdown).
+      if (state.queryDomains) {
+        const domains = isAdmin ? (CF.enabled ? [...new Set([DOMAIN, ...(await cfListZones()).map(z => z.name)])] : [DOMAIN]) : [];
+        send(T.DOMAINS, 0, Buffer.from(JSON.stringify({ isAdmin, domains })));
+        return sock.destroy();
       }
-      if (hosts.has(state.want)) { send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: "That address is already in use right now" }))); return sock.destroy(); }
-      state.authed = true; state.sub = state.want;
-      hosts.set(state.sub, { send, streams: state.streams, nextStream: () => state.nextStream++ });
-      recentSubs[state.sub] = Date.now(); saveState();
-      log("registered", `${state.sub}.${DOMAIN}`, "->", profile.name);
-      send(T.WELCOME, 0, Buffer.from(JSON.stringify({ address: `${state.sub}.${DOMAIN}`, port: MC_PORT })));
+
+      const domain = state.wantDomain || DOMAIN;
+      // Validate the claim against the VERIFIED identity.
+      if (isAdmin) {
+        const zones = CF.enabled ? (await cfListZones()).map(z => z.name) : [];
+        if (domain !== DOMAIN && !zones.includes(domain)) {
+          send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: "That domain isn't managed by this relay" }))); return sock.destroy();
+        }
+      } else {
+        if (domain !== DOMAIN || !nonAdminSubAllowed(state.want, profile.name)) {
+          send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: `You can only use <name>.${profile.name}.${DOMAIN} or ${profile.name}.${DOMAIN}` }))); return sock.destroy();
+        }
+      }
+      const fullHost = state.want ? `${state.want}.${domain}` : domain;
+      if (hosts.has(fullHost)) { send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: "That address is already in use right now" }))); return sock.destroy(); }
+      state.authed = true; state.host = fullHost; state.domain = domain;
+      hosts.set(fullHost, { send, streams: state.streams, nextStream: () => state.nextStream++ });
+      recentSubs[fullHost] = Date.now(); saveState();
+      log("registered", fullHost, "->", profile.name, isAdmin ? "(admin)" : "");
+      send(T.WELCOME, 0, Buffer.from(JSON.stringify({ address: fullHost, port: MC_PORT })));
       return;
     }
     if (!state.authed) return sock.destroy();
@@ -264,16 +317,16 @@ const control = tls.createServer(tlsOptions, (sock) => {
       // Host has a public (UPnP) endpoint — point DNS straight at it so players
       // connect directly instead of through the relay.
       let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
-      if (info.ip && CF.enabled && state.sub) {
-        cfPointDirect(state.sub, info.ip).then(id => { state.cfRecordId = id; if (id) log("direct DNS", `${state.sub}.${DOMAIN} -> ${info.ip}`); }).catch(e => log("cf error", e.message));
+      if (info.ip && CF.enabled && state.host) {
+        cfPointDirect(state.host, state.domain, info.ip).then(rec => { state.cfRecord = rec; if (rec) log("direct DNS", `${state.host} -> ${info.ip}`); }).catch(e => log("cf error", e.message));
       }
     }
   });
 
   sock.on("data", decode);
   sock.on("close", () => {
-    if (state.sub && hosts.get(state.sub)?.send === send) { hosts.delete(state.sub); recentSubs[state.sub] = Date.now(); saveState(); log("unregistered", state.sub); }
-    if (state.cfRecordId) cfRemoveDirect(state.cfRecordId); // restore wildcard -> VPS
+    if (state.host && hosts.get(state.host)?.send === send) { hosts.delete(state.host); recentSubs[state.host] = Date.now(); saveState(); log("unregistered", state.host); }
+    if (state.cfRecord) cfRemoveDirect(state.cfRecord); // restore wildcard -> VPS
     for (const p of state.streams.values()) { try { p.destroy(); } catch { /* ignore */ } }
   });
   sock.on("error", () => {});
@@ -294,8 +347,8 @@ const mc = net.createServer((client) => {
     client.removeListener("data", onData);
     if (hs.unknown) { client.destroy(); return; }
 
-    const sub = subdomainFromAddress(hs.address);
-    const host = hosts.get(sub);
+    const fullHost = hostFromAddress(hs.address);
+    const host = hosts.get(fullHost);
     if (host) {
       // Live host — open a mux stream and replay the handshake + any extra bytes.
       const streamId = host.nextStream() >>> 0 || 1;
@@ -307,7 +360,7 @@ const mc = net.createServer((client) => {
       client.on("error", () => {});
     } else {
       // Not live: "offline" if used recently, else "doesn't exist".
-      const recent = recentSubs[sub] && (Date.now() - recentSubs[sub] < RECENT_MS);
+      const recent = recentSubs[fullHost] && (Date.now() - recentSubs[fullHost] < RECENT_MS);
       servePlaceholder(client, hs, recent ? "offline" : "missing");
       // Re-feed any bytes that arrived after the handshake to the placeholder reader.
       const extra = acc.subarray(hs.consumed);
