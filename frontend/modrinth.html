@@ -841,6 +841,21 @@
         categoryTags = Array.isArray(cats) ? cats : [];
         populateVersionFilter();
         buildDynamicFilters();
+        // Installing into an instance/server → pre-apply its version + loader so
+        // the listed mods are already the compatible ones.
+        if (installMode && installInstance) {
+          const vf = document.getElementById('versionFilter');
+          const lf = document.getElementById('loaderFilter');
+          if (vf && installInstance.version) {
+            if (![...vf.options].some(o => o.value === installInstance.version)) {
+              const sa = document.getElementById('versionShowAll'); if (sa) { sa.checked = true; populateVersionFilter(); }
+            }
+            vf.value = installInstance.version;
+          }
+          if (lf && installInstance.loader && installInstance.loader !== 'vanilla') lf.value = installInstance.loader;
+          currentPage = 1;
+          loadProjects();
+        }
       } catch (err) { console.warn('Failed to load filter tags', err); }
     })();
     document.getElementById('versionShowAll').onchange = () => { populateVersionFilter(); currentPage = 1; loadProjects(); };

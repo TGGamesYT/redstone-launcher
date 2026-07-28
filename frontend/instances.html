@@ -329,6 +329,10 @@
             <option value="neoforge">NeoForge</option>
           </select>
         </div>
+        <div class="modal-section" id="instanceLoaderVerSection" style="display:none;">
+          <label>Loader version</label>
+          <select id="instanceLoaderVersion"></select>
+        </div>
         <div class="modal-section">
           <label>Instance Icon</label>
           <input type="file" id="instanceIcon" accept="image/*" />
@@ -520,6 +524,7 @@
       } else {
         instanceName.value = "";
         instanceLoader.value = "vanilla";
+        if (typeof updateInstanceLoaderVersion === 'function') updateInstanceLoaderVersion();
         instanceIcon.value = "";
         delete modalCreateBtn.dataset.editingId;
         delete modalCreateBtn._originalProfile;
@@ -595,9 +600,31 @@
       }
     }
 
+    // Loader-version dropdown (Fabric/Quilt) — defaults to latest, lets you pin.
+    const INSTANCE_LOADER_META = {
+      fabric: 'https://meta.fabricmc.net/v2/versions/loader',
+      quilt: 'https://meta.quiltmc.org/v3/versions/loader',
+    };
+    async function updateInstanceLoaderVersion(preselect) {
+      const url = INSTANCE_LOADER_META[instanceLoader.value];
+      const section = document.getElementById('instanceLoaderVerSection');
+      const sel = document.getElementById('instanceLoaderVersion');
+      if (!url) { section.style.display = 'none'; return; }
+      section.style.display = '';
+      sel.innerHTML = '<option value="">Loading…</option>';
+      try {
+        const list = await (await fetch(url)).json();
+        const versions = (Array.isArray(list) ? list : []).map(v => v.version).filter(Boolean);
+        sel.innerHTML = versions.map((v, i) => `<option value="${v}">${v}${i === 0 ? ' (latest)' : ''}</option>`).join('');
+        if (preselect && versions.includes(preselect)) sel.value = preselect;
+      } catch { sel.innerHTML = '<option value="">latest</option>'; }
+    }
+    instanceLoader.addEventListener('change', () => updateInstanceLoaderVersion());
+
     async function openEditModal(profile) {
       instanceName.value = profile.name;
       instanceLoader.value = profile.loader;
+      updateInstanceLoaderVersion(profile.loaderVersion);
       instanceIcon.value = "";
 
       // If the instance is on a snapshot/non-release, auto-enable "Show All" so
@@ -2121,6 +2148,8 @@
           launchBtn.style.opacity = "0.6";
           launchBtn.style.cursor = "not-allowed";
           ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
+          // Launching from the list → open the instance's detail page.
+          window.openInstanceInPage(p.id);
           
           // Re-enable after timeout
           setTimeout(() => {
@@ -2189,6 +2218,9 @@
             if (instanceLoader.value !== original.loader) {
               updatedProfile.loader = instanceLoader.value;
             }
+            const lvSel = document.getElementById('instanceLoaderVersion');
+            const newLoaderVer = (document.getElementById('instanceLoaderVerSection').style.display !== 'none') ? lvSel.value : '';
+            if (newLoaderVer !== (original.loaderVersion || '')) updatedProfile.loaderVersion = newLoaderVer;
             const alwaysCbEl = document.getElementById('alwaysUpdate');
             if (alwaysCbEl) updatedProfile.alwaysUpdate = alwaysCbEl.checked;
             updatedProfile.autoUpdateVersion = document.getElementById('autoUpdateVersionCb').checked;
@@ -2230,6 +2262,7 @@
               name,
               version: instanceVersion.value,
               loader,
+              loaderVersion: (document.getElementById('instanceLoaderVerSection').style.display !== 'none') ? document.getElementById('instanceLoaderVersion').value : '',
               alwaysUpdate: document.getElementById('alwaysUpdate').checked,
               autoUpdateVersion: document.getElementById('autoUpdateVersionCb').checked,
               launchArgs: document.getElementById('instanceLaunchArgs').value.trim(),

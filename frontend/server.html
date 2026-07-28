@@ -291,6 +291,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           <option value="purpur">Purpur</option>
           <option value="folia">Folia</option>
           <option value="fabric">Fabric</option>
+          <option value="quilt">Quilt</option>
           <option value="forge">Forge</option>
           <option value="neoforge">NeoForge</option>
         </select>
@@ -299,6 +300,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <div class="modal-section" style="flex:1;"><label>Version</label><select id="srvVersion"></select></div>
         <label class="inline-check"><input type="checkbox" id="showAllVersions" /> Show all (snapshots)</label>
       </div>
+      <div class="modal-section" id="srvLoaderVerSection" style="display:none;"><label>Loader version</label><select id="srvLoaderVersion"></select></div>
       <div class="modal-section"><label>Extra Java args (optional)</label><input id="srvLaunchArgs" placeholder="-XX:+UseG1GC …" /></div>
       <div class="modal-actions">
         <button id="createServerBtn">Create</button>
@@ -419,11 +421,15 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         toggle.className = running ? '' : 'play-button';
         toggle.innerHTML = `<i class="material-icons">${running ? 'stop' : 'play_arrow'}</i>`;
         toggle.title = running ? 'Stop' : 'Start';
-        toggle.onclick = async (e) => { e.stopPropagation(); if (running) await ipcRenderer.invoke('stop-server', s.name); else await startServerChecked(s.name); setTimeout(loadServers, 600); };
+        toggle.onclick = async (e) => {
+          e.stopPropagation();
+          if (running) { await ipcRenderer.invoke('stop-server', s.name); setTimeout(loadServers, 600); }
+          else { const ok = await startServerChecked(s.name); if (ok) openDetail(s); } // starting → open its detail
+        };
         const restart = document.createElement('button');
         restart.innerHTML = `<i class="material-icons">restart_alt</i>`;
         restart.title = 'Restart';
-        restart.onclick = async (e) => { e.stopPropagation(); await ipcRenderer.invoke('restart-server', s.name); setTimeout(loadServers, 600); };
+        restart.onclick = async (e) => { e.stopPropagation(); await ipcRenderer.invoke('restart-server', s.name); openDetail(s); };
         actions.append(toggle, restart);
         li.appendChild(actions);
 
@@ -440,8 +446,11 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
     // ---------- Detail ----------
     let detailStatusTimer = null;
-    async function openDetail(server) {
+    async function openDetail(server, fromHistory) {
+      const already = !!selectedServer;
       selectedServer = server;
+      // Push a history entry so the toolbar Back button returns to the list.
+      if (!fromHistory) history.pushState({ srvDetail: server.name }, '', location.pathname + '?srv=' + encodeURIComponent(server.name));
       $('serverListView').style.display = 'none';
       $('serverDetail').style.display = 'flex';
       $('srvDetailIcon').src = server.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
@@ -452,6 +461,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       $('srvModsTab').style.display = modded ? '' : 'none';
       // Always land on the Console tab when (re)opening a server.
       selectTab('console');
+      setTimeout(() => { const c = $('cmdInput'); if (c && $('serverDetail').style.display !== 'none') c.focus(); }, 80);
       refreshDetailStatus();
       startConsolePolling();
       // Files tab starts at the server root.
@@ -486,11 +496,14 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       loadServers();
     }
 
+    // Toolbar/browser Back while in a detail view → return to the list.
+    window.addEventListener('popstate', () => { if (selectedServer) closeDetail(); });
+
     // Let the sidebar's "Server Manager" button restructure to the list in-page
     // (rather than reloading) when we're already on this page. Returns true if
     // it handled the click (i.e. we were in the detail view).
     window.showListView = () => {
-      if (selectedServer) { closeDetail(); return true; }
+      if (selectedServer) { history.back(); return true; } // pops the detail state → closeDetail
       return false;
     };
 
@@ -512,6 +525,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     function selectTab(name) {
       document.querySelectorAll('.srv-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
       document.querySelectorAll('.srv-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === name));
+      if (name === 'console') setTimeout(() => { const c = $('cmdInput'); if (c) c.focus(); }, 40);
       if (name === 'mods') loadServerMods();
     }
     document.querySelectorAll('.srv-tab').forEach(tab => {
@@ -872,10 +886,33 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         }
         $('srvVersion').value = server.version;
       }
+      updateLoaderVersionSection(server && server.loaderVersion);
       $('dMenu').classList.remove('open');
       $('createServerModal').classList.add('active');
       setTimeout(() => $('srvName').focus(), 60);
     }
+
+    // Loader-version dropdown — shown for Fabric/Quilt; defaults to latest but
+    // lets you pin an older loader for mod compatibility.
+    const LOADER_META = {
+      fabric: 'https://meta.fabricmc.net/v2/versions/loader',
+      quilt: 'https://meta.quiltmc.org/v3/versions/loader',
+    };
+    async function updateLoaderVersionSection(preselect) {
+      const type = $('srvType').value;
+      const url = LOADER_META[type];
+      if (!url) { $('srvLoaderVerSection').style.display = 'none'; return; }
+      $('srvLoaderVerSection').style.display = '';
+      const sel = $('srvLoaderVersion');
+      sel.innerHTML = '<option value="">Loading…</option>';
+      try {
+        const list = await (await fetch(url)).json();
+        const versions = (Array.isArray(list) ? list : []).map(v => v.version).filter(Boolean);
+        sel.innerHTML = versions.map((v, i) => `<option value="${v}">${v}${i === 0 ? ' (latest)' : ''}</option>`).join('');
+        if (preselect && versions.includes(preselect)) sel.value = preselect;
+      } catch { sel.innerHTML = '<option value="">latest</option>'; }
+    }
+    $('srvType').addEventListener('change', () => updateLoaderVersionSection());
     $('addServerBtn').onclick = () => openServerModal(null);
     $('createServerBtn').onclick = async () => {
       const type = $('srvType').value;
@@ -884,17 +921,18 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);
       const name = ($('srvName').value.trim()) || `${typeLabel} ${version}`;
       const launchArgs = $('srvLaunchArgs').value.trim();
+      const loaderVersion = ($('srvLoaderVerSection').style.display !== 'none') ? $('srvLoaderVersion').value : '';
       const btn = $('createServerBtn'); const wasEdit = !!editingServer;
       btn.disabled = true; btn.textContent = wasEdit ? 'Saving…' : 'Creating…';
       try {
         if (wasEdit) {
-          const res = await ipcRenderer.invoke('edit-server', { name: editingServer.name, newName: name, version, type, launchArgs });
+          const res = await ipcRenderer.invoke('edit-server', { name: editingServer.name, newName: name, version, type, launchArgs, loaderVersion });
           if (res && res.error) throw new Error(res.error);
           $('createServerModal').classList.remove('active');
           selectedServer = null;
           closeDetail();
         } else {
-          await ipcRenderer.invoke('make-server', { name, version, type, launchArgs });
+          await ipcRenderer.invoke('make-server', { name, version, type, launchArgs, loaderVersion });
           $('createServerModal').classList.remove('active');
           await loadServers();
         }

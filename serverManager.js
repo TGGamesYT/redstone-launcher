@@ -59,8 +59,20 @@ function fetchLatestFabricLoader() {
   });
 }
 
+function fetchLatestQuiltLoader() {
+  return new Promise((resolve, reject) => {
+    https.get('https://meta.quiltmc.org/v3/versions/loader', (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { const arr = JSON.parse(data); resolve(arr[0]?.version); } catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
 // Resolve the download URL for a given server software + MC version.
-async function resolveJarUrl(version, type) {
+async function resolveJarUrl(version, type, loaderVersion) {
   switch ((type || "").toLowerCase()) {
     case "vanilla": {
       const manifest = await fetchJson("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json");
@@ -85,8 +97,12 @@ async function resolveJarUrl(version, type) {
       return `https://api.purpurmc.org/v2/purpur/${version}/latest/download`;
     }
     case "fabric": {
-      const loaderVer = await fetchLatestFabricLoader();
+      const loaderVer = loaderVersion || await fetchLatestFabricLoader();
       return `https://meta.fabricmc.net/v2/versions/loader/${version}/${loaderVer}/1.1.0/server/jar`;
+    }
+    case "quilt": {
+      const loaderVer = loaderVersion || await fetchLatestQuiltLoader();
+      return `https://meta.quiltmc.org/v3/versions/loader/${version}/${loaderVer}/server/jar`;
     }
     default:
       throw new Error("Unknown server type " + type);
@@ -146,7 +162,7 @@ function findArgFileDir(root) {
 }
 
 // Provision a server's files. Returns extra serverInfo fields (launch metadata).
-async function provisionServer(serverDir, version, type, javaPath) {
+async function provisionServer(serverDir, version, type, javaPath, loaderVersion) {
   const t = (type || "").toLowerCase();
   if (t === "forge" || t === "neoforge") {
     const isNeo = t === "neoforge";
@@ -163,17 +179,17 @@ async function provisionServer(serverDir, version, type, javaPath) {
     return { launchType: "argfile", argFileDir: argDir.startsWith("libraries") ? argDir : path.join("libraries", argDir), buildVersion: build };
   }
   // Everything else is a single runnable jar.
-  const jarUrl = await resolveJarUrl(version, type);
+  const jarUrl = await resolveJarUrl(version, type, loaderVersion);
   await download(jarUrl, path.join(serverDir, "server.jar"));
   return { launchType: "jar" };
 }
 
 // --- Create a server ---
-async function makeServer({ name, version, type, launchArgs }, javaPath) {
+async function makeServer({ name, version, type, launchArgs, loaderVersion }, javaPath) {
   const serverDir = path.join(serversDir, name);
   fs.mkdirSync(serverDir, { recursive: true });
 
-  const launchMeta = await provisionServer(serverDir, version, type, javaPath);
+  const launchMeta = await provisionServer(serverDir, version, type, javaPath, loaderVersion);
 
   // Leave the EULA UNaccepted — the launcher prompts the user on first launch.
   fs.writeFileSync(path.join(serverDir, "eula.txt"), "eula=false\n");
@@ -182,7 +198,7 @@ async function makeServer({ name, version, type, launchArgs }, javaPath) {
   }
 
   // Save metadata
-  const serverInfo = { name, version, type, launchArgs: launchArgs || "", ...launchMeta };
+  const serverInfo = { name, version, type, launchArgs: launchArgs || "", loaderVersion: loaderVersion || "", ...launchMeta };
   fs.writeFileSync(path.join(serverDir, "serverinfo.json"), JSON.stringify(serverInfo, null, 2));
 
   const serverObj = { ...serverInfo, dir: serverDir, status: "stopped", process: null, logs: [] };
@@ -191,20 +207,21 @@ async function makeServer({ name, version, type, launchArgs }, javaPath) {
 }
 
 // --- Edit a server (rename, change version/type, launch args) ---
-async function editServer(name, { newName, version, type, launchArgs }, javaPath) {
+async function editServer(name, { newName, version, type, launchArgs, loaderVersion }, javaPath) {
   const dir = path.join(serversDir, name);
   const infoPath = path.join(dir, "serverinfo.json");
   if (!fs.existsSync(infoPath)) throw new Error("Server not found");
   const info = JSON.parse(fs.readFileSync(infoPath, "utf-8"));
   if (servers.get(name)?.process) throw new Error("Stop the server before editing it");
 
-  const changedJar = (version && version !== info.version) || (type && type.toLowerCase() !== (info.type || "").toLowerCase());
+  const changedJar = (version && version !== info.version) || (type && type.toLowerCase() !== (info.type || "").toLowerCase()) || (loaderVersion !== undefined && loaderVersion !== info.loaderVersion);
   if (version) info.version = version;
   if (type) info.type = type;
   if (launchArgs !== undefined) info.launchArgs = launchArgs;
+  if (loaderVersion !== undefined) info.loaderVersion = loaderVersion;
 
   if (changedJar) {
-    const meta = await provisionServer(dir, info.version, info.type, javaPath);
+    const meta = await provisionServer(dir, info.version, info.type, javaPath, info.loaderVersion);
     Object.assign(info, { launchType: undefined, argFileDir: undefined, buildVersion: undefined }, meta);
   }
   fs.writeFileSync(infoPath, JSON.stringify(info, null, 2));

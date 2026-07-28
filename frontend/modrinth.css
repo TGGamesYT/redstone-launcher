@@ -193,7 +193,12 @@
 .project-container {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* Scroll the WHOLE project page (header + tabs + whichever panel is active),
+     not just the description. */
+  height: calc(100vh - 44px);
+  overflow-y: auto;
+  padding-bottom: 40px;
+  box-sizing: border-box;
 }
 
 .install-scroll-area {
@@ -201,9 +206,11 @@
   overflow-y: auto;
   padding: 0px;
 }
+/* The container scrolls now, so the description shouldn't have its own inner
+   scrollbar/fixed height. */
 .projectView-scrolly {
-  height: calc(100vh - 170px);
-  overflow-y: auto;
+  height: auto;
+  overflow: visible;
   padding: 0px;
 }
 .mainModView-scrolly {

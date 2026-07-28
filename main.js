@@ -1267,9 +1267,13 @@ ipcMain.on('create-profile', async (event, profile) => {
     name: profile.name,
     version: profile.version || "1.20.1",
     loader: profile.loader || "vanilla",
+    loaderVersion: profile.loaderVersion || "",
     icon: profile.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png",
     alwaysUpdate: !!profile.alwaysUpdate,
     autoUpdateVersion: !!profile.alwaysUpdate,
+    launchArgs: profile.launchArgs || "",
+    ramMin: profile.ramMin || null,
+    ramMax: profile.ramMax || null,
     created: Date.now(),
     lastUsed: Date.now()
   };
@@ -1480,7 +1484,8 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     }
     const launcherConfig = await loaderer.getMCLCLaunchConfig({
       gameVersion: profile.version,
-      rootPath: rootDir
+      rootPath: rootDir,
+      ...(profile.loaderVersion ? { loaderVersion: profile.loaderVersion } : {}),
     });
     let opts = {
       ...launcherConfig,
@@ -2223,7 +2228,8 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
     }
     const launcherConfig = await loaderer.getMCLCLaunchConfig({
       gameVersion: profile.version,
-      rootPath: rootDir
+      rootPath: rootDir,
+      ...(profile.loaderVersion ? { loaderVersion: profile.loaderVersion } : {}),
     });
     let opts = {
       ...launcherConfig,

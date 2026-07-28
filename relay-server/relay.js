@@ -196,7 +196,7 @@ function statusJson(kind) {
       { text: "redstone-launcher.com", color: "red" },
     ],
   };
-  const obj = { version: { name: "Redstone", protocol: -1 }, players: { max: 0, online: 0, sample: [] }, description };
+  const obj = { version: { name: "Redstone Launcher", protocol: -1 }, players: { max: 0, online: 0, sample: [] }, description };
   const icon = offlineIcon();
   if (icon) obj.favicon = icon;
   return JSON.stringify(obj);
