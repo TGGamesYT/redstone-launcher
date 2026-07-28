@@ -79,6 +79,7 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
     let settled = false, keepalive = null;
 
     const sock = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () => {
+      try { sock.setNoDelay(true); } catch { /* ignore */ } // no Nagle → low latency
       sock.write(encodeFrame(T.HELLO, 0, Buffer.from(JSON.stringify({ subdomain, domain, localPort }))));
     });
     const send = (type, streamId, payload) => { try { sock.write(encodeFrame(type, streamId, payload)); } catch { /* ignore */ } };
@@ -103,6 +104,7 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
         if (!settled) reject(new Error(m));
       } else if (type === T.OPEN) {
         const local = net.connect({ host: "127.0.0.1", port: localPort });
+        try { local.setNoDelay(true); } catch { /* ignore */ } // no Nagle → low latency
         const st = { socket: local, buffer: [], connected: false };
         streams.set(streamId, st);
         local.on("connect", () => { st.connected = true; for (const b of st.buffer) { try { local.write(b); } catch { /* ignore */ } } st.buffer = []; });

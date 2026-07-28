@@ -60,14 +60,25 @@ function cfRequest(method, apiPath, body) {
     req.end();
   });
 }
-// Zones (domains) the token is allowed to edit — cached briefly.
+// Zones (domains) the token can use — cached briefly. Paginates so all domains
+// show up (a token with All-Zones DNS edit lists every zone).
 let cfZonesCache = null, cfZonesAt = 0;
 async function cfListZones() {
   if (!CF.enabled) return [];
-  if (cfZonesCache && Date.now() - cfZonesAt < 300000) return cfZonesCache;
-  const res = await cfRequest("GET", "/zones?per_page=50&status=active");
-  cfZonesCache = (res?.result || []).map(z => ({ id: z.id, name: z.name }));
-  cfZonesAt = Date.now();
+  if (cfZonesCache && Date.now() - cfZonesAt < 120000) return cfZonesCache;
+  const zones = [];
+  for (let page = 1; page <= 10; page++) {
+    const res = await cfRequest("GET", `/zones?per_page=50&page=${page}`);
+    if (!res || res.success === false) {
+      log("Cloudflare /zones failed — token likely needs 'Zone:Read'. Response:", JSON.stringify(res?.errors || res));
+      break;
+    }
+    for (const z of (res.result || [])) zones.push({ id: z.id, name: z.name });
+    const ti = res.result_info;
+    if (!ti || page >= (ti.total_pages || 1)) break;
+  }
+  cfZonesCache = zones; cfZonesAt = Date.now();
+  log("Cloudflare zones available:", zones.map(z => z.name).join(", ") || "(none)");
   return cfZonesCache;
 }
 async function cfZoneIdFor(domain) {
@@ -174,9 +185,17 @@ function offlineIcon() {
 }
 
 function statusJson(kind) {
-  const description = kind === "offline"
-    ? { text: "Offline\n", extra: [{ text: "redstone-launcher.com", color: "gray" }] }
-    : { text: "This server doesn't exist\n", extra: [{ text: "redstone-launcher.com", color: "gray" }] };
+  // Mirrors the old Velocity MOTDs:
+  //   <dark_red>This server doesn't exist<newline><red>redstone-launcher.com
+  //   <dark_red>This server is offline<newline><red>redstone-launcher.com
+  const line1 = kind === "offline" ? "This server is offline" : "This server doesn't exist";
+  const description = {
+    text: "", extra: [
+      { text: line1, color: "dark_red" },
+      { text: "\n" },
+      { text: "redstone-launcher.com", color: "red" },
+    ],
+  };
   const obj = { version: { name: "Redstone", protocol: -1 }, players: { max: 0, online: 0, sample: [] }, description };
   const icon = offlineIcon();
   if (icon) obj.favicon = icon;
@@ -256,6 +275,8 @@ catch (e) {
 }
 
 const control = tls.createServer(tlsOptions, (sock) => {
+  // CRITICAL for latency: disable Nagle so muxed game packets aren't buffered.
+  try { sock.setNoDelay(true); } catch { /* ignore */ }
   const state = { authed: false, host: null, domain: DOMAIN, streams: new Map(), nextStream: 1, serverId: null, want: null, wantDomain: DOMAIN, localPort: null, queryDomains: false };
   const send = (type, streamId, payload) => { try { sock.write(encodeFrame(type, streamId, payload)); } catch { /* ignore */ } };
 
@@ -335,6 +356,7 @@ control.listen(CONTROL_PORT, () => log(`control TLS on :${CONTROL_PORT}`));
 
 // ───────────────────────── public MC port ───────────────────────────────
 const mc = net.createServer((client) => {
+  try { client.setNoDelay(true); } catch { /* ignore */ } // no Nagle → low latency
   let routed = false;
   let acc = Buffer.alloc(0);
   const onData = (chunk) => {
