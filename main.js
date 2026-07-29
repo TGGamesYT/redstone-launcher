@@ -18,6 +18,7 @@ import serverManager from './serverManager.js';
 import upnp from './upnp.js';
 import relayClient from './relayClient.js';
 import fileManager from './fileManager.js';
+import shortcuts from './shortcuts.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
 import { exec, execSync, spawn } from "child_process";
@@ -728,13 +729,51 @@ if (args.includes('admin')) {
   }
 }
 
+// ── Deep-link protocol (desktop shortcuts) ──
+const DEEPLINK_SCHEME = 'redstonelauncher';
+try {
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(DEEPLINK_SCHEME, process.execPath, [path.resolve(process.argv[1])]);
+  } else {
+    app.setAsDefaultProtocolClient(DEEPLINK_SCHEME);
+  }
+} catch { /* ignore */ }
+let pendingDeepLink = null;
+function findDeepLink(argv) { return (argv || []).find(a => typeof a === 'string' && a.startsWith(DEEPLINK_SCHEME + '://')) || null; }
+
+// Perform a shortcut's action: navigate the window to the right page with query
+// params; the page's own code starts the server / launches the instance.
+function dispatchDeepLink(url) {
+  if (!url) return;
+  try {
+    const u = new URL(url); // redstonelauncher://server?name=… | ://instance?id=…&mode=…
+    const kind = u.hostname;
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    const load = () => {
+      if (kind === 'server') {
+        mainWindow.loadFile('frontend/server.html', { search: `?srv=${encodeURIComponent(u.searchParams.get('name') || '')}&action=start` });
+      } else if (kind === 'instance') {
+        const p = new URLSearchParams(u.search);
+        p.set('i', u.searchParams.get('id') || '');
+        p.set('shortcut', '1');
+        mainWindow.loadFile('frontend/instances.html', { search: '?' + p.toString() });
+      }
+    };
+    if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', load); else load();
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  } catch (e) { console.error('[DeepLink] bad url', url, e.message); }
+}
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
   app.quit();
   process.exit(0);
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (event, argv) => {
+    const link = findDeepLink(argv);
+    if (link) { dispatchDeepLink(link); return; }
     // If the window was closed while games kept running, relaunching brings it
     // back instead of starting a second copy.
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -744,6 +783,8 @@ if (!gotTheLock) {
       createWindow();
     }
   });
+  // macOS delivers deep links via open-url.
+  app.on('open-url', (event, url) => { event.preventDefault(); if (mainWindow) dispatchDeepLink(url); else pendingDeepLink = url; });
 
   app.whenReady().then(async () => {
     if (adminMode) {
@@ -756,7 +797,12 @@ if (!gotTheLock) {
     const applied = await maybeApplyStagedUpdate();
     if (applied) return; // installer launched; app is quitting
 
+    // Deep link the app was launched with (Windows/Linux argv, or macOS open-url).
+    const initialLink = pendingDeepLink || findDeepLink(process.argv);
+
     if (!mainWindow) createWindow();
+
+    if (initialLink) { pendingDeepLink = null; dispatchDeepLink(initialLink); }
 
     // Re-detect games still running from a previous launcher session.
     restoreRunningInstances();
@@ -2134,7 +2180,7 @@ async function getJavaForMinecraft(mcVersion) {
 }
 
 // Launch profile
-ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip, quickPlay }) => {
+ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip, quickPlay, shortcutArgs }) => {
   const now = Date.now();
   const lastLaunch = launchingProfiles.get(profileId);
   
@@ -2243,8 +2289,10 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
       },
       quickPlay: quickplay
     }
-    // Per-instance custom JVM args (Instance Settings → Java & Launch).
-    const extraArgs = (profileForRam.launchArgs || "").trim();
+    // Per-instance custom JVM args (Instance Settings → Java & Launch), plus any
+    // extra args baked into a desktop shortcut for this launch.
+    const extraArgs = [(profileForRam.launchArgs || ""), (shortcutArgs || "")]
+      .join(" ").trim();
     if (extraArgs) opts.customArgs = extraArgs.split(/\s+/).filter(Boolean);
     const childProcess = await launcher.launch(opts);
 
@@ -2283,6 +2331,27 @@ ipcMain.handle("make-server", async (event, params) => {
   let java = "java";
   try { if (params && params.version) java = await getJavaForMinecraft(params.version); } catch { /* fall back to system java */ }
   return await serverManager.makeServer(params, java);
+});
+
+// Create a desktop shortcut for a server or instance. icon is an optional
+// data:/http(s) PNG URL (instance/server/world/custom).
+async function iconUrlToPng(icon) {
+  if (!icon) return null;
+  try {
+    if (icon.startsWith("data:")) return Buffer.from(icon.split(",")[1], "base64");
+    if (/^https?:/.test(icon)) {
+      const res = await fetch(icon);
+      if (res.ok) return Buffer.from(await res.arrayBuffer());
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+ipcMain.handle("create-shortcut", async (event, { kind, id, name, action, icon }) => {
+  try {
+    const pngBuffer = await iconUrlToPng(icon);
+    const r = shortcuts.createShortcut({ kind, id, name, action, pngBuffer });
+    return { success: true, path: r.path };
+  } catch (err) { console.error("[Shortcut] failed:", err); return { success: false, error: err.message }; }
 });
 
 ipcMain.handle("edit-server", async (event, { name, ...changes }) => {

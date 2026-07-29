@@ -1,0 +1,60 @@
+/* Centralized UI-component styles shared across the Servers, Instances and Mods
+   pages. Modal container styles (.modal-content/.modal-header/.modal-section/…)
+   already live in server.css, which every page loads. This file consolidates the
+   OTHER repeated widgets — 3-dot dropdown menus, tab buttons and small modal
+   helpers — so they look identical everywhere and only need editing once.
+
+   Loaded BEFORE each page's own stylesheet, so any page-specific rule (which is
+   usually more specific, e.g. `.srv-menu .menu-item`) still wins. */
+
+/* ---- 3-dot dropdown / context menu ---- */
+.rl-menu {
+  position: absolute;
+  z-index: 1000;
+  min-width: 150px;
+  padding: 4px 0;
+  background: var(--toolbar-bg, var(--base-color));
+  border: 1px solid var(--secondary-color, var(--base-color));
+  border-radius: var(--border-radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.rl-menu.hidden { display: none; }
+
+/* Shared flat menu-item look (no icons, subtle hover) used by both the servers
+   dropdown and the instances context menu. */
+.menu-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--text-color);
+  font-family: var(--text-font);
+  font-size: 13px;
+  white-space: nowrap;
+  border-radius: 4px;
+}
+.menu-item:hover { background: var(--menu-hover-bg, rgba(255, 255, 255, 0.06)); }
+
+/* ---- Tab buttons (detail views, settings modal) ---- */
+.rl-tab {
+  background: var(--menu-bg);
+  color: var(--text-color);
+  border: none;
+  border-radius: var(--border-radius);
+  padding: 6px 14px;
+  cursor: pointer;
+  font-family: var(--text-font);
+  transition: background 0.15s;
+}
+.rl-tab:hover { background: var(--third-color); }
+.rl-tab.active { background: var(--base-color); }
+
+/* ---- Small modal helpers ---- */
+/* Stacked radio rows used in config modals (e.g. the desktop-shortcut modal). */
+.sc-radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+.sc-radio input { width: auto; margin: 0; }

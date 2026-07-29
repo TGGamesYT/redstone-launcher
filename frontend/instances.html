@@ -21,6 +21,7 @@
       document.documentElement.classList.add('gradient-enabled');
     }
   </script>
+  <link rel="stylesheet" href="common.css">
   <link rel="stylesheet" href="server.css">
   <link rel="stylesheet" href="instanceview.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
@@ -335,7 +336,11 @@
         </div>
         <div class="modal-section">
           <label>Instance Icon</label>
-          <input type="file" id="instanceIcon" accept="image/*" />
+          <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <img id="instanceIconPreview" style="width:48px;height:48px;border-radius:8px;object-fit:cover;background:var(--menu-bg);border:2px solid var(--border-dark);display:none;" />
+            <input type="file" id="instanceIcon" accept="image/*" style="flex:1;min-width:160px;" />
+            <button type="button" id="instanceSelectIcon">Select icon…</button>
+          </div>
         </div>
       </div>
 
@@ -482,8 +487,44 @@
 
     // Fetch profiles
     ipcRenderer.send("get-profiles");
-    ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
+    ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); maybeLaunchFromShortcut(); });
     ipcRenderer.on("profiles-updated", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
+
+    // Launched via a desktop shortcut? The deep-link handler loaded us with
+    // ?shortcut=1&i=<id>&mode=<start|world|server|args>&… — perform that action
+    // once, using the currently-selected player.
+    let __shortcutHandled = false;
+    async function maybeLaunchFromShortcut() {
+      if (__shortcutHandled) return;
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("shortcut") !== "1") return;
+      __shortcutHandled = true;
+      const id = p.get("i") || p.get("id");
+      const profile = profiles.find(pr => String(pr.id) === String(id));
+      if (!profile) return;
+      // Show this instance's detail view so its console/logs are visible.
+      window.openInstanceInPage(profile.id);
+      const selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
+      if (!selectedPlayerId) { alert("Select a player first, then click the shortcut again."); return; }
+      const mode = p.get("mode") || "start";
+      const msg = { profileId: profile.id, playerId: selectedPlayerId };
+      if (mode === "world" && p.get("world")) {
+        msg.quickPlay = { type: "singleplayer", identifier: p.get("world") };
+      } else if (mode === "server" && p.get("server")) {
+        // Modern multiplayer quick-play needs 1.20+, else fall back to legacy.
+        const parse = (v) => (String(v).match(/^\d+(\.\d+)*/)?.[0] || "").split(".").filter(s => s !== "").map(Number);
+        const a = parse(profile.version), b = parse("1.20");
+        let atLeast = a.length > 0;
+        for (let i = 0; i < Math.max(a.length, b.length) && atLeast; i++) {
+          const x = a[i] || 0, y = b[i] || 0;
+          if (x !== y) { atLeast = x > y; break; }
+        }
+        msg.quickPlay = { type: atLeast ? "multiplayer" : "legacy", identifier: p.get("server") };
+      } else if (mode === "args" && p.get("args")) {
+        msg.shortcutArgs = p.get("args");
+      }
+      ipcRenderer.send("launch-profile", msg);
+    }
 
     // small debounce helper
     function debounce(fn, wait = 150) {
@@ -507,6 +548,26 @@
     // call once on load
     attachFilterListeners();
 
+    // Instance-icon selection in the create/edit modal: a file upload OR the
+    // shared predefined icon picker. Whichever was chosen last wins.
+    let pickedInstanceIcon = null;
+    const instanceIconPreview = document.getElementById('instanceIconPreview');
+    function setInstancePreview(url) {
+      if (url) { instanceIconPreview.src = url; instanceIconPreview.style.display = ''; }
+      else { instanceIconPreview.removeAttribute('src'); instanceIconPreview.style.display = 'none'; }
+    }
+    if (instanceIcon) instanceIcon.addEventListener('change', async () => {
+      if (instanceIcon.files.length) { pickedInstanceIcon = null; setInstancePreview(await fileToBase64(instanceIcon.files[0])); }
+    });
+    const instanceSelectIcon = document.getElementById('instanceSelectIcon');
+    if (instanceSelectIcon) instanceSelectIcon.onclick = () => {
+      const editingId = modalCreateBtn.dataset.editingId;
+      window.IconPicker.open({
+        instanceId: editingId || undefined,
+        onPick: (d) => { pickedInstanceIcon = d; if (instanceIcon) instanceIcon.value = ''; setInstancePreview(d); },
+      });
+    };
+
     function fileToBase64(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -526,6 +587,8 @@
         instanceLoader.value = "vanilla";
         if (typeof updateInstanceLoaderVersion === 'function') updateInstanceLoaderVersion();
         instanceIcon.value = "";
+        pickedInstanceIcon = null;
+        setInstancePreview(null);
         delete modalCreateBtn.dataset.editingId;
         delete modalCreateBtn._originalProfile;
         if (typeof setModalMode === 'function') setModalMode('create');
@@ -648,6 +711,11 @@
       modalCreateBtn.dataset.editingId = profile.id;
       modalCreateBtn._originalProfile = profile;
       setModalMode('edit');
+
+      // Reset icon selection to the instance's current icon.
+      pickedInstanceIcon = null;
+      if (instanceIcon) instanceIcon.value = '';
+      setInstancePreview((profile.icon && /^(data:|https?:)/.test(profile.icon)) ? profile.icon : null);
 
       // Java & Launch fields.
       document.getElementById('instanceLaunchArgs').value = profile.launchArgs || '';
@@ -1293,6 +1361,7 @@
         menu.style.zIndex = 1000;
         menu.innerHTML = `
     <div class="menu-item" data-action="open">Open Folder</div>
+    <div class="menu-item" data-action="shortcut">Desktop shortcut</div>
     <div class="menu-item export-item" data-action="export">Export ▸
         <div class="submenu hidden">
             <div class="menu-item" data-export="modrinth">Modrinth Pack</div>
@@ -1391,6 +1460,7 @@
               e.stopPropagation();
               if (item.dataset.action === "open") ipcRenderer.send("open-folder", { id: profile.id, isClient: true });
               if (item.dataset.action === "delete" && confirm(`Delete "${profile.name}"?`)) ipcRenderer.send("delete-profile", profile.id);
+              if (item.dataset.action === "shortcut") openShortcutModal(profile);
 
               menu.style.display = "none";
               menuVisible = false;
@@ -1664,6 +1734,107 @@
               close({ name, ip, icon: iconData });
             };
           });
+        }
+
+        // Desktop-shortcut config modal for an instance. Lets the user choose what
+        // clicking the shortcut does (just start / auto-join a world / auto-join a
+        // server / launch with extra args) and which icon to use.
+        async function openShortcutModal(profile) {
+          const worlds = await ipcRenderer.invoke("get-instance-worlds", { profileId: profile.id }).catch(() => []);
+          const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id }).catch(() => []);
+          const worldOpts = (worlds || []).map(w => `<option value="${w.folder}">${(w.name || w.folder).replace(/</g, "&lt;")}</option>`).join("");
+          const serverOpts = (servers || []).map(s => `<option value="${(s.ip || "").replace(/"/g, "&quot;")}">${(s.name || s.ip).replace(/</g, "&lt;")}</option>`).join("");
+
+          const overlay = document.createElement("div");
+          overlay.className = "modal-overlay active";
+          overlay.style.zIndex = 5000;
+          overlay.innerHTML = `
+            <div class="modal-content" style="max-width:480px;">
+              <div class="modal-header"><h2>Desktop shortcut</h2><button class="modal-close" id="scClose">✕</button></div>
+              <div class="modal-section">
+                <label>When the shortcut is clicked</label>
+                <label class="sc-radio"><input type="radio" name="scMode" value="start" checked> Just start the instance</label>
+                <label class="sc-radio"><input type="radio" name="scMode" value="world"> Auto-join a world</label>
+                <label class="sc-radio"><input type="radio" name="scMode" value="server"> Auto-join a server</label>
+                <label class="sc-radio"><input type="radio" name="scMode" value="args"> Launch with extra args</label>
+              </div>
+              <div class="modal-section sc-when sc-world" style="display:none;">
+                <label>World</label>
+                <select id="scWorld">${worldOpts || `<option value="">No worlds found</option>`}</select>
+              </div>
+              <div class="modal-section sc-when sc-server" style="display:none;">
+                <label>Server address</label>
+                ${serverOpts ? `<select id="scServerPick"><option value="">— saved servers —</option>${serverOpts}</select>` : ""}
+                <input type="text" id="scServer" placeholder="play.example.net">
+              </div>
+              <div class="modal-section sc-when sc-args" style="display:none;">
+                <label>Extra launch arguments</label>
+                <input type="text" id="scArgs" placeholder="-Dsomething=1 --width 1920">
+              </div>
+              <div class="modal-section">
+                <label>Icon</label>
+                <div style="display:flex; align-items:center; gap:12px;">
+                  <img id="scIcon" style="width:56px; height:56px; border-radius:var(--border-radius); object-fit:cover; background:var(--menu-bg); border:2px solid var(--border-dark);" />
+                  <button id="scChangeIcon" type="button">Change icon…</button>
+                </div>
+              </div>
+              <div class="modal-actions"><button id="scCreate">Create shortcut</button><button id="scCancel">Cancel</button></div>
+            </div>`;
+          document.body.appendChild(overlay);
+
+          let scIconData = (profile.icon && /^(data:|https?:)/.test(profile.icon)) ? profile.icon : DEFAULT_ICON;
+          const scIcon = overlay.querySelector("#scIcon");
+          scIcon.src = scIconData;
+          scIcon.onerror = () => { scIcon.src = DEFAULT_ICON; };
+
+          const syncWhen = () => {
+            const mode = overlay.querySelector('input[name="scMode"]:checked').value;
+            overlay.querySelectorAll(".sc-when").forEach(el => el.style.display = "none");
+            const map = { world: ".sc-world", server: ".sc-server", args: ".sc-args" };
+            if (map[mode]) overlay.querySelector(map[mode]).style.display = "";
+          };
+          overlay.querySelectorAll('input[name="scMode"]').forEach(r => r.addEventListener("change", syncWhen));
+          syncWhen();
+
+          const serverPick = overlay.querySelector("#scServerPick");
+          if (serverPick) serverPick.onchange = () => { if (serverPick.value) overlay.querySelector("#scServer").value = serverPick.value; };
+
+          overlay.querySelector("#scChangeIcon").onclick = () => {
+            window.IconPicker.open({ instanceId: profile.id, onPick: (url) => { scIconData = url; scIcon.src = url; } });
+          };
+
+          const close = () => overlay.remove();
+          overlay.querySelector("#scClose").onclick = close;
+          overlay.querySelector("#scCancel").onclick = close;
+          overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+
+          overlay.querySelector("#scCreate").onclick = async () => {
+            const mode = overlay.querySelector('input[name="scMode"]:checked').value;
+            const action = { mode };
+            let suffix = "";
+            if (mode === "world") {
+              action.world = overlay.querySelector("#scWorld").value;
+              if (!action.world) return;
+              suffix = " (World)";
+            } else if (mode === "server") {
+              action.server = overlay.querySelector("#scServer").value.trim();
+              if (!action.server) return;
+              suffix = " (Server)";
+            } else if (mode === "args") {
+              action.args = overlay.querySelector("#scArgs").value.trim();
+            }
+            const r = await ipcRenderer.invoke("create-shortcut", {
+              kind: "instance", id: profile.id, name: (profile.name || "Instance") + suffix,
+              action, icon: scIconData,
+            });
+            close();
+            if (r && r.success) {
+              if (window.notify) window.notify("Desktop shortcut created", "success");
+              else alert("Desktop shortcut created.");
+            } else {
+              alert("Failed to create shortcut" + (r && r.error ? ": " + r.error : ""));
+            }
+          };
         }
 
         let currentTabSession = 0; // global counter
@@ -2229,6 +2400,8 @@
             updatedProfile.ramMax = parseInt(document.getElementById('instanceRamMax').value) || null;
             if (instanceIcon.files.length > 0) {
               updatedProfile.icon = await fileToBase64(instanceIcon.files[0]);
+            } else if (pickedInstanceIcon) {
+              updatedProfile.icon = pickedInstanceIcon;
             }
 
             if (Object.keys(updatedProfile).length > 1) {
@@ -2273,6 +2446,8 @@
 
             if (instanceIcon.files.length > 0) {
               newProfile.icon = await fileToBase64(instanceIcon.files[0]);
+            } else if (pickedInstanceIcon) {
+              newProfile.icon = pickedInstanceIcon;
             }
 
             ipcRenderer.send("create-profile", newProfile);
@@ -2295,6 +2470,8 @@
         instanceVersion.value = "";
         instanceLoader.value = "vanilla";
         instanceIcon.value = "";
+        pickedInstanceIcon = null;
+        setInstancePreview(null);
         delete modalCreateBtn.dataset.editingId;
         delete modalCreateBtn._originalProfile;
         if (typeof setModalMode === 'function') setModalMode('create');
@@ -2386,6 +2563,7 @@
   <script src="filebrowser.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
+  <script src="iconpicker.js"></script>
 </body>
 
 </html>

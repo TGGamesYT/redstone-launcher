@@ -185,7 +185,7 @@ async function provisionServer(serverDir, version, type, javaPath, loaderVersion
 }
 
 // --- Create a server ---
-async function makeServer({ name, version, type, launchArgs, loaderVersion }, javaPath) {
+async function makeServer({ name, version, type, launchArgs, loaderVersion, icon }, javaPath) {
   const serverDir = path.join(serversDir, name);
   fs.mkdirSync(serverDir, { recursive: true });
 
@@ -197,8 +197,8 @@ async function makeServer({ name, version, type, launchArgs, loaderVersion }, ja
     fs.writeFileSync(path.join(serverDir, "server.properties"), `motd=${name}\nserver-port=25565\n`);
   }
 
-  // Save metadata
-  const serverInfo = { name, version, type, launchArgs: launchArgs || "", loaderVersion: loaderVersion || "", ...launchMeta };
+  // Save metadata (icon kept inline as a data: URL so it survives renames).
+  const serverInfo = { name, version, type, launchArgs: launchArgs || "", loaderVersion: loaderVersion || "", icon: icon || "", ...launchMeta };
   fs.writeFileSync(path.join(serverDir, "serverinfo.json"), JSON.stringify(serverInfo, null, 2));
 
   const serverObj = { ...serverInfo, dir: serverDir, status: "stopped", process: null, logs: [] };
@@ -207,7 +207,7 @@ async function makeServer({ name, version, type, launchArgs, loaderVersion }, ja
 }
 
 // --- Edit a server (rename, change version/type, launch args) ---
-async function editServer(name, { newName, version, type, launchArgs, loaderVersion }, javaPath) {
+async function editServer(name, { newName, version, type, launchArgs, loaderVersion, icon }, javaPath) {
   const dir = path.join(serversDir, name);
   const infoPath = path.join(dir, "serverinfo.json");
   if (!fs.existsSync(infoPath)) throw new Error("Server not found");
@@ -219,6 +219,7 @@ async function editServer(name, { newName, version, type, launchArgs, loaderVers
   if (type) info.type = type;
   if (launchArgs !== undefined) info.launchArgs = launchArgs;
   if (loaderVersion !== undefined) info.loaderVersion = loaderVersion;
+  if (icon !== undefined) info.icon = icon;
 
   if (changedJar) {
     const meta = await provisionServer(dir, info.version, info.type, javaPath, info.loaderVersion);
@@ -336,7 +337,8 @@ function getServers() {
       name: server.name,
       version: server.version,
       type: server.type,
-      status: server.status
+      status: server.status,
+      icon: server.icon || info.icon || ""
     });
   }
 

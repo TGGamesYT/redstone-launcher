@@ -20,6 +20,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   document.documentElement.classList.add('gradient-enabled');
 }
 </script>
+  <link rel="stylesheet" href="common.css" />
   <link rel="stylesheet" href="server.css" />
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
@@ -218,6 +219,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
             <button id="dMenuBtn" title="More"><i class="material-icons">more_vert</i></button>
             <div id="dMenu" class="srv-menu">
               <div class="menu-item" id="dShare">Share over internet</div>
+              <div class="menu-item" id="dShortcut">Desktop shortcut</div>
               <div class="menu-item" id="dFolder">Open folder</div>
               <div class="menu-item" id="dDelete">Delete server</div>
             </div>
@@ -301,6 +303,12 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <label class="inline-check"><input type="checkbox" id="showAllVersions" /> Show all (snapshots)</label>
       </div>
       <div class="modal-section" id="srvLoaderVerSection" style="display:none;"><label>Loader version</label><select id="srvLoaderVersion"></select></div>
+      <div class="modal-section"><label>Icon</label>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <img id="srvIconPreview" style="width:48px;height:48px;border-radius:8px;object-fit:cover;background:var(--menu-bg);border:2px solid var(--border-dark);" />
+          <button type="button" id="srvSelectIcon">Select icon…</button>
+        </div>
+      </div>
       <div class="modal-section"><label>Extra Java args (optional)</label><input id="srvLaunchArgs" placeholder="-XX:+UseG1GC …" /></div>
       <div class="modal-actions">
         <button id="createServerBtn">Create</button>
@@ -331,6 +339,24 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <div class="modal-actions">
         <button id="shareGo">Share</button>
         <button onclick="document.getElementById('shareModal').classList.remove('active');">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Desktop shortcut modal -->
+  <div id="shortcutModal" class="modal-overlay">
+    <div class="modal-content" style="max-width:400px;">
+      <div class="modal-header"><h2>Desktop shortcut</h2>
+        <button class="modal-close" onclick="document.getElementById('shortcutModal').classList.remove('active');">✕</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+        <img id="scIcon" style="width:56px;height:56px;border-radius:8px;object-fit:cover;border:2px solid var(--border-dark);" />
+        <button id="scChangeIcon">Change icon</button>
+      </div>
+      <div style="font-size:12px;opacity:0.7;margin-bottom:12px;">Starts this server and opens it in the launcher when clicked.</div>
+      <div class="modal-actions">
+        <button id="scCreate">Create shortcut</button>
+        <button onclick="document.getElementById('shortcutModal').classList.remove('active');">Cancel</button>
       </div>
     </div>
   </div>
@@ -641,6 +667,21 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     $('relayCopy').onclick = () => { try { navigator.clipboard.writeText($('relayAddr').textContent.split('  (')[0]); $('relayCopy').textContent = 'Copied'; setTimeout(() => ($('relayCopy').textContent = 'Copy'), 1200); } catch { /* ignore */ } };
     document.addEventListener('click', () => $('dMenu').classList.remove('open'));
     $('dFolder').onclick = () => { $('dMenu').classList.remove('open'); ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false }); };
+    // ---------- Desktop shortcut ----------
+    const DEFAULT_SRV_ICON = 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
+    let scIconData = null;
+    $('dShortcut').onclick = () => {
+      $('dMenu').classList.remove('open');
+      scIconData = selectedServer.icon || null;
+      $('scIcon').src = scIconData || DEFAULT_SRV_ICON;
+      $('shortcutModal').classList.add('active');
+    };
+    $('scChangeIcon').onclick = () => window.IconPicker.open({ serverName: selectedServer.name, onPick: (d) => { scIconData = d; $('scIcon').src = d; } });
+    $('scCreate').onclick = async () => {
+      const res = await ipcRenderer.invoke('create-shortcut', { kind: 'server', id: selectedServer.name, name: selectedServer.name, icon: scIconData });
+      $('shortcutModal').classList.remove('active');
+      alert(res && res.success ? 'Shortcut created on your desktop.' : ('Failed to create shortcut: ' + (res?.error || 'unknown')));
+    };
     $('dDelete').onclick = async () => {
       $('dMenu').classList.remove('open');
       if (!confirm(`Delete server "${selectedServer.name}" and all its files?`)) return;
@@ -871,6 +912,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
     // ---------- Create / edit ----------
     let editingServer = null; // null = create mode; otherwise the server being edited
+    let newSrvIconData = null; // chosen icon (data: URL) for the create/edit modal
     function openServerModal(server) {
       editingServer = server || null;
       $('srvModalTitle').textContent = server ? 'Edit Server' : 'Create Server';
@@ -878,6 +920,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       $('srvName').value = server ? server.name : '';
       $('srvType').value = (server && server.type) || 'vanilla';
       $('srvLaunchArgs').value = (server && server.launchArgs) || '';
+      newSrvIconData = (server && server.icon) || null;
+      $('srvIconPreview').src = newSrvIconData || DEFAULT_SRV_ICON;
       // Ensure the requested version is selectable, then select it.
       if (server && server.version) {
         if (![...$('srvVersion').options].some(o => o.value === server.version)) {
@@ -913,6 +957,10 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       } catch { sel.innerHTML = '<option value="">latest</option>'; }
     }
     $('srvType').addEventListener('change', () => updateLoaderVersionSection());
+    $('srvSelectIcon').onclick = () => window.IconPicker.open({
+      serverName: editingServer ? editingServer.name : undefined,
+      onPick: (d) => { newSrvIconData = d; $('srvIconPreview').src = d; },
+    });
     $('addServerBtn').onclick = () => openServerModal(null);
     $('createServerBtn').onclick = async () => {
       const type = $('srvType').value;
@@ -926,13 +974,13 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       btn.disabled = true; btn.textContent = wasEdit ? 'Saving…' : 'Creating…';
       try {
         if (wasEdit) {
-          const res = await ipcRenderer.invoke('edit-server', { name: editingServer.name, newName: name, version, type, launchArgs, loaderVersion });
+          const res = await ipcRenderer.invoke('edit-server', { name: editingServer.name, newName: name, version, type, launchArgs, loaderVersion, icon: newSrvIconData || '' });
           if (res && res.error) throw new Error(res.error);
           $('createServerModal').classList.remove('active');
           selectedServer = null;
           closeDetail();
         } else {
-          await ipcRenderer.invoke('make-server', { name, version, type, launchArgs, loaderVersion });
+          await ipcRenderer.invoke('make-server', { name, version, type, launchArgs, loaderVersion, icon: newSrvIconData || '' });
           $('createServerModal').classList.remove('active');
           await loadServers();
         }
@@ -959,13 +1007,23 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     initVersionSelect();
 
     // ---------- Init + periodic status refresh ----------
-    loadServers();
+    (async () => {
+      await loadServers();
+      // Deep link / desktop shortcut: ?srv=<name>[&action=start]
+      const params = new URLSearchParams(location.search);
+      const srv = params.get('srv');
+      if (srv) {
+        const s = servers.find(x => x.name === srv);
+        if (s) { openDetail(s, true); if (params.get('action') === 'start') startServerChecked(s.name).then(() => setTimeout(refreshDetailStatus, 800)); }
+      }
+    })();
     setInterval(() => { if (!selectedServer) loadServers(); }, 4000);
 
     function updatePresence(details, state = 'Idle') { ipcRenderer.send('update-discord-presence', { details, state }); }
     updatePresence('Managing servers');
   </script>
   <script src="filetree.js"></script>
+  <script src="iconpicker.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
 </body>
