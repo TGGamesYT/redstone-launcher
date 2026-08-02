@@ -504,7 +504,12 @@
       if (!profile) return;
       // Show this instance's detail view so its console/logs are visible.
       window.openInstanceInPage(profile.id);
-      const selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
+      // Prefer the account baked into the shortcut; fall back to the selected one.
+      let selectedPlayerId = p.get("account") || await ipcRenderer.invoke("get-selected-player");
+      const knownPlayers = await ipcRenderer.invoke("list-players").catch(() => []);
+      if (p.get("account") && Array.isArray(knownPlayers) && !knownPlayers.find(pl => String(pl.id) === String(p.get("account")))) {
+        selectedPlayerId = await ipcRenderer.invoke("get-selected-player");
+      }
       if (!selectedPlayerId) { alert("Select a player first, then click the shortcut again."); return; }
       const mode = p.get("mode") || "start";
       const msg = { profileId: profile.id, playerId: selectedPlayerId };
@@ -1578,6 +1583,17 @@
           for (let i = 0; i < str.length; i++) {
             const ch = str[i];
             if ((ch === '§' || ch === '&') && i + 1 < str.length) {
+              const rest = str.slice(i);
+              // Hex colours, several encodings servers use in the wild:
+              //   §x§R§R§G§G§B§B (Bungee/Spigot), §xRRGGBB, §#RRGGBB / &#RRGGBB.
+              let hm;
+              if ((hm = /^[§&]x(?:[§&][0-9a-fA-F]){6}/.exec(rest))) {
+                const hex = hm[0].replace(/[§&x]/g, '');
+                style = { color: '#' + hex }; i += hm[0].length - 1; flush(); continue;
+              }
+              if ((hm = /^[§&][x#]([0-9a-fA-F]{6})/.exec(rest))) {
+                style = { color: '#' + hm[1] }; i += hm[0].length - 1; flush(); continue;
+              }
               const code = str[++i].toLowerCase(); flush();
               if (code === 'r') style = { ...base };
               else if (MC_LEGACY[code]) style = { color: MC_LEGACY[code] };
@@ -1585,6 +1601,7 @@
               else if (code === 'o') style.italic = true;
               else if (code === 'n') style.underlined = true;
               else if (code === 'm') style.strikethrough = true;
+              else if (code === 'x' || code === '#') { /* stray hex marker, skip */ }
             } else if (ch === '\n') { flush(); parent.appendChild(document.createElement('br')); }
             else buf += ch;
           }
@@ -1706,7 +1723,7 @@
             overlay.innerHTML = `
               <div class="modal-content">
                 <div class="modal-header"><h2>${mode === "edit" ? "Edit Server" : "Add Server"}</h2></div>
-                <div class="modal-section"><label>Name</label><input class="sv-name" type="text" placeholder="My Server"></div>
+                <div class="modal-section"><label>Name (optional)</label><input class="sv-name" type="text" placeholder="Defaults to the address"></div>
                 <div class="modal-section"><label>Address</label><input class="sv-ip" type="text" placeholder="play.example.net"></div>
                 <div class="modal-section"><label>Icon (PNG)</label><input class="sv-icon" type="file" accept="image/png"></div>
                 <div class="modal-actions"><button class="sv-save">Save</button><button class="sv-cancel">Cancel</button></div>
@@ -1729,8 +1746,10 @@
             overlay.querySelector(".sv-cancel").onclick = () => close(null);
             overlay.onclick = (e) => { if (e.target === overlay) close(null); };
             overlay.querySelector(".sv-save").onclick = () => {
-              const name = nameI.value.trim(), ip = ipI.value.trim();
-              if (!name || !ip) return;
+              const ip = ipI.value.trim();
+              if (!ip) return;
+              // Name is optional — default it to the address.
+              const name = nameI.value.trim() || ip;
               close({ name, ip, icon: iconData });
             };
           });
@@ -1742,8 +1761,12 @@
         async function openShortcutModal(profile) {
           const worlds = await ipcRenderer.invoke("get-instance-worlds", { profileId: profile.id }).catch(() => []);
           const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id }).catch(() => []);
+          const players = await ipcRenderer.invoke("list-players").catch(() => []);
           const worldOpts = (worlds || []).map(w => `<option value="${w.folder}">${(w.name || w.folder).replace(/</g, "&lt;")}</option>`).join("");
           const serverOpts = (servers || []).map(s => `<option value="${(s.ip || "").replace(/"/g, "&quot;")}">${(s.name || s.ip).replace(/</g, "&lt;")}</option>`).join("");
+          const accountOpts = (players || []).map(pl => `<option value="${pl.id}">${(pl.name || pl.username || pl.id).replace(/</g, "&lt;")}${pl.type === "cracked" ? " (cracked)" : ""}</option>`).join("");
+          // Look up a saved server by address for the "use server icon" option.
+          const serverByIp = {}; (servers || []).forEach(s => { serverByIp[(s.ip || "").trim()] = s; });
 
           const overlay = document.createElement("div");
           overlay.className = "modal-overlay active";
@@ -1766,10 +1789,15 @@
                 <label>Server address</label>
                 ${serverOpts ? `<select id="scServerPick"><option value="">— saved servers —</option>${serverOpts}</select>` : ""}
                 <input type="text" id="scServer" placeholder="play.example.net">
+                <label class="sc-radio" style="margin-top:8px;"><input type="checkbox" id="scUseServerIcon"> Use this server's icon (auto-updates when it changes)</label>
               </div>
               <div class="modal-section sc-when sc-args" style="display:none;">
                 <label>Extra launch arguments</label>
                 <input type="text" id="scArgs" placeholder="-Dsomething=1 --width 1920">
+              </div>
+              <div class="modal-section">
+                <label>Account</label>
+                <select id="scAccount"><option value="">Currently-selected account</option>${accountOpts}</select>
               </div>
               <div class="modal-section">
                 <label>Icon</label>
@@ -1796,10 +1824,22 @@
           overlay.querySelectorAll('input[name="scMode"]').forEach(r => r.addEventListener("change", syncWhen));
           syncWhen();
 
+          const serverInput = overlay.querySelector("#scServer");
           const serverPick = overlay.querySelector("#scServerPick");
-          if (serverPick) serverPick.onchange = () => { if (serverPick.value) overlay.querySelector("#scServer").value = serverPick.value; };
+          const useServerIcon = overlay.querySelector("#scUseServerIcon");
+          if (serverPick) serverPick.onchange = () => { if (serverPick.value) { serverInput.value = serverPick.value; applyServerIcon(); } };
+          // When "use server icon" is ticked, mirror the saved server's icon into
+          // the preview; also records the source so it can auto-update later.
+          function applyServerIcon() {
+            if (!useServerIcon || !useServerIcon.checked) return;
+            const s = serverByIp[serverInput.value.trim()];
+            if (s && s.icon) { scIconData = `data:image/png;base64,${s.icon}`; scIcon.src = scIconData; }
+          }
+          if (useServerIcon) useServerIcon.onchange = applyServerIcon;
+          serverInput.addEventListener("input", applyServerIcon);
 
           overlay.querySelector("#scChangeIcon").onclick = () => {
+            if (useServerIcon) useServerIcon.checked = false; // manual pick overrides
             window.IconPicker.open({ instanceId: profile.id, onPick: (url) => { scIconData = url; scIcon.src = url; } });
           };
 
@@ -1812,20 +1852,26 @@
             const mode = overlay.querySelector('input[name="scMode"]:checked').value;
             const action = { mode };
             let suffix = "";
+            let iconSource = null;
             if (mode === "world") {
               action.world = overlay.querySelector("#scWorld").value;
               if (!action.world) return;
               suffix = " (World)";
             } else if (mode === "server") {
-              action.server = overlay.querySelector("#scServer").value.trim();
+              action.server = serverInput.value.trim();
               if (!action.server) return;
               suffix = " (Server)";
+              if (useServerIcon && useServerIcon.checked) {
+                iconSource = { type: "instance-server", profileId: profile.id, ip: action.server };
+              }
             } else if (mode === "args") {
               action.args = overlay.querySelector("#scArgs").value.trim();
             }
+            const acct = overlay.querySelector("#scAccount").value;
+            if (acct) action.account = acct;
             const r = await ipcRenderer.invoke("create-shortcut", {
               kind: "instance", id: profile.id, name: (profile.name || "Instance") + suffix,
-              action, icon: scIconData,
+              action, icon: scIconData, iconSource,
             });
             close();
             if (r && r.success) {

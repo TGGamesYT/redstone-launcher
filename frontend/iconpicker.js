@@ -4,20 +4,27 @@
 (function () {
   const { ipcRenderer } = require('electron');
 
-  // Predefined icons rendered from emoji onto a canvas → self-contained PNGs,
-  // no asset files needed.
-  const PRESET_EMOJI = ['🟩', '🧱', '💎', '⚔️', '🏰', '🌲', '🔥', '⚙️', '🚀', '🐉', '🍎', '⭐', '🌍', '🎮', '🛠️', '👾'];
-  function emojiToDataUrl(emoji, size = 128) {
-    const c = document.createElement('canvas'); c.width = c.height = size;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = 'rgba(0,0,0,0)'; ctx.fillRect(0, 0, size, size);
-    ctx.font = `${Math.floor(size * 0.72)}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(emoji, size / 2, size / 2 + size * 0.06);
-    return c.toDataURL('image/png');
-  }
+  // Predefined icons — Minecraft block renders bundled in assets/icons.
+  const PRESET_ICONS = [
+    'Block_of_Diamond_JE5_BE3.png', 'Block_of_Emerald_JE4_BE3.png', 'Block_of_Gold_JE6_BE3.png',
+    'Block_of_Iron_JE4_BE3.png', 'Block_of_Copper_JE1_BE1.png', 'Block_of_Lapis_Lazuli_JE3_BE3.png',
+    'Diamond_Ore_JE5_BE5.png', 'Deepslate_Diamond_Ore_JE2_BE1.png', 'Redstone_Ore_JE4_BE3.png',
+    'Deepslate_Redstone_Ore_JE2_BE1.png', 'Cobblestone_JE5_BE3.png', 'Reinforced_Deepslate_JE1_BE1.png',
+    'Beacon_JE6_BE2.png', 'Piston_(U)_JE3.png', 'Chest_(S)_JE2.png', 'Copper_Chest_(S)_JE2.png',
+    'Xmas_Chest.png', 'Chorus_Flower_JE2_BE2.png', 'Camera_(block).png',
+    'Impulse_Command_Block_JE5_BE2.png', 'Chain_Command_Block_JE3_BE2.png',
+    'Repeating_Command_Block_JE4_BE2.png', 'Missing_Model_JE2.png', 'Missing_Tile_BE3.png',
+  ];
+  const presetSrc = (file) => 'assets/icons/' + file;
   function fileToDataUrl(file) {
     return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+  }
+  // Convert a (possibly relative) image URL to a self-contained data: URL so the
+  // chosen icon survives being embedded in serverinfo.json / a desktop shortcut.
+  function urlToDataUrl(url) {
+    return fetch(url).then(r => r.blob()).then(b => new Promise((res, rej) => {
+      const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(b);
+    }));
   }
   function ensureStyle() {
     if (document.getElementById('iconpicker-style')) return;
@@ -26,7 +33,7 @@
       .ip-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(56px,1fr)); gap:8px; max-height:280px; overflow-y:auto; padding:4px; }
       .ip-cell { width:56px; height:56px; border:2px solid var(--border-dark); border-radius:var(--border-radius); cursor:pointer; display:flex; align-items:center; justify-content:center; background:var(--menu-bg); overflow:hidden; }
       .ip-cell:hover { border-color:var(--accent); }
-      .ip-cell img { width:100%; height:100%; object-fit:cover; }
+      .ip-cell img { width:100%; height:100%; object-fit:contain; padding:4px; image-rendering:pixelated; }
       .ip-section-title { font-size:12px; text-transform:uppercase; opacity:0.7; margin:12px 0 4px; }`;
     document.head.appendChild(s);
   }
@@ -54,11 +61,12 @@
       ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
 
       const presets = ov.querySelector('#ipPresets');
-      PRESET_EMOJI.forEach(em => {
-        const url = emojiToDataUrl(em);
+      PRESET_ICONS.forEach(file => {
+        const src = presetSrc(file);
         const cell = document.createElement('div'); cell.className = 'ip-cell';
-        cell.innerHTML = `<img src="${url}" />`;
-        cell.onclick = () => pick(url);
+        cell.title = file.replace(/_JE.*$|_BE.*$|\.png$/g, '').replace(/_/g, ' ');
+        cell.innerHTML = `<img src="${src}" />`;
+        cell.onclick = async () => { try { pick(await urlToDataUrl(src)); } catch { pick(src); } };
         presets.appendChild(cell);
       });
 

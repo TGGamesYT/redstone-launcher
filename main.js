@@ -765,6 +765,49 @@ function dispatchDeepLink(url) {
   } catch (e) { console.error('[DeepLink] bad url', url, e.message); }
 }
 
+// Compare two Minecraft versions ("1.20.1" >= "1.20").
+function mcVersionAtLeast(version, target) {
+  const parse = (v) => (String(v).match(/^\d+(\.\d+)*/)?.[0] || "").split(".").filter(s => s !== "").map(Number);
+  const a = parse(version), b = parse(target);
+  if (!a.length) return false;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] || 0, y = b[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+
+// Launch a Minecraft client from an instance deep link WITHOUT opening the
+// launcher window — used when a desktop shortcut is clicked while the app is
+// not already running. Resolves once the game process has spawned (or failed).
+async function launchInstanceFromDeepLink(url) {
+  try {
+    const u = new URL(url);
+    const p = u.searchParams;
+    const profiles = await loadProfiles();
+    const profile = profiles.find(pr => String(pr.id) === String(p.get("id")));
+    if (!profile) return { error: "Profile not found" };
+    // Use the shortcut's chosen account if it still exists, else the selected one.
+    const players = loadPlayers();
+    let playerId = p.get("account");
+    if (!playerId || !players.find(pl => String(pl.id) === String(playerId))) {
+      playerId = storage.get("selectedPlayerId", null);
+    }
+    if (!playerId) return { error: "No account selected" };
+    const args = { profileId: profile.id, playerId };
+    const mode = p.get("mode") || "start";
+    if (mode === "world" && p.get("world")) {
+      args.quickPlay = { type: "singleplayer", identifier: p.get("world") };
+    } else if (mode === "server" && p.get("server")) {
+      const t = mcVersionAtLeast(profile.version, "1.20") ? "multiplayer" : "legacy";
+      args.quickPlay = { type: t, identifier: p.get("server") };
+    } else if (mode === "args" && p.get("args")) {
+      args.shortcutArgs = p.get("args");
+    }
+    return await launchProfileCore(args);
+  } catch (e) { return { error: e.message }; }
+}
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
@@ -799,13 +842,32 @@ if (!gotTheLock) {
 
     // Deep link the app was launched with (Windows/Linux argv, or macOS open-url).
     const initialLink = pendingDeepLink || findDeepLink(process.argv);
+    pendingDeepLink = null;
+
+    // Cold-start via an INSTANCE shortcut: just launch the client (and auto-join
+    // the world/server) without ever opening the launcher window, then quit once
+    // the game has spawned. Only opening the window when the app was already
+    // running is handled by the second-instance / open-url paths.
+    let headless = false;
+    if (initialLink) {
+      try { headless = new URL(initialLink).hostname === "instance"; } catch { /* ignore */ }
+    }
+    if (headless) {
+      const r = await launchInstanceFromDeepLink(initialLink);
+      // Give the detached JVM a moment to fully spawn, then exit the launcher.
+      setTimeout(() => { if (!mainWindow || mainWindow.isDestroyed()) app.quit(); }, r && r.pid ? 4000 : 500);
+      return;
+    }
 
     if (!mainWindow) createWindow();
 
-    if (initialLink) { pendingDeepLink = null; dispatchDeepLink(initialLink); }
+    if (initialLink) dispatchDeepLink(initialLink);
 
     // Re-detect games still running from a previous launcher session.
     restoreRunningInstances();
+
+    // Keep auto-updating shortcut icons (e.g. server icons) fresh.
+    refreshShortcutIcons().catch(() => {});
 
     // Quietly stage the next update in the background (no install this run).
     stageUpdateInBackground();
@@ -1301,6 +1363,11 @@ ipcMain.on("cancel-qr-login", () => {
 ipcMain.on('get-players', (event) => {
   event.reply('players-list', loadPlayers());
 });
+// Promise-based variant for callers that need the list inline (e.g. the desktop
+// shortcut account picker). Returns { id, username, name, type } per player.
+ipcMain.handle('list-players', () => loadPlayers().map(p => ({
+  id: p.id, username: p.username, name: p.auth?.name || p.username, type: p.type,
+})));
 
 /* ─────────────── Game Profiles ─────────────── */
 
@@ -2180,7 +2247,7 @@ async function getJavaForMinecraft(mcVersion) {
 }
 
 // Launch profile
-ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool, quickplayip, quickPlay, shortcutArgs }) => {
+async function launchProfileCore({ profileId, playerId, quickplaybool, quickplayip, quickPlay, shortcutArgs }) {
   const now = Date.now();
   const lastLaunch = launchingProfiles.get(profileId);
   
@@ -2318,11 +2385,14 @@ ipcMain.on('launch-profile', async (event, { profileId, playerId, quickplaybool,
       broadcastProgress(profileId, { done: true });
       broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
     });
+    return { pid };
   } catch (err) {
     launchingProfiles.delete(profileId);
     broadcastLog(profileId, "[ERROR] " + err.message);
+    return { error: err.message };
   }
-});
+}
+ipcMain.on('launch-profile', (event, args) => { launchProfileCore(args); });
 
 //shi
 
@@ -2346,13 +2416,57 @@ async function iconUrlToPng(icon) {
   } catch { /* ignore */ }
   return null;
 }
-ipcMain.handle("create-shortcut", async (event, { kind, id, name, action, icon }) => {
+ipcMain.handle("create-shortcut", async (event, { kind, id, name, action, icon, iconSource }) => {
   try {
     const pngBuffer = await iconUrlToPng(icon);
     const r = shortcuts.createShortcut({ kind, id, name, action, pngBuffer });
+    // Remember shortcuts whose icon tracks a live source (e.g. an instance
+    // server's icon) so we can rewrite the icon file when the source changes.
+    if (iconSource && r.iconPath) {
+      const reg = loadShortcutRegistry();
+      reg.push({ path: r.path, iconPath: r.iconPath, kind, iconSource });
+      saveShortcutRegistry(reg);
+    }
     return { success: true, path: r.path };
   } catch (err) { console.error("[Shortcut] failed:", err); return { success: false, error: err.message }; }
 });
+
+// ── Auto-updating shortcut icons ──
+// Registry of shortcuts whose icon mirrors a live source. Persisted in userData.
+function shortcutRegistryPath() { return path.join(app.getPath("userData"), "shortcut-registry.json"); }
+function loadShortcutRegistry() {
+  try { return JSON.parse(fs.readFileSync(shortcutRegistryPath(), "utf-8")) || []; } catch { return []; }
+}
+function saveShortcutRegistry(reg) {
+  try { fs.writeFileSync(shortcutRegistryPath(), JSON.stringify(reg, null, 2)); } catch { /* ignore */ }
+}
+// Resolve the current PNG for a shortcut's icon source.
+async function pngForIconSource(src) {
+  try {
+    if (src.type === "instance-server") {
+      const list = await readServersList(src.profileId);
+      const s = (list || []).find(x => (x.ip || "").trim() === String(src.ip).trim());
+      if (s && s.icon) return Buffer.from(String(s.icon).replace(/^data:image\/\w+;base64,/, ""), "base64");
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+// Rewrite every registered shortcut icon from its current source. Drops entries
+// whose shortcut file no longer exists. Best-effort, called on startup and after
+// an instance server is edited.
+async function refreshShortcutIcons() {
+  const reg = loadShortcutRegistry();
+  if (!reg.length) return;
+  let changed = false;
+  const kept = [];
+  for (const entry of reg) {
+    if (!entry.path || !fs.existsSync(entry.path)) { changed = true; continue; } // shortcut deleted
+    kept.push(entry);
+    const png = await pngForIconSource(entry.iconSource || {});
+    if (png) shortcuts.rewriteIcon(entry.iconPath, png);
+  }
+  if (changed) saveShortcutRegistry(kept);
+}
 
 ipcMain.handle("edit-server", async (event, { name, ...changes }) => {
   try {
@@ -2508,13 +2622,28 @@ function accountCredsById(accountId) {
   const p = players.find(x => x.id === accountId && x.type === "microsoft") || players.find(x => x.type === "microsoft" && x.auth?.access_token && x.auth.access_token !== "0");
   return p ? { accessToken: p.auth.access_token, uuid: p.auth.uuid, name: p.auth.name || p.username } : null;
 }
+// Same as accountCredsById but refreshes the Microsoft token first (and persists
+// it). Mojang's join/hasJoined challenge rejects stale access tokens, so the
+// relay auth fails unless we hand it a freshly-minted token.
+async function accountCredsByIdFresh(accountId) {
+  const players = loadPlayers();
+  const p = players.find(x => x.id === accountId && x.type === "microsoft") || players.find(x => x.type === "microsoft" && x.auth?.access_token && x.auth.access_token !== "0");
+  if (!p) return null;
+  try {
+    await refreshPlayer(p);
+    savePlayers(players);
+  } catch (err) {
+    console.warn("[Relay] token refresh failed, trying existing token:", err.message);
+  }
+  return p.auth ? { accessToken: p.auth.access_token, uuid: p.auth.uuid, name: p.auth.name || p.username } : null;
+}
 ipcMain.handle("relay:accounts", () => premiumAccounts());
 
 // Ask the relay whether this account is an admin + which domains it may use (for
 // the share modal's styling). The relay is the sole authority.
 ipcMain.handle("relay:adminInfo", async (event, { accountId }) => {
   try {
-    const account = accountCredsById(accountId);
+    const account = await accountCredsByIdFresh(accountId);
     if (!account) return { isAdmin: false, domains: [] };
     const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
     return await relayClient.queryRelay({ host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort, account, rejectUnauthorized });
@@ -2537,7 +2666,7 @@ ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, do
     if (!localPort && name) { try { localPort = serverManager.getServerPort(name); } catch { /* ignore */ } }
     if (!localPort) return { success: false, error: "No local port to share" };
 
-    const account = accountCredsById(accountId);
+    const account = await accountCredsByIdFresh(accountId);
     if (!account) return { success: false, error: "Sharing over the internet needs a premium Minecraft account. Add one in the Login page first." };
 
     const sub = subdomain || subLabel(account.name);
@@ -4189,6 +4318,8 @@ ipcMain.handle("edit-instance-server", async (event, { profileId, index, name, i
     else delete serversList[index].icon;
   }
   await writeServersList(profileId, serversList);
+  // Keep any desktop shortcut that mirrors this server's icon in sync.
+  refreshShortcutIcons().catch(() => {});
   return { success: true };
 });
 
