@@ -1570,13 +1570,9 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     } else {
       auth = player.auth;
     }
-    let quickplay = null;
-    if (quickplaybool) {
-      quickplay = {
-        "type": 'legacy',
-        "identifier": quickplayip
-      }
-    }
+    // Legacy (pre-1.20) server join is done with plain --server/--port game
+    // args (see launchProfileCore) rather than the library's quickPlay path.
+    const legacyServer = quickplaybool ? quickplayip : null;
 
     const rootDir = path.join(dataDir, 'client', String(profile.id));
     fs.mkdirSync(rootDir, { recursive: true });
@@ -1595,11 +1591,11 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     } else {
       loaderer = vanilla
     }
-    const launcherConfig = await loaderer.getMCLCLaunchConfig({
+    const launcherConfig = await withRetry(() => loaderer.getMCLCLaunchConfig({
       gameVersion: profile.version,
       rootPath: rootDir,
       ...(profile.loaderVersion ? { loaderVersion: profile.loaderVersion } : {}),
-    });
+    }), { label: "Preparing launch", profileId });
     let opts = {
       ...launcherConfig,
       authorization: auth,
@@ -1608,9 +1604,16 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
         // Detached so the game keeps running if the launcher is closed.
         detached: true
       },
-      quickPlay: quickplay
+      quickPlay: null
     }
-    const childProcess = await launcher.launch(opts);
+    if (legacyServer) {
+      const str = String(legacyServer).trim();
+      const m = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(str);
+      const host = m ? m[1] : str;
+      const port = m && m[2] ? m[2] : "25565";
+      opts.customLaunchArgs = ["--server", host, "--port", port];
+    }
+    const childProcess = await withRetry(() => launcher.launch(opts), { tries: 2, label: "Launching", profileId });
 
     launchingProfiles.delete(profileId);
     broadcastProgress(profileId, { done: true, label: 'Starting Minecraft' });
@@ -2246,6 +2249,31 @@ async function getJavaForMinecraft(mcVersion) {
   return javaBin;
 }
 
+// Is this error a transient network/server hiccup worth retrying? (e.g. a 502
+// from a metadata CDN, a dropped connection, a timeout.)
+function isTransientError(err) {
+  const msg = String(err && err.message || err || "");
+  if (/\b(429|500|502|503|504)\b/.test(msg)) return true;
+  if (/status code (429|5\d\d)/i.test(msg)) return true;
+  return /ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|socket hang up|network|timed? ?out|fetch failed/i.test(msg);
+}
+// Retry a flaky async op a few times with exponential backoff, but only for
+// transient failures (real errors fail fast).
+async function withRetry(fn, { tries = 3, base = 800, label = "op", profileId = null } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    try { return await fn(); }
+    catch (err) {
+      lastErr = err;
+      if (attempt >= tries || !isTransientError(err)) throw err;
+      const delay = base * Math.pow(2, attempt - 1);
+      if (profileId) broadcastLog(profileId, `[WARN] ${label} failed (${err.message}); retrying in ${Math.round(delay / 1000)}s… (${attempt}/${tries - 1})`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
 // Launch profile
 async function launchProfileCore({ profileId, playerId, quickplaybool, quickplayip, quickPlay, shortcutArgs }) {
   const now = Date.now();
@@ -2310,12 +2338,17 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     }
     // Quick Play: join a server / open a world straight away. Accepts an
     // explicit { type, identifier } (multiplayer/singleplayer/legacy) or the
-    // legacy quickplaybool/quickplayip pair.
+    // legacy quickplaybool/quickplayip pair. For pre-1.20 ("legacy") we join
+    // with plain --server/--port game args ourselves rather than going through
+    // the library's quickPlay path — that keeps behaviour identical to a vanilla
+    // launcher and avoids any quickPlay argument leaking onto old versions.
     let quickplay = null;
+    let legacyServer = null;
     if (quickPlay && quickPlay.type && quickPlay.identifier) {
-      quickplay = quickPlay;
+      if (quickPlay.type === 'legacy') legacyServer = quickPlay.identifier;
+      else quickplay = quickPlay;
     } else if (quickplaybool) {
-      quickplay = { type: 'legacy', identifier: quickplayip };
+      legacyServer = quickplayip;
     }
 
     const rootDir = path.join(dataDir, 'client', String(profile.id));
@@ -2339,11 +2372,12 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     } else {
       loaderer = vanilla
     }
-    const launcherConfig = await loaderer.getMCLCLaunchConfig({
+    // Fetching loader/version metadata can hit a transient 502/timeout — retry.
+    const launcherConfig = await withRetry(() => loaderer.getMCLCLaunchConfig({
       gameVersion: profile.version,
       rootPath: rootDir,
       ...(profile.loaderVersion ? { loaderVersion: profile.loaderVersion } : {}),
-    });
+    }), { label: "Preparing launch", profileId });
     let opts = {
       ...launcherConfig,
       authorization: auth,
@@ -2361,7 +2395,19 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     const extraArgs = [(profileForRam.launchArgs || ""), (shortcutArgs || "")]
       .join(" ").trim();
     if (extraArgs) opts.customArgs = extraArgs.split(/\s+/).filter(Boolean);
-    const childProcess = await launcher.launch(opts);
+    // Legacy (pre-1.20) server join: pass the classic game args directly.
+    if (legacyServer) {
+      const str = String(legacyServer).trim();
+      // Split host:port (leave IPv6 in brackets alone).
+      const m = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(str);
+      const host = m ? m[1] : str;
+      const port = m && m[2] ? m[2] : "25565";
+      opts.customLaunchArgs = [...(opts.customLaunchArgs || []), "--server", host, "--port", port];
+    }
+    // launch() downloads assets/libraries then spawns the JVM at the very end,
+    // so a transient failure throws before any process is spawned — one retry is
+    // safe and covers the occasional 502 mid-download.
+    const childProcess = await withRetry(() => launcher.launch(opts), { tries: 2, label: "Launching", profileId });
 
     launchingProfiles.delete(profileId);
     // Downloads are done and the JVM has been spawned.

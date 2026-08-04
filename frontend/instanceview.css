@@ -256,6 +256,29 @@
   cursor: not-allowed;
 }
 
+/* Reorder (move up / move down) — both arrows share ONE action slot, stacked. */
+.reorder-stack {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.reorder-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-color);
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  height: 15px;
+  line-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+.reorder-btn:hover { background: var(--third-color); }
+.reorder-btn i { font-size: 18px; }
+
 .server-row.dragging {
   opacity: 0.4;
 }

@@ -1012,7 +1012,7 @@
       return list.filter(p => {
         if (query && !p.name.toLowerCase().includes(query)) return false;
         if (loaderFilter && p.loader !== loaderFilter) return false;
-        if (versionFilter && !p.version.includes(versionFilter)) return false;
+        if (versionFilter && p.version !== versionFilter) return false;
         return true;
       });
     }
@@ -1075,7 +1075,7 @@
       // FILTER
       if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q) || String(p.id).includes(q));
       if (loaderFilterVal) list = list.filter(p => (p.loader || '').toLowerCase() === loaderFilterVal.toLowerCase());
-      if (versionFilterVal) list = list.filter(p => (p.version || '').toLowerCase().includes(versionFilterVal));
+      if (versionFilterVal) list = list.filter(p => (p.version || '').toLowerCase() === versionFilterVal);
 
       // SORT
       if (sortMode && sortMode !== 'custom') {
@@ -2203,27 +2203,28 @@
                   actions.appendChild(delBtn);
 
                   // Move up / down — reorder within the instance's server list.
-                  // (No "up" on the first row, no "down" on the last.)
+                  // Both arrows share ONE action slot, stacked vertically. The up
+                  // arrow is hidden on the first row, the down arrow on the last.
                   const move = async (to) => {
                     await ipcRenderer.invoke("reorder-instance-server", { profileId: profile.id, from: s.index, to });
                     renderServers();
                   };
-                  if (s.index > 0) {
-                    const upBtn = document.createElement("button");
-                    upBtn.className = "card-action-btn";
-                    upBtn.innerHTML = `<i class="material-icons">arrow_upward</i>`;
-                    upBtn.title = "Move up";
-                    upBtn.onclick = (e) => { e.stopPropagation(); move(s.index - 1); };
-                    actions.appendChild(upBtn);
-                  }
-                  if (s.index < servers.length - 1) {
-                    const downBtn = document.createElement("button");
-                    downBtn.className = "card-action-btn";
-                    downBtn.innerHTML = `<i class="material-icons">arrow_downward</i>`;
-                    downBtn.title = "Move down";
-                    downBtn.onclick = (e) => { e.stopPropagation(); move(s.index + 1); };
-                    actions.appendChild(downBtn);
-                  }
+                  const reorder = document.createElement("div");
+                  reorder.className = "reorder-stack";
+                  const upBtn = document.createElement("button");
+                  upBtn.className = "reorder-btn";
+                  upBtn.innerHTML = `<i class="material-icons">keyboard_arrow_up</i>`;
+                  upBtn.title = "Move up";
+                  upBtn.onclick = (e) => { e.stopPropagation(); move(s.index - 1); };
+                  if (s.index === 0) upBtn.style.visibility = "hidden";
+                  const downBtn = document.createElement("button");
+                  downBtn.className = "reorder-btn";
+                  downBtn.innerHTML = `<i class="material-icons">keyboard_arrow_down</i>`;
+                  downBtn.title = "Move down";
+                  downBtn.onclick = (e) => { e.stopPropagation(); move(s.index + 1); };
+                  if (s.index === servers.length - 1) downBtn.style.visibility = "hidden";
+                  reorder.append(upBtn, downBtn);
+                  actions.appendChild(reorder);
                   li.appendChild(actions);
 
                   // Drag to reorder.
