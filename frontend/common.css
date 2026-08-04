@@ -58,3 +58,21 @@
   cursor: pointer;
 }
 .sc-radio input { width: auto; margin: 0; }
+
+/* Segmented action buttons (e.g. the desktop-shortcut "what happens on click"). */
+.sc-action-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.sc-action-btn {
+  flex: 1;
+  min-width: 110px;
+  padding: 9px 12px;
+  border: 2px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  background: var(--menu-bg);
+  color: var(--text-color);
+  font-family: var(--text-font);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.sc-action-btn:hover { border-color: var(--base-color); }
+.sc-action-btn.active { background: var(--base-color); border-color: var(--base-color); }

@@ -801,9 +801,9 @@ async function launchInstanceFromDeepLink(url) {
     } else if (mode === "server" && p.get("server")) {
       const t = mcVersionAtLeast(profile.version, "1.20") ? "multiplayer" : "legacy";
       args.quickPlay = { type: t, identifier: p.get("server") };
-    } else if (mode === "args" && p.get("args")) {
-      args.shortcutArgs = p.get("args");
     }
+    // Extra launch args are independent of the action (advanced option).
+    if (p.get("args")) args.shortcutArgs = p.get("args");
     return await launchProfileCore(args);
   } catch (e) { return { error: e.message }; }
 }

@@ -33,7 +33,7 @@
       .ip-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(56px,1fr)); gap:8px; max-height:280px; overflow-y:auto; padding:4px; }
       .ip-cell { width:56px; height:56px; border:2px solid var(--border-dark); border-radius:var(--border-radius); cursor:pointer; display:flex; align-items:center; justify-content:center; background:var(--menu-bg); overflow:hidden; }
       .ip-cell:hover { border-color:var(--accent); }
-      .ip-cell img { width:100%; height:100%; object-fit:contain; padding:4px; image-rendering:pixelated; }
+      .ip-cell img { width:100%; height:100%; object-fit:contain; padding:4px; image-rendering:auto; }
       .ip-section-title { font-size:12px; text-transform:uppercase; opacity:0.7; margin:12px 0 4px; }`;
     document.head.appendChild(s);
   }
@@ -50,6 +50,7 @@
         <div class="ip-section-title">Presets</div>
         <div class="ip-grid" id="ipPresets"></div>
         <div id="ipWorldsWrap" style="display:none;"><div class="ip-section-title">Worlds</div><div class="ip-grid" id="ipWorlds"></div></div>
+        <div id="ipServersWrap" style="display:none;"><div class="ip-section-title">Servers</div><div class="ip-grid" id="ipServers"></div></div>
         <div class="modal-actions"><button id="ipCustom">Custom image…</button><button id="ipCancel">Cancel</button></div>
         <input type="file" id="ipFile" accept="image/*" style="display:none;" />
       </div>`;
@@ -74,19 +75,33 @@
       ov.querySelector('#ipCustom').onclick = () => fileInput.click();
       fileInput.onchange = async () => { if (fileInput.files[0]) pick(await fileToDataUrl(fileInput.files[0])); };
 
-      // World icons from the instance (if any).
+      // World + server icons from the instance (if any).
       if (opts.instanceId) {
+        const toUrl = (icon) => icon.startsWith('data:') ? icon : ('data:image/png;base64,' + icon);
         ipcRenderer.invoke('get-instance-worlds', { profileId: opts.instanceId }).then(worlds => {
           const withIcons = (worlds || []).filter(w => w.icon);
           if (!withIcons.length) return;
           ov.querySelector('#ipWorldsWrap').style.display = '';
           const wc = ov.querySelector('#ipWorlds');
           withIcons.forEach(w => {
-            const url = w.icon.startsWith('data:') ? w.icon : ('data:image/png;base64,' + w.icon);
+            const url = toUrl(w.icon);
             const cell = document.createElement('div'); cell.className = 'ip-cell'; cell.title = w.name || '';
             cell.innerHTML = `<img src="${url}" />`;
             cell.onclick = () => pick(url);
             wc.appendChild(cell);
+          });
+        }).catch(() => {});
+        ipcRenderer.invoke('get-instance-servers', { profileId: opts.instanceId }).then(servers => {
+          const withIcons = (servers || []).filter(s => s.icon);
+          if (!withIcons.length) return;
+          ov.querySelector('#ipServersWrap').style.display = '';
+          const sc = ov.querySelector('#ipServers');
+          withIcons.forEach(s => {
+            const url = toUrl(s.icon);
+            const cell = document.createElement('div'); cell.className = 'ip-cell'; cell.title = (s.name || s.ip || '') + (s.ip ? ` (${s.ip})` : '');
+            cell.innerHTML = `<img src="${url}" />`;
+            cell.onclick = () => pick(url);
+            sc.appendChild(cell);
           });
         }).catch(() => {});
       }

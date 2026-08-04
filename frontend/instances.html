@@ -185,6 +185,16 @@
     .settings-tab:hover { background: var(--menu-hover-bg); }
     .settings-tab.active { background: var(--base-color); }
 
+    /* Import reads as a standalone action button, pushed to the far right. */
+    .settings-tab-import {
+      margin-left: auto;
+      border: 1px solid var(--secondary-color);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .settings-tab-import.active { border-color: var(--base-color); }
+
     .settings-panel { display: none; }
     .settings-panel.active { display: block; }
 
@@ -304,21 +314,21 @@
 
       <div class="settings-tabs">
         <button type="button" class="settings-tab active" data-tab="general">General</button>
-        <button type="button" class="settings-tab" data-tab="version">Version</button>
-        <button type="button" class="settings-tab" data-tab="java">Java &amp; Launch</button>
-        <button type="button" class="settings-tab" data-tab="modpack" id="modpackTabBtn" style="display:none;">Modpack</button>
+        <button type="button" class="settings-tab" data-tab="advanced">Advanced</button>
+        <button type="button" class="settings-tab settings-tab-import" data-tab="import" id="importTabBtn"><i class="material-icons" style="vertical-align:middle;font-size:17px;">archive</i> Import</button>
       </div>
 
       <div class="settings-panel active" data-panel="general">
-        <div class="modal-section" id="importSection">
-          <label id="importSectionLabel">Import a pack</label>
-          <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button type="button" id="importPackBtn" class="import-new-btn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import modpack (.mrpack / .zip)</button>
-          </div>
-        </div>
         <div class="modal-section">
           <label>Instance Name</label>
           <input id="instanceName" type="text" placeholder="Leave blank to auto-name (e.g. Fabric 1.21)" />
+        </div>
+        <div class="form-row">
+          <div class="modal-section" style="flex:1;">
+            <label>Game Version</label>
+            <select id="instanceVersion"></select>
+          </div>
+          <label class="inline-check"><input type="checkbox" id="showAllVersions" /> Show all</label>
         </div>
         <div class="modal-section">
           <label>Mod Loader</label>
@@ -337,26 +347,16 @@
         <div class="modal-section">
           <label>Instance Icon</label>
           <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-            <img id="instanceIconPreview" style="width:48px;height:48px;border-radius:8px;object-fit:cover;background:var(--menu-bg);border:2px solid var(--border-dark);display:none;" />
-            <input type="file" id="instanceIcon" accept="image/*" style="flex:1;min-width:160px;" />
+            <img id="instanceIconPreview" style="width:48px;height:48px;border-radius:8px;object-fit:contain;background:var(--menu-bg);border:2px solid var(--border-dark);display:none;" />
             <button type="button" id="instanceSelectIcon">Select icon…</button>
           </div>
         </div>
       </div>
 
-      <div class="settings-panel" data-panel="version">
-        <div class="form-row">
-          <div class="modal-section" style="flex:1;">
-            <label>Game Version</label>
-            <select id="instanceVersion"></select>
-          </div>
-          <label class="inline-check"><input type="checkbox" id="showAllVersions" /> Show all</label>
-          <label class="inline-check"><input type="checkbox" id="alwaysUpdate" /> Always update</label>
+      <div class="settings-panel" data-panel="advanced">
+        <div class="modal-section">
+          <label class="inline-check"><input type="checkbox" id="autoUpdateVersionCb" /> Auto-update to newer game versions when released</label>
         </div>
-        <label class="inline-check"><input type="checkbox" id="autoUpdateVersionCb" /> Auto-update to newer game versions when released</label>
-      </div>
-
-      <div class="settings-panel" data-panel="java">
         <div class="modal-section">
           <label>Custom JVM arguments</label>
           <input id="instanceLaunchArgs" type="text" placeholder="-XX:+UseG1GC -Dfoo=bar" />
@@ -373,8 +373,14 @@
         </div>
       </div>
 
-      <div class="settings-panel" data-panel="modpack">
-        <div class="modal-section">
+      <div class="settings-panel" data-panel="import">
+        <div class="modal-section" id="importSection">
+          <label id="importSectionLabel">Import a pack</label>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" id="importPackBtn" class="import-new-btn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">archive</i> Import modpack (.mrpack / .zip)</button>
+          </div>
+        </div>
+        <div class="modal-section" id="modpackUpdateSection" style="display:none;">
           <label>Modpack</label>
           <button type="button" id="updateModpackBtn"><i class="material-icons" style="vertical-align:middle;font-size:18px;">upgrade</i> Update Modpack from a new .mrpack</button>
         </div>
@@ -476,7 +482,6 @@
     const instanceName = document.getElementById("instanceName");
     const instanceVersion = document.getElementById("instanceVersion");
     const instanceLoader = document.getElementById("instanceLoader");
-    const instanceIcon = document.getElementById("instanceIcon");
     const sortSelect = document.getElementById("sortSelect");
     const editOrderBtn = document.getElementById("editOrderBtn");
     const searchsort = document.getElementById("search-sort");
@@ -525,9 +530,9 @@
           if (x !== y) { atLeast = x > y; break; }
         }
         msg.quickPlay = { type: atLeast ? "multiplayer" : "legacy", identifier: p.get("server") };
-      } else if (mode === "args" && p.get("args")) {
-        msg.shortcutArgs = p.get("args");
       }
+      // Extra launch args are independent of the action (advanced option).
+      if (p.get("args")) msg.shortcutArgs = p.get("args");
       ipcRenderer.send("launch-profile", msg);
     }
 
@@ -553,23 +558,20 @@
     // call once on load
     attachFilterListeners();
 
-    // Instance-icon selection in the create/edit modal: a file upload OR the
-    // shared predefined icon picker. Whichever was chosen last wins.
+    // Instance-icon selection in the create/edit modal — entirely via the shared
+    // predefined icon picker (presets / worlds / servers / custom upload).
     let pickedInstanceIcon = null;
     const instanceIconPreview = document.getElementById('instanceIconPreview');
     function setInstancePreview(url) {
       if (url) { instanceIconPreview.src = url; instanceIconPreview.style.display = ''; }
       else { instanceIconPreview.removeAttribute('src'); instanceIconPreview.style.display = 'none'; }
     }
-    if (instanceIcon) instanceIcon.addEventListener('change', async () => {
-      if (instanceIcon.files.length) { pickedInstanceIcon = null; setInstancePreview(await fileToBase64(instanceIcon.files[0])); }
-    });
     const instanceSelectIcon = document.getElementById('instanceSelectIcon');
     if (instanceSelectIcon) instanceSelectIcon.onclick = () => {
       const editingId = modalCreateBtn.dataset.editingId;
       window.IconPicker.open({
         instanceId: editingId || undefined,
-        onPick: (d) => { pickedInstanceIcon = d; if (instanceIcon) instanceIcon.value = ''; setInstancePreview(d); },
+        onPick: (d) => { pickedInstanceIcon = d; setInstancePreview(d); },
       });
     };
 
@@ -591,7 +593,6 @@
         instanceName.value = "";
         instanceLoader.value = "vanilla";
         if (typeof updateInstanceLoaderVersion === 'function') updateInstanceLoaderVersion();
-        instanceIcon.value = "";
         pickedInstanceIcon = null;
         setInstancePreview(null);
         delete modalCreateBtn.dataset.editingId;
@@ -653,18 +654,23 @@
     function setModalMode(mode) {
       const title = document.getElementById('addInstanceTitle');
       const importSection = document.getElementById('importSection');
-      const modpackTabBtn = document.getElementById('modpackTabBtn');
+      const importTabBtn = document.getElementById('importTabBtn');
+      const modpackUpdateSection = document.getElementById('modpackUpdateSection');
       resetSettingsTabs();
-      if (modpackTabBtn) modpackTabBtn.style.display = 'none';
+      if (modpackUpdateSection) modpackUpdateSection.style.display = 'none';
       if (mode === 'edit') {
         if (title) title.textContent = 'Instance Settings';
         modalCreateBtn.textContent = 'Save Changes';
-        // Importing a pack only applies when creating.
+        // Importing a pack only applies when creating. The Import tab is hidden
+        // in edit mode and only re-shown (for its modpack-update section) when
+        // editing a modpack instance.
         if (importSection) importSection.style.display = 'none';
+        if (importTabBtn) importTabBtn.style.display = 'none';
       } else {
         if (title) title.textContent = 'Create Instance';
         modalCreateBtn.textContent = 'Create Instance';
         if (importSection) importSection.style.display = '';
+        if (importTabBtn) importTabBtn.style.display = '';
       }
     }
 
@@ -693,18 +699,17 @@
       instanceName.value = profile.name;
       instanceLoader.value = profile.loader;
       updateInstanceLoaderVersion(profile.loaderVersion);
-      instanceIcon.value = "";
 
       // If the instance is on a snapshot/non-release, auto-enable "Show All" so
       // the version is actually present in the dropdown.
       const showAllCb = document.getElementById('showAllVersions');
-      const alwaysCb = document.getElementById('alwaysUpdate');
-      if (alwaysCb) alwaysCb.checked = !!profile.alwaysUpdate;
       if (showAllCb && !isReleaseVersion(profile.version)) showAllCb.checked = true;
-      // Repopulate the version list to reflect the toggles, then select the
-      // instance's current version (unless Always Update pins it).
+      // Repopulate the version list, then select either a "Latest …" option
+      // (instances pinned to latest) or the instance's specific version.
       if (typeof applyVersionMode === 'function') applyVersionMode();
-      if (!(alwaysCb && alwaysCb.checked)) {
+      if (profile.alwaysUpdate) {
+        instanceVersion.value = isReleaseVersion(profile.version) ? '__latest_release__' : '__latest_snapshot__';
+      } else {
         if (![...instanceVersion.options].some(o => o.value === profile.version)) {
           const opt = document.createElement('option');
           opt.value = profile.version; opt.textContent = profile.version;
@@ -719,7 +724,6 @@
 
       // Reset icon selection to the instance's current icon.
       pickedInstanceIcon = null;
-      if (instanceIcon) instanceIcon.value = '';
       setInstancePreview((profile.icon && /^(data:|https?:)/.test(profile.icon)) ? profile.icon : null);
 
       // Java & Launch fields.
@@ -729,11 +733,13 @@
       // Version tab toggles.
       document.getElementById('autoUpdateVersionCb').checked = !!(profile.autoUpdateVersion ?? profile.alwaysUpdate);
 
-      // Reveal the Modpack tab + wire the update button for modpack instances.
-      const modpackTabBtn = document.getElementById('modpackTabBtn');
+      // Reveal the Import tab + modpack-update section for modpack instances.
+      const modpackUpdateSection = document.getElementById('modpackUpdateSection');
+      const importTabBtn = document.getElementById('importTabBtn');
       const updateBtn = document.getElementById('updateModpackBtn');
-      if (profile.modpack && modpackTabBtn && updateBtn) {
-        modpackTabBtn.style.display = '';
+      if (profile.modpack && modpackUpdateSection && updateBtn) {
+        if (importTabBtn) importTabBtn.style.display = '';
+        modpackUpdateSection.style.display = '';
         updateBtn.onclick = () => startModpackUpdate(profile);
       }
 
@@ -1723,25 +1729,18 @@
             overlay.innerHTML = `
               <div class="modal-content">
                 <div class="modal-header"><h2>${mode === "edit" ? "Edit Server" : "Add Server"}</h2></div>
-                <div class="modal-section"><label>Name (optional)</label><input class="sv-name" type="text" placeholder="Defaults to the address"></div>
+                <div class="modal-section"><label>Name</label><input class="sv-name" type="text" placeholder="Defaults to the address"></div>
                 <div class="modal-section"><label>Address</label><input class="sv-ip" type="text" placeholder="play.example.net"></div>
-                <div class="modal-section"><label>Icon (PNG)</label><input class="sv-icon" type="file" accept="image/png"></div>
                 <div class="modal-actions"><button class="sv-save">Save</button><button class="sv-cancel">Cancel</button></div>
               </div>`;
             document.body.appendChild(overlay);
             const nameI = overlay.querySelector(".sv-name");
             const ipI = overlay.querySelector(".sv-ip");
-            const iconI = overlay.querySelector(".sv-icon");
             nameI.value = server?.name || "";
             ipI.value = server?.ip || "";
-            let iconData = server?.icon ? `data:image/png;base64,${server.icon}` : null;
-            iconI.onchange = () => {
-              const f = iconI.files[0];
-              if (!f) return;
-              const r = new FileReader();
-              r.onload = () => { iconData = r.result; };
-              r.readAsDataURL(f);
-            };
+            // Preserve any existing icon (from a prior version / import) on edit,
+            // but the launcher no longer lets you pick one here.
+            const iconData = server?.icon ? `data:image/png;base64,${server.icon}` : null;
             const close = (val) => { overlay.remove(); resolve(val); };
             overlay.querySelector(".sv-cancel").onclick = () => close(null);
             overlay.onclick = (e) => { if (e.target === overlay) close(null); };
@@ -1763,9 +1762,9 @@
           const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id }).catch(() => []);
           const players = await ipcRenderer.invoke("list-players").catch(() => []);
           const worldOpts = (worlds || []).map(w => `<option value="${w.folder}">${(w.name || w.folder).replace(/</g, "&lt;")}</option>`).join("");
-          const serverOpts = (servers || []).map(s => `<option value="${(s.ip || "").replace(/"/g, "&quot;")}">${(s.name || s.ip).replace(/</g, "&lt;")}</option>`).join("");
+          const serverOpts = (servers || []).map(s => `<option value="${(s.ip || "").replace(/"/g, "&quot;")}">${((s.name && s.name !== s.ip) ? `${s.name} (${s.ip})` : s.ip).replace(/</g, "&lt;")}</option>`).join("");
           const accountOpts = (players || []).map(pl => `<option value="${pl.id}">${(pl.name || pl.username || pl.id).replace(/</g, "&lt;")}${pl.type === "cracked" ? " (cracked)" : ""}</option>`).join("");
-          // Look up a saved server by address for the "use server icon" option.
+          // Look up a saved server by address (to auto-apply its icon).
           const serverByIp = {}; (servers || []).forEach(s => { serverByIp[(s.ip || "").trim()] = s; });
 
           const overlay = document.createElement("div");
@@ -1776,24 +1775,20 @@
               <div class="modal-header"><h2>Desktop shortcut</h2><button class="modal-close" id="scClose">✕</button></div>
               <div class="modal-section">
                 <label>When the shortcut is clicked</label>
-                <label class="sc-radio"><input type="radio" name="scMode" value="start" checked> Just start the instance</label>
-                <label class="sc-radio"><input type="radio" name="scMode" value="world"> Auto-join a world</label>
-                <label class="sc-radio"><input type="radio" name="scMode" value="server"> Auto-join a server</label>
-                <label class="sc-radio"><input type="radio" name="scMode" value="args"> Launch with extra args</label>
+                <div class="sc-action-row">
+                  <button type="button" class="sc-action-btn active" data-mode="start">Just start</button>
+                  <button type="button" class="sc-action-btn" data-mode="world">Auto-join a world</button>
+                  <button type="button" class="sc-action-btn" data-mode="server">Auto-join a server</button>
+                </div>
               </div>
               <div class="modal-section sc-when sc-world" style="display:none;">
                 <label>World</label>
                 <select id="scWorld">${worldOpts || `<option value="">No worlds found</option>`}</select>
               </div>
               <div class="modal-section sc-when sc-server" style="display:none;">
-                <label>Server address</label>
+                <label>Server</label>
                 ${serverOpts ? `<select id="scServerPick"><option value="">— saved servers —</option>${serverOpts}</select>` : ""}
-                <input type="text" id="scServer" placeholder="play.example.net">
-                <label class="sc-radio" style="margin-top:8px;"><input type="checkbox" id="scUseServerIcon"> Use this server's icon (auto-updates when it changes)</label>
-              </div>
-              <div class="modal-section sc-when sc-args" style="display:none;">
-                <label>Extra launch arguments</label>
-                <input type="text" id="scArgs" placeholder="-Dsomething=1 --width 1920">
+                <input type="text" id="scServer" placeholder="play.example.net" style="margin-top:8px;">
               </div>
               <div class="modal-section">
                 <label>Account</label>
@@ -1802,45 +1797,59 @@
               <div class="modal-section">
                 <label>Icon</label>
                 <div style="display:flex; align-items:center; gap:12px;">
-                  <img id="scIcon" style="width:56px; height:56px; border-radius:var(--border-radius); object-fit:cover; background:var(--menu-bg); border:2px solid var(--border-dark);" />
+                  <img id="scIcon" style="width:56px; height:56px; border-radius:var(--border-radius); object-fit:contain; background:var(--menu-bg); border:2px solid var(--border-dark);" />
                   <button id="scChangeIcon" type="button">Change icon…</button>
                 </div>
               </div>
+              <details class="modal-section" style="margin-bottom:0;">
+                <summary style="cursor:pointer; opacity:0.8; font-size:13px;">Advanced</summary>
+                <div style="margin-top:10px;">
+                  <label style="display:block; margin-bottom:8px; font-size:12px; text-transform:uppercase; opacity:0.8;">Extra launch arguments</label>
+                  <input type="text" id="scArgs" placeholder="-Dsomething=1 --width 1920">
+                </div>
+              </details>
               <div class="modal-actions"><button id="scCreate">Create shortcut</button><button id="scCancel">Cancel</button></div>
             </div>`;
           document.body.appendChild(overlay);
 
+          let scMode = "start";
+          let iconSource = null; // set when the icon mirrors a saved server (auto-updates)
           let scIconData = (profile.icon && /^(data:|https?:)/.test(profile.icon)) ? profile.icon : DEFAULT_ICON;
           const scIcon = overlay.querySelector("#scIcon");
           scIcon.src = scIconData;
           scIcon.onerror = () => { scIcon.src = DEFAULT_ICON; };
 
-          const syncWhen = () => {
-            const mode = overlay.querySelector('input[name="scMode"]:checked').value;
-            overlay.querySelectorAll(".sc-when").forEach(el => el.style.display = "none");
-            const map = { world: ".sc-world", server: ".sc-server", args: ".sc-args" };
-            if (map[mode]) overlay.querySelector(map[mode]).style.display = "";
-          };
-          overlay.querySelectorAll('input[name="scMode"]').forEach(r => r.addEventListener("change", syncWhen));
-          syncWhen();
-
           const serverInput = overlay.querySelector("#scServer");
           const serverPick = overlay.querySelector("#scServerPick");
-          const useServerIcon = overlay.querySelector("#scUseServerIcon");
-          if (serverPick) serverPick.onchange = () => { if (serverPick.value) { serverInput.value = serverPick.value; applyServerIcon(); } };
-          // When "use server icon" is ticked, mirror the saved server's icon into
-          // the preview; also records the source so it can auto-update later.
+
+          const syncWhen = () => {
+            overlay.querySelectorAll(".sc-when").forEach(el => el.style.display = "none");
+            const map = { world: ".sc-world", server: ".sc-server" };
+            if (map[scMode]) overlay.querySelector(map[scMode]).style.display = "";
+          };
+          overlay.querySelectorAll(".sc-action-btn").forEach(b => b.onclick = () => {
+            scMode = b.dataset.mode;
+            overlay.querySelectorAll(".sc-action-btn").forEach(x => x.classList.toggle("active", x === b));
+            syncWhen();
+          });
+          syncWhen();
+
+          // Selecting a saved server auto-applies its icon (and marks it for
+          // auto-update). Typing a custom address that matches a saved server
+          // does the same; otherwise the current icon is kept.
           function applyServerIcon() {
-            if (!useServerIcon || !useServerIcon.checked) return;
             const s = serverByIp[serverInput.value.trim()];
-            if (s && s.icon) { scIconData = `data:image/png;base64,${s.icon}`; scIcon.src = scIconData; }
+            if (s && s.icon) {
+              scIconData = `data:image/png;base64,${s.icon}`;
+              scIcon.src = scIconData;
+              iconSource = { type: "instance-server", profileId: profile.id, ip: (s.ip || "").trim() };
+            }
           }
-          if (useServerIcon) useServerIcon.onchange = applyServerIcon;
+          if (serverPick) serverPick.onchange = () => { if (serverPick.value) { serverInput.value = serverPick.value; applyServerIcon(); } };
           serverInput.addEventListener("input", applyServerIcon);
 
           overlay.querySelector("#scChangeIcon").onclick = () => {
-            if (useServerIcon) useServerIcon.checked = false; // manual pick overrides
-            window.IconPicker.open({ instanceId: profile.id, onPick: (url) => { scIconData = url; scIcon.src = url; } });
+            window.IconPicker.open({ instanceId: profile.id, onPick: (url) => { scIconData = url; scIcon.src = url; iconSource = null; } });
           };
 
           const close = () => overlay.remove();
@@ -1849,29 +1858,27 @@
           overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
 
           overlay.querySelector("#scCreate").onclick = async () => {
-            const mode = overlay.querySelector('input[name="scMode"]:checked').value;
-            const action = { mode };
-            let suffix = "";
-            let iconSource = null;
-            if (mode === "world") {
+            const action = { mode: scMode };
+            let name = profile.name || "Instance";
+            if (scMode === "world") {
               action.world = overlay.querySelector("#scWorld").value;
               if (!action.world) return;
-              suffix = " (World)";
-            } else if (mode === "server") {
+              name += " (World)";
+            } else if (scMode === "server") {
               action.server = serverInput.value.trim();
               if (!action.server) return;
-              suffix = " (Server)";
-              if (useServerIcon && useServerIcon.checked) {
-                iconSource = { type: "instance-server", profileId: profile.id, ip: action.server };
-              }
-            } else if (mode === "args") {
-              action.args = overlay.querySelector("#scArgs").value.trim();
+              // Disambiguate multiple server shortcuts by appending the address.
+              const saved = serverByIp[action.server];
+              name = `${(saved && saved.name) || profile.name || "Instance"} (${action.server})`;
             }
+            // Extra args are an advanced option, independent of the action.
+            const extraArgs = overlay.querySelector("#scArgs").value.trim();
+            if (extraArgs) action.args = extraArgs;
             const acct = overlay.querySelector("#scAccount").value;
             if (acct) action.account = acct;
             const r = await ipcRenderer.invoke("create-shortcut", {
-              kind: "instance", id: profile.id, name: (profile.name || "Instance") + suffix,
-              action, icon: scIconData, iconSource,
+              kind: "instance", id: profile.id, name,
+              action, icon: scIconData, iconSource: (scMode === "server" ? iconSource : null),
             });
             close();
             if (r && r.success) {
@@ -2194,6 +2201,29 @@
                     renderServers();
                   };
                   actions.appendChild(delBtn);
+
+                  // Move up / down — reorder within the instance's server list.
+                  // (No "up" on the first row, no "down" on the last.)
+                  const move = async (to) => {
+                    await ipcRenderer.invoke("reorder-instance-server", { profileId: profile.id, from: s.index, to });
+                    renderServers();
+                  };
+                  if (s.index > 0) {
+                    const upBtn = document.createElement("button");
+                    upBtn.className = "card-action-btn";
+                    upBtn.innerHTML = `<i class="material-icons">arrow_upward</i>`;
+                    upBtn.title = "Move up";
+                    upBtn.onclick = (e) => { e.stopPropagation(); move(s.index - 1); };
+                    actions.appendChild(upBtn);
+                  }
+                  if (s.index < servers.length - 1) {
+                    const downBtn = document.createElement("button");
+                    downBtn.className = "card-action-btn";
+                    downBtn.innerHTML = `<i class="material-icons">arrow_downward</i>`;
+                    downBtn.title = "Move down";
+                    downBtn.onclick = (e) => { e.stopPropagation(); move(s.index + 1); };
+                    actions.appendChild(downBtn);
+                  }
                   li.appendChild(actions);
 
                   // Drag to reorder.
@@ -2426,7 +2456,8 @@
           if (editingId) {
             const original = modalCreateBtn._originalProfile;
             const updatedProfile = { id: editingId };
-            const newVersion = instanceVersion.value.trim();
+            const sel = resolveVersionSelection();
+            const newVersion = (sel.version || '').trim();
             const versionChanged = newVersion && newVersion !== original.version;
 
             if (instanceName.value.trim() !== original.name) {
@@ -2438,15 +2469,12 @@
             const lvSel = document.getElementById('instanceLoaderVersion');
             const newLoaderVer = (document.getElementById('instanceLoaderVerSection').style.display !== 'none') ? lvSel.value : '';
             if (newLoaderVer !== (original.loaderVersion || '')) updatedProfile.loaderVersion = newLoaderVer;
-            const alwaysCbEl = document.getElementById('alwaysUpdate');
-            if (alwaysCbEl) updatedProfile.alwaysUpdate = alwaysCbEl.checked;
+            updatedProfile.alwaysUpdate = sel.alwaysUpdate;
             updatedProfile.autoUpdateVersion = document.getElementById('autoUpdateVersionCb').checked;
             updatedProfile.launchArgs = document.getElementById('instanceLaunchArgs').value.trim();
             updatedProfile.ramMin = parseInt(document.getElementById('instanceRamMin').value) || null;
             updatedProfile.ramMax = parseInt(document.getElementById('instanceRamMax').value) || null;
-            if (instanceIcon.files.length > 0) {
-              updatedProfile.icon = await fileToBase64(instanceIcon.files[0]);
-            } else if (pickedInstanceIcon) {
+            if (pickedInstanceIcon) {
               updatedProfile.icon = pickedInstanceIcon;
             }
 
@@ -2463,8 +2491,9 @@
             delete modalCreateBtn.dataset.editingId;
             delete modalCreateBtn._originalProfile;
           } else {
+            const sel = resolveVersionSelection();
             // Only a version is required now — the name is optional.
-            if (!instanceVersion.value) {
+            if (!sel.version) {
               const originalText = modalCreateBtn.textContent;
               modalCreateBtn.textContent = "Pick a version";
               setTimeout(() => { modalCreateBtn.textContent = originalText; }, 2000);
@@ -2474,15 +2503,15 @@
             const loader = instanceLoader.value;
             // Auto-name blank instances after their loader + version, e.g.
             // "Fabric 1.21".
-            const autoName = `${LOADER_DISPLAY[loader] || loader} ${instanceVersion.value}`;
+            const autoName = `${LOADER_DISPLAY[loader] || loader} ${sel.version}`;
             const name = instanceName.value.trim() || autoName;
 
             const newProfile = {
               name,
-              version: instanceVersion.value,
+              version: sel.version,
               loader,
               loaderVersion: (document.getElementById('instanceLoaderVerSection').style.display !== 'none') ? document.getElementById('instanceLoaderVersion').value : '',
-              alwaysUpdate: document.getElementById('alwaysUpdate').checked,
+              alwaysUpdate: sel.alwaysUpdate,
               autoUpdateVersion: document.getElementById('autoUpdateVersionCb').checked,
               launchArgs: document.getElementById('instanceLaunchArgs').value.trim(),
               ramMin: parseInt(document.getElementById('instanceRamMin').value) || null,
@@ -2490,9 +2519,7 @@
               icon: null
             };
 
-            if (instanceIcon.files.length > 0) {
-              newProfile.icon = await fileToBase64(instanceIcon.files[0]);
-            } else if (pickedInstanceIcon) {
+            if (pickedInstanceIcon) {
               newProfile.icon = pickedInstanceIcon;
             }
 
@@ -2513,9 +2540,7 @@
       if (instanceId === 'NEWINSTANCE') {
         // Reset and open the modal
         instanceName.value = "";
-        instanceVersion.value = "";
         instanceLoader.value = "vanilla";
-        instanceIcon.value = "";
         pickedInstanceIcon = null;
         setInstancePreview(null);
         delete modalCreateBtn.dataset.editingId;
@@ -2545,10 +2570,27 @@
 
     function populateSelect(versions, showAll) {
       const select = document.getElementById('instanceVersion');
+      const prev = select.value;
       select.innerHTML = ''; // clear existing options
 
-      const filtered = showAll ? versions : versions.filter(v => v.type === 'release');
+      const rel = versionManifest && versionManifest.latest && versionManifest.latest.release;
+      const snap = versionManifest && versionManifest.latest && versionManifest.latest.snapshot;
 
+      // "Latest" options at the top — picking one keeps the instance pinned to
+      // the newest version (this replaced the old "Always update" toggle). The
+      // current latest is shown in parentheses.
+      const optLatest = document.createElement('option');
+      optLatest.value = '__latest_release__';
+      optLatest.textContent = `Latest release${rel ? ` (${rel})` : ''}`;
+      select.appendChild(optLatest);
+      if (showAll) {
+        const optSnap = document.createElement('option');
+        optSnap.value = '__latest_snapshot__';
+        optSnap.textContent = `Latest snapshot${snap ? ` (${snap})` : ''}`;
+        select.appendChild(optSnap);
+      }
+
+      const filtered = showAll ? versions : versions.filter(v => v.type === 'release');
       filtered.forEach(v => {
         const opt = document.createElement('option');
         opt.value = v.id;
@@ -2556,39 +2598,27 @@
         select.appendChild(opt);
       });
 
-      // optionally select latest release by default
-      if (!showAll) {
-        const latest = filtered.find(v => v.type === 'release');
-        if (latest) select.value = latest.id;
-      }
+      // Keep the previous selection if it's still valid, else default to the
+      // specific latest release.
+      if (prev && [...select.options].some(o => o.value === prev)) select.value = prev;
+      else if (rel) select.value = rel;
     }
 
-    // Reflect the Show All / Always Update toggles. Always Update pins the
-    // version to the latest release (or latest snapshot when Show All is on)
-    // and disables manual selection.
+    // Repopulate the version list to reflect the "Show all" toggle.
     function applyVersionMode() {
       if (!versionManifest) return;
       const showAll = document.getElementById('showAllVersions').checked;
-      const always = document.getElementById('alwaysUpdate').checked;
-      const select = document.getElementById('instanceVersion');
-
       populateSelect(versionManifest.versions, showAll);
+    }
 
-      if (always) {
-        const target = showAll ? versionManifest.latest.snapshot : versionManifest.latest.release;
-        if (target) {
-          // Make sure the target is present as an option even if filtered out.
-          if (![...select.options].some(o => o.value === target)) {
-            const opt = document.createElement('option');
-            opt.value = target; opt.textContent = target;
-            select.insertBefore(opt, select.firstChild);
-          }
-          select.value = target;
-        }
-        select.disabled = true;
-      } else {
-        select.disabled = false;
-      }
+    // Resolve the version dropdown selection into a concrete version + whether
+    // the instance should stay pinned to the latest (the "Latest …" options).
+    function resolveVersionSelection() {
+      const val = document.getElementById('instanceVersion').value;
+      const latest = versionManifest && versionManifest.latest;
+      if (val === '__latest_release__') return { version: (latest && latest.release) || '', alwaysUpdate: true };
+      if (val === '__latest_snapshot__') return { version: (latest && latest.snapshot) || '', alwaysUpdate: true };
+      return { version: val, alwaysUpdate: false };
     }
 
     async function initVersionSelect() {
@@ -2598,7 +2628,6 @@
       // in the unordered fallback) — re-populate it now that we have piston order.
       if (typeof populateVersionFilter === 'function') populateVersionFilter();
       document.getElementById('showAllVersions').addEventListener('change', applyVersionMode);
-      document.getElementById('alwaysUpdate').addEventListener('change', applyVersionMode);
     }
 
     // run on page load
