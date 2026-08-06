@@ -1763,7 +1763,10 @@
           const players = await ipcRenderer.invoke("list-players").catch(() => []);
           const worldOpts = (worlds || []).map(w => `<option value="${w.folder}">${(w.name || w.folder).replace(/</g, "&lt;")}</option>`).join("");
           const serverOpts = (servers || []).map(s => `<option value="${(s.ip || "").replace(/"/g, "&quot;")}">${((s.name && s.name !== s.ip) ? `${s.name} (${s.ip})` : s.ip).replace(/</g, "&lt;")}</option>`).join("");
-          const accountOpts = (players || []).map(pl => `<option value="${pl.id}">${(pl.name || pl.username || pl.id).replace(/</g, "&lt;")}${pl.type === "cracked" ? " (cracked)" : ""}</option>`).join("");
+          const accountOpts = (players || []).map(pl => {
+            const label = String(pl.name || pl.username || pl.id || "").replace(/</g, "&lt;");
+            return `<option value="${pl.id}">${label}${pl.type === "cracked" ? " (cracked)" : ""}</option>`;
+          }).join("");
           // Look up a saved server by address (to auto-apply its icon).
           const serverByIp = {}; (servers || []).forEach(s => { serverByIp[(s.ip || "").trim()] = s; });
 
