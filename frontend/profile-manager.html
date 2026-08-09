@@ -499,6 +499,11 @@
     let pendingSelection = null;  // { base64, variant, name, pixelHash } chosen but not yet applied
     let libraryCache = [];
     let defaultSkinsCache = [];
+    // Guards against overlapping renders: updateSKin() is async and is triggered
+    // by both players-list and players-updated, so two runs could interleave
+    // (each clearing then appending) and double every skin/cape. Only the latest
+    // run is allowed to keep rendering.
+    let renderSeq = 0;
 
     function showLoading(on) {
       document.getElementById('pm-loading').style.display = on ? 'flex' : 'none';
@@ -508,7 +513,10 @@
     function variantLabel(v) { return v === "slim" ? "slim" : "wide"; }
 
     async function updateSKin() {
+      const mySeq = ++renderSeq;
+      const stillCurrent = () => mySeq === renderSeq;
       selectedplayer = await getSelectedPlayer();
+      if (!stillCurrent()) return;
       let player = players.find(p => String(p.id) === String(selectedplayer));
       if (!player) return;
       let name;
@@ -533,6 +541,7 @@
 
       let profile = { skins: [], capes: [] };
       profile = await ipcRenderer.invoke("mc:getProfile");
+      if (!stillCurrent()) return;
       showLoading(false);
       sections.style.display = "block";
 
@@ -590,6 +599,7 @@
       activePixelHash = null;
       if (activeSkinB64) {
         activePixelHash = await ipcRenderer.invoke("skins:pixelHash", { base64: activeSkinB64 });
+        if (!stillCurrent()) return;
       }
       const appliedId = localStorage.getItem('appliedSkin_' + uuid);
 
@@ -615,6 +625,7 @@
       // Saved local library. Clicking selects locally (no upload); Apply applies.
       // Dedup any pixel-identical entries left over from older versions.
       const rawLibrary = await ipcRenderer.invoke("skins:list", { uuid });
+      if (!stillCurrent()) return;
       const seenHashes = new Set();
       const library = rawLibrary.filter(s => {
         const key = s.pixelHash || s.base64;

@@ -394,6 +394,30 @@
     </div>
   </div>
 
+  <!-- Share-over-internet modal (instance LAN world) -->
+  <div id="instShareModal" class="modal-overlay">
+    <div class="modal-content" style="max-width:440px;">
+      <div class="modal-header"><h2>Share over the internet</h2>
+        <button class="modal-close" onclick="document.getElementById('instShareModal').classList.remove('active');">✕</button>
+      </div>
+      <div style="font-size:12px;opacity:0.75;margin-bottom:10px;">Tunnels your open-to-LAN world through the Redstone Relay (works behind any NAT) and also tries a direct UPnP path when possible.</div>
+      <div class="modal-section" id="instShareAccountSection"><label>Account</label><select id="instShareAccount"></select></div>
+      <div class="modal-section"><label>Address</label>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <input id="instShareSub" style="flex:1;" placeholder="name" />
+          <span id="instShareDomainSuffix" style="opacity:0.8;white-space:nowrap;">.redstonemc.net</span>
+          <select id="instShareDomain" style="display:none;width:auto;flex:0 0 auto;"></select>
+        </div>
+        <div style="font-size:12px;opacity:0.7;margin-top:4px;">Friends join at <b><span id="instSharePreview"></span></b></div>
+        <div id="instShareAdminNote" style="font-size:11px;opacity:0.6;margin-top:3px;display:none;"></div>
+      </div>
+      <div class="modal-actions">
+        <button id="instShareGo">Share</button>
+        <button onclick="document.getElementById('instShareModal').classList.remove('active');">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Import progress overlay -->
   <div id="importProgressModal" class="modal-overlay">
     <div class="modal-content" style="width:360px; text-align:center;">
@@ -535,6 +559,80 @@
       if (p.get("args")) msg.shortcutArgs = p.get("args");
       ipcRenderer.send("launch-profile", msg);
     }
+
+    // ── Share-over-internet modal (instance LAN world) ──
+    // Mirrors the Server Manager's share modal: pick an account, choose a
+    // subdomain (admins additionally pick a domain), preview the join address,
+    // then open the relay. `opts`: { localPort, relayKey, defaultSub, onShared }.
+    const _instShare = { accounts: [], baseDomain: 'redstonemc.net', admin: { isAdmin: false, domains: [] }, opts: null };
+    const _instSubLabel = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    function _instShareAccount() { return _instShare.accounts.find(a => a.id === document.getElementById('instShareAccount').value) || _instShare.accounts[0]; }
+    function _instSelectedDomain() { const d = document.getElementById('instShareDomain'); return (_instShare.admin.isAdmin && d.value) ? d.value : _instShare.baseDomain; }
+    function _instFullSubdomain() {
+      const a = _instShareAccount(); if (!a) return '';
+      const text = _instSubLabel(document.getElementById('instShareSub').value);
+      if (_instShare.admin.isAdmin) return text;                 // admin: label only; domain chosen separately
+      const uname = _instSubLabel(a.name);
+      return text ? `${text}.${uname}` : uname;                  // else: <text>.<username> or <username>
+    }
+    function _instUpdateSharePreview() {
+      const sub = _instFullSubdomain(), dom = _instSelectedDomain();
+      document.getElementById('instSharePreview').textContent = sub ? `${sub}.${dom}` : dom;
+    }
+    function _instApplyShareMode() {
+      const a = _instShareAccount(); if (!a) return;
+      const uname = _instSubLabel(a.name);
+      const dom = document.getElementById('instShareDomain');
+      const suffix = document.getElementById('instShareDomainSuffix');
+      const note = document.getElementById('instShareAdminNote');
+      if (_instShare.admin.isAdmin && _instShare.admin.domains.length) {
+        dom.style.display = ''; dom.innerHTML = _instShare.admin.domains.map(d => `<option value="${d}">.${d}</option>`).join('');
+        suffix.style.display = 'none';
+        note.style.display = ''; note.textContent = 'Admin: any subdomain. Domains other than ' + _instShare.baseDomain + ' need a working UPnP (direct) path.';
+      } else {
+        dom.style.display = 'none'; suffix.style.display = ''; suffix.textContent = `.${uname}.${_instShare.baseDomain}`;
+        note.style.display = 'none';
+      }
+      _instUpdateSharePreview();
+    }
+    async function _instRefreshAdminInfo() {
+      _instShare.admin = { isAdmin: false, domains: [] };
+      const note = document.getElementById('instShareAdminNote');
+      note.style.display = ''; note.textContent = 'Checking account…';
+      const a = _instShareAccount();
+      try { _instShare.admin = await ipcRenderer.invoke('relay:adminInfo', { accountId: a.id }); } catch { /* stays non-admin */ }
+      _instApplyShareMode();
+    }
+    async function openInstanceShareModal(opts) {
+      _instShare.opts = opts;
+      _instShare.accounts = await ipcRenderer.invoke('relay:accounts');
+      _instShare.baseDomain = await ipcRenderer.invoke('relay:domain');
+      if (!_instShare.accounts.length) { alert('Sharing over the internet needs a premium Minecraft account. Add one in the Login page first.'); return; }
+      const sel = document.getElementById('instShareAccount');
+      sel.innerHTML = _instShare.accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+      document.getElementById('instShareAccountSection').style.display = _instShare.accounts.length > 1 ? '' : 'none';
+      document.getElementById('instShareSub').value = _instSubLabel(opts.defaultSub);
+      document.getElementById('instShareSub').oninput = _instUpdateSharePreview;
+      document.getElementById('instShareDomain').onchange = _instUpdateSharePreview;
+      sel.onchange = _instRefreshAdminInfo;
+      document.getElementById('instShareModal').classList.add('active');
+      setTimeout(() => document.getElementById('instShareSub').focus(), 60);
+      _instRefreshAdminInfo();
+    }
+    document.getElementById('instShareGo').onclick = async () => {
+      const btn = document.getElementById('instShareGo');
+      const o = _instShare.opts; if (!o) return;
+      btn.disabled = true; btn.textContent = 'Connecting…';
+      try {
+        const res = await ipcRenderer.invoke('relay:open', {
+          key: o.relayKey, localPort: o.localPort,
+          subdomain: _instFullSubdomain(), domain: _instSelectedDomain(),
+          accountId: document.getElementById('instShareAccount').value,
+        });
+        if (res && res.success) { document.getElementById('instShareModal').classList.remove('active'); o.onShared && o.onShared(res.address); }
+        else alert("Couldn't share: " + (res?.error || 'unknown error'));
+      } finally { btn.disabled = false; btn.textContent = 'Share'; }
+    };
 
     // small debounce helper
     function debounce(fn, wait = 150) {
@@ -1305,17 +1403,14 @@
           lanShareBtn.style.display = ""; lanCopyBtn.style.display = "none"; lanStopBtn.style.display = "none";
           lanBar.style.display = "flex";
         }
-        lanShareBtn.onclick = async () => {
+        lanShareBtn.onclick = () => {
           if (!lanPort) return;
-          const accounts = await ipcRenderer.invoke("relay:accounts");
-          if (!accounts.length) { alert("Sharing over the internet needs a premium Minecraft account. Add one in the Login page first."); return; }
-          const u = accounts[0].name.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
-          const inst = (profile.name || "instance").toLowerCase().replace(/[^a-z0-9-]+/g, "-");
-          lanShareBtn.textContent = "Connecting…";
-          const res = await ipcRenderer.invoke("relay:open", { key: relayKey, localPort: lanPort, subdomain: `${inst}.${u}`, accountId: accounts[0].id });
-          lanShareBtn.textContent = "Share over internet";
-          if (res && res.success) showLanShared(res.address);
-          else alert("Couldn't share: " + (res?.error || "unknown error"));
+          openInstanceShareModal({
+            localPort: lanPort,
+            relayKey,
+            defaultSub: (profile.name || "instance"),
+            onShared: (address) => showLanShared(address),
+          });
         };
         lanStopBtn.onclick = async () => { await ipcRenderer.invoke("relay:close", { key: relayKey }); showLanAvailable(lanPort); };
         lanCopyBtn.onclick = () => { try { navigator.clipboard.writeText(lanMsg.textContent.replace(/^.*join at\s*/i, "").trim()); lanCopyBtn.textContent = "Copied"; setTimeout(() => lanCopyBtn.textContent = "Copy", 1200); } catch { /* ignore */ } };
