@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>Redstone Launcher - Player Manager</title>
+  <title>Redstone Launcher - Skins</title>
   <link rel="stylesheet" href="server.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <script>
@@ -267,7 +267,7 @@
     </ul>
     <ul class="menu bottom">
       <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
-      <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skin, cape changer</span></li>
+      <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skins</span></li>
       <a href="players.html">
         <li id="players-login"><i class="material-icons">login</i><span>Login</span></li>
       </a>
@@ -296,6 +296,22 @@
       <div id="pm-unavailable" style="display:none; padding:40px 10px; opacity:0.8;"></div>
     </div>
     <input type="file" id="skinFileInput" accept="image/png" style="display:none;" />
+  </div>
+
+  <!-- Add-skin menu -->
+  <div id="addSkinModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2000; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+    <div class="skin-modal-card" style="width:360px;">
+      <h3 style="margin-top:0; margin-bottom:14px;">Add a skin</h3>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <button class="pm-btn" id="addUploadBtn" style="text-align:left; display:flex; align-items:center; gap:8px;"><i class="material-icons">upload</i> Upload a skin (PNG)</button>
+        <button class="pm-btn" id="addTemplateBtn" style="text-align:left; display:flex; align-items:center; gap:8px;"><i class="material-icons">person</i> Create new — start from template</button>
+        <button class="pm-btn" id="addEmptyBtn" style="text-align:left; display:flex; align-items:center; gap:8px;"><i class="material-icons">add_box</i> Create new — empty skin</button>
+        <button class="pm-btn" id="addImageBtn" style="text-align:left; display:flex; align-items:center; gap:8px;"><i class="material-icons">image</i> Convert a regular image</button>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:16px; justify-content:flex-end;">
+        <button class="pm-btn" id="addSkinCancelBtn">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <!-- Upload skin modal (choose model) -->
@@ -609,8 +625,8 @@
       skinsDiv.innerHTML = "";
       capesDiv.innerHTML = "";
 
-      // Action cards, in order: Upload · Default Skins · Reset.
-      const uploadCard = createCard("Upload Skin", openUploadModal, iconEl("upload"));
+      // Action cards, in order: Add skin · Default Skins · Reset.
+      const uploadCard = createCard("Add skin", openAddSkinMenu, iconEl("add"));
       uploadCard.classList.add("action-card");
       skinsDiv.appendChild(uploadCard);
 
@@ -653,16 +669,19 @@
         card.dataset.pixelhash = skin.pixelHash || "";
         card.dataset.skinid = String(skin.id);
 
-        // Rename + delete controls.
+        // Edit-in-editor + rename + delete controls.
         const acts = document.createElement("div");
         acts.className = "skin-card-actions";
+        const editBtn = document.createElement("button");
+        editBtn.title = "Edit in skin editor"; editBtn.appendChild(iconEl("brush"));
+        editBtn.onclick = (e) => { e.stopPropagation(); openSkinEditor({ mode: "edit", skinId: skin.id }); };
         const renameBtn = document.createElement("button");
-        renameBtn.title = "Rename"; renameBtn.appendChild(iconEl("edit"));
+        renameBtn.title = "Rename"; renameBtn.appendChild(iconEl("drive_file_rename_outline"));
         renameBtn.onclick = (e) => { e.stopPropagation(); openSkinRename(uuid, skin); };
         const delBtn = document.createElement("button");
         delBtn.title = "Delete"; delBtn.appendChild(iconEl("delete"));
         delBtn.onclick = (e) => { e.stopPropagation(); openSkinDelete(uuid, skin); };
-        acts.append(renameBtn, delBtn);
+        acts.append(editBtn, renameBtn, delBtn);
         card.appendChild(acts);
 
         skinsDiv.appendChild(card);
@@ -870,6 +889,24 @@
       deleteTarget = null;
       updateSKin();
     };
+
+    // ---- Add-skin menu: upload / create new / convert image ----
+    function openAddSkinMenu() { document.getElementById('addSkinModal').style.display = 'flex'; }
+    function closeAddSkinMenu() { document.getElementById('addSkinModal').style.display = 'none'; }
+    // Open the standalone skin editor, carrying the current account uuid so it
+    // can save back into the right library.
+    function openSkinEditor(opts) {
+      const p = new URLSearchParams();
+      Object.entries(opts || {}).forEach(([k, v]) => { if (v != null) p.set(k, String(v)); });
+      if (currentUuid) p.set('uuid', currentUuid);
+      window.location.href = 'skin-editor.html?' + p.toString();
+    }
+    document.getElementById('addSkinCancelBtn').onclick = closeAddSkinMenu;
+    document.getElementById('addSkinModal').addEventListener('mousedown', (e) => { if (e.target.id === 'addSkinModal') closeAddSkinMenu(); });
+    document.getElementById('addUploadBtn').onclick = () => { closeAddSkinMenu(); openUploadModal(); };
+    document.getElementById('addTemplateBtn').onclick = () => { closeAddSkinMenu(); openSkinEditor({ mode: 'new', template: 1 }); };
+    document.getElementById('addEmptyBtn').onclick = () => { closeAddSkinMenu(); openSkinEditor({ mode: 'new', template: 0 }); };
+    document.getElementById('addImageBtn').onclick = () => { closeAddSkinMenu(); openSkinEditor({ mode: 'image' }); };
 
     // ---- Upload flow: saves to the local library only (no Mojang) ----
     let pendingSkinBase64 = null;

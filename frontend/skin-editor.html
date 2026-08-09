@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>Redstone Launcher - Skin Editor</title>
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="server.css">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <script>
+    const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+    if (cached.baseColor) {
+      document.documentElement.style.setProperty('--base-color', cached.baseColor);
+      document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
+      var _third = (cached.autoThird === false && cached.thirdColor) ? cached.thirdColor : (function (a, b) { try { var p = function (h) { h = h.replace('#', ''); if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join(''); return [0, 2, 4].map(function (i) { return parseInt(h.slice(i, i + 2), 16); }); }; var x = p(a), y = p(b); return '#' + [0, 1, 2].map(function (i) { return Math.round((x[i] + y[i]) / 2).toString(16).padStart(2, '0'); }).join(''); } catch (e) { return b; } })(cached.baseColor, cached.secondaryColor);
+      if (_third) document.documentElement.style.setProperty('--third-color', _third);
+      document.documentElement.style.setProperty('--text-color', cached.textColor);
+      document.documentElement.style.setProperty('--text-font', cached.font);
+      if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
+    }
+    if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColors && cached.gradientColors.length > 0) {
+      const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
+      document.documentElement.style.setProperty('--app-gradient', gradientStr);
+      document.documentElement.classList.add('gradient-enabled');
+    }
+  </script>
+  <style>
+    #editor-wrap { display: flex; gap: 16px; padding: 8px 20px 0 0; height: calc(100vh - 110px); }
+    /* Left: 3D preview + visibility toggles. */
+    #ed-left { flex: 0 0 260px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+    #ed-3d { width: 260px; height: 340px; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); }
+    .ed-parts { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 12px; }
+    .ed-parts label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+    .ed-parts input { width: auto; margin: 0; }
+    /* Center: texture canvas. */
+    #ed-center { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: auto; }
+    #ed-canvas-holder { position: relative; }
+    #ed-canvas { image-rendering: pixelated; cursor: crosshair; touch-action: none; border-radius: 4px; }
+    #ed-overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
+    /* Right: tools. */
+    #ed-right { flex: 0 0 240px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding-right: 4px; }
+    .ed-group { background: color-mix(in srgb, var(--third-color) 60%, transparent); border-radius: var(--border-radius); padding: 10px; }
+    .ed-group h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; opacity: 0.8; }
+    .ed-tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .ed-tool { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 8px 0; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; }
+    .ed-tool .material-icons { font-size: 20px; }
+    .ed-tool:hover { border-color: var(--base-color); }
+    .ed-tool.active { background: var(--base-color); border-color: var(--text-color); }
+    .ed-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+    .ed-row label { flex: 0 0 auto; opacity: 0.85; }
+    .ed-row input[type=range] { flex: 1; margin: 0; }
+    .ed-row input[type=color] { width: 42px; height: 30px; padding: 0; border: none; background: none; cursor: pointer; }
+    .ed-seg { display: flex; gap: 6px; }
+    .ed-seg button { flex: 1; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 6px 0; font-size: 12px; }
+    .ed-seg button.active { background: var(--base-color); border-color: var(--text-color); }
+    .ed-btn { background: var(--secondary-color); color: var(--text-color); border: none; border-radius: var(--border-radius); padding: 8px 10px; cursor: pointer; font-family: var(--text-font); font-size: 13px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .ed-btn:hover { background: var(--third-color); }
+    .ed-btn.primary { background: var(--base-color); }
+    .ed-btn .material-icons { font-size: 18px; }
+    .ed-btn-row { display: flex; gap: 6px; }
+    .ed-swatches { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .ed-swatch { width: 18px; height: 18px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.4); cursor: pointer; }
+    #ed-import-panel { display: none; }
+    .ed-hint { font-size: 11px; opacity: 0.6; margin-top: 4px; }
+  </style>
+</head>
+
+<body>
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-container">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Redstone Launcher</div>
+      <div class="loading-subtext">Loading skin editor...</div>
+    </div>
+  </div>
+  <div id="toolbar">
+    <div class="toolbar-buttons-left">
+      <button id="backBtn">⬅</button>
+      <button id="forwardBtn">➡</button>
+    </div>
+    <div class="drag-region">Redstone Launcher</div>
+    <div class="toolbar-buttons">
+      <div id="instance-processes"></div>
+      <button id="min-btn">—</button>
+      <button id="max-btn">◻</button>
+      <button id="close-btn">✕</button>
+    </div>
+  </div>
+  <div class="sidebar">
+    <ul class="menu top">
+      <a href="index.html"><li><i class="material-icons">home</i><span>Home</span></li></a>
+      <a href="instances.html"><li><i class="material-icons">play_arrow</i><span>Instances</span></li></a>
+      <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
+      <a href="server.html"><li><i class="material-icons">storage</i><span>Server Manager</span></li></a>
+    </ul>
+    <ul class="menu middle" id="instances">
+      <li><i class="material-icons">add</i><span>Add an instance</span></li>
+    </ul>
+    <ul class="menu bottom">
+      <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+      <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skins</span></li>
+      <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
+      <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+    </ul>
+  </div>
+
+  <h1 style="margin-left:0; display:flex; align-items:center; gap:12px;">
+    <button class="ed-btn" style="width:auto; padding:6px 12px;" onclick="window.location.href='profile-manager.html'"><i class="material-icons">arrow_back</i> Skins</button>
+    <span id="ed-title">Skin Editor</span>
+  </h1>
+
+  <div id="editor-wrap">
+    <!-- Left: 3D preview -->
+    <div id="ed-left">
+      <canvas id="ed-3d"></canvas>
+      <div class="ed-group">
+        <h4>Show in 3D</h4>
+        <div class="ed-parts" id="ed-parts"></div>
+        <div class="ed-row" style="margin-top:8px;"><label><input type="checkbox" id="ed-show-overlay" checked> 2nd layer</label></div>
+      </div>
+    </div>
+
+    <!-- Center: texture editor -->
+    <div id="ed-center">
+      <div id="ed-canvas-holder">
+        <canvas id="ed-canvas" width="640" height="640"></canvas>
+        <canvas id="ed-overlay" width="640" height="640"></canvas>
+      </div>
+      <div class="ed-hint">Drawing edits the texture; the 3D model on the left updates live.</div>
+    </div>
+
+    <!-- Right: tools -->
+    <div id="ed-right">
+      <div class="ed-group">
+        <h4>Tools</h4>
+        <div class="ed-tools" id="ed-tool-grid"></div>
+      </div>
+
+      <div class="ed-group">
+        <h4>Brush</h4>
+        <div class="ed-row"><label>Color</label><input type="color" id="ed-color" value="#8a5a3b"><span id="ed-color-hex" style="font-size:12px;opacity:0.7;">#8a5a3b</span></div>
+        <div class="ed-swatches" id="ed-swatches"></div>
+        <div class="ed-row"><label>Size</label><input type="range" id="ed-size" min="1" max="8" value="1"><span id="ed-size-val" style="width:14px;">1</span></div>
+        <div class="ed-row"><label>Opacity</label><input type="range" id="ed-opacity" min="1" max="100" value="100"><span id="ed-opacity-val" style="width:28px;">100%</span></div>
+        <div class="ed-row" id="ed-fillwith-row" style="display:none;"><label>Fill with</label>
+          <select id="ed-fillwith"><option value="brush">Brush</option><option value="texture">Texture</option><option value="eraser">Eraser</option></select>
+        </div>
+      </div>
+
+      <div class="ed-group">
+        <h4>Layer</h4>
+        <div class="ed-seg">
+          <button id="ed-layer-base" class="active">1st (base)</button>
+          <button id="ed-layer-overlay">2nd (overlay)</button>
+        </div>
+        <div class="ed-row" style="margin-top:8px;"><label><input type="checkbox" id="ed-mirror"> Mirror (symmetry)</label></div>
+        <div class="ed-hint">Mirror paints the opposite side of the same body part too.</div>
+      </div>
+
+      <div class="ed-group">
+        <h4>Edit</h4>
+        <div class="ed-btn-row">
+          <button class="ed-btn" id="ed-undo" title="Undo (Ctrl+Z)"><i class="material-icons">undo</i></button>
+          <button class="ed-btn" id="ed-redo" title="Redo (Ctrl+Y)"><i class="material-icons">redo</i></button>
+        </div>
+        <div class="ed-btn-row" style="margin-top:6px;">
+          <button class="ed-btn" id="ed-flip" title="Swap left/right & flip faces (fix a backwards skin)"><i class="material-icons">flip</i> Flip</button>
+          <button class="ed-btn" id="ed-mirror-apply" title="Copy the left side onto the right (make symmetric)"><i class="material-icons">compare_arrows</i> Symm</button>
+        </div>
+        <button class="ed-btn" id="ed-import" style="margin-top:6px;"><i class="material-icons">image</i> Add image…</button>
+        <button class="ed-btn" id="ed-clear" style="margin-top:6px;"><i class="material-icons">delete_sweep</i> Clear</button>
+      </div>
+
+      <!-- Image import controls (shown after picking an image) -->
+      <div class="ed-group" id="ed-import-panel">
+        <h4>Place image</h4>
+        <div class="ed-row"><label>X</label><input type="range" id="ed-img-x" min="-32" max="64" value="16"></div>
+        <div class="ed-row"><label>Y</label><input type="range" id="ed-img-y" min="-32" max="64" value="8"></div>
+        <div class="ed-row"><label>Scale</label><input type="range" id="ed-img-scale" min="1" max="200" value="40"></div>
+        <div class="ed-row"><label>Rotate</label><input type="range" id="ed-img-rot" min="-180" max="180" value="0"></div>
+        <div class="ed-row"><label>Opacity</label><input type="range" id="ed-img-op" min="1" max="100" value="100"></div>
+        <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror"> Mirror image</label></div>
+        <div class="ed-btn-row">
+          <button class="ed-btn primary" id="ed-img-bake">Bake in</button>
+          <button class="ed-btn" id="ed-img-cancel">Cancel</button>
+        </div>
+      </div>
+
+      <div class="ed-group">
+        <h4>Save</h4>
+        <div class="ed-row"><label>Name</label><input type="text" id="ed-name" placeholder="My skin" style="flex:1;"></div>
+        <div class="ed-seg" style="margin-bottom:8px;">
+          <button id="ed-variant-classic" class="active">Wide</button>
+          <button id="ed-variant-slim">Slim</button>
+        </div>
+        <button class="ed-btn primary" id="ed-save"><i class="material-icons">save</i> Save to library</button>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="ed-file" accept="image/png,image/*" style="display:none;" />
+  <img id="ed-hidden-img" style="display:none;" />
+  <script src="skinview3d.bundle.js"></script>
+  <script>
+    const { ipcRenderer } = require('electron');
+    const params = new URLSearchParams(location.search);
+    const mode = params.get('mode') || 'new';       // new | edit | image
+    const editSkinId = params.get('skinId');
+    let uuid = params.get('uuid') || null;
+
+    const SIZE = 64;
+    const SCALE = 10;                                 // display px per texel
+    const work = document.createElement('canvas'); work.width = SIZE; work.height = SIZE;
+    const wctx = work.getContext('2d', { willReadFrequently: true });
+    const view = document.getElementById('ed-canvas');
+    const vctx = view.getContext('2d');
+    const overlay = document.getElementById('ed-overlay');
+    const octx = overlay.getContext('2d');
+    view.width = overlay.width = SIZE * SCALE;
+    view.height = overlay.height = SIZE * SCALE;
+    vctx.imageSmoothingEnabled = false;
+
+    // ── Region layout (64×64). Bounding boxes per body part, base & overlay. ──
+    const BASE_RECTS = [
+      { name: 'Head', x: 0, y: 0, w: 32, h: 16 },
+      { name: 'R Leg', x: 0, y: 16, w: 16, h: 16 },
+      { name: 'Body', x: 16, y: 16, w: 24, h: 16 },
+      { name: 'R Arm', x: 40, y: 16, w: 16, h: 16 },
+      { name: 'L Leg', x: 16, y: 48, w: 16, h: 16 },
+      { name: 'L Arm', x: 32, y: 48, w: 16, h: 16 },
+    ];
+    const OVERLAY_RECTS = [
+      { name: 'Hat', x: 32, y: 0, w: 32, h: 16 },
+      { name: 'R Leg 2', x: 0, y: 32, w: 16, h: 16 },
+      { name: 'Jacket', x: 16, y: 32, w: 24, h: 16 },
+      { name: 'R Arm 2', x: 40, y: 32, w: 16, h: 16 },
+      { name: 'L Leg 2', x: 0, y: 48, w: 16, h: 16 },
+      { name: 'L Arm 2', x: 48, y: 48, w: 16, h: 16 },
+    ];
+    const inRect = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+    const rectAt = (rects, x, y) => rects.find(r => inRect(r, x, y)) || null;
+    const isOverlayTexel = (x, y) => OVERLAY_RECTS.some(r => inRect(r, x, y));
+
+    // ── State ──
+    let tool = 'brush';
+    let layer = 'base';       // base | overlay
+    let mirror = false;
+    let variant = 'classic';
+    let color = { r: 138, g: 90, b: 59 };
+    let opacity = 1;
+    let brushSize = 1;
+    let fillWith = 'brush';
+    let drawing = false;
+    let lastTexel = null;
+
+    // ── Undo / redo (edit history only, independent of launcher nav) ──
+    let undoStack = [], redoStack = [];
+    function snapshot() { return wctx.getImageData(0, 0, SIZE, SIZE); }
+    function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); redoStack = []; }
+    function restore(imgData) { wctx.putImageData(imgData, 0, 0); render(); update3D(); }
+    function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
+    function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
+
+    // ── Rendering ──
+    function drawChecker() {
+      const s = SCALE * 2;
+      for (let y = 0; y < view.height; y += s) for (let x = 0; x < view.width; x += s) {
+        vctx.fillStyle = ((x / s + y / s) % 2 === 0) ? '#3a3a3a' : '#2c2c2c';
+        vctx.fillRect(x, y, SCALE, SCALE); vctx.fillRect(x + SCALE, y + SCALE, SCALE, SCALE);
+        vctx.fillStyle = ((x / s + y / s) % 2 === 0) ? '#2c2c2c' : '#3a3a3a';
+        vctx.fillRect(x + SCALE, y, SCALE, SCALE); vctx.fillRect(x, y + SCALE, SCALE, SCALE);
+      }
+    }
+    function render() {
+      drawChecker();
+      vctx.imageSmoothingEnabled = false;
+      // Dim the inactive layer's regions so the active layer stands out.
+      vctx.drawImage(work, 0, 0, SIZE, SIZE, 0, 0, view.width, view.height);
+      renderOverlay();
+    }
+    function renderOverlay() {
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+      // faint grid
+      octx.strokeStyle = 'rgba(255,255,255,0.05)'; octx.lineWidth = 1;
+      for (let i = 0; i <= SIZE; i++) {
+        octx.beginPath(); octx.moveTo(i * SCALE + 0.5, 0); octx.lineTo(i * SCALE + 0.5, overlay.height); octx.stroke();
+        octx.beginPath(); octx.moveTo(0, i * SCALE + 0.5); octx.lineTo(overlay.width, i * SCALE + 0.5); octx.stroke();
+      }
+      // region outlines + labels for the ACTIVE layer
+      const rects = layer === 'overlay' ? OVERLAY_RECTS : BASE_RECTS;
+      const other = layer === 'overlay' ? BASE_RECTS : OVERLAY_RECTS;
+      other.forEach(r => outlineRect(r, 'rgba(255,255,255,0.10)', null));
+      rects.forEach(r => outlineRect(r, 'var(--base-color)', r.name));
+    }
+    function outlineRect(r, stroke, label) {
+      octx.strokeStyle = stroke === 'var(--base-color)'
+        ? getComputedStyle(document.documentElement).getPropertyValue('--base-color').trim() || '#c0392b'
+        : stroke;
+      octx.lineWidth = 2;
+      octx.strokeRect(r.x * SCALE + 1, r.y * SCALE + 1, r.w * SCALE - 2, r.h * SCALE - 2);
+      if (label) {
+        octx.fillStyle = 'rgba(0,0,0,0.55)';
+        const tw = octx.measureText(label).width + 6;
+        octx.fillRect(r.x * SCALE + 2, r.y * SCALE + 2, tw, 13);
+        octx.fillStyle = '#fff'; octx.font = '10px sans-serif'; octx.textBaseline = 'top';
+        octx.fillText(label, r.x * SCALE + 5, r.y * SCALE + 4);
+      }
+    }
+
+    // ── Painting ──
+    function texelFromEvent(e) {
+      const rect = view.getBoundingClientRect();
+      const x = Math.floor((e.clientX - rect.left) / (rect.width / SIZE));
+      const y = Math.floor((e.clientY - rect.top) / (rect.height / SIZE));
+      return { x, y };
+    }
+    function paintable(x, y) {
+      if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return false;
+      return layer === 'overlay' ? isOverlayTexel(x, y) : !isOverlayTexel(x, y);
+    }
+    function jitter(v, amt) { return Math.max(0, Math.min(255, v + Math.round((Math.random() * 2 - 1) * amt))); }
+    function setTexel(x, y, mode) {
+      if (!paintable(x, y)) return;
+      if (mode === 'eraser') { wctx.clearRect(x, y, 1, 1); return; }
+      let r = color.r, g = color.g, b = color.b;
+      if (mode === 'texture') { r = jitter(r, 22); g = jitter(g, 22); b = jitter(b, 22); }
+      wctx.globalAlpha = 1;
+      // Compose with opacity (erase target first so alpha is exact).
+      if (opacity >= 1) { wctx.clearRect(x, y, 1, 1); wctx.fillStyle = `rgb(${r},${g},${b})`; wctx.fillRect(x, y, 1, 1); }
+      else { wctx.fillStyle = `rgba(${r},${g},${b},${opacity})`; wctx.fillRect(x, y, 1, 1); }
+    }
+    function mirrorTexel(x, y) {
+      // Horizontal mirror within the body part the texel belongs to.
+      const rects = layer === 'overlay' ? OVERLAY_RECTS : BASE_RECTS;
+      const r = rectAt(rects, x, y);
+      if (!r) return null;
+      return { x: r.x + (r.x + r.w - 1 - x), y };
+    }
+    function stampAt(cx, cy, mode) {
+      const half = Math.floor(brushSize / 2);
+      for (let dy = 0; dy < brushSize; dy++) for (let dx = 0; dx < brushSize; dx++) {
+        const x = cx - half + dx, y = cy - half + dy;
+        setTexel(x, y, mode);
+        if (mirror) { const m = mirrorTexel(x, y); if (m) setTexel(m.x, m.y, mode); }
+      }
+    }
+    function lineStamp(a, b, mode) {
+      // Bresenham so fast drags don't leave gaps.
+      let x0 = a.x, y0 = a.y, x1 = b.x, y1 = b.y;
+      const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+      const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      let err = dx - dy;
+      while (true) {
+        stampAt(x0, y0, mode);
+        if (x0 === x1 && y0 === y1) break;
+        const e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x0 += sx; }
+        if (e2 < dx) { err += dx; y0 += sy; }
+      }
+    }
+    function pickColor(x, y) {
+      const d = wctx.getImageData(x, y, 1, 1).data;
+      if (d[3] === 0) return;
+      color = { r: d[0], g: d[1], b: d[2] };
+      syncColorInputs();
+    }
+    function floodFill(sx, sy) {
+      if (!paintable(sx, sy)) return;
+      const img = wctx.getImageData(0, 0, SIZE, SIZE);
+      const at = (x, y) => (y * SIZE + x) * 4;
+      const t = at(sx, sy);
+      const target = [img.data[t], img.data[t + 1], img.data[t + 2], img.data[t + 3]];
+      const tol = 40;
+      const match = (i) => {
+        const dr = img.data[i] - target[0], dg = img.data[i + 1] - target[1], db = img.data[i + 2] - target[2], da = img.data[i + 3] - target[3];
+        return (dr * dr + dg * dg + db * db + da * da) <= tol * tol;
+      };
+      const stack = [[sx, sy]], seen = new Set();
+      const fillMode = fillWith;
+      while (stack.length) {
+        const [x, y] = stack.pop();
+        if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) continue;
+        const key = y * SIZE + x; if (seen.has(key)) continue; seen.add(key);
+        if (!paintable(x, y)) continue;
+        if (!match(at(x, y))) continue;
+        setTexel(x, y, fillMode);
+        if (mirror) { const m = mirrorTexel(x, y); if (m) setTexel(m.x, m.y, fillMode); }
+        stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+      }
+    }
+
+    // ── Pointer handling ──
+    view.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); view.setPointerCapture(e.pointerId);
+      const t = texelFromEvent(e);
+      if (tool === 'eyedropper') { pickColor(t.x, t.y); return; }
+      pushUndo();
+      if (tool === 'fill') { floodFill(t.x, t.y); render(); update3D(); return; }
+      drawing = true; lastTexel = t;
+      stampAt(t.x, t.y, tool === 'texture' ? 'texture' : (tool === 'eraser' ? 'eraser' : 'brush'));
+      render();
+    });
+    view.addEventListener('pointermove', (e) => {
+      if (!drawing) return;
+      const t = texelFromEvent(e);
+      if (lastTexel && (t.x !== lastTexel.x || t.y !== lastTexel.y)) {
+        lineStamp(lastTexel, t, tool === 'texture' ? 'texture' : (tool === 'eraser' ? 'eraser' : 'brush'));
+        lastTexel = t; render();
+      }
+    });
+    const endStroke = () => { if (drawing) { drawing = false; lastTexel = null; update3D(); } };
+    view.addEventListener('pointerup', endStroke);
+    view.addEventListener('pointercancel', endStroke);
+
+    // ── Tools UI ──
+    const TOOLS = [
+      { id: 'brush', icon: 'brush', label: 'Brush' },
+      { id: 'texture', icon: 'grain', label: 'Texture' },
+      { id: 'eraser', icon: 'ink_eraser', label: 'Eraser' },
+      { id: 'fill', icon: 'format_color_fill', label: 'Fill' },
+      { id: 'eyedropper', icon: 'colorize', label: 'Pick' },
+    ];
+    const toolGrid = document.getElementById('ed-tool-grid');
+    TOOLS.forEach(tl => {
+      const b = document.createElement('button'); b.className = 'ed-tool' + (tl.id === tool ? ' active' : '');
+      b.innerHTML = `<i class="material-icons">${tl.icon}</i>${tl.label}`;
+      b.onclick = () => {
+        tool = tl.id;
+        [...toolGrid.children].forEach(c => c.classList.remove('active')); b.classList.add('active');
+        document.getElementById('ed-fillwith-row').style.display = (tool === 'fill') ? '' : 'none';
+      };
+      toolGrid.appendChild(b);
+    });
+
+    // Color + swatches
+    const colorInput = document.getElementById('ed-color');
+    const hexToRgb = (h) => ({ r: parseInt(h.slice(1, 3), 16), g: parseInt(h.slice(3, 5), 16), b: parseInt(h.slice(5, 7), 16) });
+    const rgbToHex = (c) => '#' + [c.r, c.g, c.b].map(v => v.toString(16).padStart(2, '0')).join('');
+    function syncColorInputs() { colorInput.value = rgbToHex(color); document.getElementById('ed-color-hex').textContent = rgbToHex(color); }
+    colorInput.oninput = () => { color = hexToRgb(colorInput.value); document.getElementById('ed-color-hex').textContent = colorInput.value; };
+    const SWATCHES = ['#000000', '#ffffff', '#8a5a3b', '#c8a17a', '#3b2a1a', '#7f7f7f', '#c0392b', '#2980b9', '#27ae60', '#f1c40f', '#8e44ad', '#e67e22'];
+    const sw = document.getElementById('ed-swatches');
+    SWATCHES.forEach(c => { const d = document.createElement('div'); d.className = 'ed-swatch'; d.style.background = c; d.onclick = () => { color = hexToRgb(c); syncColorInputs(); }; sw.appendChild(d); });
+
+    document.getElementById('ed-size').oninput = (e) => { brushSize = +e.target.value; document.getElementById('ed-size-val').textContent = brushSize; };
+    document.getElementById('ed-opacity').oninput = (e) => { opacity = (+e.target.value) / 100; document.getElementById('ed-opacity-val').textContent = e.target.value + '%'; };
+    document.getElementById('ed-fillwith').onchange = (e) => { fillWith = e.target.value; };
+
+    document.getElementById('ed-layer-base').onclick = () => setLayer('base');
+    document.getElementById('ed-layer-overlay').onclick = () => setLayer('overlay');
+    function setLayer(l) {
+      layer = l;
+      document.getElementById('ed-layer-base').classList.toggle('active', l === 'base');
+      document.getElementById('ed-layer-overlay').classList.toggle('active', l === 'overlay');
+      renderOverlay();
+    }
+    document.getElementById('ed-mirror').onchange = (e) => { mirror = e.target.checked; };
+
+    document.getElementById('ed-variant-classic').onclick = () => setVariant('classic');
+    document.getElementById('ed-variant-slim').onclick = () => setVariant('slim');
+    function setVariant(v) {
+      variant = v;
+      document.getElementById('ed-variant-classic').classList.toggle('active', v === 'classic');
+      document.getElementById('ed-variant-slim').classList.toggle('active', v === 'slim');
+      update3D(true);
+    }
+
+    document.getElementById('ed-undo').onclick = undo;
+    document.getElementById('ed-redo').onclick = redo;
+    window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+      else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redo(); }
+    });
+    document.getElementById('ed-clear').onclick = () => { pushUndo(); wctx.clearRect(0, 0, SIZE, SIZE); render(); update3D(); };
+
+    // ── Flip (port of flipSkin.js: swap left/right & flip each face) ──
+    document.getElementById('ed-flip').onclick = () => { pushUndo(); flipSkin(); render(); update3D(); };
+    function flipSkin() {
+      const src = document.createElement('canvas'); src.width = SIZE; src.height = SIZE;
+      src.getContext('2d').drawImage(work, 0, 0);
+      const res = document.createElement('canvas'); res.width = SIZE; res.height = SIZE;
+      const rc = res.getContext('2d');
+      const HS = 8, BH = 12, LW = 4, AW = variant === 'slim' ? 3 : 4;
+      const block = (srow, scol, w, h, drow, dcol, fh = false, fv = false) => {
+        const crop = document.createElement('canvas'); crop.width = w; crop.height = h;
+        crop.getContext('2d').drawImage(src, scol, srow, w, h, 0, 0, w, h);
+        const aux = document.createElement('canvas'); aux.width = w; aux.height = h;
+        const ax = aux.getContext('2d');
+        ax.save(); ax.setTransform(fh ? -1 : 1, 0, 0, fv ? -1 : 1, fh ? w : 0, fv ? h : 0); ax.drawImage(crop, 0, 0); ax.restore();
+        rc.drawImage(aux, 0, 0, w, h, dcol, drow, w, h);
+      };
+      // head
+      block(0, 8, HS, HS, 0, 8, true, true); block(0, 16, HS, HS, 0, 16, true, true);
+      block(8, 0, HS, HS, 8, 16); block(8, 8, HS, HS, 8, 24); block(8, 16, HS, HS, 8, 0); block(8, 24, HS, HS, 8, 8);
+      // head2
+      block(0, 40, HS, HS, 0, 40, true, true); block(0, 48, HS, HS, 0, 48, true, true);
+      block(8, 32, HS, HS, 8, 48); block(8, 40, HS, HS, 8, 56); block(8, 48, HS, HS, 8, 32); block(8, 56, HS, HS, 8, 40);
+      // legs swap
+      block(48, 20, LW, LW, 16, 4, true, true); block(48, 24, LW, LW, 16, 8, true, true);
+      block(52, 28, LW, BH, 20, 4); block(52, 20, LW, BH, 20, 12); block(52, 24, LW, BH, 20, 0); block(52, 16, LW, BH, 20, 8);
+      block(16, 4, LW, LW, 48, 20, true, true); block(16, 8, LW, LW, 48, 24, true, true);
+      block(20, 4, LW, BH, 52, 28); block(20, 12, LW, BH, 52, 20); block(20, 0, LW, BH, 52, 24); block(20, 8, LW, BH, 52, 16);
+      // legs2 swap
+      block(48, 4, LW, LW, 32, 4, true, true); block(48, 8, LW, LW, 32, 8, true, true);
+      block(52, 12, LW, BH, 36, 4); block(52, 4, LW, BH, 36, 12); block(52, 8, LW, BH, 36, 0); block(52, 0, LW, BH, 36, 8);
+      block(32, 4, LW, LW, 48, 4, true, true); block(32, 8, LW, LW, 48, 8, true, true);
+      block(36, 4, LW, BH, 52, 12); block(36, 12, LW, BH, 52, 4); block(36, 0, LW, BH, 52, 8); block(36, 8, LW, BH, 52, 0);
+      // body
+      block(16, 20, HS, LW, 16, 20, true, true); block(16, 28, HS, LW, 16, 28, true, true);
+      block(20, 28, LW, BH, 20, 16); block(20, 32, HS, BH, 20, 20); block(20, 20, HS, BH, 20, 32); block(20, 16, LW, BH, 20, 28);
+      // body2
+      block(32, 20, HS, LW, 32, 20, true, true); block(32, 28, HS, LW, 32, 28, true, true);
+      block(36, 28, LW, BH, 36, 16); block(36, 32, HS, BH, 36, 20); block(36, 20, HS, BH, 36, 32); block(36, 16, LW, BH, 36, 28);
+      // arms swap
+      block(48, 36, AW, LW, 16, 44, true, true); block(48, 36 + AW, AW, LW, 16, 44 + AW, true, true);
+      block(52, 36 + AW, LW, BH, 20, 40); block(52, 40 + AW, AW, BH, 20, 44); block(52, 32, LW, BH, 20, 44 + AW); block(52, 36, AW, BH, 20, 48 + AW);
+      block(16, 44, AW, LW, 48, 36, true, true); block(16, 44 + AW, AW, LW, 48, 36 + AW, true, true);
+      block(20, 40, LW, BH, 52, 36 + AW); block(20, 44, AW, BH, 52, 40 + AW); block(20, 44 + AW, LW, BH, 52, 32); block(20, 48 + AW, AW, BH, 52, 36);
+      // arms2 swap
+      block(48, 52, AW, LW, 32, 44, true, true); block(48, 52 + AW, AW, LW, 32, 44 + AW, true, true);
+      block(52, 52 + AW, LW, BH, 36, 40); block(52, 56 + AW, AW, BH, 36, 44); block(52, 48, LW, BH, 36, 44 + AW); block(52, 52, AW, BH, 36, 48 + AW);
+      block(32, 44, AW, LW, 48, 52, true, true); block(32, 44 + AW, AW, LW, 48, 52 + AW, true, true);
+      block(36, 40, LW, BH, 52, 52 + AW); block(36, 44, AW, BH, 52, 56 + AW); block(36, 44 + AW, LW, BH, 52, 48); block(36, 48 + AW, AW, BH, 52, 52);
+      wctx.clearRect(0, 0, SIZE, SIZE); wctx.drawImage(res, 0, 0);
+    }
+
+    // ── Make symmetric: copy left-half faces onto the right (per front-facing part) ──
+    document.getElementById('ed-mirror-apply').onclick = () => {
+      pushUndo();
+      const rects = layer === 'overlay' ? OVERLAY_RECTS : BASE_RECTS;
+      const img = wctx.getImageData(0, 0, SIZE, SIZE);
+      rects.forEach(r => {
+        for (let y = r.y; y < r.y + r.h; y++) {
+          for (let x = r.x; x < r.x + Math.floor(r.w / 2); x++) {
+            const mx = r.x + (r.x + r.w - 1 - x);
+            const s = (y * SIZE + x) * 4, d = (y * SIZE + mx) * 4;
+            img.data[d] = img.data[s]; img.data[d + 1] = img.data[s + 1]; img.data[d + 2] = img.data[s + 2]; img.data[d + 3] = img.data[s + 3];
+          }
+        }
+      });
+      wctx.putImageData(img, 0, 0); render(); update3D();
+    };
+
+    // ── Image import: place a regular image, then bake into the texture ──
+    let imgBitmap = null;
+    document.getElementById('ed-import').onclick = () => document.getElementById('ed-file').click();
+    document.getElementById('ed-file').onchange = (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        const im = new Image();
+        im.onload = () => { imgBitmap = im; document.getElementById('ed-import-panel').style.display = ''; drawImagePreview(); };
+        im.src = r.result;
+      };
+      r.readAsDataURL(f);
+      e.target.value = '';
+    };
+    function imgParams() {
+      return {
+        x: +document.getElementById('ed-img-x').value,
+        y: +document.getElementById('ed-img-y').value,
+        scale: (+document.getElementById('ed-img-scale').value) / 100,
+        rot: (+document.getElementById('ed-img-rot').value) * Math.PI / 180,
+        op: (+document.getElementById('ed-img-op').value) / 100,
+        mir: document.getElementById('ed-img-mirror').checked,
+      };
+    }
+    function drawImagePreview() {
+      render();
+      // preview on the display overlay-scale canvas
+      vctx.save(); vctx.imageSmoothingEnabled = true;
+      const p = imgParams();
+      const w = imgBitmap.width * p.scale * SCALE, h = imgBitmap.height * p.scale * SCALE;
+      vctx.globalAlpha = p.op;
+      vctx.translate(p.x * SCALE, p.y * SCALE);
+      vctx.rotate(p.rot);
+      if (p.mir) vctx.scale(-1, 1);
+      vctx.drawImage(imgBitmap, -w / 2, -h / 2, w, h);
+      vctx.restore();
+    }
+    ['ed-img-x', 'ed-img-y', 'ed-img-scale', 'ed-img-rot', 'ed-img-op'].forEach(id => document.getElementById(id).oninput = drawImagePreview);
+    document.getElementById('ed-img-mirror').onchange = drawImagePreview;
+    document.getElementById('ed-img-cancel').onclick = () => { imgBitmap = null; document.getElementById('ed-import-panel').style.display = 'none'; render(); };
+    document.getElementById('ed-img-bake').onclick = () => {
+      if (!imgBitmap) return;
+      pushUndo();
+      const p = imgParams();
+      const w = imgBitmap.width * p.scale, h = imgBitmap.height * p.scale;
+      wctx.save(); wctx.imageSmoothingEnabled = true; wctx.globalAlpha = p.op;
+      wctx.translate(p.x, p.y); wctx.rotate(p.rot); if (p.mir) wctx.scale(-1, 1);
+      wctx.drawImage(imgBitmap, -w / 2, -h / 2, w, h);
+      wctx.restore(); wctx.globalAlpha = 1;
+      imgBitmap = null; document.getElementById('ed-import-panel').style.display = 'none';
+      render(); update3D();
+    };
+
+    // ── 3D preview ──
+    let viewer = null, parts3d = {};
+    function build3D() {
+      if (typeof skinview3d === 'undefined') return;
+      viewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-3d'), width: 260, height: 340 });
+      try { viewer.controls.enableZoom = true; } catch { }
+      try { viewer.animation = new skinview3d.IdleAnimation(); viewer.animation.speed = 0.4; } catch { }
+      buildPartToggles();
+      update3D(true);
+    }
+    const PART_KEYS = [['head', 'Head'], ['body', 'Body'], ['rightArm', 'R Arm'], ['leftArm', 'L Arm'], ['rightLeg', 'R Leg'], ['leftLeg', 'L Leg']];
+    function buildPartToggles() {
+      const holder = document.getElementById('ed-parts'); holder.innerHTML = '';
+      PART_KEYS.forEach(([key, label]) => {
+        const lab = document.createElement('label');
+        lab.innerHTML = `<input type="checkbox" checked data-part="${key}"> ${label}`;
+        lab.querySelector('input').onchange = (e) => applyPartVisibility();
+        holder.appendChild(lab);
+      });
+      document.getElementById('ed-show-overlay').onchange = applyPartVisibility;
+    }
+    function applyPartVisibility() {
+      if (!viewer || !viewer.playerObject) return;
+      const showOverlay = document.getElementById('ed-show-overlay').checked;
+      PART_KEYS.forEach(([key]) => {
+        const cb = document.querySelector(`#ed-parts input[data-part="${key}"]`);
+        const part = viewer.playerObject.skin[key];
+        if (!part) return;
+        const on = cb ? cb.checked : true;
+        if (part.innerLayer) part.innerLayer.visible = on;
+        if (part.outerLayer) part.outerLayer.visible = on && showOverlay;
+      });
+    }
+    let update3DTimer = null;
+    function update3D(immediate) {
+      if (!viewer) return;
+      clearTimeout(update3DTimer);
+      const run = () => {
+        try {
+          viewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' });
+          setTimeout(applyPartVisibility, 30);
+        } catch (e) { /* ignore */ }
+      };
+      if (immediate) run(); else update3DTimer = setTimeout(run, 120);
+    }
+
+    // ── Load initial skin ──
+    function loadIntoWork(src) {
+      return new Promise((resolve) => {
+        const im = new Image();
+        im.onload = () => {
+          wctx.clearRect(0, 0, SIZE, SIZE);
+          if (im.height === 32) { // legacy 64×32 → draw into top, leave rest empty
+            wctx.drawImage(im, 0, 0, 64, 32, 0, 0, 64, 32);
+          } else {
+            wctx.drawImage(im, 0, 0, SIZE, SIZE);
+          }
+          resolve();
+        };
+        im.onerror = () => resolve();
+        im.src = src;
+      });
+    }
+    async function init() {
+      // The library is keyed by the account's Mojang UUID — resolve the real one
+      // if we weren't handed it, so saves land in the right place.
+      if (!uuid) { try { const prof = await ipcRenderer.invoke('mc:getProfile'); uuid = prof && prof.id; } catch { } }
+      let name = 'My skin';
+      if (mode === 'edit' && editSkinId && uuid) {
+        try {
+          const lib = await ipcRenderer.invoke('skins:list', { uuid });
+          const s = (lib || []).find(x => String(x.id) === String(editSkinId));
+          if (s) { await loadIntoWork('data:image/png;base64,' + s.base64); name = s.name || name; variant = s.variant || 'classic'; setVariant(variant); document.getElementById('ed-title').textContent = 'Editing: ' + name; }
+        } catch { }
+      } else if (mode === 'new' && params.get('template') === '1') {
+        await loadIntoWork('assets/template.png');
+        document.getElementById('ed-title').textContent = 'New skin (from template)';
+      } else if (mode === 'image') {
+        // start blank; open the image picker immediately
+        document.getElementById('ed-title').textContent = 'Image → skin';
+        setTimeout(() => document.getElementById('ed-import').click(), 300);
+      } else {
+        document.getElementById('ed-title').textContent = 'New skin';
+      }
+      document.getElementById('ed-name').value = name;
+      syncColorInputs();
+      render();
+      build3D();
+      const ov = document.getElementById('loading-overlay'); if (ov) { ov.classList.add('fade-out'); setTimeout(() => ov.style.display = 'none', 400); }
+    }
+
+    // ── Save ──
+    document.getElementById('ed-save').onclick = async () => {
+      const btn = document.getElementById('ed-save');
+      const nm = (document.getElementById('ed-name').value || 'My skin').trim();
+      const dataUrl = work.toDataURL('image/png');
+      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
+      try {
+        if (mode === 'edit' && editSkinId && uuid) {
+          await ipcRenderer.invoke('skins:update', { uuid, id: editSkinId, base64: dataUrl, variant, name: nm });
+        } else if (uuid) {
+          await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm });
+        }
+        window.location.href = 'profile-manager.html';
+      } catch (e) {
+        alert('Save failed: ' + (e.message || e));
+        btn.disabled = false; btn.innerHTML = '<i class="material-icons">save</i> Save to library';
+      }
+    };
+
+    function updatePresence(details, state = 'Idle') { ipcRenderer.send('update-discord-presence', { details, state }); }
+    updatePresence('Editing a skin');
+    init();
+  </script>
+  <script src="sidebar.js"></script>
+  <script src="notifications.js"></script>
+</body>
+
+</html>

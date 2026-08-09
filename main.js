@@ -5807,6 +5807,26 @@ ipcMain.handle("skins:rename", (event, { uuid, id, name }) => {
   return arr;
 });
 
+// Update an existing library skin in place (from the skin editor). Keeps the id
+// so the same card is edited rather than a duplicate created.
+ipcMain.handle("skins:update", async (event, { uuid, id, base64, variant, name }) => {
+  const lib = loadSkinLib();
+  const arr = lib[uuid] || [];
+  const s = arr.find(x => String(x.id) === String(id));
+  if (!s) return arr;
+  if (base64) {
+    const b = String(base64).replace(/^data:image\/\w+;base64,/, "");
+    s.base64 = b;
+    s.pixelHash = await skinPixelHash(b);
+  }
+  if (variant) s.variant = variant;
+  if (name) s.name = name;
+  s.updatedAt = Date.now();
+  lib[uuid] = arr;
+  saveSkinLib(lib);
+  return arr;
+});
+
 // Pixel hash for arbitrary base64 (used to detect if the active Mojang skin
 // matches a library entry, regardless of PNG encoding).
 ipcMain.handle("skins:pixelHash", async (event, { base64 }) => {
