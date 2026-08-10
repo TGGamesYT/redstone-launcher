@@ -113,6 +113,8 @@
     <!-- Left: 3D preview -->
     <div id="ed-left">
       <canvas id="ed-3d"></canvas>
+      <label class="ed-row" style="margin:0;"><input type="checkbox" id="ed-draw3d"> <span>Draw on the 3D model</span></label>
+      <div class="ed-hint" style="margin-top:-4px;">On: click/drag paints faces. Off: drag rotates.</div>
       <div class="ed-group">
         <h4>Show in 3D</h4>
         <div class="ed-parts" id="ed-parts"></div>
@@ -155,6 +157,7 @@
         </div>
         <div class="ed-row" style="margin-top:8px;"><label><input type="checkbox" id="ed-mirror"> Mirror (symmetry)</label></div>
         <div class="ed-hint">Mirror paints the opposite side of the same body part too.</div>
+        <div class="ed-row" style="margin-top:6px;"><label><input type="checkbox" id="ed-grid" checked> Grid on this layer</label></div>
       </div>
 
       <div class="ed-group">
@@ -173,13 +176,25 @@
 
       <!-- Image import controls (shown after picking an image) -->
       <div class="ed-group" id="ed-import-panel">
-        <h4>Place image</h4>
-        <div class="ed-row"><label>X</label><input type="range" id="ed-img-x" min="-32" max="64" value="16"></div>
-        <div class="ed-row"><label>Y</label><input type="range" id="ed-img-y" min="-32" max="64" value="8"></div>
-        <div class="ed-row"><label>Scale</label><input type="range" id="ed-img-scale" min="1" max="200" value="40"></div>
-        <div class="ed-row"><label>Rotate</label><input type="range" id="ed-img-rot" min="-180" max="180" value="0"></div>
+        <h4>Add image</h4>
+        <div class="ed-seg" style="margin-bottom:8px;">
+          <button id="ed-img-mode-free" class="active">Place freely</button>
+          <button id="ed-img-mode-wrap">Wrap on body</button>
+        </div>
+        <div id="ed-free-controls">
+          <div class="ed-row"><label>X</label><input type="range" id="ed-img-x" min="-32" max="64" value="16"></div>
+          <div class="ed-row"><label>Y</label><input type="range" id="ed-img-y" min="-32" max="64" value="8"></div>
+          <div class="ed-row"><label>Scale</label><input type="range" id="ed-img-scale" min="1" max="200" value="40"></div>
+          <div class="ed-row"><label>Rotate</label><input type="range" id="ed-img-rot" min="-180" max="180" value="0"></div>
+        </div>
+        <div id="ed-wrap-controls" style="display:none;">
+          <div class="ed-row"><label>Pan X</label><input type="range" id="ed-wrap-px" min="-100" max="100" value="0"></div>
+          <div class="ed-row"><label>Pan Y</label><input type="range" id="ed-wrap-py" min="-100" max="100" value="0"></div>
+          <div class="ed-row"><label>Zoom</label><input type="range" id="ed-wrap-scale" min="20" max="300" value="100"></div>
+          <div class="ed-hint">Wraps the photo onto the body's front (and sides); the current skin shows on faces the photo doesn't cover.</div>
+        </div>
         <div class="ed-row"><label>Opacity</label><input type="range" id="ed-img-op" min="1" max="100" value="100"></div>
-        <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror"> Mirror image</label></div>
+        <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror"> Mirror <span id="ed-mirror-label">image</span></label></div>
         <div class="ed-btn-row">
           <button class="ed-btn primary" id="ed-img-bake">Bake in</button>
           <button class="ed-btn" id="ed-img-cancel">Cancel</button>
@@ -200,6 +215,8 @@
 
   <input type="file" id="ed-file" accept="image/png,image/*" style="display:none;" />
   <img id="ed-hidden-img" style="display:none;" />
+  <!-- three.js (r163, matching skinview3d) exposed as window.THREE for raycast painting on the 3D model -->
+  <script type="module">import * as THREE from './three.module.js'; window.THREE = THREE;</script>
   <script src="skinview3d.bundle.js"></script>
   <script>
     const { ipcRenderer } = require('electron');
@@ -245,6 +262,8 @@
     let tool = 'brush';
     let layer = 'base';       // base | overlay
     let mirror = false;
+    let gridOn = true;
+    let draw3d = false;
     let variant = 'classic';
     let color = { r: 138, g: 90, b: 59 };
     let opacity = 1;
@@ -280,15 +299,17 @@
     }
     function renderOverlay() {
       octx.clearRect(0, 0, overlay.width, overlay.height);
-      // faint grid
-      octx.strokeStyle = 'rgba(255,255,255,0.05)'; octx.lineWidth = 1;
-      for (let i = 0; i <= SIZE; i++) {
-        octx.beginPath(); octx.moveTo(i * SCALE + 0.5, 0); octx.lineTo(i * SCALE + 0.5, overlay.height); octx.stroke();
-        octx.beginPath(); octx.moveTo(0, i * SCALE + 0.5); octx.lineTo(overlay.width, i * SCALE + 0.5); octx.stroke();
-      }
-      // region outlines + labels for the ACTIVE layer
       const rects = layer === 'overlay' ? OVERLAY_RECTS : BASE_RECTS;
       const other = layer === 'overlay' ? BASE_RECTS : OVERLAY_RECTS;
+      // Per-texel grid, drawn only over the ACTIVE layer's regions, toggleable.
+      if (gridOn) {
+        octx.strokeStyle = 'rgba(255,255,255,0.16)'; octx.lineWidth = 1;
+        rects.forEach(r => {
+          for (let gx = r.x; gx <= r.x + r.w; gx++) { octx.beginPath(); octx.moveTo(gx * SCALE + 0.5, r.y * SCALE); octx.lineTo(gx * SCALE + 0.5, (r.y + r.h) * SCALE); octx.stroke(); }
+          for (let gy = r.y; gy <= r.y + r.h; gy++) { octx.beginPath(); octx.moveTo(r.x * SCALE, gy * SCALE + 0.5); octx.lineTo((r.x + r.w) * SCALE, gy * SCALE + 0.5); octx.stroke(); }
+        });
+      }
+      // region outlines + labels for the ACTIVE layer (inactive faint)
       other.forEach(r => outlineRect(r, 'rgba(255,255,255,0.10)', null));
       rects.forEach(r => outlineRect(r, 'var(--base-color)', r.name));
     }
@@ -314,13 +335,14 @@
       const y = Math.floor((e.clientY - rect.top) / (rect.height / SIZE));
       return { x, y };
     }
-    function paintable(x, y) {
+    function paintable(x, y, force) {
       if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return false;
+      if (force) return true; // 3D painting hits an exact texel; no layer mask
       return layer === 'overlay' ? isOverlayTexel(x, y) : !isOverlayTexel(x, y);
     }
     function jitter(v, amt) { return Math.max(0, Math.min(255, v + Math.round((Math.random() * 2 - 1) * amt))); }
-    function setTexel(x, y, mode) {
-      if (!paintable(x, y)) return;
+    function setTexel(x, y, mode, force) {
+      if (!paintable(x, y, force)) return;
       if (mode === 'eraser') { wctx.clearRect(x, y, 1, 1); return; }
       let r = color.r, g = color.g, b = color.b;
       if (mode === 'texture') { r = jitter(r, 22); g = jitter(g, 22); b = jitter(b, 22); }
@@ -330,18 +352,19 @@
       else { wctx.fillStyle = `rgba(${r},${g},${b},${opacity})`; wctx.fillRect(x, y, 1, 1); }
     }
     function mirrorTexel(x, y) {
-      // Horizontal mirror within the body part the texel belongs to.
-      const rects = layer === 'overlay' ? OVERLAY_RECTS : BASE_RECTS;
+      // Horizontal mirror within the body part the texel belongs to. The part is
+      // chosen by the texel's OWN layer so this works for 2D and 3D painting.
+      const rects = isOverlayTexel(x, y) ? OVERLAY_RECTS : BASE_RECTS;
       const r = rectAt(rects, x, y);
       if (!r) return null;
       return { x: r.x + (r.x + r.w - 1 - x), y };
     }
-    function stampAt(cx, cy, mode) {
+    function stampAt(cx, cy, mode, force) {
       const half = Math.floor(brushSize / 2);
       for (let dy = 0; dy < brushSize; dy++) for (let dx = 0; dx < brushSize; dx++) {
         const x = cx - half + dx, y = cy - half + dy;
-        setTexel(x, y, mode);
-        if (mirror) { const m = mirrorTexel(x, y); if (m) setTexel(m.x, m.y, mode); }
+        setTexel(x, y, mode, force);
+        if (mirror) { const m = mirrorTexel(x, y); if (m) setTexel(m.x, m.y, mode, force); }
       }
     }
     function lineStamp(a, b, mode) {
@@ -364,8 +387,8 @@
       color = { r: d[0], g: d[1], b: d[2] };
       syncColorInputs();
     }
-    function floodFill(sx, sy) {
-      if (!paintable(sx, sy)) return;
+    function floodFill(sx, sy, force) {
+      if (!paintable(sx, sy, force)) return;
       const img = wctx.getImageData(0, 0, SIZE, SIZE);
       const at = (x, y) => (y * SIZE + x) * 4;
       const t = at(sx, sy);
@@ -381,10 +404,10 @@
         const [x, y] = stack.pop();
         if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) continue;
         const key = y * SIZE + x; if (seen.has(key)) continue; seen.add(key);
-        if (!paintable(x, y)) continue;
+        if (!paintable(x, y, force)) continue;
         if (!match(at(x, y))) continue;
-        setTexel(x, y, fillMode);
-        if (mirror) { const m = mirrorTexel(x, y); if (m) setTexel(m.x, m.y, fillMode); }
+        setTexel(x, y, fillMode, force);
+        if (mirror) { const m = mirrorTexel(x, y); if (m) setTexel(m.x, m.y, fillMode, force); }
         stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
       }
     }
@@ -455,6 +478,16 @@
       renderOverlay();
     }
     document.getElementById('ed-mirror').onchange = (e) => { mirror = e.target.checked; };
+    document.getElementById('ed-grid').onchange = (e) => { gridOn = e.target.checked; renderOverlay(); };
+    document.getElementById('ed-draw3d').onchange = (e) => {
+      draw3d = e.target.checked;
+      // Free the orbit controls when painting, restore them otherwise; pause the
+      // idle animation so the model holds still while you draw on it.
+      if (viewer && viewer.controls) { try { viewer.controls.enableRotate = !draw3d; viewer.controls.enableZoom = !draw3d; } catch { } }
+      if (viewer && viewer.animation) { try { viewer.animation.paused = draw3d; } catch { } }
+      const c = document.getElementById('ed-3d');
+      c.style.cursor = draw3d ? 'crosshair' : 'grab';
+    };
 
     document.getElementById('ed-variant-classic').onclick = () => setVariant('classic');
     document.getElementById('ed-variant-slim').onclick = () => setVariant('slim');
@@ -549,12 +582,25 @@
       const r = new FileReader();
       r.onload = () => {
         const im = new Image();
-        im.onload = () => { imgBitmap = im; document.getElementById('ed-import-panel').style.display = ''; drawImagePreview(); };
+        im.onload = () => { imgBitmap = im; document.getElementById('ed-import-panel').style.display = ''; setImportMode(mode === 'image' ? 'wrap' : 'free'); };
         im.src = r.result;
       };
       r.readAsDataURL(f);
       e.target.value = '';
     };
+    let importMode = 'free';   // free | wrap
+    function setImportMode(m) {
+      importMode = m;
+      document.getElementById('ed-img-mode-free').classList.toggle('active', m === 'free');
+      document.getElementById('ed-img-mode-wrap').classList.toggle('active', m === 'wrap');
+      document.getElementById('ed-free-controls').style.display = m === 'free' ? '' : 'none';
+      document.getElementById('ed-wrap-controls').style.display = m === 'wrap' ? '' : 'none';
+      document.getElementById('ed-mirror-label').textContent = m === 'wrap' ? 'to back' : 'image';
+      drawImagePreview();
+    }
+    document.getElementById('ed-img-mode-free').onclick = () => setImportMode('free');
+    document.getElementById('ed-img-mode-wrap').onclick = () => setImportMode('wrap');
+
     function imgParams() {
       return {
         x: +document.getElementById('ed-img-x').value,
@@ -565,33 +611,89 @@
         mir: document.getElementById('ed-img-mirror').checked,
       };
     }
+
+    // Freeform placement onto a target 2D context (dest 64×64 space scaled by k).
+    function drawFree(ctx, k) {
+      const p = imgParams();
+      const w = imgBitmap.width * p.scale * k, h = imgBitmap.height * p.scale * k;
+      ctx.save(); ctx.imageSmoothingEnabled = true; ctx.globalAlpha = p.op;
+      ctx.translate(p.x * k, p.y * k); ctx.rotate(p.rot); if (p.mir) ctx.scale(-1, 1);
+      ctx.drawImage(imgBitmap, -w / 2, -h / 2, w, h);
+      ctx.restore(); ctx.globalAlpha = 1;
+    }
+
+    // Wrap a photo onto the body's faces (front + sides, optional back), ported
+    // from the pngskin2 mapping. Draws over whatever skin is already there so the
+    // current skin shows through on uncovered faces. `M` maps RS units → px.
+    function drawWrap(ctx, M) {
+      const bm = imgBitmap.height / 12;
+      const panX = (+document.getElementById('ed-wrap-px').value) / 100 * imgBitmap.width * 0.5;
+      const panY = (+document.getElementById('ed-wrap-py').value) / 100 * imgBitmap.height * 0.5;
+      const sizeX = (+document.getElementById('ed-wrap-scale').value) / 100;
+      const sizeY = sizeX;
+      const ox = imgBitmap.width / 2 + panX, oy = imgBitmap.height / 2 + panY;
+      const back = document.getElementById('ed-img-mirror').checked;
+      const op = (+document.getElementById('ed-img-op').value) / 100;
+      ctx.save(); ctx.globalAlpha = op; ctx.imageSmoothingEnabled = true;
+      const D = (sx, sy, sw, sh, dx, dy, dw, dh) =>
+        ctx.drawImage(imgBitmap, sx * sizeX, sy * sizeY, sw * bm * sizeX, sh * bm * sizeY, dx * M, dy * M, dw * M, dh * M);
+      const flip = (x, y, w, h, fn) => {
+        const dx = x * M, dy = y * M, dw = w * M, dh = h * M, cx = dx + dw / 2, cy = dy + dh / 2;
+        ctx.save(); ctx.translate(cx, cy); ctx.scale(-1, 1); ctx.translate(-cx, -cy); fn(); ctx.restore();
+      };
+      // front faces
+      D(ox - 1 * bm, oy - 4 * bm, 2, 2, 2, 2, 2, 2);       // head
+      D(ox - 1 * bm, oy - 2 * bm, 2, 3, 5, 5, 2, 3);       // torso
+      D(ox + 1 * bm, oy - 2 * bm, 1, 3, 9, 13, 1, 3);      // left arm
+      D(ox - 2 * bm, oy - 2 * bm, 1, 3, 11, 5, 1, 3);      // right arm
+      D(ox + 0, oy + 1 * bm, 1, 3, 5, 13, 1, 3);           // left leg
+      D(ox - 1 * bm, oy + 1 * bm, 1, 3, 1, 5, 1, 3);       // right leg
+      if (back) {
+        flip(6, 2, 2, 2, () => D(ox - 1 * bm, oy - 4 * bm, 2, 2, 6, 2, 2, 2));
+        flip(8, 5, 2, 3, () => D(ox - 1 * bm, oy - 2 * bm, 2, 3, 8, 5, 2, 3));
+        flip(13, 5, 1, 3, () => D(ox - 2 * bm, oy - 2 * bm, 1, 3, 13, 5, 1, 3));
+        flip(11, 13, 1, 3, () => D(ox + 1 * bm, oy - 2 * bm, 1, 3, 11, 13, 1, 3));
+        flip(3, 5, 1, 3, () => D(ox - 1 * bm, oy + 1 * bm, 1, 3, 3, 5, 1, 3));
+        flip(7, 13, 1, 3, () => D(ox, oy + 1 * bm, 1, 3, 7, 13, 1, 3));
+      }
+      // sides (2px)
+      D(ox - 1.5 * bm, oy - 4 * bm, .5, 2, 1.5, 2, .5, 2); D(ox + 1 * bm, oy - 4 * bm, .5, 2, 4, 2, .5, 2);
+      D(ox - 1 * bm, oy - 2 * bm, 2, .5, 4, 1.5, 2, .5); D(ox - 1 * bm, oy - 4.5 * bm, 2, .5, 2, 1.5, 2, .5);
+      D(ox - 1.5 * bm, oy - 2 * bm, .5, 3, 4.5, 5, .5, 3); D(ox + 1 * bm, oy - 2 * bm, .5, 3, 7, 5, .5, 3);
+      D(ox - 1 * bm, oy - 2.5 * bm, 2, .5, 5, 4.5, 2, .5); D(ox - 1 * bm, oy + 1 * bm, 2, .5, 7, 4.5, 2, .5);
+      D(ox + 0.5 * bm, oy - 2 * bm, .5, 3, 8.5, 13, .5, 3); D(ox + 2 * bm, oy - 2 * bm, .5, 3, 10, 13, .5, 3);
+      D(ox + 1 * bm, oy - 2.5 * bm, 1, .5, 9, 12.5, 1, .5); D(ox + 1 * bm, oy + 1 * bm, 1, .5, 10, 12.5, 1, .5);
+      D(ox - 2.5 * bm, oy - 2 * bm, .5, 3, 10.5, 5, .5, 3); D(ox - 1 * bm, oy - 2 * bm, .5, 3, 12, 5, .5, 3);
+      D(ox - 2 * bm, oy - 2.5 * bm, 1, .5, 11, 4.5, 1, .5); D(ox - 2 * bm, oy + 1 * bm, 1, .5, 12, 4.5, 1, .5);
+      D(ox - 1.5 * bm, oy + 1 * bm, .5, 3, .5, 5, .5, 3); D(ox - 0 * bm, oy + 1 * bm, .5, 3, 2, 5, .5, 3);
+      D(ox - 1 * bm, oy + 0.5 * bm, 1, .5, 1, 4.5, 1, .5); D(ox - 1 * bm, oy + 4 * bm, 1, .5, 2, 4.5, 1, .5);
+      D(ox - 0.5 * bm, oy + 1 * bm, .5, 3, 4.5, 13, .5, 3); D(ox + 1 * bm, oy + 1 * bm, .5, 3, 6, 13, .5, 3);
+      D(ox + 0 * bm, oy + .5 * bm, 1, .5, 5, 12.5, 1, .5); D(ox + 0 * bm, oy + 4 * bm, 1, .5, 6, 12.5, 1, .5);
+      ctx.restore(); ctx.globalAlpha = 1;
+    }
+
     function drawImagePreview() {
       render();
-      // preview on the display overlay-scale canvas
-      vctx.save(); vctx.imageSmoothingEnabled = true;
-      const p = imgParams();
-      const w = imgBitmap.width * p.scale * SCALE, h = imgBitmap.height * p.scale * SCALE;
-      vctx.globalAlpha = p.op;
-      vctx.translate(p.x * SCALE, p.y * SCALE);
-      vctx.rotate(p.rot);
-      if (p.mir) vctx.scale(-1, 1);
-      vctx.drawImage(imgBitmap, -w / 2, -h / 2, w, h);
-      vctx.restore();
+      if (!imgBitmap) return;
+      if (importMode === 'wrap') {
+        // Composite over a copy of the current skin, then show at display scale.
+        const tmp = document.createElement('canvas'); tmp.width = SIZE; tmp.height = SIZE;
+        const tc = tmp.getContext('2d'); tc.drawImage(work, 0, 0); drawWrap(tc, 4);
+        vctx.imageSmoothingEnabled = false;
+        vctx.drawImage(tmp, 0, 0, SIZE, SIZE, 0, 0, view.width, view.height);
+      } else {
+        drawFree(vctx, SCALE);
+      }
     }
-    ['ed-img-x', 'ed-img-y', 'ed-img-scale', 'ed-img-rot', 'ed-img-op'].forEach(id => document.getElementById(id).oninput = drawImagePreview);
+    ['ed-img-x', 'ed-img-y', 'ed-img-scale', 'ed-img-rot', 'ed-img-op', 'ed-wrap-px', 'ed-wrap-py', 'ed-wrap-scale'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = drawImagePreview; });
     document.getElementById('ed-img-mirror').onchange = drawImagePreview;
     document.getElementById('ed-img-cancel').onclick = () => { imgBitmap = null; document.getElementById('ed-import-panel').style.display = 'none'; render(); };
     document.getElementById('ed-img-bake').onclick = () => {
       if (!imgBitmap) return;
       pushUndo();
-      const p = imgParams();
-      const w = imgBitmap.width * p.scale, h = imgBitmap.height * p.scale;
-      wctx.save(); wctx.imageSmoothingEnabled = true; wctx.globalAlpha = p.op;
-      wctx.translate(p.x, p.y); wctx.rotate(p.rot); if (p.mir) wctx.scale(-1, 1);
-      wctx.drawImage(imgBitmap, -w / 2, -h / 2, w, h);
-      wctx.restore(); wctx.globalAlpha = 1;
+      if (importMode === 'wrap') drawWrap(wctx, 4); else drawFree(wctx, 1);
       imgBitmap = null; document.getElementById('ed-import-panel').style.display = 'none';
-      render(); update3D();
+      render(); update3D(true);
     };
 
     // ── 3D preview ──
@@ -603,6 +705,48 @@
       try { viewer.animation = new skinview3d.IdleAnimation(); viewer.animation.speed = 0.4; } catch { }
       buildPartToggles();
       update3D(true);
+      attach3DPainting();
+    }
+    // Paint directly on the 3D model: raycast the click against the player mesh,
+    // read the hit UV, convert to a texel and stamp it. Needs window.THREE
+    // (vendored r163). Requires the "Draw on the 3D model" toggle.
+    let drawing3d = false;
+    function texelFromHit(e) {
+      if (!window.THREE || !viewer || !viewer.playerObject || !viewer.camera) return null;
+      const c = document.getElementById('ed-3d');
+      const rect = c.getBoundingClientRect();
+      const ndc = new window.THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      const rc = new window.THREE.Raycaster();
+      rc.setFromCamera(ndc, viewer.camera);
+      const hits = rc.intersectObject(viewer.playerObject, true);
+      const hit = hits.find(h => h.uv);
+      if (!hit) return null;
+      return { x: Math.floor(hit.uv.x * SIZE), y: Math.floor((1 - hit.uv.y) * SIZE) };
+    }
+    function paint3D(e, isDown) {
+      const t = texelFromHit(e);
+      if (!t) return;
+      if (tool === 'eyedropper') { if (isDown) pickColor(t.x, t.y); return; }
+      if (tool === 'fill') { if (isDown) { pushUndo(); floodFill(t.x, t.y, true); render(); update3D(true); } return; }
+      stampAt(t.x, t.y, tool === 'texture' ? 'texture' : (tool === 'eraser' ? 'eraser' : 'brush'), true);
+      render(); update3D();
+    }
+    function attach3DPainting() {
+      const c = document.getElementById('ed-3d');
+      c.style.cursor = 'grab';
+      c.addEventListener('pointerdown', (e) => {
+        if (!draw3d) return;
+        e.preventDefault(); c.setPointerCapture(e.pointerId);
+        if (tool !== 'eyedropper' && tool !== 'fill') pushUndo();
+        drawing3d = true; paint3D(e, true);
+      });
+      c.addEventListener('pointermove', (e) => { if (draw3d && drawing3d) paint3D(e, false); });
+      const end = () => { if (drawing3d) { drawing3d = false; update3D(true); } };
+      c.addEventListener('pointerup', end);
+      c.addEventListener('pointercancel', end);
     }
     const PART_KEYS = [['head', 'Head'], ['body', 'Body'], ['rightArm', 'R Arm'], ['leftArm', 'L Arm'], ['rightLeg', 'R Leg'], ['leftLeg', 'L Leg']];
     function buildPartToggles() {
