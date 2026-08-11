@@ -27,6 +27,7 @@ import nbt from "prismarine-nbt";
 import RPC from "discord-rpc";
 import os from 'os';
 import net from 'net';
+import dns from 'dns';
 import xml2js from "xml2js";
 import unzipper from "unzipper";
 import QRCode from "qrcode";
@@ -4450,28 +4451,47 @@ function pingMinecraft(host, port, timeout = 4000) {
 
 ipcMain.handle("get-server-status", async (event, { ip }) => {
   if (!ip) return { online: false };
-  const { host, port } = splitHostPort(ip);
-  // LAN / localhost: ping the server directly (mcsrvstat can't see private IPs).
-  if (isLocalAddress(host)) {
+  let { host, port } = splitHostPort(ip);
+  const hadExplicitPort = /:\d+$/.test(String(ip).trim());
+  const isIpLiteral = /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":");
+
+  // Resolve a Minecraft SRV record for public hostnames with no explicit port so
+  // we can reach the actual host:port directly (many networks publish these).
+  if (!hadExplicitPort && !isLocalAddress(host) && !isIpLiteral) {
     try {
-      const r = await pingMinecraft(host, port);
-      if (!r.online) return { online: false };
+      const rec = await dns.promises.resolveSrv(`_minecraft._tcp.${host}`);
+      if (rec && rec.length) { host = rec[0].name; port = rec[0].port; }
+    } catch { /* no SRV — use host:25565 */ }
+  }
+
+  // Talk to the server DIRECTLY (Server List Ping) — no third party in the
+  // middle. This returns the real MOTD component, so gradient/per-character
+  // colours survive instead of being collapsed by a status API.
+  try {
+    const r = await pingMinecraft(host, port);
+    if (r.online) {
       const d = r.raw || {};
       return {
         online: true,
-        motd: d.description != null ? d.description : null, // chat component or string
+        motd: d.description != null ? d.description : null, // chat component or legacy string
         players: d.players ? { online: d.players.online, max: d.players.max } : null,
         version: d.version && d.version.name ? d.version.name : null,
         icon: d.favicon || null, // already a data: URL
       };
-    } catch { return { online: false }; }
-  }
+    }
+  } catch { /* fall through to the public API */ }
+
+  // Local servers can't be reached any other way — if the direct ping failed
+  // they're simply offline.
+  if (isLocalAddress(host)) return { online: false };
+
+  // Fallback for public servers a direct ping couldn't reach (odd NAT/proxy,
+  // ping disabled, etc.). The API can't render gradients but is a safety net.
   try {
     const res = await fetch(`https://api.mcsrvstat.us/3/${encodeURIComponent(ip)}`, {
       headers: { "User-Agent": LAUNCHER_UA }
     });
     const d = await res.json();
-    // Prefer the raw (§-coded) MOTD so the UI can render its colours/formatting.
     const motdRaw = d.motd?.raw ? d.motd.raw.join("\n").trim() : null;
     const motdClean = d.motd?.clean ? d.motd.clean.join("\n").trim() : null;
     return {
@@ -4479,7 +4499,7 @@ ipcMain.handle("get-server-status", async (event, { ip }) => {
       motd: motdRaw || motdClean || null,
       players: d.players ? { online: d.players.online, max: d.players.max } : null,
       version: d.version || null,
-      icon: d.icon || null // already a data: URL
+      icon: d.icon || null
     };
   } catch (err) {
     devtoolsLog("Server status lookup failed:", err);

@@ -256,20 +256,21 @@
   cursor: not-allowed;
 }
 
-/* Reorder (move up / move down) — both arrows share ONE action slot, stacked. */
+/* Reorder (move up / move down) — both arrows share ONE action slot the same
+   width as the other buttons, stacked vertically inside it. */
 .reorder-stack {
   display: inline-flex;
   flex-direction: column;
   justify-content: center;
+  align-items: stretch;
 }
 .reorder-btn {
   background: transparent;
   border: none;
   color: var(--text-color);
   cursor: pointer;
-  padding: 0;
+  padding: 2px 4px;
   margin: 0;
-  height: 15px;
   line-height: 0;
   display: flex;
   align-items: center;
@@ -277,7 +278,16 @@
   border-radius: 4px;
 }
 .reorder-btn:hover { background: var(--third-color); }
-.reorder-btn i { font-size: 18px; }
+.reorder-btn i { font-size: 20px; }
+
+/* Player count, sat just left of the row's action buttons. */
+.server-players {
+  font-size: 12px;
+  opacity: 0.8;
+  white-space: nowrap;
+  margin-right: 4px;
+  align-self: center;
+}
 
 .server-row.dragging {
   opacity: 0.4;

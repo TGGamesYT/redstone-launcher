@@ -634,6 +634,17 @@
       } finally { btn.disabled = false; btn.textContent = 'Share'; }
     };
 
+    // When the launcher regains focus after being away (e.g. you tabbed out to
+    // the running game and changed its servers / resource packs), re-render the
+    // currently-open instance tab so the launcher reflects those on-disk changes.
+    let _instLastBlur = 0;
+    window.addEventListener('blur', () => { _instLastBlur = Date.now(); });
+    window.addEventListener('focus', () => {
+      if (Date.now() - _instLastBlur < 1200) return;
+      const activeTab = document.querySelector('.instance-tab-btn.active');
+      if (activeTab) activeTab.click();
+    });
+
     // small debounce helper
     function debounce(fn, wait = 150) {
       let t;
@@ -1725,7 +1736,7 @@
 
         // Card for an installed mod/resourcepack/shader with enable/disable +
         // update controls. `refresh` re-renders the tab after a change.
-        function createContentCard(p, tabName, refresh) {
+        function createContentCard(p, tabName, refresh, running) {
           const li = document.createElement("li");
           li.className = "profile-item";
           if (p.disabled) li.style.opacity = "0.45";
@@ -1782,7 +1793,8 @@
           const toggle = document.createElement("button");
           toggle.className = "card-action-btn";
           toggle.innerHTML = `<i class="material-icons">${p.enabled ? "toggle_on" : "toggle_off"}</i>`;
-          toggle.title = p.enabled ? "Disable" : "Enable";
+          toggle.disabled = !!running;
+          toggle.title = running ? "Close the game to change this" : (p.enabled ? "Disable" : "Enable");
           toggle.onclick = async (e) => {
             e.stopPropagation();
             toggle.disabled = true;
@@ -2106,6 +2118,9 @@
               const renderContentTab = async () => {
                 const fileInfos = await ipcRenderer.invoke("get-instance-mods", { profileId: profile.id, tab: tabName });
                 if (!ensureStillActive()) return;
+                // Enabling/disabling while the game is running won't take effect.
+                const running = (await ipcRenderer.invoke("get-running-instances") || []).some(r => String(r.id) === String(profile.id));
+                if (!ensureStillActive()) return;
                 tabContent.classList.remove("logs-active");
                 tabContent.innerHTML = "";
                 const bar = document.createElement("div");
@@ -2117,10 +2132,21 @@
                 openBtn.textContent = `Open ${tabName.charAt(0).toUpperCase() + tabName.slice(1)} Folder`;
                 openBtn.onclick = () => ipcRenderer.send("open-instance-folder", { profileId: profile.id, sub: tabName });
                 bar.appendChild(openBtn);
+                const refreshBtn = document.createElement("button");
+                refreshBtn.className = "tab-install-btn secondary";
+                refreshBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">refresh</i> Refresh`;
+                refreshBtn.onclick = () => renderContentTab();
+                bar.appendChild(refreshBtn);
+                if (running) {
+                  const note = document.createElement("span");
+                  note.style.cssText = "font-size:12px; opacity:0.7; align-self:center;";
+                  note.textContent = "Instance running — changes apply after restart.";
+                  bar.appendChild(note);
+                }
                 tabContent.appendChild(bar);
                 const ul = document.createElement("ul");
                 ul.className = "profile-list";
-                for (const p of fileInfos) ul.appendChild(createContentCard(p, tabName, renderContentTab));
+                for (const p of fileInfos) ul.appendChild(createContentCard(p, tabName, renderContentTab, running));
                 tabContent.appendChild(ul);
               };
               await renderContentTab();
@@ -2222,18 +2248,38 @@
               const renderServers = async () => {
                 const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id });
                 if (!ensureStillActive()) return;
+                // Editing the server list while the game is running won't take
+                // effect (the game owns servers.dat), so lock those actions.
+                const running = (await ipcRenderer.invoke("get-running-instances") || []).some(r => String(r.id) === String(profile.id));
+                if (!ensureStillActive()) return;
                 tabContent.innerHTML = "";
 
+                const bar = document.createElement("div");
+                bar.style.cssText = "display:flex; gap:8px; align-items:center; flex-wrap:wrap;";
                 const addBtn = document.createElement("button");
                 addBtn.className = "tab-install-btn";
                 addBtn.textContent = "Add Server";
+                addBtn.disabled = running;
+                if (running) addBtn.title = "Close the game to edit its server list";
                 addBtn.onclick = async () => {
                   const data = await openServerModal({ mode: "add" });
                   if (!data) return;
                   await ipcRenderer.invoke("add-instance-server", { profileId: profile.id, name: data.name, ip: data.ip, icon: data.icon });
                   renderServers();
                 };
-                tabContent.appendChild(addBtn);
+                const refreshBtn = document.createElement("button");
+                refreshBtn.className = "tab-install-btn secondary";
+                refreshBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">refresh</i> Refresh`;
+                refreshBtn.title = "Re-ping the servers";
+                refreshBtn.onclick = () => renderServers();
+                bar.append(addBtn, refreshBtn);
+                if (running) {
+                  const note = document.createElement("span");
+                  note.style.cssText = "font-size:12px; opacity:0.7;";
+                  note.textContent = "Instance is running — server list is read-only.";
+                  bar.appendChild(note);
+                }
+                tabContent.appendChild(bar);
 
                 const ul = document.createElement("ul");
                 ul.className = "profile-list";
@@ -2279,7 +2325,8 @@
                   const editBtn = document.createElement("button");
                   editBtn.className = "card-action-btn";
                   editBtn.innerHTML = `<i class="material-icons">edit</i>`;
-                  editBtn.title = "Edit server";
+                  editBtn.title = running ? "Close the game to edit servers" : "Edit server";
+                  editBtn.disabled = running;
                   editBtn.onclick = async (e) => {
                     e.stopPropagation();
                     const data = await openServerModal({ mode: "edit", server: s });
@@ -2292,7 +2339,8 @@
                   const delBtn = document.createElement("button");
                   delBtn.className = "card-action-btn";
                   delBtn.innerHTML = `<i class="material-icons">delete</i>`;
-                  delBtn.title = "Delete server";
+                  delBtn.title = running ? "Close the game to remove servers" : "Delete server";
+                  delBtn.disabled = running;
                   delBtn.onclick = async (e) => {
                     e.stopPropagation();
                     await ipcRenderer.invoke("delete-instance-server", { profileId: profile.id, index: s.index });
@@ -2314,16 +2362,25 @@
                   upBtn.innerHTML = `<i class="material-icons">keyboard_arrow_up</i>`;
                   upBtn.title = "Move up";
                   upBtn.onclick = (e) => { e.stopPropagation(); move(s.index - 1); };
-                  if (s.index === 0) upBtn.style.visibility = "hidden";
+                  if (s.index === 0 || running) upBtn.style.visibility = "hidden";
                   const downBtn = document.createElement("button");
                   downBtn.className = "reorder-btn";
                   downBtn.innerHTML = `<i class="material-icons">keyboard_arrow_down</i>`;
                   downBtn.title = "Move down";
                   downBtn.onclick = (e) => { e.stopPropagation(); move(s.index + 1); };
-                  if (s.index === servers.length - 1) downBtn.style.visibility = "hidden";
+                  if (s.index === servers.length - 1 || running) downBtn.style.visibility = "hidden";
                   reorder.append(upBtn, downBtn);
+
+                  // Player count sits just left of the buttons (not on the MOTD).
+                  const playersEl = document.createElement("span");
+                  playersEl.className = "server-players";
+                  actions.insertBefore(playersEl, actions.firstChild);
+                  li._playersEl = playersEl;
+
                   actions.appendChild(reorder);
                   li.appendChild(actions);
+                  // Drag-reorder is disabled while the game is running.
+                  li.draggable = !running;
 
                   // Drag to reorder.
                   li.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", String(s.index)); li.classList.add("dragging"); });
@@ -2355,11 +2412,10 @@
                       } else {
                         details.appendChild(document.createTextNode(s.ip));
                       }
-                      if (st.players) {
-                        const p = document.createElement("span");
-                        p.style.opacity = "0.8";
-                        p.textContent = `  ·  ${st.players.online}/${st.players.max} online`;
-                        details.appendChild(p);
+                      // Player count goes next to the action buttons, not on the MOTD.
+                      if (st.players && li._playersEl) {
+                        li._playersEl.textContent = `${st.players.online}/${st.players.max}`;
+                        li._playersEl.title = "Players online";
                       }
                       if (st.icon && !s.icon) img.src = st.icon;
                     }).catch(() => { details.textContent = s.ip; });

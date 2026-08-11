@@ -249,6 +249,9 @@
     // with globals defined by sidebar.js / notifications.js loaded afterwards.
     (function () {
     const { ipcRenderer } = require('electron');
+    // sidebar.js / notifications.js expect a global `ipcRenderer`; expose it
+    // (the IIFE would otherwise keep it private and break those scripts).
+    window.ipcRenderer = ipcRenderer;
     const params = new URLSearchParams(location.search);
     const mode = params.get('mode') || 'new';       // new | edit | image
     const editSkinId = params.get('skinId');
@@ -305,7 +308,6 @@
     const rectAt = (rects, x, y) => rects.find(r => inRect(r, x, y)) || null;
     const isOverlayTexel = (x, y) => FACE_OVERLAY.some(r => inRect(r, x, y));
     const layerFaces = () => (layer === 'overlay' ? FACE_OVERLAY : FACE_BASE);
-    buildFaces();
 
     // ── State ──
     let tool = 'brush';
@@ -313,6 +315,7 @@
     let mirror = false;
     let gridOn = true;
     let variant = 'classic';
+    buildFaces(); // now that `variant` exists
     let color = { r: 138, g: 90, b: 59 };
     let opacity = 1;
     let brushSize = 1;
