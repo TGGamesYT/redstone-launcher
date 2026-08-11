@@ -25,7 +25,8 @@
     }
   </script>
   <style>
-    #editor-wrap { display: flex; gap: 16px; padding: 8px 20px 0 0; height: calc(100vh - 110px); }
+    body { overflow-x: hidden; }
+    #editor-wrap { display: flex; gap: 16px; padding: 8px 20px 0 0; height: calc(100vh - 110px); max-width: 100%; box-sizing: border-box; overflow: hidden; }
     /* Left: 3D preview + visibility toggles. */
     #ed-left { flex: 0 0 260px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
     #ed-3d { width: 260px; height: 340px; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); }
@@ -41,8 +42,8 @@
     #ed-right { flex: 0 0 240px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding-right: 4px; }
     .ed-group { background: color-mix(in srgb, var(--third-color) 60%, transparent); border-radius: var(--border-radius); padding: 10px; }
     .ed-group h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; opacity: 0.8; }
-    .ed-tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-    .ed-tool { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 8px 0; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; }
+    .ed-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .ed-tool { min-width: 0; overflow: hidden; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 8px 2px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; }
     .ed-tool .material-icons { font-size: 20px; }
     .ed-tool:hover { border-color: var(--base-color); }
     .ed-tool.active { background: var(--base-color); border-color: var(--text-color); }
@@ -113,8 +114,7 @@
     <!-- Left: 3D preview -->
     <div id="ed-left">
       <canvas id="ed-3d"></canvas>
-      <label class="ed-row" style="margin:0;"><input type="checkbox" id="ed-draw3d"> <span>Draw on the 3D model</span></label>
-      <div class="ed-hint" style="margin-top:-4px;">On: click/drag paints faces. Off: drag rotates.</div>
+      <div class="ed-hint" style="margin-top:-2px;">Pick the <b>View</b> tool to rotate the model; any paint tool draws directly on it.</div>
       <div class="ed-group">
         <h4>Show in 3D</h4>
         <div class="ed-parts" id="ed-parts"></div>
@@ -219,6 +219,9 @@
   <script type="module">import * as THREE from './three.module.js'; window.THREE = THREE;</script>
   <script src="skinview3d.bundle.js"></script>
   <script>
+    // Wrapped so the editor's locals (hexToRgb, render, view, …) don't collide
+    // with globals defined by sidebar.js / notifications.js loaded afterwards.
+    (function () {
     const { ipcRenderer } = require('electron');
     const params = new URLSearchParams(location.search);
     const mode = params.get('mode') || 'new';       // new | edit | image
@@ -237,33 +240,52 @@
     view.height = overlay.height = SIZE * SCALE;
     vctx.imageSmoothingEnabled = false;
 
-    // ── Region layout (64×64). Bounding boxes per body part, base & overlay. ──
-    const BASE_RECTS = [
-      { name: 'Head', x: 0, y: 0, w: 32, h: 16 },
-      { name: 'R Leg', x: 0, y: 16, w: 16, h: 16 },
-      { name: 'Body', x: 16, y: 16, w: 24, h: 16 },
-      { name: 'R Arm', x: 40, y: 16, w: 16, h: 16 },
-      { name: 'L Leg', x: 16, y: 48, w: 16, h: 16 },
-      { name: 'L Arm', x: 32, y: 48, w: 16, h: 16 },
-    ];
-    const OVERLAY_RECTS = [
-      { name: 'Hat', x: 32, y: 0, w: 32, h: 16 },
-      { name: 'R Leg 2', x: 0, y: 32, w: 16, h: 16 },
-      { name: 'Jacket', x: 16, y: 32, w: 24, h: 16 },
-      { name: 'R Arm 2', x: 40, y: 32, w: 16, h: 16 },
-      { name: 'L Leg 2', x: 0, y: 48, w: 16, h: 16 },
-      { name: 'L Arm 2', x: 48, y: 48, w: 16, h: 16 },
-    ];
+    // ── Region layout (64×64), PER FACE so only real texture area is used ──
+    // Standard box-UV layout for a part of width W, height H, depth D whose
+    // top-left block corner is (ox, oy):
+    //   [top][bottom]         (each W×D)
+    //   [right][front][left][back]   (D×H, W×H, D×H, W×H)
+    function facesFor(name, ox, oy, W, H, D) {
+      return [
+        { name, face: 'top', x: ox + D, y: oy, w: W, h: D },
+        { name, face: 'bottom', x: ox + D + W, y: oy, w: W, h: D },
+        { name, face: 'right', x: ox, y: oy + D, w: D, h: H },
+        { name, face: 'front', x: ox + D, y: oy + D, w: W, h: H, front: true },
+        { name, face: 'left', x: ox + D + W, y: oy + D, w: D, h: H },
+        { name, face: 'back', x: ox + D + W + D, y: oy + D, w: W, h: H },
+      ];
+    }
+    let FACE_BASE = [], FACE_OVERLAY = [];
+    function buildFaces() {
+      const AW = variant === 'slim' ? 3 : 4; // arm width
+      FACE_BASE = [
+        ...facesFor('Head', 0, 0, 8, 8, 8),
+        ...facesFor('Body', 16, 16, 8, 12, 4),
+        ...facesFor('R Arm', 40, 16, AW, 12, 4),
+        ...facesFor('L Arm', 32, 48, AW, 12, 4),
+        ...facesFor('R Leg', 0, 16, 4, 12, 4),
+        ...facesFor('L Leg', 16, 48, 4, 12, 4),
+      ];
+      FACE_OVERLAY = [
+        ...facesFor('Hat', 32, 0, 8, 8, 8),
+        ...facesFor('Jacket', 16, 32, 8, 12, 4),
+        ...facesFor('R Arm 2', 40, 32, AW, 12, 4),
+        ...facesFor('L Arm 2', 48, 48, AW, 12, 4),
+        ...facesFor('R Leg 2', 0, 32, 4, 12, 4),
+        ...facesFor('L Leg 2', 0, 48, 4, 12, 4),
+      ];
+    }
     const inRect = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
     const rectAt = (rects, x, y) => rects.find(r => inRect(r, x, y)) || null;
-    const isOverlayTexel = (x, y) => OVERLAY_RECTS.some(r => inRect(r, x, y));
+    const isOverlayTexel = (x, y) => FACE_OVERLAY.some(r => inRect(r, x, y));
+    const layerFaces = () => (layer === 'overlay' ? FACE_OVERLAY : FACE_BASE);
+    buildFaces();
 
     // ── State ──
     let tool = 'brush';
     let layer = 'base';       // base | overlay
     let mirror = false;
     let gridOn = true;
-    let draw3d = false;
     let variant = 'classic';
     let color = { r: 138, g: 90, b: 59 };
     let opacity = 1;
@@ -299,9 +321,9 @@
     }
     function renderOverlay() {
       octx.clearRect(0, 0, overlay.width, overlay.height);
-      const rects = layer === 'overlay' ? OVERLAY_RECTS : BASE_RECTS;
-      const other = layer === 'overlay' ? BASE_RECTS : OVERLAY_RECTS;
-      // Per-texel grid, drawn only over the ACTIVE layer's regions, toggleable.
+      const rects = layerFaces();
+      const other = layer === 'overlay' ? FACE_BASE : FACE_OVERLAY;
+      // Per-texel grid, drawn only over the ACTIVE layer's FACES, toggleable.
       if (gridOn) {
         octx.strokeStyle = 'rgba(255,255,255,0.16)'; octx.lineWidth = 1;
         rects.forEach(r => {
@@ -309,9 +331,9 @@
           for (let gy = r.y; gy <= r.y + r.h; gy++) { octx.beginPath(); octx.moveTo(r.x * SCALE, gy * SCALE + 0.5); octx.lineTo((r.x + r.w) * SCALE, gy * SCALE + 0.5); octx.stroke(); }
         });
       }
-      // region outlines + labels for the ACTIVE layer (inactive faint)
-      other.forEach(r => outlineRect(r, 'rgba(255,255,255,0.10)', null));
-      rects.forEach(r => outlineRect(r, 'var(--base-color)', r.name));
+      // Face outlines for the ACTIVE layer (inactive faint), labelled on fronts.
+      other.forEach(r => outlineRect(r, 'rgba(255,255,255,0.08)', null));
+      rects.forEach(r => outlineRect(r, 'var(--base-color)', r.front ? r.name : null));
     }
     function outlineRect(r, stroke, label) {
       octx.strokeStyle = stroke === 'var(--base-color)'
@@ -338,7 +360,9 @@
     function paintable(x, y, force) {
       if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return false;
       if (force) return true; // 3D painting hits an exact texel; no layer mask
-      return layer === 'overlay' ? isOverlayTexel(x, y) : !isOverlayTexel(x, y);
+      // Only real face pixels of the active layer are paintable (so the unused
+      // corners between faces aren't painted).
+      return layerFaces().some(r => inRect(r, x, y));
     }
     function jitter(v, amt) { return Math.max(0, Math.min(255, v + Math.round((Math.random() * 2 - 1) * amt))); }
     function setTexel(x, y, mode, force) {
@@ -352,10 +376,9 @@
       else { wctx.fillStyle = `rgba(${r},${g},${b},${opacity})`; wctx.fillRect(x, y, 1, 1); }
     }
     function mirrorTexel(x, y) {
-      // Horizontal mirror within the body part the texel belongs to. The part is
-      // chosen by the texel's OWN layer so this works for 2D and 3D painting.
-      const rects = isOverlayTexel(x, y) ? OVERLAY_RECTS : BASE_RECTS;
-      const r = rectAt(rects, x, y);
+      // Horizontal mirror within the FACE the texel belongs to (works for 2D and
+      // 3D). Searches both layers so it's correct regardless of the active one.
+      const r = rectAt(FACE_BASE, x, y) || rectAt(FACE_OVERLAY, x, y);
       if (!r) return null;
       return { x: r.x + (r.x + r.w - 1 - x), y };
     }
@@ -414,6 +437,7 @@
 
     // ── Pointer handling ──
     view.addEventListener('pointerdown', (e) => {
+      if (tool === 'view') return; // View tool doesn't paint the 2D texture
       e.preventDefault(); view.setPointerCapture(e.pointerId);
       const t = texelFromEvent(e);
       if (tool === 'eyedropper') { pickColor(t.x, t.y); return; }
@@ -442,6 +466,7 @@
       { id: 'eraser', icon: 'ink_eraser', label: 'Eraser' },
       { id: 'fill', icon: 'format_color_fill', label: 'Fill' },
       { id: 'eyedropper', icon: 'colorize', label: 'Pick' },
+      { id: 'view', icon: 'pan_tool', label: 'View' },
     ];
     const toolGrid = document.getElementById('ed-tool-grid');
     TOOLS.forEach(tl => {
@@ -451,9 +476,19 @@
         tool = tl.id;
         [...toolGrid.children].forEach(c => c.classList.remove('active')); b.classList.add('active');
         document.getElementById('ed-fillwith-row').style.display = (tool === 'fill') ? '' : 'none';
+        apply3DMode();
       };
       toolGrid.appendChild(b);
     });
+    // The View tool lets the model orbit; any paint tool disables orbit (and
+    // pauses the idle animation) so painting hits a still target.
+    function apply3DMode() {
+      const viewing = tool === 'view';
+      if (viewer && viewer.controls) { try { viewer.controls.enableRotate = viewing; viewer.controls.enableZoom = viewing; } catch { } }
+      if (viewer && viewer.animation) { try { viewer.animation.paused = !viewing; } catch { } }
+      const c = document.getElementById('ed-3d');
+      if (c) c.style.cursor = viewing ? 'grab' : 'crosshair';
+    }
 
     // Color + swatches
     const colorInput = document.getElementById('ed-color');
@@ -479,15 +514,6 @@
     }
     document.getElementById('ed-mirror').onchange = (e) => { mirror = e.target.checked; };
     document.getElementById('ed-grid').onchange = (e) => { gridOn = e.target.checked; renderOverlay(); };
-    document.getElementById('ed-draw3d').onchange = (e) => {
-      draw3d = e.target.checked;
-      // Free the orbit controls when painting, restore them otherwise; pause the
-      // idle animation so the model holds still while you draw on it.
-      if (viewer && viewer.controls) { try { viewer.controls.enableRotate = !draw3d; viewer.controls.enableZoom = !draw3d; } catch { } }
-      if (viewer && viewer.animation) { try { viewer.animation.paused = draw3d; } catch { } }
-      const c = document.getElementById('ed-3d');
-      c.style.cursor = draw3d ? 'crosshair' : 'grab';
-    };
 
     document.getElementById('ed-variant-classic').onclick = () => setVariant('classic');
     document.getElementById('ed-variant-slim').onclick = () => setVariant('slim');
@@ -495,6 +521,8 @@
       variant = v;
       document.getElementById('ed-variant-classic').classList.toggle('active', v === 'classic');
       document.getElementById('ed-variant-slim').classList.toggle('active', v === 'slim');
+      buildFaces();      // arm faces are narrower for slim
+      renderOverlay();
       update3D(true);
     }
 
@@ -560,7 +588,7 @@
     // ── Make symmetric: copy left-half faces onto the right (per front-facing part) ──
     document.getElementById('ed-mirror-apply').onclick = () => {
       pushUndo();
-      const rects = layer === 'overlay' ? OVERLAY_RECTS : BASE_RECTS;
+      const rects = layerFaces();
       const img = wctx.getImageData(0, 0, SIZE, SIZE);
       rects.forEach(r => {
         for (let y = r.y; y < r.y + r.h; y++) {
@@ -706,10 +734,11 @@
       buildPartToggles();
       update3D(true);
       attach3DPainting();
+      apply3DMode(); // reflect the current tool (paint tools disable orbit)
     }
     // Paint directly on the 3D model: raycast the click against the player mesh,
-    // read the hit UV, convert to a texel and stamp it. Needs window.THREE
-    // (vendored r163). Requires the "Draw on the 3D model" toggle.
+    // read the hit UV, convert to a texel and stamp it (needs window.THREE r163).
+    // Active whenever a paint tool (not View) is selected.
     let drawing3d = false;
     function texelFromHit(e) {
       if (!window.THREE || !viewer || !viewer.playerObject || !viewer.camera) return null;
@@ -738,12 +767,12 @@
       const c = document.getElementById('ed-3d');
       c.style.cursor = 'grab';
       c.addEventListener('pointerdown', (e) => {
-        if (!draw3d) return;
+        if (tool === 'view') return; // View tool: let the orbit controls handle it
         e.preventDefault(); c.setPointerCapture(e.pointerId);
         if (tool !== 'eyedropper' && tool !== 'fill') pushUndo();
         drawing3d = true; paint3D(e, true);
       });
-      c.addEventListener('pointermove', (e) => { if (draw3d && drawing3d) paint3D(e, false); });
+      c.addEventListener('pointermove', (e) => { if (tool !== 'view' && drawing3d) paint3D(e, false); });
       const end = () => { if (drawing3d) { drawing3d = false; update3D(true); } };
       c.addEventListener('pointerup', end);
       c.addEventListener('pointercancel', end);
@@ -851,6 +880,7 @@
     function updatePresence(details, state = 'Idle') { ipcRenderer.send('update-discord-presence', { details, state }); }
     updatePresence('Editing a skin');
     init();
+    })();
   </script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>

@@ -26,6 +26,7 @@ import crypto from "crypto";
 import nbt from "prismarine-nbt";
 import RPC from "discord-rpc";
 import os from 'os';
+import net from 'net';
 import xml2js from "xml2js";
 import unzipper from "unzipper";
 import QRCode from "qrcode";
@@ -4393,8 +4394,78 @@ ipcMain.handle("reorder-instance-server", async (event, { profileId, from, to })
 });
 
 // Live server status (MOTD, players, favicon) via mcsrvstat.
+// Split "host", "host:port" (leaves bracketed IPv6 alone) into { host, port }.
+function splitHostPort(addr) {
+  const s = String(addr || "").trim();
+  const m = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(s);
+  const host = m ? m[1].replace(/^\[|\]$/g, "") : s;
+  const port = m && m[2] ? parseInt(m[2], 10) : 25565;
+  return { host, port };
+}
+// Is this a local / private-network address api.mcsrvstat.us can't reach?
+function isLocalAddress(host) {
+  const h = String(host || "").toLowerCase();
+  if (h === "localhost" || h.endsWith(".local") || h.endsWith(".localhost")) return true;
+  if (h === "127.0.0.1" || h.startsWith("127.")) return true;
+  if (h === "0.0.0.0" || h === "::1") return true;
+  if (h.startsWith("10.") || h.startsWith("192.168.")) return true;
+  const m = /^172\.(\d+)\./.exec(h); if (m) { const o = +m[1]; if (o >= 16 && o <= 31) return true; }
+  if (/^169\.254\./.test(h)) return true; // link-local
+  return false;
+}
+
+// ── Minecraft Server List Ping (SLP) — used for LAN/localhost servers that a
+// public status API can't reach. Speaks the modern handshake+status protocol.
+function pingMinecraft(host, port, timeout = 4000) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host, port }, () => {
+      // VarInt encoder.
+      const varint = (n) => { const b = []; n >>>= 0; do { let t = n & 0x7f; n >>>= 7; if (n) t |= 0x80; b.push(t); } while (n); return Buffer.from(b); };
+      const str = (s) => { const d = Buffer.from(s, "utf8"); return Buffer.concat([varint(d.length), d]); };
+      const packet = (id, payload) => { const body = Buffer.concat([varint(id), payload]); return Buffer.concat([varint(body.length), body]); };
+      const portBuf = Buffer.alloc(2); portBuf.writeUInt16BE(port & 0xffff, 0);
+      const handshake = packet(0x00, Buffer.concat([varint(765), str(host), portBuf, varint(1)])); // 765≈1.20.5 proto; server ignores exact value for status
+      sock.write(Buffer.concat([handshake, packet(0x00, Buffer.alloc(0))])); // + status request
+    });
+    sock.setTimeout(timeout);
+    let buf = Buffer.alloc(0);
+    const done = (v) => { try { sock.destroy(); } catch { } resolve(v); };
+    // Streaming VarInt reader.
+    const readVarInt = (b, off) => { let res = 0, shift = 0, pos = off; while (pos < b.length) { const byte = b[pos++]; res |= (byte & 0x7f) << shift; if (!(byte & 0x80)) return { value: res >>> 0, size: pos - off }; shift += 7; if (shift > 35) break; } return null; };
+    sock.on("data", (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      const lenR = readVarInt(buf, 0); if (!lenR) return;
+      if (buf.length < lenR.size + lenR.value) return; // wait for the full packet
+      let off = lenR.size;
+      const idR = readVarInt(buf, off); if (!idR) return done({ online: false }); off += idR.size;
+      const strLen = readVarInt(buf, off); if (!strLen) return done({ online: false }); off += strLen.size;
+      const json = buf.subarray(off, off + strLen.value).toString("utf8");
+      try { done({ online: true, raw: JSON.parse(json) }); }
+      catch { done({ online: false }); }
+    });
+    sock.on("timeout", () => done({ online: false }));
+    sock.on("error", () => done({ online: false }));
+  });
+}
+
 ipcMain.handle("get-server-status", async (event, { ip }) => {
   if (!ip) return { online: false };
+  const { host, port } = splitHostPort(ip);
+  // LAN / localhost: ping the server directly (mcsrvstat can't see private IPs).
+  if (isLocalAddress(host)) {
+    try {
+      const r = await pingMinecraft(host, port);
+      if (!r.online) return { online: false };
+      const d = r.raw || {};
+      return {
+        online: true,
+        motd: d.description != null ? d.description : null, // chat component or string
+        players: d.players ? { online: d.players.online, max: d.players.max } : null,
+        version: d.version && d.version.name ? d.version.name : null,
+        icon: d.favicon || null, // already a data: URL
+      };
+    } catch { return { online: false }; }
+  }
   try {
     const res = await fetch(`https://api.mcsrvstat.us/3/${encodeURIComponent(ip)}`, {
       headers: { "User-Agent": LAUNCHER_UA }
