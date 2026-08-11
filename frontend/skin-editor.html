@@ -61,8 +61,17 @@
     .ed-btn-row { display: flex; gap: 6px; }
     .ed-swatches { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .ed-swatch { width: 18px; height: 18px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.4); cursor: pointer; }
-    #ed-import-panel { display: none; }
     .ed-hint { font-size: 11px; opacity: 0.6; margin-top: 4px; }
+    /* Image import modal */
+    .ed-modal-overlay { position: fixed; inset: 38px 0 0 70px; background: rgba(0,0,0,0.55); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 3000; }
+    .ed-modal-overlay.active { display: flex; }
+    .ed-modal { background: linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black)); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 18px; width: 720px; max-width: 94vw; max-height: 88vh; overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+    .ed-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .ed-modal-body { display: flex; gap: 16px; flex-wrap: wrap; }
+    .ed-modal-preview { flex: 0 0 auto; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); padding: 8px; }
+    #ed-img-preview { image-rendering: pixelated; display: block; width: 384px; height: 384px; max-width: 100%; }
+    .ed-modal-controls { flex: 1; min-width: 240px; }
+    .ed-modal-controls select { width: auto; flex: 1; }
   </style>
 </head>
 
@@ -174,32 +183,6 @@
         <button class="ed-btn" id="ed-clear" style="margin-top:6px;"><i class="material-icons">delete_sweep</i> Clear</button>
       </div>
 
-      <!-- Image import controls (shown after picking an image) -->
-      <div class="ed-group" id="ed-import-panel">
-        <h4>Add image</h4>
-        <div class="ed-seg" style="margin-bottom:8px;">
-          <button id="ed-img-mode-free" class="active">Place freely</button>
-          <button id="ed-img-mode-wrap">Wrap on body</button>
-        </div>
-        <div id="ed-free-controls">
-          <div class="ed-row"><label>X</label><input type="range" id="ed-img-x" min="-32" max="64" value="16"></div>
-          <div class="ed-row"><label>Y</label><input type="range" id="ed-img-y" min="-32" max="64" value="8"></div>
-          <div class="ed-row"><label>Scale</label><input type="range" id="ed-img-scale" min="1" max="200" value="40"></div>
-          <div class="ed-row"><label>Rotate</label><input type="range" id="ed-img-rot" min="-180" max="180" value="0"></div>
-        </div>
-        <div id="ed-wrap-controls" style="display:none;">
-          <div class="ed-row"><label>Pan X</label><input type="range" id="ed-wrap-px" min="-100" max="100" value="0"></div>
-          <div class="ed-row"><label>Pan Y</label><input type="range" id="ed-wrap-py" min="-100" max="100" value="0"></div>
-          <div class="ed-row"><label>Zoom</label><input type="range" id="ed-wrap-scale" min="20" max="300" value="100"></div>
-          <div class="ed-hint">Wraps the photo onto the body's front (and sides); the current skin shows on faces the photo doesn't cover.</div>
-        </div>
-        <div class="ed-row"><label>Opacity</label><input type="range" id="ed-img-op" min="1" max="100" value="100"></div>
-        <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror"> Mirror <span id="ed-mirror-label">image</span></label></div>
-        <div class="ed-btn-row">
-          <button class="ed-btn primary" id="ed-img-bake">Bake in</button>
-          <button class="ed-btn" id="ed-img-cancel">Cancel</button>
-        </div>
-      </div>
 
       <div class="ed-group">
         <h4>Save</h4>
@@ -209,6 +192,49 @@
           <button id="ed-variant-slim">Slim</button>
         </div>
         <button class="ed-btn primary" id="ed-save"><i class="material-icons">save</i> Save to library</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image → skin modal (full placement / body-wrap customisation) -->
+  <div id="ed-img-modal" class="ed-modal-overlay">
+    <div class="ed-modal">
+      <div class="ed-modal-head"><h3 style="margin:0;">Add image to skin</h3><button class="ed-btn" style="width:auto;padding:4px 10px;" id="ed-img-x2">✕</button></div>
+      <div class="ed-modal-body">
+        <div class="ed-modal-preview">
+          <canvas id="ed-img-preview" width="384" height="384"></canvas>
+        </div>
+        <div class="ed-modal-controls">
+          <div class="ed-seg" style="margin-bottom:10px;">
+            <button id="ed-img-mode-free" class="active">Place freely</button>
+            <button id="ed-img-mode-wrap">Wrap on body</button>
+          </div>
+          <div id="ed-free-controls">
+            <div class="ed-row"><label>X</label><input type="range" id="ed-img-x" min="-32" max="64" value="16"></div>
+            <div class="ed-row"><label>Y</label><input type="range" id="ed-img-y" min="-32" max="64" value="8"></div>
+            <div class="ed-row"><label>Scale</label><input type="range" id="ed-img-scale" min="1" max="200" value="60"></div>
+            <div class="ed-row"><label>Rotate</label><input type="range" id="ed-img-rot" min="-180" max="180" value="0"></div>
+          </div>
+          <div id="ed-wrap-controls" style="display:none;">
+            <div class="ed-row"><label>Pan X</label><input type="range" id="ed-wrap-px" min="-100" max="100" value="0"></div>
+            <div class="ed-row"><label>Pan Y</label><input type="range" id="ed-wrap-py" min="-100" max="100" value="0"></div>
+            <div class="ed-row"><label>Zoom X</label><input type="range" id="ed-wrap-sx" min="20" max="300" value="100"></div>
+            <div class="ed-row"><label>Zoom Y</label><input type="range" id="ed-wrap-sy" min="20" max="300" value="100"></div>
+            <div class="ed-row"><label><input type="checkbox" id="ed-wrap-aspect" checked> Lock aspect ratio</label></div>
+            <div class="ed-row"><label>Sides</label>
+              <select id="ed-wrap-sides"><option value="none">None</option><option value="2px" selected>2px edge</option><option value="stretch">Stretch</option></select>
+            </div>
+            <div class="ed-hint">Projects the photo onto the body; the current skin shows on faces the photo doesn't cover.</div>
+          </div>
+          <div class="ed-row"><label>Opacity</label><input type="range" id="ed-img-op" min="1" max="100" value="100"></div>
+          <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror"> Mirror <span id="ed-mirror-label">image</span></label></div>
+          <div class="ed-btn-row" style="margin-top:10px;">
+            <button class="ed-btn primary" id="ed-img-bake">Bake in</button>
+            <button class="ed-btn" id="ed-img-bake-more" title="Bake this image and keep the tool open to add another">+ another</button>
+          </div>
+          <button class="ed-btn" id="ed-img-pick" style="margin-top:6px;">Choose a different image…</button>
+          <button class="ed-btn" id="ed-img-cancel" style="margin-top:6px;">Cancel</button>
+        </div>
       </div>
     </div>
   </div>
@@ -602,21 +628,28 @@
       wctx.putImageData(img, 0, 0); render(); update3D();
     };
 
-    // ── Image import: place a regular image, then bake into the texture ──
+    // ── Image → skin (modal). Place freely or wrap a photo onto the body. ──
     let imgBitmap = null;
-    document.getElementById('ed-import').onclick = () => document.getElementById('ed-file').click();
+    let importMode = 'free';   // free | wrap
+    const imgModal = document.getElementById('ed-img-modal');
+    const imgPrev = document.getElementById('ed-img-preview');
+    const imgPrevCtx = imgPrev.getContext('2d');
+    const $v = (id) => +document.getElementById(id).value;
+
+    function openImgModal() { document.getElementById('ed-file').click(); }
+    document.getElementById('ed-import').onclick = openImgModal;
+    document.getElementById('ed-img-pick').onclick = openImgModal;
     document.getElementById('ed-file').onchange = (e) => {
       const f = e.target.files[0]; if (!f) return;
       const r = new FileReader();
       r.onload = () => {
         const im = new Image();
-        im.onload = () => { imgBitmap = im; document.getElementById('ed-import-panel').style.display = ''; setImportMode(mode === 'image' ? 'wrap' : 'free'); };
+        im.onload = () => { imgBitmap = im; imgModal.classList.add('active'); setImportMode(mode === 'image' ? 'wrap' : importMode); };
         im.src = r.result;
       };
       r.readAsDataURL(f);
       e.target.value = '';
     };
-    let importMode = 'free';   // free | wrap
     function setImportMode(m) {
       importMode = m;
       document.getElementById('ed-img-mode-free').classList.toggle('active', m === 'free');
@@ -629,42 +662,36 @@
     document.getElementById('ed-img-mode-free').onclick = () => setImportMode('free');
     document.getElementById('ed-img-mode-wrap').onclick = () => setImportMode('wrap');
 
-    function imgParams() {
-      return {
-        x: +document.getElementById('ed-img-x').value,
-        y: +document.getElementById('ed-img-y').value,
-        scale: (+document.getElementById('ed-img-scale').value) / 100,
-        rot: (+document.getElementById('ed-img-rot').value) * Math.PI / 180,
-        op: (+document.getElementById('ed-img-op').value) / 100,
-        mir: document.getElementById('ed-img-mirror').checked,
-      };
-    }
-
-    // Freeform placement onto a target 2D context (dest 64×64 space scaled by k).
+    // Freeform placement onto a dest 2D context (64×64 space scaled by k).
     function drawFree(ctx, k) {
-      const p = imgParams();
-      const w = imgBitmap.width * p.scale * k, h = imgBitmap.height * p.scale * k;
-      ctx.save(); ctx.imageSmoothingEnabled = true; ctx.globalAlpha = p.op;
-      ctx.translate(p.x * k, p.y * k); ctx.rotate(p.rot); if (p.mir) ctx.scale(-1, 1);
+      const scale = $v('ed-img-scale') / 100, rot = $v('ed-img-rot') * Math.PI / 180;
+      const op = $v('ed-img-op') / 100, mir = document.getElementById('ed-img-mirror').checked;
+      const x = $v('ed-img-x'), y = $v('ed-img-y');
+      const w = imgBitmap.width * scale * k, h = imgBitmap.height * scale * k;
+      ctx.save(); ctx.imageSmoothingEnabled = true; ctx.globalAlpha = op;
+      ctx.translate(x * k, y * k); ctx.rotate(rot); if (mir) ctx.scale(-1, 1);
       ctx.drawImage(imgBitmap, -w / 2, -h / 2, w, h);
       ctx.restore(); ctx.globalAlpha = 1;
     }
 
     // Wrap a photo onto the body's faces (front + sides, optional back), ported
-    // from the pngskin2 mapping. Draws over whatever skin is already there so the
-    // current skin shows through on uncovered faces. `M` maps RS units → px.
+    // from the pngskin2 mapping. Draws over whatever skin is already there, so
+    // the current skin shows through on faces the photo doesn't cover. `M` maps
+    // RS units → px (4 for our 64px texture).
     function drawWrap(ctx, M) {
       const bm = imgBitmap.height / 12;
-      const panX = (+document.getElementById('ed-wrap-px').value) / 100 * imgBitmap.width * 0.5;
-      const panY = (+document.getElementById('ed-wrap-py').value) / 100 * imgBitmap.height * 0.5;
-      const sizeX = (+document.getElementById('ed-wrap-scale').value) / 100;
-      const sizeY = sizeX;
+      const panX = $v('ed-wrap-px') / 100 * imgBitmap.width * 0.5;
+      const panY = $v('ed-wrap-py') / 100 * imgBitmap.height * 0.5;
+      const aspect = document.getElementById('ed-wrap-aspect').checked;
+      const sizeX = $v('ed-wrap-sx') / 100;
+      const sizeY = aspect ? sizeX : $v('ed-wrap-sy') / 100;
       const ox = imgBitmap.width / 2 + panX, oy = imgBitmap.height / 2 + panY;
       const back = document.getElementById('ed-img-mirror').checked;
-      const op = (+document.getElementById('ed-img-op').value) / 100;
+      const sides = document.getElementById('ed-wrap-sides').value;
+      const op = $v('ed-img-op') / 100;
       ctx.save(); ctx.globalAlpha = op; ctx.imageSmoothingEnabled = true;
       const D = (sx, sy, sw, sh, dx, dy, dw, dh) =>
-        ctx.drawImage(imgBitmap, sx * sizeX, sy * sizeY, sw * bm * sizeX, sh * bm * sizeY, dx * M, dy * M, dw * M, dh * M);
+        ctx.drawImage(imgBitmap, sx * sizeX, sy * sizeY, Math.max(0.01, sw) * bm * sizeX, Math.max(0.01, sh) * bm * sizeY, dx * M, dy * M, dw * M, dh * M);
       const flip = (x, y, w, h, fn) => {
         const dx = x * M, dy = y * M, dw = w * M, dh = h * M, cx = dx + dw / 2, cy = dy + dh / 2;
         ctx.save(); ctx.translate(cx, cy); ctx.scale(-1, 1); ctx.translate(-cx, -cy); fn(); ctx.restore();
@@ -684,45 +711,48 @@
         flip(3, 5, 1, 3, () => D(ox - 1 * bm, oy + 1 * bm, 1, 3, 3, 5, 1, 3));
         flip(7, 13, 1, 3, () => D(ox, oy + 1 * bm, 1, 3, 7, 13, 1, 3));
       }
-      // sides (2px)
-      D(ox - 1.5 * bm, oy - 4 * bm, .5, 2, 1.5, 2, .5, 2); D(ox + 1 * bm, oy - 4 * bm, .5, 2, 4, 2, .5, 2);
-      D(ox - 1 * bm, oy - 2 * bm, 2, .5, 4, 1.5, 2, .5); D(ox - 1 * bm, oy - 4.5 * bm, 2, .5, 2, 1.5, 2, .5);
-      D(ox - 1.5 * bm, oy - 2 * bm, .5, 3, 4.5, 5, .5, 3); D(ox + 1 * bm, oy - 2 * bm, .5, 3, 7, 5, .5, 3);
-      D(ox - 1 * bm, oy - 2.5 * bm, 2, .5, 5, 4.5, 2, .5); D(ox - 1 * bm, oy + 1 * bm, 2, .5, 7, 4.5, 2, .5);
-      D(ox + 0.5 * bm, oy - 2 * bm, .5, 3, 8.5, 13, .5, 3); D(ox + 2 * bm, oy - 2 * bm, .5, 3, 10, 13, .5, 3);
-      D(ox + 1 * bm, oy - 2.5 * bm, 1, .5, 9, 12.5, 1, .5); D(ox + 1 * bm, oy + 1 * bm, 1, .5, 10, 12.5, 1, .5);
-      D(ox - 2.5 * bm, oy - 2 * bm, .5, 3, 10.5, 5, .5, 3); D(ox - 1 * bm, oy - 2 * bm, .5, 3, 12, 5, .5, 3);
-      D(ox - 2 * bm, oy - 2.5 * bm, 1, .5, 11, 4.5, 1, .5); D(ox - 2 * bm, oy + 1 * bm, 1, .5, 12, 4.5, 1, .5);
-      D(ox - 1.5 * bm, oy + 1 * bm, .5, 3, .5, 5, .5, 3); D(ox - 0 * bm, oy + 1 * bm, .5, 3, 2, 5, .5, 3);
-      D(ox - 1 * bm, oy + 0.5 * bm, 1, .5, 1, 4.5, 1, .5); D(ox - 1 * bm, oy + 4 * bm, 1, .5, 2, 4.5, 1, .5);
-      D(ox - 0.5 * bm, oy + 1 * bm, .5, 3, 4.5, 13, .5, 3); D(ox + 1 * bm, oy + 1 * bm, .5, 3, 6, 13, .5, 3);
-      D(ox + 0 * bm, oy + .5 * bm, 1, .5, 5, 12.5, 1, .5); D(ox + 0 * bm, oy + 4 * bm, 1, .5, 6, 12.5, 1, .5);
+      // sides: sample a thin strip of the image next to each front face. "2px"
+      // takes a 0.5-RS-wide strip; "stretch" takes a 0.1 sliver stretched wide.
+      if (sides !== 'none') {
+        const sw = sides === 'stretch' ? 0.1 : 0.5;  // source strip width (RS)
+        const dwR = sides === 'stretch' ? 2 : 0.5;   // dest width for head/side (RS)
+        // Head sides (2 tall)
+        D(ox - (1 + sw) * bm, oy - 4 * bm, sw, 2, 1.5, 2, sides === 'stretch' ? 2 : 0.5, 2);
+        D(ox + 1 * bm, oy - 4 * bm, sw, 2, 4, 2, sides === 'stretch' ? 2 : 0.5, 2);
+        D(ox - 1 * bm, oy - (4 + sw) * bm, 2, sw, 2, 1.5, 2, sides === 'stretch' ? 2 : 0.5);
+        D(ox - 1 * bm, oy - 2 * bm, 2, sw, 4, 1.5, 2, sides === 'stretch' ? 2 : 0.5);
+        // Torso sides (3 tall)
+        D(ox - (1 + sw) * bm, oy - 2 * bm, sw, 3, 4.5, 5, sides === 'stretch' ? 1 : 0.5, 3);
+        D(ox + 1 * bm, oy - 2 * bm, sw, 3, 7, 5, sides === 'stretch' ? 1 : 0.5, 3);
+      }
       ctx.restore(); ctx.globalAlpha = 1;
     }
 
     function drawImagePreview() {
-      render();
       if (!imgBitmap) return;
-      if (importMode === 'wrap') {
-        // Composite over a copy of the current skin, then show at display scale.
-        const tmp = document.createElement('canvas'); tmp.width = SIZE; tmp.height = SIZE;
-        const tc = tmp.getContext('2d'); tc.drawImage(work, 0, 0); drawWrap(tc, 4);
-        vctx.imageSmoothingEnabled = false;
-        vctx.drawImage(tmp, 0, 0, SIZE, SIZE, 0, 0, view.width, view.height);
-      } else {
-        drawFree(vctx, SCALE);
-      }
+      const tmp = document.createElement('canvas'); tmp.width = SIZE; tmp.height = SIZE;
+      const tc = tmp.getContext('2d'); tc.drawImage(work, 0, 0);
+      if (importMode === 'wrap') drawWrap(tc, 4); else drawFree(tc, 1);
+      // Show the composited skin rendered onto a big flat preview…
+      imgPrevCtx.imageSmoothingEnabled = false;
+      imgPrevCtx.clearRect(0, 0, imgPrev.width, imgPrev.height);
+      imgPrevCtx.drawImage(tmp, 0, 0, SIZE, SIZE, 0, 0, imgPrev.width, imgPrev.height);
+      // …and live-preview it on the 3D model (restored to the real skin on close).
+      if (viewer) { try { viewer.loadSkin(tmp.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' }); setTimeout(applyPartVisibility, 20); } catch { } }
     }
-    ['ed-img-x', 'ed-img-y', 'ed-img-scale', 'ed-img-rot', 'ed-img-op', 'ed-wrap-px', 'ed-wrap-py', 'ed-wrap-scale'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = drawImagePreview; });
-    document.getElementById('ed-img-mirror').onchange = drawImagePreview;
-    document.getElementById('ed-img-cancel').onclick = () => { imgBitmap = null; document.getElementById('ed-import-panel').style.display = 'none'; render(); };
-    document.getElementById('ed-img-bake').onclick = () => {
+    ['ed-img-x', 'ed-img-y', 'ed-img-scale', 'ed-img-rot', 'ed-img-op', 'ed-wrap-px', 'ed-wrap-py', 'ed-wrap-sx', 'ed-wrap-sy'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = drawImagePreview; });
+    ['ed-img-mirror', 'ed-wrap-aspect', 'ed-wrap-sides'].forEach(id => { const el = document.getElementById(id); if (el) el.onchange = () => { document.getElementById('ed-wrap-sy').disabled = document.getElementById('ed-wrap-aspect').checked; drawImagePreview(); }; });
+    const closeImgModal = () => { imgBitmap = null; imgModal.classList.remove('active'); update3D(true); /* restore the real skin on the model */ };
+    document.getElementById('ed-img-cancel').onclick = closeImgModal;
+    document.getElementById('ed-img-x2').onclick = closeImgModal;
+    function bakeImage() {
       if (!imgBitmap) return;
       pushUndo();
       if (importMode === 'wrap') drawWrap(wctx, 4); else drawFree(wctx, 1);
-      imgBitmap = null; document.getElementById('ed-import-panel').style.display = 'none';
       render(); update3D(true);
-    };
+    }
+    document.getElementById('ed-img-bake').onclick = () => { bakeImage(); closeImgModal(); };
+    document.getElementById('ed-img-bake-more').onclick = () => { bakeImage(); openImgModal(); };
 
     // ── 3D preview ──
     let viewer = null, parts3d = {};
