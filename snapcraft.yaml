@@ -1,6 +1,6 @@
 name: redstone-launcher
 base: core22
-version: '1.15.0'
+version: '1.16.0'
 summary: Redstone Launcher for Linux
 description: |
   Unofficial Minecraft Launcher.
