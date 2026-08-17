@@ -10,7 +10,7 @@ import fs from 'fs';
 const fsp = fs.promises;
 import { ssim } from "ssim.js";
 import sharp from "sharp";
-import { shell, app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { shell, app, BrowserWindow, ipcMain, dialog, utilityProcess } from 'electron';
 import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
 import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
@@ -2358,87 +2358,84 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     const javaPath = await getJavaForMinecraft(profile.version);
     devtoolsLog("Java ready at:", javaPath);
 
-    const launcher = new Client();
-    // Attach log + progress listeners BEFORE launch() so the loading bar
-    // reflects the (often lengthy) download/prepare phase.
-    attachLauncherEvents(launcher, profileId);
-    let loaderer;
-    if (profile.loader == "fabric") {
-      loaderer = fabric
-    } else if (profile.loader == "quilt") {
-      loaderer = quilt
-    } else if (profile.loader == "forge") {
-      loaderer = forge
-    } else if (profile.loader == "neoforge") {
-      loaderer = neoforge
-    } else {
-      loaderer = vanilla
-    }
-    // Fetching loader/version metadata can hit a transient 502/timeout — retry.
-    const launcherConfig = await withRetry(() => loaderer.getMCLCLaunchConfig({
-      gameVersion: profile.version,
-      rootPath: rootDir,
-      ...(profile.loaderVersion ? { loaderVersion: profile.loaderVersion } : {}),
-    }), { label: "Preparing launch", profileId });
-    let opts = {
-      ...launcherConfig,
-      authorization: auth,
-      memory: { max: maxRam, min: minRam },
-      javaPath,
-      overrides: {
-        assetRoot: path.join(dataDir, 'assets'),
-        // Detached so the game keeps running if the launcher is closed.
-        detached: true
-      },
-      quickPlay: quickplay
-    }
     // Per-instance custom JVM args (Instance Settings → Java & Launch), plus any
     // extra args baked into a desktop shortcut for this launch.
     const extraArgs = [(profileForRam.launchArgs || ""), (shortcutArgs || "")]
       .join(" ").trim();
-    if (extraArgs) opts.customArgs = extraArgs.split(/\s+/).filter(Boolean);
+    const customArgs = extraArgs ? extraArgs.split(/\s+/).filter(Boolean) : [];
     // Legacy (pre-1.20) server join: pass the classic game args directly.
+    let customLaunchArgs = [];
     if (legacyServer) {
       const str = String(legacyServer).trim();
-      // Split host:port (leave IPv6 in brackets alone).
       const m = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(str);
       const host = m ? m[1] : str;
       const port = m && m[2] ? m[2] : "25565";
-      opts.customLaunchArgs = [...(opts.customLaunchArgs || []), "--server", host, "--port", port];
+      customLaunchArgs = ["--server", host, "--port", port];
     }
-    // launch() downloads assets/libraries then spawns the JVM at the very end,
-    // so a transient failure throws before any process is spawned — one retry is
-    // safe and covers the occasional 502 mid-download.
-    const childProcess = await withRetry(() => launcher.launch(opts), { tries: 2, label: "Launching", profileId });
+
+    // Do the actual (heavy, CPU-bound) launch in a utility process so the app's
+    // main event loop — and therefore the whole UI — stays responsive.
+    const { pid } = await launchViaWorker(profileId, {
+      loader: profile.loader, gameVersion: profile.version, loaderVersion: profile.loaderVersion || "",
+      rootPath: rootDir, auth, memory: { max: maxRam, min: minRam }, javaPath,
+      assetRoot: path.join(dataDir, 'assets'), quickPlay: quickplay,
+      customArgs, customLaunchArgs, name: profile.name,
+    });
 
     launchingProfiles.delete(profileId);
-    // Downloads are done and the JVM has been spawned.
-    broadcastProgress(profileId, { done: true, label: 'Starting Minecraft' });
-
-    // Fully decouple the game from the launcher's event loop so quitting the
-    // launcher leaves the game running.
-    if (childProcess && typeof childProcess.unref === 'function') childProcess.unref();
-
-    const pid = childProcess.pid;
-    devtoolsLog("PID: " + pid);
-    instanceMeta.set(profileId, { name: profile.name, version: profile.version });
-    startInstance(profileId, pid);
-    updateGamePresence();
-    broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${pid})`);
-
-    // Handle process exit
-    childProcess.on('exit', (code) => {
-      stopInstance(profileId, pid);
-      onInstanceExited(profileId);
-      broadcastProgress(profileId, { done: true });
-      broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${code}`);
-    });
     return { pid };
   } catch (err) {
     launchingProfiles.delete(profileId);
     broadcastLog(profileId, "[ERROR] " + err.message);
     return { error: err.message };
   }
+}
+
+// Fork the launcher worker, relay its log/progress events, resolve when the game
+// process has spawned, and track its exit. The game is detached so it survives
+// the worker (and the launcher) closing.
+function launchViaWorker(profileId, cfg) {
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = utilityProcess.fork(path.join(app.getAppPath(), 'launcher-worker.js'), [], { serviceName: 'mc-launch' });
+    } catch (e) { reject(e); return; }
+    let settled = false;
+    worker.on('message', (m) => {
+      if (!m) return;
+      switch (m.type) {
+        case 'log':
+        case 'gamelog':
+          broadcastLog(profileId, m.line); break;
+        case 'progress':
+          broadcastProgress(profileId, { stage: m.p.type, current: m.p.task, total: m.p.total, label: progressLabel(m.p.type) }); break;
+        case 'dl':
+          broadcastProgress(profileId, { stage: m.s.type, fileName: m.s.name, current: m.s.current, total: m.s.total, bytes: true, label: 'Downloading files' }); break;
+        case 'spawned':
+          settled = true;
+          broadcastProgress(profileId, { done: true, label: 'Starting Minecraft' });
+          instanceMeta.set(profileId, { name: cfg.name, version: cfg.gameVersion });
+          startInstance(profileId, m.pid);
+          updateGamePresence();
+          broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${m.pid})`);
+          resolve({ pid: m.pid });
+          break;
+        case 'exit':
+          stopInstance(profileId, m.pid);
+          onInstanceExited(profileId);
+          broadcastProgress(profileId, { done: true });
+          broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${m.code}`);
+          try { worker.kill(); } catch { /* ignore */ }
+          break;
+        case 'error':
+          if (!settled) { settled = true; reject(new Error(m.error)); }
+          try { worker.kill(); } catch { /* ignore */ }
+          break;
+      }
+    });
+    worker.on('exit', () => { if (!settled) { settled = true; reject(new Error('Launch worker stopped unexpectedly')); } });
+    worker.postMessage({ type: 'launch', cfg });
+  });
 }
 ipcMain.on('launch-profile', (event, args) => { launchProfileCore(args); });
 

@@ -37,6 +37,12 @@ const RECENT_MS = 30 * 24 * 60 * 60 * 1000; // "used in the last month"
 
 function log(...a) { console.log(new Date().toISOString(), ...a); }
 
+// The relay must never die from one bad connection (a client force-disconnecting
+// on app close, an old/incompatible client speaking a different protocol, a
+// Cloudflare hiccup, …). Log and keep serving everyone else.
+process.on("uncaughtException", (err) => { try { log("[uncaught]", err && err.stack || err); } catch { /* ignore */ } });
+process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.stack || err); } catch { /* ignore */ } });
+
 // ───────────────────────── control mux protocol ─────────────────────────
 const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12 };
 
@@ -101,14 +107,21 @@ function encodeFrame(type, streamId, payload) {
   if (len) payload.copy(buf, 9);
   return buf;
 }
-function createDecoder(onFrame) {
+function createDecoder(onFrame, onError) {
   let buf = Buffer.alloc(0);
   return (chunk) => {
     buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
     while (buf.length >= 9) {
       const len = buf.readUInt32BE(5);
+      // A garbage length (e.g. an old/incompatible client, or something speaking
+      // the wrong protocol at the control port) would otherwise buffer forever /
+      // OOM. No legitimate control frame is anywhere near this big.
+      if (len > 8 * 1024 * 1024) { if (onError) onError(new Error("oversized frame")); return; }
       if (buf.length < 9 + len) break;
-      onFrame(buf.readUInt8(0), buf.readUInt32BE(1), Buffer.from(buf.subarray(9, 9 + len)));
+      try {
+        const r = onFrame(buf.readUInt8(0), buf.readUInt32BE(1), Buffer.from(buf.subarray(9, 9 + len)));
+        if (r && typeof r.then === "function") r.catch((e) => { if (onError) onError(e); });
+      } catch (e) { if (onError) onError(e); return; }
       buf = buf.subarray(9 + len);
     }
   };
@@ -342,13 +355,15 @@ const control = tls.createServer(tlsOptions, (sock) => {
         cfPointDirect(state.host, state.domain, info.ip).then(rec => { state.cfRecord = rec; if (rec) log("direct DNS", `${state.host} -> ${info.ip}`); }).catch(e => log("cf error", e.message));
       }
     }
-  });
+  }, (e) => { log("[control frame]", e && e.message); try { sock.destroy(); } catch { /* ignore */ } });
 
   sock.on("data", decode);
   sock.on("close", () => {
-    if (state.host && hosts.get(state.host)?.send === send) { hosts.delete(state.host); recentSubs[state.host] = Date.now(); saveState(); log("unregistered", state.host); }
-    if (state.cfRecord) cfRemoveDirect(state.cfRecord); // restore wildcard -> VPS
-    for (const p of state.streams.values()) { try { p.destroy(); } catch { /* ignore */ } }
+    try {
+      if (state.host && hosts.get(state.host)?.send === send) { hosts.delete(state.host); recentSubs[state.host] = Date.now(); saveState(); log("unregistered", state.host); }
+      if (state.cfRecord) cfRemoveDirect(state.cfRecord); // restore wildcard -> VPS
+      for (const p of state.streams.values()) { try { p.destroy(); } catch { /* ignore */ } }
+    } catch (e) { log("[close]", e.message); }
   });
   sock.on("error", () => {});
 });
