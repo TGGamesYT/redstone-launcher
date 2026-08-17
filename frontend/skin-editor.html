@@ -34,10 +34,10 @@
     .ed-parts label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
     .ed-parts input { width: auto; margin: 0; }
     /* Center: texture canvas. */
-    #ed-center { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: auto; }
-    #ed-canvas-holder { position: relative; }
-    #ed-canvas { image-rendering: pixelated; cursor: crosshair; touch-action: none; border-radius: 4px; }
-    #ed-overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
+    #ed-center { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; }
+    #ed-canvas-holder { position: relative; width: min(100%, calc(100vh - 200px)); aspect-ratio: 1 / 1; }
+    #ed-canvas { image-rendering: pixelated; cursor: crosshair; touch-action: none; border-radius: 4px; width: 100%; height: 100%; display: block; }
+    #ed-overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
     /* Right: tools. */
     #ed-right { flex: 0 0 240px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding-right: 4px; }
     .ed-group { background: color-mix(in srgb, var(--third-color) 60%, transparent); border-radius: var(--border-radius); padding: 10px; }
@@ -114,20 +114,24 @@
     </ul>
   </div>
 
-  <h1 style="margin-left:0; display:flex; align-items:center; gap:12px;">
+  <h1 style="margin-left:0; margin-top:14px; display:flex; align-items:center; gap:12px;">
     <button class="ed-btn" style="width:auto; padding:6px 12px;" onclick="window.location.href='profile-manager.html'"><i class="material-icons">arrow_back</i> Skins</button>
     <span id="ed-title">Skin Editor</span>
   </h1>
 
   <div id="editor-wrap">
-    <!-- Left: 3D preview -->
+    <!-- Left: 3D preview + editing toggles -->
     <div id="ed-left">
       <canvas id="ed-3d"></canvas>
-      <div class="ed-hint" style="margin-top:-2px;">Pick the <b>View</b> tool to rotate the model; any paint tool draws directly on it.</div>
+      <div class="ed-hint" style="margin-top:-2px;">Click a body part to draw on it; drag empty space to rotate.</div>
+      <div class="ed-group">
+        <div class="ed-row" style="margin:0 0 6px;"><label><input type="checkbox" id="ed-show-overlay"> Edit 2nd layer (overlay)</label></div>
+        <div class="ed-row" style="margin:0 0 6px;"><label><input type="checkbox" id="ed-mirror"> Mirror (whole-body symmetry)</label></div>
+        <div class="ed-row" style="margin:0;"><label><input type="checkbox" id="ed-grid" checked> Grid on current layer</label></div>
+      </div>
       <div class="ed-group">
         <h4>Show in 3D</h4>
         <div class="ed-parts" id="ed-parts"></div>
-        <div class="ed-row" style="margin-top:8px;"><label><input type="checkbox" id="ed-show-overlay" checked> 2nd layer</label></div>
       </div>
     </div>
 
@@ -153,20 +157,12 @@
         <div class="ed-swatches" id="ed-swatches"></div>
         <div class="ed-row"><label>Size</label><input type="range" id="ed-size" min="1" max="8" value="1"><span id="ed-size-val" style="width:14px;">1</span></div>
         <div class="ed-row"><label>Opacity</label><input type="range" id="ed-opacity" min="1" max="100" value="100"><span id="ed-opacity-val" style="width:28px;">100%</span></div>
-        <div class="ed-row" id="ed-fillwith-row" style="display:none;"><label>Fill with</label>
+        <div class="ed-row" id="ed-fillregion-row" style="display:none;"><label>Fill</label>
+          <select id="ed-fillregion"><option value="connected">Connected colours</option><option value="face">Whole face</option><option value="element">Whole element</option></select>
+        </div>
+        <div class="ed-row" id="ed-fillwith-row" style="display:none;"><label>With</label>
           <select id="ed-fillwith"><option value="brush">Brush</option><option value="texture">Texture</option><option value="eraser">Eraser</option></select>
         </div>
-      </div>
-
-      <div class="ed-group">
-        <h4>Layer</h4>
-        <div class="ed-seg">
-          <button id="ed-layer-base" class="active">1st (base)</button>
-          <button id="ed-layer-overlay">2nd (overlay)</button>
-        </div>
-        <div class="ed-row" style="margin-top:8px;"><label><input type="checkbox" id="ed-mirror"> Mirror (symmetry)</label></div>
-        <div class="ed-hint">Mirror paints the opposite side of the same body part too.</div>
-        <div class="ed-row" style="margin-top:6px;"><label><input type="checkbox" id="ed-grid" checked> Grid on this layer</label></div>
       </div>
 
       <div class="ed-group">
@@ -192,6 +188,7 @@
           <button id="ed-variant-slim">Slim</button>
         </div>
         <button class="ed-btn primary" id="ed-save"><i class="material-icons">save</i> Save to library</button>
+        <button class="ed-btn" id="ed-save-copy" style="margin-top:6px; display:none;"><i class="material-icons">content_copy</i> Save as a copy</button>
       </div>
     </div>
   </div>
@@ -284,7 +281,7 @@
         { name, face: 'back', x: ox + D + W + D, y: oy + D, w: W, h: H },
       ];
     }
-    let FACE_BASE = [], FACE_OVERLAY = [];
+    let FACE_BASE = [], FACE_OVERLAY = [], FACE_INDEX = {};
     function buildFaces() {
       const AW = variant === 'slim' ? 3 : 4; // arm width
       FACE_BASE = [
@@ -303,7 +300,16 @@
         ...facesFor('R Leg 2', 0, 32, 4, 12, 4),
         ...facesFor('L Leg 2', 0, 48, 4, 12, 4),
       ];
+      FACE_INDEX = {};
+      [...FACE_BASE, ...FACE_OVERLAY].forEach(f => { FACE_INDEX[`${f.name}|${f.face}`] = f; });
     }
+    // Whole-body (3D) mirror across the left/right symmetry plane: right limbs map
+    // to the matching left limbs, head/torso mirror onto themselves. Under an
+    // X-mirror the right↔left FACES swap and the front/back/top/bottom faces flip
+    // horizontally.
+    const MIRROR_PART = { 'Head': 'Head', 'Body': 'Body', 'R Arm': 'L Arm', 'L Arm': 'R Arm', 'R Leg': 'L Leg', 'L Leg': 'R Leg', 'Hat': 'Hat', 'Jacket': 'Jacket', 'R Arm 2': 'L Arm 2', 'L Arm 2': 'R Arm 2', 'R Leg 2': 'L Leg 2', 'L Leg 2': 'R Leg 2' };
+    const MIRROR_FACE = { top: 'top', bottom: 'bottom', front: 'front', back: 'back', right: 'left', left: 'right' };
+    const FLIPX_FACES = new Set(['front', 'back', 'top', 'bottom']);
     const inRect = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
     const rectAt = (rects, x, y) => rects.find(r => inRect(r, x, y)) || null;
     const isOverlayTexel = (x, y) => FACE_OVERLAY.some(r => inRect(r, x, y));
@@ -320,6 +326,7 @@
     let opacity = 1;
     let brushSize = 1;
     let fillWith = 'brush';
+    let fillRegion = 'connected';
     let drawing = false;
     let lastTexel = null;
 
@@ -327,7 +334,7 @@
     let undoStack = [], redoStack = [];
     function snapshot() { return wctx.getImageData(0, 0, SIZE, SIZE); }
     function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); redoStack = []; }
-    function restore(imgData) { wctx.putImageData(imgData, 0, 0); render(); update3D(); }
+    function restore(imgData) { wctx.putImageData(imgData, 0, 0); render(); liveUpdate(); }
     function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
     function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
 
@@ -405,11 +412,15 @@
       else { wctx.fillStyle = `rgba(${r},${g},${b},${opacity})`; wctx.fillRect(x, y, 1, 1); }
     }
     function mirrorTexel(x, y) {
-      // Horizontal mirror within the FACE the texel belongs to (works for 2D and
-      // 3D). Searches both layers so it's correct regardless of the active one.
-      const r = rectAt(FACE_BASE, x, y) || rectAt(FACE_OVERLAY, x, y);
-      if (!r) return null;
-      return { x: r.x + (r.x + r.w - 1 - x), y };
+      // Whole-body 3D mirror: map this texel to the same point on the opposite
+      // side of the body (right arm→left arm, etc.), keeping the same layer.
+      const src = rectAt(FACE_BASE, x, y) || rectAt(FACE_OVERLAY, x, y);
+      if (!src) return null;
+      const dst = FACE_INDEX[`${MIRROR_PART[src.name]}|${MIRROR_FACE[src.face]}`];
+      if (!dst) return null;
+      let lx = x - src.x, ly = y - src.y;
+      if (FLIPX_FACES.has(src.face)) lx = dst.w - 1 - lx;
+      return { x: dst.x + Math.min(dst.w - 1, lx), y: dst.y + Math.min(dst.h - 1, ly) };
     }
     function stampAt(cx, cy, mode, force) {
       const half = Math.floor(brushSize / 2);
@@ -463,28 +474,43 @@
         stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
       }
     }
+    // Fill dispatcher: connected colours, the whole face, or the whole element.
+    function doFill(sx, sy, force) {
+      if (fillRegion === 'connected') { floodFill(sx, sy, force); return; }
+      const f = rectAt(FACE_BASE, sx, sy) || rectAt(FACE_OVERLAY, sx, sy);
+      if (!f) return;
+      const targets = fillRegion === 'element'
+        ? [...FACE_BASE, ...FACE_OVERLAY].filter(r => r.name === f.name) // all faces of that part+layer
+        : [f];
+      targets.forEach(r => {
+        for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) {
+          setTexel(x, y, fillWith, force);
+          if (mirror) { const m = mirrorTexel(x, y); if (m) setTexel(m.x, m.y, fillWith, force); }
+        }
+      });
+    }
 
     // ── Pointer handling ──
+    const strokeMode = () => tool === 'texture' ? 'texture' : (tool === 'eraser' ? 'eraser' : 'brush');
     view.addEventListener('pointerdown', (e) => {
-      if (tool === 'view') return; // View tool doesn't paint the 2D texture
       e.preventDefault(); view.setPointerCapture(e.pointerId);
       const t = texelFromEvent(e);
       if (tool === 'eyedropper') { pickColor(t.x, t.y); return; }
       pushUndo();
-      if (tool === 'fill') { floodFill(t.x, t.y); render(); update3D(); return; }
+      if (tool === 'fill') { doFill(t.x, t.y); render(); liveUpdate(); return; }
       drawing = true; lastTexel = t;
-      stampAt(t.x, t.y, tool === 'texture' ? 'texture' : (tool === 'eraser' ? 'eraser' : 'brush'));
-      render();
+      stampAt(t.x, t.y, strokeMode());
+      render(); liveUpdate();
     });
     view.addEventListener('pointermove', (e) => {
       if (!drawing) return;
       const t = texelFromEvent(e);
       if (lastTexel && (t.x !== lastTexel.x || t.y !== lastTexel.y)) {
-        lineStamp(lastTexel, t, tool === 'texture' ? 'texture' : (tool === 'eraser' ? 'eraser' : 'brush'));
-        lastTexel = t; render();
+        lineStamp(lastTexel, t, strokeMode());
+        lastTexel = t; render(); liveUpdate();
       }
     });
-    const endStroke = () => { if (drawing) { drawing = false; lastTexel = null; update3D(); } };
+    const endStroke = () => { if (drawing) { drawing = false; lastTexel = null; liveUpdate(); } };
     view.addEventListener('pointerup', endStroke);
     view.addEventListener('pointercancel', endStroke);
 
@@ -495,7 +521,6 @@
       { id: 'eraser', icon: 'ink_eraser', label: 'Eraser' },
       { id: 'fill', icon: 'format_color_fill', label: 'Fill' },
       { id: 'eyedropper', icon: 'colorize', label: 'Pick' },
-      { id: 'view', icon: 'pan_tool', label: 'View' },
     ];
     const toolGrid = document.getElementById('ed-tool-grid');
     TOOLS.forEach(tl => {
@@ -505,19 +530,11 @@
         tool = tl.id;
         [...toolGrid.children].forEach(c => c.classList.remove('active')); b.classList.add('active');
         document.getElementById('ed-fillwith-row').style.display = (tool === 'fill') ? '' : 'none';
-        apply3DMode();
+        document.getElementById('ed-fillregion-row').style.display = (tool === 'fill') ? '' : 'none';
       };
       toolGrid.appendChild(b);
     });
-    // The View tool lets the model orbit; any paint tool disables orbit (and
-    // pauses the idle animation) so painting hits a still target.
-    function apply3DMode() {
-      const viewing = tool === 'view';
-      if (viewer && viewer.controls) { try { viewer.controls.enableRotate = viewing; viewer.controls.enableZoom = viewing; } catch { } }
-      if (viewer && viewer.animation) { try { viewer.animation.paused = !viewing; } catch { } }
-      const c = document.getElementById('ed-3d');
-      if (c) c.style.cursor = viewing ? 'grab' : 'crosshair';
-    }
+    document.getElementById('ed-fillregion').onchange = (e) => { fillRegion = e.target.value; };
 
     // Color + swatches
     const colorInput = document.getElementById('ed-color');
@@ -533,16 +550,14 @@
     document.getElementById('ed-opacity').oninput = (e) => { opacity = (+e.target.value) / 100; document.getElementById('ed-opacity-val').textContent = e.target.value + '%'; };
     document.getElementById('ed-fillwith').onchange = (e) => { fillWith = e.target.value; };
 
-    document.getElementById('ed-layer-base').onclick = () => setLayer('base');
-    document.getElementById('ed-layer-overlay').onclick = () => setLayer('overlay');
-    function setLayer(l) {
-      layer = l;
-      document.getElementById('ed-layer-base').classList.toggle('active', l === 'base');
-      document.getElementById('ed-layer-overlay').classList.toggle('active', l === 'overlay');
-      renderOverlay();
-    }
+    // The "Edit 2nd layer" toggle both selects the layer being edited and shows/
+    // hides the overlay on the model.
+    document.getElementById('ed-show-overlay').onchange = (e) => {
+      layer = e.target.checked ? 'overlay' : 'base';
+      renderOverlay(); applyPartVisibility(); liveUpdate();
+    };
     document.getElementById('ed-mirror').onchange = (e) => { mirror = e.target.checked; };
-    document.getElementById('ed-grid').onchange = (e) => { gridOn = e.target.checked; renderOverlay(); };
+    document.getElementById('ed-grid').onchange = (e) => { gridOn = e.target.checked; renderOverlay(); liveUpdate(); };
 
     document.getElementById('ed-variant-classic').onclick = () => setVariant('classic');
     document.getElementById('ed-variant-slim').onclick = () => setVariant('slim');
@@ -561,10 +576,10 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
       else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redo(); }
     });
-    document.getElementById('ed-clear').onclick = () => { pushUndo(); wctx.clearRect(0, 0, SIZE, SIZE); render(); update3D(); };
+    document.getElementById('ed-clear').onclick = () => { pushUndo(); wctx.clearRect(0, 0, SIZE, SIZE); render(); liveUpdate(); };
 
     // ── Flip (port of flipSkin.js: swap left/right & flip each face) ──
-    document.getElementById('ed-flip').onclick = () => { pushUndo(); flipSkin(); render(); update3D(); };
+    document.getElementById('ed-flip').onclick = () => { pushUndo(); flipSkin(); render(); liveUpdate(); };
     function flipSkin() {
       const src = document.createElement('canvas'); src.width = SIZE; src.height = SIZE;
       src.getContext('2d').drawImage(work, 0, 0);
@@ -614,21 +629,26 @@
       wctx.clearRect(0, 0, SIZE, SIZE); wctx.drawImage(res, 0, 0);
     }
 
-    // ── Make symmetric: copy left-half faces onto the right (per front-facing part) ──
+    // ── Make the whole model symmetric (3D): copy the RIGHT side onto the left,
+    //    and the left half of the self-mirroring parts (head/torso) onto the
+    //    right, using the whole-body mirror map. ──
     document.getElementById('ed-mirror-apply').onclick = () => {
       pushUndo();
-      const rects = layerFaces();
       const img = wctx.getImageData(0, 0, SIZE, SIZE);
-      rects.forEach(r => {
-        for (let y = r.y; y < r.y + r.h; y++) {
-          for (let x = r.x; x < r.x + Math.floor(r.w / 2); x++) {
-            const mx = r.x + (r.x + r.w - 1 - x);
-            const s = (y * SIZE + x) * 4, d = (y * SIZE + mx) * 4;
-            img.data[d] = img.data[s]; img.data[d + 1] = img.data[s + 1]; img.data[d + 2] = img.data[s + 2]; img.data[d + 3] = img.data[s + 3];
-          }
+      const copy = (sx, sy, dx, dy) => { const s = (sy * SIZE + sx) * 4, d = (dy * SIZE + dx) * 4; for (let k = 0; k < 4; k++) img.data[d + k] = img.data[s + k]; };
+      [...FACE_BASE, ...FACE_OVERLAY].forEach(f => {
+        const rightSide = /^R /.test(f.name);        // right arm/leg → copy to left
+        for (let y = f.y; y < f.y + f.h; y++) for (let x = f.x; x < f.x + f.w; x++) {
+          const lx = x - f.x;
+          // Right-side parts: copy everything. Self-mirroring parts (head/torso):
+          // copy the left half of the flippable faces, and the right side face.
+          const isSource = rightSide || f.face === 'right' || (FLIPX_FACES.has(f.face) && lx < f.w / 2);
+          if (!isSource) continue;
+          const m = mirrorTexel(x, y);
+          if (m && (m.x !== x || m.y !== y)) copy(x, y, m.x, m.y);
         }
       });
-      wctx.putImageData(img, 0, 0); render(); update3D();
+      wctx.putImageData(img, 0, 0); render(); liveUpdate();
     };
 
     // ── Image → skin (modal). Place freely or wrap a photo onto the body. ──
@@ -752,26 +772,66 @@
       if (!imgBitmap) return;
       pushUndo();
       if (importMode === 'wrap') drawWrap(wctx, 4); else drawFree(wctx, 1);
-      render(); update3D(true);
+      render(); liveUpdate();
     }
     document.getElementById('ed-img-bake').onclick = () => { bakeImage(); closeImgModal(); };
     document.getElementById('ed-img-bake-more').onclick = () => { bakeImage(); openImgModal(); };
 
     // ── 3D preview ──
-    let viewer = null, parts3d = {};
+    let viewer = null;
+    // A higher-res canvas (8px per texel) backs the 3D texture: it holds the skin
+    // plus the optional grid, and is bound straight to the model's materials so
+    // edits show INSTANTLY (no data-URL round-trip) and the grid appears in 3D.
+    const GT = 8;
+    const gridCanvas = document.createElement('canvas'); gridCanvas.width = SIZE * GT; gridCanvas.height = SIZE * GT;
+    const gctx = gridCanvas.getContext('2d');
+    let liveTex = null;
+    function refreshGridCanvas() {
+      gctx.imageSmoothingEnabled = false;
+      gctx.clearRect(0, 0, gridCanvas.width, gridCanvas.height);
+      gctx.drawImage(work, 0, 0, SIZE, SIZE, 0, 0, gridCanvas.width, gridCanvas.height);
+      if (gridOn) {
+        gctx.strokeStyle = 'rgba(255,255,255,0.30)'; gctx.lineWidth = 1;
+        layerFaces().forEach(r => {
+          for (let gx = r.x; gx <= r.x + r.w; gx++) { const X = gx * GT + 0.5; gctx.beginPath(); gctx.moveTo(X, r.y * GT); gctx.lineTo(X, (r.y + r.h) * GT); gctx.stroke(); }
+          for (let gy = r.y; gy <= r.y + r.h; gy++) { const Y = gy * GT + 0.5; gctx.beginPath(); gctx.moveTo(r.x * GT, Y); gctx.lineTo((r.x + r.w) * GT, Y); gctx.stroke(); }
+        });
+      }
+    }
+    function bindLiveTexture() {
+      if (!window.THREE || !viewer || !viewer.playerObject) return;
+      const skin = viewer.playerObject.skin;
+      let flipY = false;
+      try { const cur = skin.head.innerLayer.material.map; if (cur) flipY = cur.flipY; } catch { }
+      liveTex = new window.THREE.CanvasTexture(gridCanvas);
+      liveTex.magFilter = window.THREE.NearestFilter;
+      liveTex.minFilter = window.THREE.NearestFilter;
+      liveTex.flipY = flipY;
+      liveTex.needsUpdate = true;
+      ['head', 'body', 'rightArm', 'leftArm', 'rightLeg', 'leftLeg'].forEach(k => {
+        const part = skin[k]; if (!part) return;
+        [part.innerLayer, part.outerLayer].forEach(l => { if (l && l.material) { l.material.map = liveTex; l.material.transparent = true; l.material.needsUpdate = true; } });
+      });
+      refreshGridCanvas(); liveTex.needsUpdate = true;
+    }
+    // Instant texture-only refresh of the 3D model (draws, grid, flip, undo, …).
+    function liveUpdate() {
+      if (liveTex) { refreshGridCanvas(); liveTex.needsUpdate = true; }
+      else if (viewer) update3D(true);
+    }
     function build3D() {
       if (typeof skinview3d === 'undefined') return;
       viewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-3d'), width: 260, height: 340 });
-      try { viewer.controls.enableZoom = true; } catch { }
-      try { viewer.animation = new skinview3d.IdleAnimation(); viewer.animation.speed = 0.4; } catch { }
+      try { viewer.controls.enableZoom = true; viewer.controls.enableRotate = true; } catch { }
+      // No idle animation — the model stays still so you can draw on it; the user
+      // rotates it by dragging empty space.
       buildPartToggles();
       update3D(true);
       attach3DPainting();
-      apply3DMode(); // reflect the current tool (paint tools disable orbit)
+      const c = document.getElementById('ed-3d'); c.style.cursor = 'crosshair';
     }
     // Paint directly on the 3D model: raycast the click against the player mesh,
     // read the hit UV, convert to a texel and stamp it (needs window.THREE r163).
-    // Active whenever a paint tool (not View) is selected.
     let drawing3d = false;
     function texelFromHit(e) {
       if (!window.THREE || !viewer || !viewer.playerObject || !viewer.camera) return null;
@@ -792,21 +852,25 @@
       const t = texelFromHit(e);
       if (!t) return;
       if (tool === 'eyedropper') { if (isDown) pickColor(t.x, t.y); return; }
-      if (tool === 'fill') { if (isDown) { pushUndo(); floodFill(t.x, t.y, true); render(); update3D(true); } return; }
-      stampAt(t.x, t.y, tool === 'texture' ? 'texture' : (tool === 'eraser' ? 'eraser' : 'brush'), true);
-      render(); update3D();
+      if (tool === 'fill') { if (isDown) { pushUndo(); doFill(t.x, t.y, true); render(); liveUpdate(); } return; }
+      stampAt(t.x, t.y, strokeMode(), true);
+      render(); liveUpdate();
     }
     function attach3DPainting() {
       const c = document.getElementById('ed-3d');
-      c.style.cursor = 'grab';
+      // Capture phase so we pre-empt the orbit controls: if the click hit a body
+      // part we paint (and block the orbit for that drag); if it hit empty space
+      // we do nothing and the orbit controls rotate as normal.
       c.addEventListener('pointerdown', (e) => {
-        if (tool === 'view') return; // View tool: let the orbit controls handle it
-        e.preventDefault(); c.setPointerCapture(e.pointerId);
+        const t = texelFromHit(e);
+        if (!t) return; // empty space → rotate
+        e.preventDefault(); e.stopImmediatePropagation();
+        try { c.setPointerCapture(e.pointerId); } catch { }
         if (tool !== 'eyedropper' && tool !== 'fill') pushUndo();
         drawing3d = true; paint3D(e, true);
-      });
-      c.addEventListener('pointermove', (e) => { if (tool !== 'view' && drawing3d) paint3D(e, false); });
-      const end = () => { if (drawing3d) { drawing3d = false; update3D(true); } };
+      }, true);
+      c.addEventListener('pointermove', (e) => { if (drawing3d) paint3D(e, false); });
+      const end = (e) => { if (drawing3d) { drawing3d = false; try { c.releasePointerCapture(e.pointerId); } catch { } } };
       c.addEventListener('pointerup', end);
       c.addEventListener('pointercancel', end);
     }
@@ -816,34 +880,32 @@
       PART_KEYS.forEach(([key, label]) => {
         const lab = document.createElement('label');
         lab.innerHTML = `<input type="checkbox" checked data-part="${key}"> ${label}`;
-        lab.querySelector('input').onchange = (e) => applyPartVisibility();
+        lab.querySelector('input').onchange = () => applyPartVisibility();
         holder.appendChild(lab);
       });
-      document.getElementById('ed-show-overlay').onchange = applyPartVisibility;
     }
+    // While in the (later) face-copy mode, all parts are forced visible.
+    let forceAllVisible = false;
     function applyPartVisibility() {
       if (!viewer || !viewer.playerObject) return;
-      const showOverlay = document.getElementById('ed-show-overlay').checked;
+      const showOverlay = forceAllVisible || document.getElementById('ed-show-overlay').checked;
       PART_KEYS.forEach(([key]) => {
         const cb = document.querySelector(`#ed-parts input[data-part="${key}"]`);
         const part = viewer.playerObject.skin[key];
         if (!part) return;
-        const on = cb ? cb.checked : true;
+        const on = forceAllVisible || (cb ? cb.checked : true);
         if (part.innerLayer) part.innerLayer.visible = on;
         if (part.outerLayer) part.outerLayer.visible = on && showOverlay;
       });
     }
-    let update3DTimer = null;
-    function update3D(immediate) {
+    // Structural reload (only needed when the model geometry changes, i.e. the
+    // slim/wide variant). Re-binds the live texture afterwards.
+    function update3D() {
       if (!viewer) return;
-      clearTimeout(update3DTimer);
-      const run = () => {
-        try {
-          viewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' });
-          setTimeout(applyPartVisibility, 30);
-        } catch (e) { /* ignore */ }
-      };
-      if (immediate) run(); else update3DTimer = setTimeout(run, 120);
+      try {
+        viewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' });
+        setTimeout(() => { applyPartVisibility(); bindLiveTexture(); }, 40);
+      } catch (e) { /* ignore */ }
     }
 
     // ── Load initial skin ──
@@ -872,7 +934,7 @@
         try {
           const lib = await ipcRenderer.invoke('skins:list', { uuid });
           const s = (lib || []).find(x => String(x.id) === String(editSkinId));
-          if (s) { await loadIntoWork('data:image/png;base64,' + s.base64); name = s.name || name; variant = s.variant || 'classic'; setVariant(variant); document.getElementById('ed-title').textContent = 'Editing: ' + name; }
+          if (s) { await loadIntoWork('data:image/png;base64,' + s.base64); name = s.name || name; variant = s.variant || 'classic'; setVariant(variant); document.getElementById('ed-title').textContent = 'Editing: ' + name; document.getElementById('ed-save-copy').style.display = ''; }
         } catch { }
       } else if (mode === 'new' && params.get('template') === '1') {
         await loadIntoWork('assets/template.png');
@@ -907,6 +969,21 @@
       } catch (e) {
         alert('Save failed: ' + (e.message || e));
         btn.disabled = false; btn.innerHTML = '<i class="material-icons">save</i> Save to library';
+      }
+    };
+    // Save-as-copy (only shown when editing an existing skin): never overrides the
+    // original — always creates a new library entry.
+    document.getElementById('ed-save-copy').onclick = async () => {
+      const btn = document.getElementById('ed-save-copy');
+      const nm = ((document.getElementById('ed-name').value || 'My skin').trim() + ' copy');
+      const dataUrl = work.toDataURL('image/png');
+      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
+      try {
+        if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm });
+        window.location.href = 'profile-manager.html';
+      } catch (e) {
+        alert('Save failed: ' + (e.message || e));
+        btn.disabled = false; btn.innerHTML = '<i class="material-icons">content_copy</i> Save as a copy';
       }
     };
 
