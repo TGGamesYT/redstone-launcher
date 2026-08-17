@@ -85,6 +85,26 @@
     .efm-src.active { outline: 2px solid var(--base-color); }
     .efm-src canvas { width: 100%; aspect-ratio: 1/1; image-rendering: pixelated; border-radius: 4px; display: block; cursor: pointer; }
     .efm-src .efm-sname { font-size: 11px; margin-top: 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* ── Simple creator (Starlight dress-up). 3D on the left, category list in the
+       middle, the selected category's options on the right. ── */
+    #creator-wrap { display: none; gap: 16px; padding: 8px 20px 0 0; height: calc(100vh - 110px); max-width: 100%; box-sizing: border-box; overflow: hidden; }
+    #creator-wrap.active { display: flex; }
+    #cr-left { flex: 0 0 280px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+    #cr-3d { width: 280px; height: 360px; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); }
+    #cr-cats { flex: 0 0 190px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
+    .cr-cat { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 9px 12px; text-align: left; font-family: var(--text-font); font-size: 13px; }
+    .cr-cat:hover { border-color: var(--base-color); }
+    .cr-cat.active { background: var(--base-color); border-color: var(--text-color); }
+    #cr-options { flex: 1; min-width: 0; overflow-y: auto; padding-right: 6px; }
+    #cr-options h3 { margin: 0 0 12px; }
+    .cr-opt-row { margin-bottom: 14px; }
+    .cr-opt-row label { display: block; font-size: 12px; opacity: 0.8; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .cr-opt-row select { width: 100%; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); padding: 8px; font-family: var(--text-font); }
+    .cr-tex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+    .cr-tex { background: color-mix(in srgb, var(--third-color) 55%, transparent); border: 2px solid transparent; border-radius: var(--border-radius); padding: 8px 4px; cursor: pointer; font-size: 11px; text-align: center; }
+    .cr-tex:hover { border-color: var(--base-color); }
+    .cr-tex.active { border-color: var(--text-color); background: var(--base-color); }
+    #cr-busy { position: absolute; top: 10px; right: 20px; font-size: 12px; opacity: 0.7; display: none; }
     /* Image import modal */
     /* Leaves the left 3D panel (≈340px) visible as the live wrap preview. */
     .ed-modal-overlay { position: fixed; inset: 44px 0 0 340px; background: rgba(0,0,0,0.35); backdrop-filter: blur(2px); display: none; align-items: center; justify-content: center; z-index: 3000; }
@@ -137,6 +157,7 @@
   <h1 style="margin-left:0; margin-top:14px; display:flex; align-items:center; gap:12px;">
     <button class="ed-btn" style="width:auto; padding:6px 12px;" onclick="window.location.href='profile-manager.html'"><i class="material-icons">arrow_back</i> Skins</button>
     <span id="ed-title">Skin Editor</span>
+    <button class="ed-btn" id="mode-toggle" style="width:auto; padding:6px 12px; margin-left:auto; display:none;"><i class="material-icons">tune</i> <span id="mode-toggle-label">Advanced editor</span></button>
   </h1>
 
   <div id="editor-wrap">
@@ -211,6 +232,25 @@
         <button class="ed-btn primary" id="ed-save"><i class="material-icons">save</i> Save to library</button>
         <button class="ed-btn" id="ed-save-copy" style="margin-top:6px; display:none;"><i class="material-icons">content_copy</i> Save as a copy</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Simple creator (Starlight dress-up). Default for brand-new skins. -->
+  <div id="creator-wrap">
+    <div id="cr-left">
+      <canvas id="cr-3d"></canvas>
+      <div class="ed-hint" style="margin-top:-2px;">Drag to rotate.</div>
+      <div class="ed-group">
+        <div class="ed-row"><label>Name</label><input type="text" id="cr-name" placeholder="My skin" style="flex:1;"></div>
+        <button class="ed-btn primary" id="cr-save" style="margin-top:6px;"><i class="material-icons">save</i> Save to library</button>
+        <button class="ed-btn" id="cr-random" style="margin-top:6px;"><i class="material-icons">casino</i> Randomize</button>
+        <button class="ed-btn" id="cr-reset" style="margin-top:6px;"><i class="material-icons">restart_alt</i> Reset</button>
+      </div>
+    </div>
+    <div id="cr-cats"></div>
+    <div id="cr-options" style="position:relative;">
+      <div id="cr-busy">Rendering…</div>
+      <div id="cr-options-body"></div>
     </div>
   </div>
 
@@ -959,7 +999,7 @@
         await loadIntoWork('assets/template.png');
         document.getElementById('ed-title').textContent = 'New skin (from template)';
       } else if (mode === 'image') {
-        // start blank; open the image picker immediately
+        // start blank; open the image picker immediately (advanced editor + modal)
         document.getElementById('ed-title').textContent = 'Image → skin';
         setTimeout(() => document.getElementById('ed-import').click(), 300);
       } else {
@@ -969,6 +1009,12 @@
       syncColorInputs();
       render();
       build3D();
+      // The mode toggle is available on every editor session.
+      document.getElementById('mode-toggle').style.display = '';
+      // A brand-new skin (not a template, not an image import, not an edit) opens
+      // the simple Starlight creator by default; everything else stays advanced.
+      const plainNew = mode !== 'edit' && mode !== 'image' && params.get('template') !== '1';
+      if (plainNew) setEditorMode('creator');
       const ov = document.getElementById('loading-overlay'); if (ov) { ov.classList.add('fade-out'); setTimeout(() => ov.style.display = 'none', 400); }
     }
 
@@ -1138,6 +1184,161 @@
       box.querySelector('#efm-pick-x').onclick = () => ov.remove();
       ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
     }
+
+    // ── Simple creator (Starlight dress-up API) ─────────────────────────────
+    // The default mode for a brand-new skin: pick a category on the middle panel,
+    // set its texture/colour/alignment on the right, and the API renders a full
+    // skin which is loaded into `work` (so Save and the Advanced editor share it).
+    const CR_ALIGN = ['center', 'left', 'right', 'up', 'down'];
+    const CR_CATS = [
+      { key: 'base', label: 'Base', tex: { param: 'base_texture', list: 'base_textures', path: true }, color: { param: 'base_color', palette: 'base', path: true } },
+      { key: 'skin_type', label: 'Skin Type', special: 'skintype' },
+      { key: 'tops', label: 'Tops', tex: { param: 'top_texture', list: 'top_textures' }, color: { param: 'top_color', palette: 'default' }, color2: { param: 'top_color_secondary', palette: 'default' } },
+      { key: 'top_designs', label: 'Top Designs', tex: { param: 'top_designs_texture', list: 'top_designs_textures' }, color: { param: 'top_designs_color', palette: 'default' } },
+      { key: 'bottoms', label: 'Bottoms', tex: { param: 'bottom_texture', list: 'bottom_textures' }, color: { param: 'bottom_color', palette: 'default' }, color2: { param: 'bottom_color_secondary', palette: 'default' } },
+      { key: 'outerwear', label: 'Outerwear', tex: { param: 'outerwear_texture', list: 'outerwear_textures' }, color: { param: 'outerwear_color', palette: 'default' }, color2: { param: 'outerwear_color_secondary', palette: 'default' } },
+      { key: 'footwear', label: 'Footwear', tex: { param: 'footwear_texture', list: 'footwear_textures' }, color: { param: 'footwear_color', palette: 'default' } },
+      { key: 'socks', label: 'Socks', tex: { param: 'socks_texture', list: 'socks_textures' }, color: { param: 'socks_color', palette: 'default' } },
+      { key: 'gloves', label: 'Gloves', tex: { param: 'gloves_texture', list: 'gloves_textures' }, color: { param: 'gloves_color', palette: 'default' } },
+      { key: 'hair', label: 'Hair', tex: { param: 'hair_style_texture', list: 'hair_style_textures' }, color: { param: 'hair_color', palette: 'hair' } },
+      { key: 'headwear', label: 'Headwear', tex: { param: 'headwear_texture', list: 'headwear_textures' }, color: { param: 'headwear_color', palette: 'default' } },
+      { key: 'eyes', label: 'Eyes', tex: { param: 'eyes_texture', list: 'eyes_textures' }, color: { param: 'eyes_color', palette: 'eyes' }, color2: { param: 'eyes_color_secondary', palette: 'eyes' }, align: 'eyes_alignment' },
+      { key: 'eyebrows', label: 'Eyebrows', tex: { param: 'eyebrow_texture', list: 'eyebrow_textures' }, color: { param: 'eyebrow_color', palette: 'hair' } },
+      { key: 'mouths', label: 'Mouths', tex: { param: 'mouth_texture', list: 'mouth_textures' }, color: { param: 'mouth_color', palette: 'default' }, align: 'mouth_alignment' },
+      { key: 'facial_hair', label: 'Facial Hair', tex: { param: 'facial_hair_texture', list: 'facial_hair_textures' }, color: { param: 'facial_hair_color', palette: 'hair' } },
+      { key: 'face_items', label: 'Face Items', tex: { param: 'face_item_texture', list: 'face_item_textures' }, color: { param: 'face_item_color', palette: 'default' } },
+    ];
+    let crInfo = null, crViewer = null, crActiveCat = null, crGenTimer = null, crGenSeq = 0;
+    const CR_DEFAULT = { base_texture: 'none', base_color: 'pale', skin_type: 'wide' };
+    let crState = { ...CR_DEFAULT };
+    const crTitle = (s) => String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const crColors = (pal) => (crInfo && crInfo.cosmetics && crInfo.cosmetics.colors && crInfo.cosmetics.colors[pal]) || [];
+    const crTexList = (k) => { const o = crInfo && crInfo.cosmetics && crInfo.cosmetics[k]; return o ? Object.keys(o) : []; };
+
+    async function crInit() {
+      const info = await ipcRenderer.invoke('starlight:info');
+      if (!info || info.error || !info.cosmetics) {
+        document.getElementById('cr-options-body').innerHTML = '<div class="ed-hint">Couldn\'t load the skin creator options (are you offline?). Switch to the Advanced editor instead.</div>';
+        return;
+      }
+      crInfo = info;
+      buildCatTabs();
+      selectCat(CR_CATS[0]);
+      crGenerate();
+    }
+    function buildCatTabs() {
+      const wrap = document.getElementById('cr-cats'); wrap.innerHTML = '';
+      CR_CATS.forEach(cat => { const b = document.createElement('button'); b.className = 'cr-cat'; b.textContent = cat.label; b.onclick = () => selectCat(cat); cat._btn = b; wrap.appendChild(b); });
+    }
+    function selectCat(cat) { crActiveCat = cat; CR_CATS.forEach(c => c._btn && c._btn.classList.toggle('active', c === cat)); renderCatOptions(cat); }
+    function crSelRow(label, opts, cur, onChange) {
+      const row = document.createElement('div'); row.className = 'cr-opt-row';
+      const l = document.createElement('label'); l.textContent = label; row.appendChild(l);
+      const s = document.createElement('select');
+      opts.forEach(o => { const op = document.createElement('option'); op.value = o; op.textContent = crTitle(o); if (o === cur) op.selected = true; s.appendChild(op); });
+      s.onchange = () => onChange(s.value); row.appendChild(s); return row;
+    }
+    function renderCatOptions(cat) {
+      const body = document.getElementById('cr-options-body'); body.innerHTML = '';
+      const h = document.createElement('h3'); h.textContent = cat.label; body.appendChild(h);
+      if (cat.special === 'skintype') { body.appendChild(crSelRow('Model', ['wide', 'slim'], crState.skin_type, v => { crState.skin_type = v; crGenerate(); })); return; }
+      if (cat.tex) {
+        const list = crTexList(cat.tex.list);
+        const cur = crState[cat.tex.param] || 'none';
+        const row = document.createElement('div'); row.className = 'cr-opt-row'; row.innerHTML = '<label>Style</label>';
+        const grid = document.createElement('div'); grid.className = 'cr-tex-grid';
+        list.forEach(name => { const t = document.createElement('div'); t.className = 'cr-tex' + (name === cur ? ' active' : ''); t.textContent = crTitle(name); t.onclick = () => { crState[cat.tex.param] = name; renderCatOptions(cat); crGenerate(); }; grid.appendChild(t); });
+        row.appendChild(grid); body.appendChild(row);
+      }
+      const chosen = cat.tex ? (crState[cat.tex.param] && crState[cat.tex.param] !== 'none') : true;
+      const colorRow = (label, cfg) => { const cols = crColors(cfg.palette); const cur = crState[cfg.param] || cols[0] || ''; return crSelRow(label, cols, cur, v => { crState[cfg.param] = v; crGenerate(); }); };
+      if (cat.color && (chosen || cat.color.path)) body.appendChild(colorRow('Colour', cat.color));
+      if (cat.color2 && chosen) body.appendChild(colorRow('Secondary colour', cat.color2));
+      if (cat.align && chosen) body.appendChild(crSelRow('Alignment', CR_ALIGN, crState[cat.align] || 'center', v => { crState[cat.align] = v; crGenerate(); }));
+    }
+    function crBuildRequest() {
+      const bt = crState.base_texture || 'none', bc = crState.base_color || 'pale', st = crState.skin_type || 'wide';
+      const pathSeg = `${encodeURIComponent(bt)}/${encodeURIComponent(bc)}/${encodeURIComponent(st)}`;
+      const query = {};
+      CR_CATS.forEach(cat => {
+        if (cat.special || !cat.tex || cat.tex.path) return;
+        const v = crState[cat.tex.param];
+        if (!v || v === 'none') return;
+        query[cat.tex.param] = v;
+        if (cat.color && crState[cat.color.param]) query[cat.color.param] = crState[cat.color.param];
+        if (cat.color2 && crState[cat.color2.param]) query[cat.color2.param] = crState[cat.color2.param];
+        if (cat.align && crState[cat.align]) query[cat.align] = crState[cat.align];
+      });
+      return { pathSeg, query };
+    }
+    function crLoadIntoWork(src) {
+      return new Promise(res => { const im = new Image(); im.onload = () => { wctx.clearRect(0, 0, SIZE, SIZE); if (im.width === 64 && im.height === 32) wctx.drawImage(im, 0, 0, 64, 32, 0, 0, 64, 32); else wctx.drawImage(im, 0, 0, SIZE, SIZE); render(); if (typeof liveUpdate === 'function') liveUpdate(); res(); }; im.onerror = () => res(); im.src = src; });
+    }
+    function crGenerate() {
+      const seq = ++crGenSeq;
+      clearTimeout(crGenTimer);
+      crGenTimer = setTimeout(async () => {
+        document.getElementById('cr-busy').style.display = 'block';
+        const r = await ipcRenderer.invoke('starlight:generate', crBuildRequest());
+        if (seq !== crGenSeq) return;
+        document.getElementById('cr-busy').style.display = 'none';
+        if (!r || r.error || !r.base64) return;
+        await crLoadIntoWork('data:image/png;base64,' + r.base64);
+        variant = crState.skin_type === 'slim' ? 'slim' : 'classic';
+        if (!crViewer && typeof skinview3d !== 'undefined') { try { crViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('cr-3d'), width: 280, height: 360 }); } catch { } }
+        if (crViewer) { try { crViewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
+      }, 250);
+    }
+    function crRandomize() {
+      crState = { ...CR_DEFAULT };
+      const rnd = (a) => a[Math.floor(Math.random() * a.length)];
+      crState.base_color = rnd(crColors('base') .length ? crColors('base') : ['pale']);
+      CR_CATS.forEach(cat => {
+        if (cat.special || !cat.tex || cat.tex.path) return;
+        // ~55% chance to add each cosmetic, chosen from its non-"none" options.
+        const list = crTexList(cat.tex.list).filter(n => n !== 'none');
+        if (list.length && Math.random() < 0.55) {
+          crState[cat.tex.param] = rnd(list);
+          if (cat.color) { const c = crColors(cat.color.palette); if (c.length) crState[cat.color.param] = rnd(c); }
+        }
+      });
+      if (crActiveCat) renderCatOptions(crActiveCat);
+      crGenerate();
+    }
+    async function crSave() {
+      const btn = document.getElementById('cr-save');
+      const nm = (document.getElementById('cr-name').value || 'My skin').trim();
+      const dataUrl = work.toDataURL('image/png');
+      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
+      try {
+        if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm });
+        window.location.href = 'profile-manager.html';
+      } catch (e) { alert('Save failed: ' + (e.message || e)); btn.disabled = false; btn.innerHTML = '<i class="material-icons">save</i> Save to library'; }
+    }
+    document.getElementById('cr-save').onclick = crSave;
+    document.getElementById('cr-random').onclick = crRandomize;
+    document.getElementById('cr-reset').onclick = () => { crState = { ...CR_DEFAULT }; if (crActiveCat) renderCatOptions(crActiveCat); crGenerate(); };
+
+    // ── Mode switch: simple creator ⇆ advanced editor ──
+    let curEditorMode = 'advanced';
+    function setEditorMode(m) {
+      curEditorMode = m;
+      const cw = document.getElementById('creator-wrap'), ew = document.getElementById('editor-wrap');
+      if (m === 'creator') {
+        cw.classList.add('active'); ew.style.display = 'none';
+        document.getElementById('mode-toggle-label').textContent = 'Advanced editor';
+        document.getElementById('ed-title').textContent = 'Create a skin';
+        if (!crInfo) crInit();
+      } else {
+        cw.classList.remove('active'); ew.style.display = '';
+        document.getElementById('mode-toggle-label').textContent = 'Simple creator';
+        if (document.getElementById('ed-title').textContent === 'Create a skin') document.getElementById('ed-title').textContent = 'Advanced editor';
+        // Carry the creator's design into the advanced editor's 3D + name.
+        try { const cn = document.getElementById('cr-name').value; if (cn && !document.getElementById('ed-name').value) document.getElementById('ed-name').value = cn; } catch { }
+        setVariant(variant); render(); update3D(true);
+      }
+    }
+    document.getElementById('mode-toggle').onclick = () => setEditorMode(curEditorMode === 'creator' ? 'advanced' : 'creator');
 
     function updatePresence(details, state = 'Idle') { ipcRenderer.send('update-discord-presence', { details, state }); }
     updatePresence('Editing a skin');

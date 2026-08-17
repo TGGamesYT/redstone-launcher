@@ -5891,6 +5891,38 @@ ipcMain.handle("skins:allLibrary", () => {
   return out;
 });
 
+// ── Starlight Skin Creator (lunareclipse.studio) ────────────────────────────
+// A Bedrock-style dress-up skin creator. The info endpoint lists every cosmetic
+// option; the create endpoint renders a 64×64 skin PNG from chosen options. Both
+// are proxied through the main process so the renderer avoids CORS / tainted
+// canvases, and the (large) option list is cached.
+const STARLIGHT_BASE = "https://starlightskins.lunareclipse.studio";
+let _starlightInfoCache = null;
+ipcMain.handle("starlight:info", async () => {
+  if (_starlightInfoCache) return _starlightInfoCache;
+  const cacheFile = path.join(texturesDir, "starlight-info.json");
+  try {
+    const j = await (await fetch(`${STARLIGHT_BASE}/create-skin/info`)).json();
+    _starlightInfoCache = j;
+    try { fs.mkdirSync(texturesDir, { recursive: true }); fs.writeFileSync(cacheFile, JSON.stringify(j)); } catch { }
+    return j;
+  } catch (e) {
+    if (fs.existsSync(cacheFile)) { try { return (_starlightInfoCache = JSON.parse(fs.readFileSync(cacheFile, "utf8"))); } catch { } }
+    return { error: e.message };
+  }
+});
+// path = "<base_texture>/<base_color>/<skinType>", query = { param: value, ... }.
+ipcMain.handle("starlight:generate", async (event, { pathSeg, query }) => {
+  try {
+    const qs = new URLSearchParams(query || {}).toString();
+    const url = `${STARLIGHT_BASE}/create-skin/${pathSeg}/${qs ? "?" + qs : ""}`;
+    const res = await fetch(url);
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const buf = Buffer.from(await res.arrayBuffer());
+    return { base64: buf.toString("base64") };
+  } catch (e) { return { error: e.message }; }
+});
+
 // Resolve a Minecraft username → its current skin PNG (base64), done in the main
 // process so there's no browser CORS/tainted-canvas problem. Used by the editor's
 // "copy faces → from player name".
