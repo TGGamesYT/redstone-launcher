@@ -149,12 +149,12 @@
         curFile = rel; data = null; nbtMeta = null; readOnly = false; kind = 'text'; view = 'tree';
         toggleBtn.style.display = 'none'; tree.style.display = 'none'; area.style.display = ''; area.disabled = false;
 
-        if (/\.(dat|dat_old)$/i.test(name)) {
+        if (/\.(dat|dat_old|nbt|schem|schematic|litematic|mcstructure)$/i.test(name)) {
           const n = await ipcRenderer.invoke(chan + ':read-nbt', arg({ path: rel }));
           if (n && !n.error) {
             kind = 'nbt'; nbtMeta = { gzip: n.gzip, type: n.type };
             try { data = JSON.parse(n.json); } catch { data = {}; }
-            toggleBtn.style.display = ''; state.textContent = 'NBT (.dat) — tree edits saved back as NBT';
+            toggleBtn.style.display = ''; state.textContent = 'NBT — tree edits saved back as NBT';
             showTree(); return;
           }
         }

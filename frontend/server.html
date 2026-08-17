@@ -522,8 +522,17 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       loadServers();
     }
 
-    // Toolbar/browser Back while in a detail view → return to the list.
-    window.addEventListener('popstate', () => { if (selectedServer) closeDetail(); });
+    // Toolbar/browser Back while in a detail view. If the previous entry is the
+    // same server on a different tab, switch tabs in place; otherwise (back past
+    // the detail root) return to the list.
+    window.addEventListener('popstate', (e) => {
+      const st = e.state;
+      if (st && st.srvDetail && selectedServer && st.srvDetail === selectedServer.name) {
+        selectTab(st.tab || 'console');
+        return;
+      }
+      if (selectedServer) closeDetail();
+    });
 
     // Let the sidebar's "Server Manager" button restructure to the list in-page
     // (rather than reloading) when we're already on this page. Returns true if
@@ -547,15 +556,20 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       poll();
     }
 
-    // Detail tab switching.
-    function selectTab(name) {
+    // Detail tab switching. `push` records the tab in history so the Back button
+    // returns to the previously-viewed tab before leaving the detail view.
+    function selectTab(name, push) {
       document.querySelectorAll('.srv-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
       document.querySelectorAll('.srv-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === name));
       if (name === 'console') setTimeout(() => { const c = $('cmdInput'); if (c) c.focus(); }, 40);
       if (name === 'mods') loadServerMods();
+      if (push && selectedServer) {
+        const u = location.pathname + '?srv=' + encodeURIComponent(selectedServer.name) + '&tab=' + encodeURIComponent(name);
+        history.pushState({ srvDetail: selectedServer.name, tab: name }, '', u);
+      }
     }
     document.querySelectorAll('.srv-tab').forEach(tab => {
-      tab.onclick = () => selectTab(tab.dataset.tab);
+      tab.onclick = () => selectTab(tab.dataset.tab, true);
     });
     // Start a server, prompting for the Mojang EULA on first launch.
     async function startServerChecked(name) {

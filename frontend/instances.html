@@ -721,18 +721,37 @@
     window.openInstanceInPage = function (id) {
       const url = new URL(window.location);
       url.searchParams.set('i', id);
+      url.searchParams.delete('tab'); // start a freshly-opened instance on its default tab
       history.pushState({}, '', url);
       renderListOrDetail();
     };
     window.openNewInstanceInPage = function () {
       const url = new URL(window.location);
       url.searchParams.delete('i');
+      url.searchParams.delete('tab');
       history.pushState({}, '', url);
       renderListOrDetail();
       openNewInstance();
     };
+    // Which instance's detail is currently on screen, and its tab buttons, so the
+    // back/forward buttons can switch TABS in place without re-rendering the view.
+    let currentDetailId = null;
+    let currentTabButtons = null;
+    let suppressTabPush = false;
     // Keep the browser back/forward buttons working with the in-page switches.
-    window.addEventListener('popstate', () => renderListOrDetail());
+    window.addEventListener('popstate', () => {
+      const url = new URL(window.location);
+      const i = url.searchParams.get('i');
+      // Still on the same instance detail → only the tab changed: switch it in
+      // place instead of rebuilding the whole view (which would reset the tab).
+      if (i && String(i) === currentDetailId && currentTabButtons) {
+        const want = url.searchParams.get('tab');
+        const btn = (want && currentTabButtons[want]) || currentTabButtons.logs;
+        if (btn && !btn.classList.contains('active')) { suppressTabPush = true; btn.click(); suppressTabPush = false; }
+        return;
+      }
+      renderListOrDetail();
+    });
 
     // The sidebar's "Instances" button calls this when we're already on this
     // page: restructure to the instance LIST in place instead of reloading.
@@ -741,6 +760,7 @@
       const url = new URL(window.location);
       if (!url.searchParams.has('i')) return false; // already showing the list
       url.searchParams.delete('i');
+      url.searchParams.delete('tab');
       history.pushState({}, '', url);
       renderListOrDetail();
       return true;
@@ -2024,6 +2044,16 @@
             const cacheKey = `${profile.id}:${tabName}`;
             const ensureStillActive = () => thisSession === currentTabSession;
 
+            // Record the tab in the URL so browser Back returns to the previous
+            // tab (unless this click IS a back/forward restore or the default).
+            if (!suppressTabPush) {
+              const u = new URL(window.location);
+              if (u.searchParams.get('tab') !== tabName) {
+                u.searchParams.set('tab', tabName);
+                history.pushState({}, '', u);
+              }
+            }
+
             Object.values(tabButtons).forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
 
@@ -2466,8 +2496,15 @@
           tabButtons[tab.toLowerCase()] = btn;
         }
 
-        // default select logs if available
-        if (tabButtons.logs) tabButtons.logs.click();
+        // Expose for back/forward tab restoration.
+        currentDetailId = String(profile.id);
+        currentTabButtons = tabButtons;
+
+        // Open the tab named in the URL (so back/forward + reload land on it),
+        // else default to logs. The initial open must not push a new history entry.
+        const wantTab = new URL(window.location).searchParams.get('tab');
+        const startBtn = (wantTab && tabButtons[wantTab]) || tabButtons.logs;
+        if (startBtn) { suppressTabPush = true; startBtn.click(); suppressTabPush = false; }
 
         return;
       }
@@ -2475,6 +2512,7 @@
 
 
       // LIST VIEW
+      currentDetailId = null; currentTabButtons = null;
       searchsort.style.display = "block";
       const heading = document.getElementById("instancesHeading");
       const topBr = document.getElementById("instancesTopBr");
