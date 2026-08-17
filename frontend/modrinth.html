@@ -230,7 +230,9 @@
         .sort((a, b) => new Date(b.date_published) - new Date(a.date_published))[0];
     }
 
-    // Resolve a version's required/optional dependencies into installable entries.
+    // Resolve a version's required/optional dependencies into installable entries,
+    // marking any that are ALREADY installed in the target instance so the modal
+    // can show them as satisfied instead of re-offering them.
     async function resolveDependencies(version) {
       const deps = (version.dependencies || []).filter(d => d.project_id && (d.dependency_type === 'required' || d.dependency_type === 'optional'));
       const out = [];
@@ -242,7 +244,10 @@
           ]);
           const cv = pickCompatible(vs, true);
           const file = cv && ((cv.files || []).find(f => f.primary) || (cv.files || [])[0]);
-          if (file) out.push({ type: d.dependency_type, name: proj.title || d.project_id, fileUrl: file.url });
+          if (!file) continue;
+          let installed = false;
+          try { installed = await ipcRenderer.invoke("check-file-exists", String(installInstance.id), !installInstance.isServer, file.url); } catch { }
+          out.push({ type: d.dependency_type, name: proj.title || d.project_id, fileUrl: file.url, installed, projectId: d.project_id });
         } catch { /* skip unresolved dep */ }
       }
       return out;
@@ -255,9 +260,9 @@
         ov.className = 'modal-overlay active';
         ov.style.zIndex = 5000;
         const rows = deps.map((d, i) =>
-          `<label style="display:flex;align-items:center;gap:8px;margin:6px 0;">
-             <input type="checkbox" data-i="${i}" ${d.type === 'required' ? 'checked' : ''} />
-             <span>${d.name} <span style="opacity:.6;">(${d.type})</span></span>
+          `<label style="display:flex;align-items:center;gap:8px;margin:6px 0;${d.installed ? 'opacity:.6;' : ''}">
+             <input type="checkbox" data-i="${i}" ${d.installed ? 'checked disabled' : (d.type === 'required' ? 'checked' : '')} />
+             <span>${d.name} <span style="opacity:.6;">(${d.installed ? 'already installed' : d.type})</span></span>
            </label>`).join('');
         ov.innerHTML = `<div class="modal-content" style="max-width:420px;">
           <div class="modal-header"><h2>Install dependencies?</h2></div>
@@ -270,7 +275,8 @@
         document.body.appendChild(ov);
         ov.querySelector('#depSkip').onclick = () => { ov.remove(); resolve([]); };
         ov.querySelector('#depGo').onclick = () => {
-          const chosen = [...ov.querySelectorAll('input[type=checkbox]')].filter(c => c.checked).map(c => deps[+c.dataset.i]);
+          // Skip anything already installed — only download newly-chosen deps.
+          const chosen = [...ov.querySelectorAll('input[type=checkbox]')].filter(c => c.checked).map(c => deps[+c.dataset.i]).filter(d => d && !d.installed);
           ov.remove(); resolve(chosen);
         };
       });
@@ -287,18 +293,31 @@
         const file = v && ((v.files || []).find(f => f.primary) || (v.files || [])[0]);
         if (!file) { btn.textContent = "Unavailable"; return; }
 
-        // Offer to also install dependencies (mods only).
+        // Offer to also install dependencies (mods only). Only prompt when at
+        // least one dependency isn't already installed — if every required (and
+        // optional) dep is satisfied, install silently without a pointless modal.
         let deps = [];
         if (installType === 'mod') {
           const resolved = await resolveDependencies(v);
-          if (resolved.length) deps = await promptDependencies(resolved);
+          if (resolved.some(d => !d.installed)) deps = await promptDependencies(resolved);
         }
 
         const dl = (fileUrl) => ipcRenderer.invoke("mod-download", {
           server: !!installInstance.isServer, id: installInstance.id, fileUrl, projectType: installType,
         });
         const result = await dl(file.url);
-        for (const d of deps) { try { await dl(d.fileUrl); } catch { /* continue */ } }
+        for (const d of deps) {
+          try {
+            await dl(d.fileUrl);
+            // If this dependency is also shown as a card on the current page,
+            // flip its button to "Installed" right away.
+            if (d.projectId) {
+              const depCard = resultsList.querySelector(`.project-card[data-pid="${d.projectId}"]`);
+              const depBtn = depCard && depCard.querySelector('.install-here-btn:not(.version-pick-btn)');
+              if (depBtn) { depBtn.textContent = "Installed"; depBtn.disabled = true; }
+            }
+          } catch { /* continue */ }
+        }
 
         btn.textContent = result && result.success === false ? "Failed" : (deps.length ? `Installed +${deps.length}` : "Installed");
         if (result && result.success === false) btn.disabled = false;
@@ -468,6 +487,7 @@
         console.log(proj)
         const card = document.createElement("div");
         card.className = "project-card";
+        if (api === "modrinth" && proj.project_id) card.dataset.pid = proj.project_id;
 
         const left = document.createElement("div");
         left.className = "project-left";
