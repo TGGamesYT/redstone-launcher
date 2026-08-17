@@ -5879,6 +5879,39 @@ ipcMain.handle("skins:list", (event, { uuid }) => {
   return loadSkinLib()[uuid] || [];
 });
 
+// Every saved skin across ALL accounts (for the editor's "copy faces → from
+// library" picker, which spans other accounts too). Flat list; owner is a
+// best-effort label only.
+ipcMain.handle("skins:allLibrary", () => {
+  const lib = loadSkinLib();
+  const out = [];
+  for (const arr of Object.values(lib)) {
+    (arr || []).forEach(s => out.push({ id: s.id, name: s.name, base64: s.base64, variant: s.variant }));
+  }
+  return out;
+});
+
+// Resolve a Minecraft username → its current skin PNG (base64), done in the main
+// process so there's no browser CORS/tainted-canvas problem. Used by the editor's
+// "copy faces → from player name".
+ipcMain.handle("skins:fetchByName", async (event, name) => {
+  try {
+    const uname = String(name || "").trim();
+    if (!uname) return { error: "Empty name" };
+    const pr = await (await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(uname)}`)).json();
+    if (!pr || !pr.id) return { error: "Player not found" };
+    const prof = await (await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${pr.id}`)).json();
+    const tex = (prof.properties || []).find(p => p.name === "textures");
+    if (!tex) return { error: "No textures for this player" };
+    const decoded = JSON.parse(Buffer.from(tex.value, "base64").toString("utf8"));
+    const url = decoded?.textures?.SKIN?.url;
+    if (!url) return { error: "This player has no custom skin" };
+    const slim = decoded?.textures?.SKIN?.metadata?.model === "slim";
+    const buf = Buffer.from(await (await fetch(url)).arrayBuffer());
+    return { base64: buf.toString("base64"), name: pr.name || uname, variant: slim ? "slim" : "classic" };
+  } catch (e) { return { error: e.message }; }
+});
+
 // Add a skin to the library WITHOUT touching Mojang. No-op (returns existing)
 // if a pixel-identical skin is already saved.
 ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name }) => {

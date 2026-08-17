@@ -64,6 +64,27 @@
     .ed-swatches { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .ed-swatch { width: 18px; height: 18px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.4); cursor: pointer; }
     .ed-hint { font-size: 11px; opacity: 0.6; margin-top: 4px; }
+    /* ── Edit-faces mode: a full-page texture mapper. Copy individual faces from
+       other skins (file / library / playername) onto the working skin. ── */
+    #ed-faces-mode { position: fixed; inset: 44px 0 0 70px; background: var(--menu-bg); z-index: 2600; display: none; flex-direction: column; padding: 14px 22px; overflow: auto; }
+    #ed-faces-mode.active { display: flex; }
+    #ed-faces-mode .efm-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    #ed-faces-mode h2 { margin: 0; font-size: 20px; }
+    .efm-top { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+    #efm-3d { width: 300px; height: 380px; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); flex: 0 0 auto; }
+    .efm-target { flex: 1; min-width: 320px; }
+    .efm-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+    .efm-face { background: color-mix(in srgb, var(--third-color) 55%, transparent); border-radius: var(--border-radius); padding: 6px; text-align: center; font-size: 10px; }
+    .efm-face canvas { width: 100%; aspect-ratio: 1/1; image-rendering: pixelated; border-radius: 4px; display: block; background: repeating-conic-gradient(#0003 0% 25%, transparent 0% 50%) 50% / 12px 12px; cursor: pointer; }
+    .efm-face.pick canvas { outline: 2px solid var(--base-color); }
+    .efm-face .efm-flabel { margin-top: 3px; opacity: 0.8; }
+    .efm-sources { margin-top: 16px; }
+    .efm-src-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .efm-src-list { display: flex; gap: 10px; flex-wrap: wrap; }
+    .efm-src { background: color-mix(in srgb, var(--third-color) 55%, transparent); border-radius: var(--border-radius); padding: 8px; width: 150px; }
+    .efm-src.active { outline: 2px solid var(--base-color); }
+    .efm-src canvas { width: 100%; aspect-ratio: 1/1; image-rendering: pixelated; border-radius: 4px; display: block; cursor: pointer; }
+    .efm-src .efm-sname { font-size: 11px; margin-top: 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* Image import modal */
     /* Leaves the left 3D panel (≈340px) visible as the live wrap preview. */
     .ed-modal-overlay { position: fixed; inset: 44px 0 0 340px; background: rgba(0,0,0,0.35); backdrop-filter: blur(2px); display: none; align-items: center; justify-content: center; z-index: 3000; }
@@ -175,6 +196,7 @@
           <button class="ed-btn" id="ed-mirror-apply" title="Copy the left side onto the right (make symmetric)"><i class="material-icons">compare_arrows</i> Symm</button>
         </div>
         <button class="ed-btn" id="ed-import" style="margin-top:6px;"><i class="material-icons">image</i> Add image…</button>
+        <button class="ed-btn" id="ed-faces-btn" style="margin-top:6px;"><i class="material-icons">dashboard_customize</i> Copy faces from skin…</button>
         <button class="ed-btn" id="ed-clear" style="margin-top:6px;"><i class="material-icons">delete_sweep</i> Clear</button>
       </div>
 
@@ -221,7 +243,32 @@
     </div>
   </div>
 
+  <!-- Edit-faces mode: full-page texture mapper (copy faces from other skins). -->
+  <div id="ed-faces-mode">
+    <div class="efm-head">
+      <button class="ed-btn" style="width:auto; padding:6px 12px;" id="efm-close"><i class="material-icons">arrow_back</i> Done</button>
+      <h2>Copy faces from another skin</h2>
+      <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="efm-overlay"> Show 2nd layer</label>
+    </div>
+    <div class="efm-top">
+      <canvas id="efm-3d"></canvas>
+      <div class="efm-target">
+        <div class="ed-hint" style="margin:0 0 8px;">Your skin. Pick a source skin below, then click a source face to stamp it onto the matching face here.</div>
+        <div class="efm-faces" id="efm-target-faces"></div>
+      </div>
+    </div>
+    <div class="efm-sources">
+      <div class="efm-src-bar">
+        <button class="ed-btn" style="width:auto;" id="efm-add-file"><i class="material-icons">upload</i> From file</button>
+        <button class="ed-btn" style="width:auto;" id="efm-add-lib"><i class="material-icons">collections</i> From library</button>
+        <button class="ed-btn" style="width:auto;" id="efm-add-player"><i class="material-icons">person</i> From player name</button>
+      </div>
+      <div class="efm-src-list" id="efm-src-list"></div>
+    </div>
+  </div>
+
   <input type="file" id="ed-file" accept="image/png,image/*" style="display:none;" />
+  <input type="file" id="efm-file" accept="image/png,image/*" style="display:none;" />
   <img id="ed-hidden-img" style="display:none;" />
   <!-- three.js (r163, matching skinview3d) exposed as window.THREE for raycast painting on the 3D model -->
   <script type="module">import * as THREE from './three.module.js'; window.THREE = THREE;</script>
@@ -958,6 +1005,139 @@
         btn.disabled = false; btn.innerHTML = '<i class="material-icons">content_copy</i> Save as a copy';
       }
     };
+
+    // ── Edit-faces mode: a full-page texture mapper that copies individual faces
+    // (or whole skins) from other skins — file / library (all accounts) / player
+    // name — onto the working skin. Every Minecraft skin shares the same UV layout,
+    // so a face copy is just a same-coordinate rect blit. ──
+    const efm = { el: document.getElementById('ed-faces-mode'), viewer: null, sources: [], showOverlay: false };
+    function efmFaceList() { return efm.showOverlay ? FACE_OVERLAY : FACE_BASE; }
+    function efmDrawThumb(cv, srcCanvas, f) {
+      cv.width = f.w; cv.height = f.h;
+      const c = cv.getContext('2d'); c.imageSmoothingEnabled = false;
+      c.clearRect(0, 0, f.w, f.h);
+      c.drawImage(srcCanvas, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+    }
+    function efmRefreshViewer() {
+      if (efm.viewer) { try { efm.viewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
+    }
+    function efmCopyFaces(src, faces) {
+      pushUndo();
+      faces.forEach(f => { wctx.clearRect(f.x, f.y, f.w, f.h); wctx.drawImage(src.canvas, f.x, f.y, f.w, f.h, f.x, f.y, f.w, f.h); });
+      render(); liveUpdate(); efmRenderTarget(); efmRefreshViewer();
+    }
+    function efmRenderTarget() {
+      const g = document.getElementById('efm-target-faces'); if (!g) return; g.innerHTML = '';
+      efmFaceList().forEach(f => {
+        const cell = document.createElement('div'); cell.className = 'efm-face';
+        const cv = document.createElement('canvas'); efmDrawThumb(cv, work, f);
+        const lab = document.createElement('div'); lab.className = 'efm-flabel'; lab.textContent = f.name + ' · ' + f.face;
+        cell.append(cv, lab); g.appendChild(cell);
+      });
+    }
+    function efmRenderSources() {
+      const list = document.getElementById('efm-src-list'); if (!list) return; list.innerHTML = '';
+      if (!efm.sources.length) { list.innerHTML = '<div class="ed-hint">Add a skin above to copy faces from it.</div>'; return; }
+      efm.sources.forEach((s, i) => {
+        const card = document.createElement('div'); card.className = 'efm-src' + (s.active ? ' active' : '');
+        const thumb = document.createElement('canvas'); thumb.width = SIZE; thumb.height = SIZE;
+        const tc = thumb.getContext('2d'); tc.imageSmoothingEnabled = false; tc.drawImage(s.canvas, 0, 0);
+        thumb.title = 'Select this skin';
+        thumb.onclick = () => { efm.sources.forEach(x => x.active = false); s.active = true; efmRenderSources(); };
+        const nm = document.createElement('div'); nm.className = 'efm-sname'; nm.textContent = s.name;
+        card.append(thumb, nm);
+        const bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:4px;margin-top:6px;';
+        const allBtn = document.createElement('button'); allBtn.className = 'ed-btn'; allBtn.style.cssText = 'font-size:11px;padding:5px;'; allBtn.textContent = 'Copy whole skin';
+        allBtn.onclick = () => efmCopyFaces(s, [...FACE_BASE, ...FACE_OVERLAY]);
+        const rm = document.createElement('button'); rm.className = 'ed-btn'; rm.style.cssText = 'font-size:11px;padding:5px;width:auto;'; rm.innerHTML = '<i class="material-icons" style="font-size:15px;">close</i>';
+        rm.title = 'Remove source'; rm.onclick = () => { efm.sources.splice(i, 1); efmRenderSources(); };
+        bar.append(allBtn, rm); card.append(bar);
+        if (s.active) {
+          const fg = document.createElement('div'); fg.className = 'efm-faces'; fg.style.marginTop = '8px';
+          efmFaceList().forEach(f => {
+            const cell = document.createElement('div'); cell.className = 'efm-face';
+            const cv = document.createElement('canvas'); efmDrawThumb(cv, s.canvas, f);
+            cv.title = 'Copy this face onto your skin';
+            cv.onclick = () => efmCopyFaces(s, [f]);
+            const lab = document.createElement('div'); lab.className = 'efm-flabel'; lab.textContent = f.face;
+            cell.append(cv, lab); fg.appendChild(cell);
+          });
+          card.append(fg);
+        }
+        list.appendChild(card);
+      });
+    }
+    function efmAddSource(name, dataUrlOrSrc, forceVariant) {
+      return new Promise(res => {
+        const im = new Image();
+        im.onload = () => {
+          const cv = document.createElement('canvas'); cv.width = SIZE; cv.height = SIZE;
+          const c = cv.getContext('2d'); c.imageSmoothingEnabled = false;
+          if (im.width === 64 && im.height === 32) c.drawImage(im, 0, 0, 64, 32, 0, 0, 64, 32); else c.drawImage(im, 0, 0, SIZE, SIZE);
+          efm.sources.forEach(x => x.active = false);
+          efm.sources.unshift({ name: name || 'Skin', canvas: cv, active: true });
+          efmRenderSources(); res(true);
+        };
+        im.onerror = () => res(false);
+        im.src = dataUrlOrSrc;
+      });
+    }
+    function openFacesMode() {
+      efm.el.classList.add('active');
+      efmRenderTarget(); efmRenderSources();
+      if (!efm.viewer && typeof skinview3d !== 'undefined') {
+        try { efm.viewer = new skinview3d.SkinViewer({ canvas: document.getElementById('efm-3d'), width: 300, height: 380 }); } catch { }
+      }
+      efmRefreshViewer();
+    }
+    function closeFacesMode() { efm.el.classList.remove('active'); }
+    document.getElementById('ed-faces-btn').onclick = openFacesMode;
+    document.getElementById('efm-close').onclick = closeFacesMode;
+    document.getElementById('efm-overlay').onchange = (e) => { efm.showOverlay = e.target.checked; efmRenderTarget(); efmRenderSources(); };
+    document.getElementById('efm-add-file').onclick = () => document.getElementById('efm-file').click();
+    document.getElementById('efm-file').onchange = (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const r = new FileReader(); r.onload = () => efmAddSource(f.name.replace(/\.[^.]+$/, ''), r.result); r.readAsDataURL(f); e.target.value = '';
+    };
+    document.getElementById('efm-add-player').onclick = async () => {
+      const nm = prompt('Minecraft player name:'); if (!nm) return;
+      const btn = document.getElementById('efm-add-player'); const old = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Fetching…';
+      try {
+        const r = await ipcRenderer.invoke('skins:fetchByName', nm.trim());
+        if (r && r.base64) await efmAddSource(r.name || nm.trim(), 'data:image/png;base64,' + r.base64);
+        else alert((r && r.error) || 'Could not fetch that player\'s skin.');
+      } catch (e) { alert('Fetch failed: ' + (e.message || e)); }
+      btn.disabled = false; btn.innerHTML = old;
+    };
+    document.getElementById('efm-add-lib').onclick = async () => {
+      // Merge this account's library, all other accounts' libraries, and Mojang's
+      // default skins into one pick list.
+      let items = [];
+      try { const all = await ipcRenderer.invoke('skins:allLibrary'); if (Array.isArray(all)) items = all.map(s => ({ name: s.name, base64: s.base64 })); } catch { }
+      try { const def = await ipcRenderer.invoke('mc:getDefaultSkins'); if (Array.isArray(def)) items = items.concat(def.map(s => ({ name: 'Default: ' + s.name, base64: s.base64 }))); } catch { }
+      if (!items.length) { alert('No library or default skins found.'); return; }
+      efmOpenPicker(items);
+    };
+    // A lightweight modal grid to choose one of many library/default skins.
+    function efmOpenPicker(items) {
+      const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.inset = '44px 0 0 70px'; ov.style.zIndex = 4000;
+      const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '640px'; box.style.maxHeight = '80vh';
+      box.innerHTML = '<div class="ed-modal-head"><h3 style="margin:0;">Pick a skin</h3><button class="ed-btn" style="width:auto;padding:4px 10px;" id="efm-pick-x">✕</button></div>';
+      const grid = document.createElement('div'); grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:8px;margin-top:10px;';
+      items.forEach(it => {
+        const cell = document.createElement('div'); cell.style.cssText = 'text-align:center;cursor:pointer;font-size:10px;';
+        const cv = document.createElement('canvas'); cv.width = SIZE; cv.height = SIZE; cv.style.cssText = 'width:100%;aspect-ratio:1/1;image-rendering:pixelated;border-radius:4px;';
+        const im = new Image(); im.onload = () => { const c = cv.getContext('2d'); c.imageSmoothingEnabled = false; if (im.width === 64 && im.height === 32) c.drawImage(im, 0, 0, 64, 32, 0, 0, SIZE, SIZE); else c.drawImage(im, 0, 0); }; im.src = 'data:image/png;base64,' + it.base64;
+        const lab = document.createElement('div'); lab.textContent = it.name; lab.style.cssText = 'margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        cell.append(cv, lab);
+        cell.onclick = () => { efmAddSource(it.name, 'data:image/png;base64,' + it.base64); ov.remove(); };
+        grid.appendChild(cell);
+      });
+      box.appendChild(grid); ov.appendChild(box); document.body.appendChild(ov);
+      box.querySelector('#efm-pick-x').onclick = () => ov.remove();
+      ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    }
 
     function updatePresence(details, state = 'Idle') { ipcRenderer.send('update-discord-presence', { details, state }); }
     updatePresence('Editing a skin');
