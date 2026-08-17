@@ -1365,3 +1365,10 @@ a:hover {
     transform: scaleX(0);
   }
 }
+/* Offline: block/grey the things that need the internet. */
+body.app-offline [data-needs-net] {
+  pointer-events: none !important;
+  opacity: 0.45 !important;
+  filter: grayscale(0.6);
+  cursor: not-allowed !important;
+}

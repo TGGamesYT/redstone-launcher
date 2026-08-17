@@ -700,3 +700,21 @@ function getSetting(key) {
 }
 
 createInstanceInfoBar(document.getElementById("instance-processes"));
+
+// ── Offline handling ──
+// When there's no internet, grey out and block the things that need it (the
+// Modrinth browser, and anything tagged data-needs-net) so the user gets a clear
+// disabled state instead of a page full of "failed to fetch" errors.
+function applyOnlineState() {
+  const off = !navigator.onLine;
+  if (document.body) document.body.classList.toggle('app-offline', off);
+  const modrinth = document.querySelector('.sidebar a[href="modrinth.html"]');
+  if (modrinth) {
+    modrinth.style.pointerEvents = off ? 'none' : '';
+    modrinth.style.opacity = off ? '0.45' : '';
+    modrinth.title = off ? 'Unavailable while offline' : '';
+  }
+}
+window.addEventListener('online', applyOnlineState);
+window.addEventListener('offline', applyOnlineState);
+applyOnlineState();
