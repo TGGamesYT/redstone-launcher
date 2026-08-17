@@ -1831,6 +1831,41 @@
             refresh();
           };
           actions.appendChild(toggle);
+
+          // Change-version: open this project's Versions tab, pre-filtered to the
+          // instance's current MC version + loader, to swap to another build.
+          if (p.projectId) {
+            const ver = document.createElement("button");
+            ver.className = "card-action-btn";
+            ver.innerHTML = `<i class="material-icons">swap_vert</i>`;
+            ver.title = "Change version";
+            ver.onclick = (e) => {
+              e.stopPropagation();
+              const cur = profiles.find(x => String(x.id) === String(profile.id)) || profile;
+              const type = installTypeForTab[tabName] || "mod";
+              localStorage.setItem("selectedProjectType", type);
+              localStorage.setItem("selectedModrinthProject", JSON.stringify({ project_id: p.projectId, title: p.name, icon_url: p.icon }));
+              localStorage.setItem("installTargetInstance", JSON.stringify({ id: cur.id, loader: cur.loader || "vanilla", version: cur.version || "", name: cur.name || "" }));
+              localStorage.setItem("openProjectTab", "versions");
+              window.location.href = "modrinth_project.html";
+            };
+            actions.appendChild(ver);
+          }
+
+          // Delete: remove the file from the instance.
+          const del = document.createElement("button");
+          del.className = "card-action-btn danger";
+          del.innerHTML = `<i class="material-icons">delete</i>`;
+          del.disabled = !!running;
+          del.title = running ? "Close the game to change this" : "Delete";
+          del.onclick = async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Delete "${p.name}" from this instance?`)) return;
+            del.disabled = true;
+            await ipcRenderer.invoke("delete-instance-mod", { profileId: profile.id, tab: tabName, filename: p.filename });
+            refresh();
+          };
+          actions.appendChild(del);
           li.appendChild(actions);
 
           // Clicking a resolved item opens its project page on the right provider.

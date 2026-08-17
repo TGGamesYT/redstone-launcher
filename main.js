@@ -4698,6 +4698,25 @@ ipcMain.handle("update-instance-mod", async (event, { profileId, tab, oldFilenam
   }
 });
 
+// Delete a mod/pack/shader file from an instance (and drop it from options.txt
+// if it's an enabled resource pack).
+ipcMain.handle("delete-instance-mod", async (event, { profileId, tab, filename }) => {
+  try {
+    const dir = path.join(dataDir, "client", String(profileId), tab);
+    const full = path.join(dir, filename);
+    // Guard against path traversal via a crafted filename.
+    if (path.dirname(full) !== dir) return { success: false, error: "Invalid filename" };
+    if (fs.existsSync(full)) fs.unlinkSync(full);
+    if (tab === "resourcepacks") {
+      const packs = readEnabledResourcePacks(profileId).filter(p => p !== "file/" + filename);
+      writeEnabledResourcePacks(profileId, packs);
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Instance version changes + the ".toupdate" system.
 //

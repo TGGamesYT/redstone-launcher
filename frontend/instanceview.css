@@ -251,6 +251,10 @@
   filter: brightness(1.6);
 }
 
+.card-action-btn.danger:hover i {
+  color: #ff6b6b;
+}
+
 .card-action-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
