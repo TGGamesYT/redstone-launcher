@@ -525,6 +525,19 @@
             installBtn.textContent = "Incompatible";
             installBtn.disabled = true;
           }
+          // Version-picker caret: opens the project's Versions tab, pre-filtered
+          // to this instance's MC version + loader, so a specific build can be
+          // chosen instead of the newest compatible one.
+          const pickBtn = document.createElement("button");
+          pickBtn.className = "install-here-btn version-pick-btn";
+          pickBtn.title = "Choose a specific version";
+          pickBtn.innerHTML = '<i class="material-icons" style="font-size:18px;vertical-align:middle;">expand_more</i>';
+          pickBtn.onclick = (e) => {
+            e.stopPropagation();
+            localStorage.setItem("openProjectTab", "versions");
+            openProjectDetails(proj);
+          };
+          actions.append(pickBtn);
         } else if (activeType === "server" && api === "modrinth") {
           // Server projects are modpack-shaped: set one up as an instance.
           installBtn.innerHTML = '<i class="material-icons" style="font-size:18px;vertical-align:middle;">play_arrow</i>';

@@ -276,6 +276,68 @@ try {
   }
 }
 
+// Render the Versions tab. When opened from an instance's install browser
+// (installTargetInstance set), each version gets an Install button and the list
+// is pre-filtered to that instance's MC version + loader (with a "show all"
+// toggle) so a SPECIFIC build can be chosen instead of the newest compatible.
+function renderVersionsPanel(panel, versions) {
+  const selType = localStorage.getItem("selectedProjectType") || "mod";
+  const tgt = installTargetInstance;
+  const loaderOf = (v) => (v.loaders || []).map(l => l === "vanilla" ? "vanilla" : l);
+  const matches = (v) => tgt && (v.game_versions || []).includes(tgt.version) &&
+    (selType !== "mod" || loaderOf(v).includes(tgt.loader === "vanilla" ? "vanilla" : tgt.loader));
+
+  panel.innerHTML = "";
+  if (tgt) {
+    const bar = document.createElement("div");
+    bar.style.cssText = "display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;";
+    bar.innerHTML = `<span style="opacity:.85;">Installing into <b>${tgt.name || 'instance'}</b> — ${tgt.loader} ${tgt.version}</span>
+      <label class="mini-check" style="margin-left:auto;"><input type="checkbox" id="verShowAll"> Show incompatible</label>`;
+    panel.appendChild(bar);
+  }
+
+  const listEl = document.createElement("div");
+  panel.appendChild(listEl);
+
+  const draw = (showAll) => {
+    listEl.innerHTML = "";
+    const shown = versions.filter(v => showAll || !tgt || matches(v));
+    if (!shown.length) { listEl.innerHTML = `<p style="opacity:.7;">No compatible versions. Tick "Show incompatible" to see all.</p>`; return; }
+    shown.forEach(v => {
+      const compat = matches(v);
+      const row = document.createElement("div");
+      row.style.cssText = `border:1px solid var(--secondary-color);border-radius:8px;padding:10px;margin-bottom:8px;display:flex;align-items:center;gap:10px;${!compat && tgt ? 'opacity:.55;' : ''}`;
+      const meta = document.createElement("div");
+      meta.style.flex = "1";
+      meta.innerHTML = `<div style="font-weight:bold;">${v.name || v.version_number} <span style="opacity:0.6;font-weight:normal;">${v.version_type || ""}</span></div>
+        <div style="opacity:0.8;font-size:0.9em;">MC ${(v.game_versions || []).join(", ")} • ${(v.loaders || []).join(", ")} • ${new Date(v.date_published).toLocaleDateString()} • ${(v.downloads || 0).toLocaleString()} downloads</div>`;
+      row.appendChild(meta);
+      if (tgt) {
+        const file = (v.files || []).find(f => f.primary) || (v.files || [])[0];
+        const btn = document.createElement("button");
+        btn.className = "install-here-btn";
+        if (!file) { btn.textContent = "Unavailable"; btn.disabled = true; }
+        else {
+          btn.textContent = "Install";
+          btn.onclick = async () => {
+            btn.textContent = "Installing…"; btn.disabled = true;
+            try {
+              const r = await ipcRenderer.invoke("mod-download", { server: !!tgt.isServer, id: tgt.id, fileUrl: file.url, projectType: selType });
+              btn.textContent = (r && r.success === false) ? "Failed" : "Installed";
+              if (r && r.success === false) btn.disabled = false;
+            } catch { btn.textContent = "Failed"; btn.disabled = false; }
+          };
+        }
+        row.appendChild(btn);
+      }
+      listEl.appendChild(row);
+    });
+  };
+  draw(false);
+  const cb = panel.querySelector("#verShowAll");
+  if (cb) cb.onchange = () => draw(cb.checked);
+}
+
 // Tabs across the top of a project page. Only shows tabs that have content.
 async function setupProjectTabs(full) {
   const panels = {
@@ -301,11 +363,7 @@ async function setupProjectTabs(full) {
     if (Array.isArray(versions) && versions.length) {
       versions.sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
       avail.push("versions");
-      panels.versions.innerHTML = versions.map(v => `
-        <div style="border:1px solid var(--secondary-color);border-radius:8px;padding:10px;margin-bottom:8px;">
-          <div style="font-weight:bold;">${v.name || v.version_number} <span style="opacity:0.6;font-weight:normal;">${v.version_type || ""}</span></div>
-          <div style="opacity:0.8;font-size:0.9em;">MC ${(v.game_versions || []).join(", ")} • ${(v.loaders || []).join(", ")} • ${new Date(v.date_published).toLocaleDateString()} • ${(v.downloads || 0).toLocaleString()} downloads</div>
-        </div>`).join("");
+      renderVersionsPanel(panels.versions, versions);
       const withLogs = versions.filter(v => v.changelog && v.changelog.trim());
       if (withLogs.length) {
         avail.push("changelog");
@@ -330,6 +388,14 @@ async function setupProjectTabs(full) {
     b.onclick = () => show(name);
     tabsEl.appendChild(b);
   });
+
+  // Jump straight to a requested tab (e.g. the version-picker caret on the
+  // install browser sets openProjectTab=versions). One-shot flag.
+  const wantTab = localStorage.getItem("openProjectTab");
+  if (wantTab) {
+    localStorage.removeItem("openProjectTab");
+    if (avail.includes(wantTab)) show(wantTab);
+  }
 }
 
 async function openInstallScreen(mod) {

@@ -1687,9 +1687,14 @@
           installBtn.className = "tab-install-btn";
           installBtn.textContent = `Install ${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`;
           installBtn.onclick = () => {
+            // Read the instance's CURRENT loader/version at click time (from the
+            // live `profiles` array, kept up to date by 'profiles-updated'). If the
+            // version was changed since this view was built, installing must target
+            // the NEW version — not the one captured when the button was created.
+            const cur = profiles.find(x => String(x.id) === String(profile.id)) || profile;
             const params = new URLSearchParams({
-              install: "1", type: installType, instanceId: profile.id,
-              loader: profile.loader || "vanilla", version: profile.version || "", name: profile.name || ""
+              install: "1", type: installType, instanceId: cur.id,
+              loader: cur.loader || "vanilla", version: cur.version || "", name: cur.name || ""
             });
             window.location.href = `modrinth.html?${params.toString()}`;
           };
