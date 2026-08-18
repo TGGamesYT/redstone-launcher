@@ -52,7 +52,6 @@ const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA
 
 // URL token (the "random safety token" in the pack path) -> the host serving it.
 const packRoutes = new Map();
-const HTTP_RE = /^(GET|HEAD|POST|PUT|DELETE|OPTIONS|PATCH|TRACE|CONNECT) /;
 
 // Cloudflare DNS (optional). When a host reports a working UPnP public endpoint,
 // we point <sub>.redstonemc.net straight at the host's IP so players connect
@@ -295,7 +294,10 @@ catch (e) {
   process.exit(1);
 }
 
-const control = tls.createServer(tlsOptions, (sock) => {
+const secureContext = tls.createSecureContext(tlsOptions);
+// The control-channel handler, run on a TLS socket (see the demuxing listener
+// below — the same port also serves plain-HTTP resource-pack requests).
+function handleControl(sock) {
   // CRITICAL for latency: disable Nagle so muxed game packets aren't buffered.
   try { sock.setNoDelay(true); } catch { /* ignore */ }
   const state = { authed: false, host: null, domain: DOMAIN, streams: new Map(), nextStream: 1, serverId: null, want: null, wantDomain: DOMAIN, localPort: null, queryDomains: false };
@@ -374,8 +376,8 @@ const control = tls.createServer(tlsOptions, (sock) => {
         packRoutes.set(info.token, { state, send, localHttpPort: info.localHttpPort });
         log("pack route", String(info.token).slice(0, 8), "->", state.host, ":" + info.localHttpPort);
       }
-      // Packs are served on the public Minecraft port itself.
-      send(T.HTTP, 0, Buffer.from(JSON.stringify({ port: MC_PORT })));
+      // Packs are served on the control port (separate from Minecraft's 25565).
+      send(T.HTTP, 0, Buffer.from(JSON.stringify({ port: CONTROL_PORT })));
     }
   }, (e) => { log("[control frame]", e && e.message); try { sock.destroy(); } catch { /* ignore */ } });
 
@@ -389,11 +391,48 @@ const control = tls.createServer(tlsOptions, (sock) => {
     } catch (e) { log("[close]", e.message); }
   });
   sock.on("error", () => {});
-});
-control.listen(CONTROL_PORT, () => log(`control TLS on :${CONTROL_PORT}`));
+}
 
-// Serve a resource-pack HTTP request that arrived on the public MC port. Reads
-// the token from the URL (/<player>/<token>/<pack>.zip), finds the host that
+// Read a resource-pack HTTP request off a plain connection, then route it.
+function servePackHttpConn(conn) {
+  let acc = Buffer.alloc(0), done = false;
+  const onData = (chunk) => {
+    if (done) return;
+    acc = acc.length ? Buffer.concat([acc, chunk]) : chunk;
+    const nl = acc.indexOf(0x0a); // end of the HTTP request line
+    if (nl < 0) { if (acc.length > 16384) { try { conn.destroy(); } catch { /* ignore */ } } return; }
+    done = true; conn.removeListener("data", onData);
+    servePackHttp(conn, acc);
+  };
+  conn.on("data", onData);
+  conn.on("error", () => { /* ignore */ });
+}
+
+// The control port serves BOTH the TLS control channel AND plain-HTTP resource
+// packs. Peek the first byte: 0x16 is a TLS handshake (control); an HTTP verb is
+// a pack request. Nothing touches the public Minecraft port (25565).
+const control = net.createServer((raw) => {
+  try { raw.setNoDelay(true); } catch { /* ignore */ }
+  raw.once("readable", () => {
+    const chunk = raw.read(1);
+    if (!chunk) { try { raw.destroy(); } catch { /* ignore */ } return; }
+    raw.unshift(chunk); // put the peeked byte back for the real handler
+    if (chunk[0] === 0x16) {
+      const tlsSock = new tls.TLSSocket(raw, { isServer: true, secureContext });
+      tlsSock.on("error", () => { try { tlsSock.destroy(); } catch { /* ignore */ } });
+      handleControl(tlsSock);
+    } else if (chunk[0] >= 0x41 && chunk[0] <= 0x5a) { // ASCII 'A'–'Z' → HTTP method
+      servePackHttpConn(raw);
+    } else {
+      try { raw.destroy(); } catch { /* ignore */ }
+    }
+  });
+  raw.on("error", () => { /* ignore */ });
+});
+control.listen(CONTROL_PORT, () => log(`control TLS + pack HTTP on :${CONTROL_PORT}`));
+
+// Serve a resource-pack HTTP request (arriving on the control port). Reads the
+// token from the URL (/<player>/<token>/<pack>.zip), finds the host that
 // registered it, and muxes the raw connection to that host's local pack server.
 function servePackHttp(conn, acc) {
   const nl = acc.indexOf(0x0a);
@@ -415,7 +454,7 @@ function servePackHttp(conn, acc) {
   conn.on("error", () => { /* ignore */ });
 }
 
-// ───────────────────────── public MC port (+ pack HTTP) ──────────────────
+// ───────────────────────── public MC port ───────────────────────────────
 const mc = net.createServer((client) => {
   try { client.setNoDelay(true); } catch { /* ignore */ } // no Nagle → low latency
   let routed = false;
@@ -423,15 +462,6 @@ const mc = net.createServer((client) => {
   const onData = (chunk) => {
     if (routed) return;
     acc = Buffer.concat([acc, chunk]);
-    if (acc.length < 5) return; // not enough bytes to classify yet
-    // A resource-pack HTTP request? (Minecraft handshakes never start this way.)
-    if (HTTP_RE.test(acc.toString("latin1", 0, Math.min(acc.length, 10)))) {
-      const nl = acc.indexOf(0x0a);
-      if (nl < 0) { if (acc.length > 16384) { try { client.destroy(); } catch { /* ignore */ } } return; }
-      routed = true; client.removeListener("data", onData);
-      servePackHttp(client, acc);
-      return;
-    }
     let hs;
     try { hs = parseHandshake(acc); } catch { client.destroy(); return; }
     if (!hs) return; // wait for more bytes
@@ -462,4 +492,4 @@ const mc = net.createServer((client) => {
   client.on("data", onData);
   client.on("error", () => {});
 });
-mc.listen(MC_PORT, () => log(`public Minecraft + pack HTTP on :${MC_PORT} for *.${DOMAIN} (auth ${adminUuids.size} admins)`));
+mc.listen(MC_PORT, () => log(`public Minecraft on :${MC_PORT} for *.${DOMAIN} (auth ${adminUuids.size} admins)`));
