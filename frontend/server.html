@@ -237,6 +237,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <button class="srv-tab active" data-tab="console">Console</button>
         <button class="srv-tab" data-tab="files">Files</button>
         <button class="srv-tab" data-tab="mods" id="srvModsTab" style="display:none;">Mods</button>
+        <button class="srv-tab" data-tab="resourcepacks">Resource Packs</button>
       </div>
       <div class="srv-panel active" data-panel="console">
         <div id="console"></div>
@@ -275,6 +276,16 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           <button id="srvOpenModsFolder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder</i> Open mods folder</button>
         </div>
         <ul id="srvModsList" style="list-style:none; margin:0; padding:0; flex:1; min-height:0; overflow-y:auto;"></ul>
+      </div>
+
+      <div class="srv-panel" data-panel="resourcepacks">
+        <div class="tab-action-bar" style="display:flex; gap:8px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
+          <button id="srvAddPack"><i class="material-icons" style="font-size:16px;vertical-align:middle;">add</i> Add pack</button>
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="srvPackRequired"> Required (kick players who decline)</label>
+          <span id="srvPackState" style="font-size:12px; opacity:0.75; margin-left:auto;"></span>
+        </div>
+        <div class="ed-hint" style="font-size:12px; opacity:0.7; margin-bottom:8px;">Packs merge top-to-bottom (top wins) into one pack served to players. When you share the server over the internet it's hosted through the relay; the pack updates on the next server start.</div>
+        <ul id="srvPackList" style="list-style:none; margin:0; padding:0; flex:1; min-height:0; overflow-y:auto;"></ul>
       </div>
     </div>
   </div>
@@ -563,6 +574,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       document.querySelectorAll('.srv-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === name));
       if (name === 'console') setTimeout(() => { const c = $('cmdInput'); if (c) c.focus(); }, 40);
       if (name === 'mods') loadServerMods();
+      if (name === 'resourcepacks') loadServerPacks();
       if (push && selectedServer) {
         const u = location.pathname + '?srv=' + encodeURIComponent(selectedServer.name) + '&tab=' + encodeURIComponent(name);
         history.pushState({ srvDetail: selectedServer.name, tab: name }, '', u);
@@ -922,6 +934,42 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         loader: (selectedServer.type || 'fabric'), version: selectedServer.version || '', name: selectedServer.name || ''
       });
       window.location.href = `modrinth.html?${params.toString()}`;
+    };
+
+    // ---------- Resource packs (ordered, merged, hosted through the relay) ----------
+    async function loadServerPacks() {
+      if (!selectedServer) return;
+      const ul = $('srvPackList');
+      ul.innerHTML = '<li style="opacity:0.6;padding:10px;">Loading…</li>';
+      const res = await ipcRenderer.invoke('server-rp:list', { name: selectedServer.name });
+      const packs = (res && res.packs) || [];
+      $('srvPackRequired').checked = !!(res && res.required);
+      ul.innerHTML = '';
+      if (!packs.length) { ul.innerHTML = '<li style="opacity:0.6;padding:10px;">No packs yet — add .zip resource packs; they merge into one, top first.</li>'; return; }
+      packs.forEach((p, i) => {
+        const li = document.createElement('li');
+        li.className = 'profile-item';
+        if (!p.enabled) li.style.opacity = '0.5';
+        const info = document.createElement('div');
+        info.className = 'profile-info';
+        info.innerHTML = `<div class="profile-name">${p.filename}</div><div class="profile-details">priority ${i + 1}${p.enabled ? '' : ' • disabled'}</div>`;
+        li.appendChild(info);
+        const mkBtn = (icon, title, fn, disabled) => { const b = document.createElement('button'); b.innerHTML = `<i class="material-icons">${icon}</i>`; b.title = title; b.disabled = !!disabled; b.onclick = (ev) => { ev.stopPropagation(); fn(); }; return b; };
+        const order = packs.map(x => x.filename);
+        const move = async (delta) => { const j = i + delta; if (j < 0 || j >= order.length) return; const t = order[i]; order[i] = order[j]; order[j] = t; await ipcRenderer.invoke('server-rp:reorder', { name: selectedServer.name, order }); loadServerPacks(); };
+        li.appendChild(mkBtn('keyboard_arrow_up', 'Move up (higher priority)', () => move(-1), i === 0));
+        li.appendChild(mkBtn('keyboard_arrow_down', 'Move down', () => move(1), i === order.length - 1));
+        li.appendChild(mkBtn(p.enabled ? 'toggle_on' : 'toggle_off', p.enabled ? 'Disable' : 'Enable', async () => { await ipcRenderer.invoke('server-rp:setEnabled', { name: selectedServer.name, filename: p.filename, enabled: !p.enabled }); loadServerPacks(); }));
+        li.appendChild(mkBtn('delete', 'Delete', async () => { if (!confirm(`Delete pack "${p.filename}"?`)) return; await ipcRenderer.invoke('server-rp:remove', { name: selectedServer.name, filename: p.filename }); loadServerPacks(); }));
+        ul.appendChild(li);
+      });
+    }
+    $('srvAddPack').onclick = async () => { const r = await ipcRenderer.invoke('server-rp:add', { name: selectedServer.name }); if (r && r.success) loadServerPacks(); };
+    $('srvPackRequired').onchange = async () => {
+      await ipcRenderer.invoke('server-rp:setRequired', { name: selectedServer.name, required: $('srvPackRequired').checked });
+      // If the server is currently shared, re-apply so the public URL/props update.
+      const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
+      if (st && st.active) { $('srvPackState').textContent = 'Applying…'; const a = await ipcRenderer.invoke('server-rp:apply', { name: selectedServer.name }); $('srvPackState').textContent = (a && a.url) ? 'Hosted ✓' : ''; }
     };
 
     // ---------- Create / edit ----------

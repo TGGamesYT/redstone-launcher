@@ -44,7 +44,41 @@ process.on("uncaughtException", (err) => { try { log("[uncaught]", err && err.st
 process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.stack || err); } catch { /* ignore */ } });
 
 // ───────────────────────── control mux protocol ─────────────────────────
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12 };
+// HTTP (13): a host asks for a dedicated public TCP port that forwards to its
+// local resource-pack HTTP server. Connections there become mux streams exactly
+// like Minecraft ones, but the OPEN frame carries the host's local target port.
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13 };
+
+// A random high port (10000–65535) for a host's public resource-pack endpoint —
+// deliberately not a common/low port. UFW on the VPS must allow this range.
+function randomHttpPort() { return 10000 + Math.floor(Math.random() * (65535 - 10000)); }
+function openHttpTunnel(state, send, onReady) {
+  let attempts = 0;
+  const tryOnce = () => {
+    const port = randomHttpPort();
+    const srv = net.createServer((conn) => {
+      try { conn.setNoDelay(true); } catch { /* ignore */ }
+      const streamId = (state.nextStream++) >>> 0 || 1;
+      state.streams.set(streamId, conn);
+      // Tell the host which LOCAL port to pipe this stream to (its pack server).
+      send(T.OPEN, streamId, Buffer.from(JSON.stringify({ port: state.httpLocalPort })));
+      conn.on("data", (d) => send(T.DATA, streamId, d));
+      conn.on("close", () => { if (state.streams.delete(streamId)) send(T.CLOSE, streamId, null); });
+      conn.on("error", () => { /* ignore */ });
+    });
+    srv.on("error", (e) => {
+      if (e && e.code === "EADDRINUSE" && attempts++ < 10) { tryOnce(); return; }
+      log("[http tunnel] listen failed:", e && e.message);
+      try { onReady(null); } catch { /* ignore */ }
+    });
+    srv.listen(port, "0.0.0.0", () => {
+      state.httpServer = srv; state.httpPort = port;
+      log("http tunnel", state.host, "public :" + port, "-> local :" + state.httpLocalPort);
+      try { onReady(port); } catch { /* ignore */ }
+    });
+  };
+  tryOnce();
+}
 
 // Cloudflare DNS (optional). When a host reports a working UPnP public endpoint,
 // we point <sub>.redstonemc.net straight at the host's IP so players connect
@@ -355,6 +389,14 @@ const control = tls.createServer(tlsOptions, (sock) => {
         cfPointDirect(state.host, state.domain, info.ip).then(rec => { state.cfRecord = rec; if (rec) log("direct DNS", `${state.host} -> ${info.ip}`); }).catch(e => log("cf error", e.message));
       }
     }
+    else if (type === T.HTTP) {
+      // Host wants a public HTTP port for its resource pack. One per host: if we
+      // already opened one, just re-report it.
+      if (state.httpServer) { send(T.HTTP, 0, Buffer.from(JSON.stringify({ port: state.httpPort }))); return; }
+      let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      state.httpLocalPort = info.localHttpPort;
+      openHttpTunnel(state, send, (port) => send(T.HTTP, 0, Buffer.from(JSON.stringify({ port }))));
+    }
   }, (e) => { log("[control frame]", e && e.message); try { sock.destroy(); } catch { /* ignore */ } });
 
   sock.on("data", decode);
@@ -362,6 +404,7 @@ const control = tls.createServer(tlsOptions, (sock) => {
     try {
       if (state.host && hosts.get(state.host)?.send === send) { hosts.delete(state.host); recentSubs[state.host] = Date.now(); saveState(); log("unregistered", state.host); }
       if (state.cfRecord) cfRemoveDirect(state.cfRecord); // restore wildcard -> VPS
+      if (state.httpServer) { try { state.httpServer.close(); } catch { /* ignore */ } state.httpServer = null; }
       for (const p of state.streams.values()) { try { p.destroy(); } catch { /* ignore */ } }
     } catch (e) { log("[close]", e.message); }
   });

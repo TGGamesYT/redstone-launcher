@@ -5,7 +5,7 @@ import net from "net";
 import tls from "tls";
 import https from "https";
 
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13 };
 
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
@@ -76,7 +76,7 @@ export function queryRelay({ host, controlPort, account, rejectUnauthorized = tr
 export function openRelay({ host, controlPort, subdomain, domain, localPort, account, directIp, rejectUnauthorized = true }) {
   return new Promise((resolve, reject) => {
     const streams = new Map();
-    let settled = false, keepalive = null;
+    let settled = false, keepalive = null, httpResolver = null;
 
     const sock = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () => {
       try { sock.setNoDelay(true); } catch { /* ignore */ } // no Nagle → low latency
@@ -98,12 +98,29 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
         // us so players bypass the relay hop entirely.
         if (directIp) send(T.DIRECT, 0, Buffer.from(JSON.stringify({ ip: directIp, port: localPort })));
         keepalive = setInterval(() => send(T.PING, 0, null), 20000);
-        resolve({ address: info.address, port: info.port, close: () => { if (keepalive) clearInterval(keepalive); try { sock.end(); } catch { /* ignore */ } } });
+        resolve({
+          address: info.address, port: info.port,
+          close: () => { if (keepalive) clearInterval(keepalive); try { sock.end(); } catch { /* ignore */ } },
+          // Ask the relay to open a public HTTP port forwarding to our local pack
+          // server (`localHttpPort`). Resolves the assigned public port (or null).
+          openHttp: (localHttpPort) => new Promise((res) => {
+            httpResolver = res;
+            send(T.HTTP, 0, Buffer.from(JSON.stringify({ localHttpPort })));
+            setTimeout(() => { if (httpResolver) { httpResolver(null); httpResolver = null; } }, 15000);
+          }),
+        });
+      } else if (type === T.HTTP) {
+        let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        if (httpResolver) { httpResolver(info.port || null); httpResolver = null; }
       } else if (type === T.ERROR) {
         let m = "relay error"; try { m = JSON.parse(payload.toString()).message; } catch { /* ignore */ }
         if (!settled) reject(new Error(m));
       } else if (type === T.OPEN) {
-        const local = net.connect({ host: "127.0.0.1", port: localPort });
+        // A muxed connection. HTTP-tunnel streams carry their local target port in
+        // the OPEN payload; Minecraft streams (null payload) go to the MC port.
+        let targetPort = localPort;
+        if (payload && payload.length) { try { const o = JSON.parse(payload.toString()); if (o.port) targetPort = o.port; } catch { /* ignore */ } }
+        const local = net.connect({ host: "127.0.0.1", port: targetPort });
         try { local.setNoDelay(true); } catch { /* ignore */ } // no Nagle → low latency
         const st = { socket: local, buffer: [], connected: false };
         streams.set(streamId, st);

@@ -2535,6 +2535,10 @@ async function resolveServerJava(id) {
 
 ipcMain.handle("start-server", async (event, id) => {
   const java = await resolveServerJava(id);
+  // Before launch, (re)merge + host this server's resource packs so
+  // server.properties reflects the current pack list. Uses the relay tunnel if
+  // the server is already shared, else the LAN IP. Best-effort.
+  try { await ensureServerPack(id); } catch (e) { console.warn("[Server] pack setup failed:", e.message); }
   return serverManager.startServer(id, settings, java);
 });
 
@@ -2643,6 +2647,161 @@ ipcMain.handle("server-fs:write-nbt", (event, { name, path: rel, json, gzip, typ
 ipcMain.handle("client-fs:read-nbt", (event, { id, path: rel }) => readNbtAt(clientRoot(id), rel));
 ipcMain.handle("client-fs:write-nbt", (event, { id, path: rel, json, gzip, type }) => writeNbtAt(clientRoot(id), rel, json, gzip, type));
 
+// ── Server resource packs (ordered) + merge-and-host through the relay ──
+// A server keeps an ordered list of .zip packs in servers/<name>/resourcepacks.
+// Before the server is shared, they're merged into ONE pack, hosted by a tiny
+// local HTTP server, and exposed publicly through the relay's HTTP tunnel — so
+// server.properties can point at http://redstonemc.net:<port>/<player>/<token>/
+// <pack>.zip with a matching sha1. Nothing is stored on the relay.
+function packDir(name) { return path.join(serverRoot(name), "resourcepacks"); }
+function packCfgPath(name) { return path.join(serverRoot(name), "resourcepack-config.json"); }
+function loadPackCfg(name) {
+  try { const c = JSON.parse(fs.readFileSync(packCfgPath(name), "utf8")); return { order: c.order || [], required: !!c.required, disabled: c.disabled || [] }; }
+  catch { return { order: [], required: false, disabled: [] }; }
+}
+function savePackCfg(name, cfg) { try { fs.mkdirSync(serverRoot(name), { recursive: true }); fs.writeFileSync(packCfgPath(name), JSON.stringify(cfg)); } catch { /* ignore */ } }
+// Ordered, existing .zip packs (order file first, then any not yet listed).
+function packList(name) {
+  const dir = packDir(name);
+  let files = [];
+  try { files = fs.readdirSync(dir).filter(f => /\.zip$/i.test(f)); } catch { }
+  const cfg = loadPackCfg(name);
+  const ordered = (cfg.order || []).filter(f => files.includes(f));
+  files.forEach(f => { if (!ordered.includes(f)) ordered.push(f); });
+  // Persist any newly-discovered packs into the order.
+  if (JSON.stringify(ordered) !== JSON.stringify(cfg.order)) { cfg.order = ordered; savePackCfg(name, cfg); }
+  return ordered.map(f => ({ filename: f, enabled: !(cfg.disabled || []).includes(f) }));
+}
+// Merge the enabled packs (top of the list = highest priority) into one zip.
+function buildMergedPack(name) {
+  const dir = packDir(name);
+  const enabled = packList(name).filter(p => p.enabled).map(p => p.filename);
+  if (!enabled.length) return null;
+  const merged = new AdmZip();
+  const seen = new Map();
+  // Iterate lowest→highest priority so the top pack's files overwrite the rest.
+  for (let i = enabled.length - 1; i >= 0; i--) {
+    try { const z = new AdmZip(path.join(dir, enabled[i])); for (const e of z.getEntries()) { if (!e.isDirectory) seen.set(e.entryName, e.getData()); } } catch { /* skip bad zip */ }
+  }
+  if (!seen.size) return null;
+  for (const [entryName, data] of seen) merged.addFile(entryName, data);
+  const buf = merged.toBuffer();
+  const sha1 = crypto.createHash("sha1").update(buf).digest("hex");
+  return { buf, sha1 };
+}
+// name -> { server, port, token, player, packName, sha1 }
+const packHttp = new Map();
+function stopPackHttp(name) { const h = packHttp.get(name); if (h) { try { h.server.close(); } catch { } packHttp.delete(name); } }
+function startPackHttp(name, player) {
+  const merged = buildMergedPack(name);
+  if (!merged) { stopPackHttp(name); return null; }
+  stopPackHttp(name);
+  return new Promise((resolve) => {
+    const token = crypto.randomBytes(9).toString("hex");
+    const packName = (String(name).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "pack");
+    const playerSeg = (String(player || "host").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "host");
+    const wantPath = `/${playerSeg}/${token}/${packName}.zip`;
+    const server = http.createServer((req, res) => {
+      // Only the exact tokenised path serves the zip; anything else 404s.
+      const url = (req.url || "").split("?")[0];
+      if (url !== wantPath) { res.writeHead(404); res.end("Not found"); return; }
+      res.writeHead(200, { "Content-Type": "application/zip", "Content-Length": merged.buf.length });
+      res.end(merged.buf);
+    });
+    server.on("error", () => resolve(null));
+    server.listen(0, "0.0.0.0", () => {
+      const port = server.address().port;
+      packHttp.set(name, { server, port, token, player: playerSeg, packName, sha1: merged.sha1, wantPath });
+      resolve({ port, token, sha1: merged.sha1, wantPath });
+    });
+  });
+}
+function lanIp() {
+  const ifs = os.networkInterfaces();
+  for (const list of Object.values(ifs)) for (const i of list || []) if (i.family === "IPv4" && !i.internal) return i.address;
+  return "127.0.0.1";
+}
+// Rewrite server.properties' resource-pack lines (or clear them).
+function setServerRpProps(name, url, sha1, required) {
+  const p = path.join(serverRoot(name), "server.properties");
+  let lines = [];
+  try { if (fs.existsSync(p)) lines = fs.readFileSync(p, "utf8").split(/\r?\n/); } catch { }
+  const drop = ["resource-pack=", "resource-pack-sha1=", "require-resource-pack="];
+  lines = lines.filter(l => !drop.some(d => l.startsWith(d)));
+  if (url) {
+    lines.push(`resource-pack=${url}`);
+    if (sha1) lines.push(`resource-pack-sha1=${sha1}`);
+    lines.push(`require-resource-pack=${required ? "true" : "false"}`);
+  }
+  try { fs.mkdirSync(serverRoot(name), { recursive: true }); fs.writeFileSync(p, lines.filter(l => l !== "").join("\n") + "\n"); } catch { /* ignore */ }
+}
+// Merge + host + expose a server's packs, then point server.properties at them.
+// Uses the relay's HTTP tunnel when the server is shared, else the LAN IP.
+async function ensureServerPack(name, player) {
+  const cfg = loadPackCfg(name);
+  const merged = buildMergedPack(name);
+  if (!merged) { stopPackHttp(name); setServerRpProps(name, null); return null; }
+  const relay = activeRelays.get(name);
+  const info = await startPackHttp(name, player || (relay && relay.packPlayer));
+  if (!info) return null;
+  let base;
+  if (relay && typeof relay.openHttp === "function") {
+    if (!relay.httpPublicPort) { try { relay.httpPublicPort = await relay.openHttp(info.port); } catch { relay.httpPublicPort = null; } }
+    if (relay.httpPublicPort) base = `http://${RELAY_DEFAULTS.host}:${relay.httpPublicPort}`;
+  }
+  if (!base) base = `http://${lanIp()}:${info.port}`;
+  const url = `${base}${info.wantPath}`;
+  setServerRpProps(name, url, info.sha1, cfg.required);
+  return { url, sha1: info.sha1, required: cfg.required };
+}
+
+// ── Server resource-pack management IPCs (used by the server detail tab) ──
+ipcMain.handle("server-rp:list", (event, { name }) => {
+  const cfg = loadPackCfg(name);
+  return { packs: packList(name), required: cfg.required };
+});
+ipcMain.handle("server-rp:add", async (event, { name }) => {
+  const r = await dialog.showOpenDialog({ title: "Add resource packs", filters: [{ name: "Resource packs", extensions: ["zip"] }], properties: ["openFile", "multiSelections"] });
+  if (r.canceled || !r.filePaths.length) return { success: false, canceled: true };
+  const dir = packDir(name); fs.mkdirSync(dir, { recursive: true });
+  const cfg = loadPackCfg(name);
+  for (const src of r.filePaths) {
+    const base = path.basename(src);
+    let dest = path.join(dir, base), i = 1;
+    while (fs.existsSync(dest) && path.resolve(dest) !== path.resolve(src)) { dest = path.join(dir, base.replace(/\.zip$/i, "") + "-" + i++ + ".zip"); }
+    try { fs.copyFileSync(src, dest); if (!cfg.order.includes(path.basename(dest))) cfg.order.push(path.basename(dest)); } catch { }
+  }
+  savePackCfg(name, cfg);
+  return { success: true, packs: packList(name) };
+});
+ipcMain.handle("server-rp:remove", (event, { name, filename }) => {
+  try { fs.unlinkSync(path.join(packDir(name), filename)); } catch { }
+  const cfg = loadPackCfg(name);
+  cfg.order = cfg.order.filter(f => f !== filename);
+  cfg.disabled = (cfg.disabled || []).filter(f => f !== filename);
+  savePackCfg(name, cfg);
+  return { success: true, packs: packList(name) };
+});
+ipcMain.handle("server-rp:reorder", (event, { name, order }) => {
+  const cfg = loadPackCfg(name); cfg.order = order; savePackCfg(name, cfg);
+  return { success: true, packs: packList(name) };
+});
+ipcMain.handle("server-rp:setEnabled", (event, { name, filename, enabled }) => {
+  const cfg = loadPackCfg(name); cfg.disabled = (cfg.disabled || []).filter(f => f !== filename);
+  if (!enabled) cfg.disabled.push(filename);
+  savePackCfg(name, cfg);
+  return { success: true, packs: packList(name) };
+});
+ipcMain.handle("server-rp:setRequired", (event, { name, required }) => {
+  const cfg = loadPackCfg(name); cfg.required = !!required; savePackCfg(name, cfg);
+  return { success: true };
+});
+// Force a rebuild/host now (e.g. after edits) — returns the public URL if shared.
+ipcMain.handle("server-rp:apply", async (event, { name }) => {
+  try { const r = await ensureServerPack(name); return { success: true, ...(r || {}) }; }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
 // ── Redstone Relay (NAT traversal without port-forwarding) ──
 // The launcher opens a TLS tunnel to the relay on the VPS; the relay assigns a
 // unique public port and players join at redstonemc.net:<port>.
@@ -2735,8 +2894,14 @@ ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, do
     if (!session.address || !session.port) { try { session.close(); } catch { /* ignore */ } return { success: false, error: "The relay didn't return a join address (is the relay server running?)" }; }
     // Minecraft's default port (25565) is implied — don't show it.
     const shownAddr = session.port === 25565 ? session.address : `${session.address}:${session.port}`;
-    activeRelays.set(k, { ...session, shownAddr, directAddress, localPort, upnpMapped: !!directIp });
-    return { success: true, address: shownAddr, port: session.port, directAddress };
+    activeRelays.set(k, { ...session, shownAddr, directAddress, localPort, upnpMapped: !!directIp, packPlayer: subLabel(account.name) });
+    // If this is a server with managed resource packs, merge + host them through
+    // the relay's HTTP tunnel and point server.properties at the public URL.
+    let resourcePack = null;
+    if (name && k === name) {
+      try { resourcePack = await ensureServerPack(name, subLabel(account.name)); } catch (e) { console.warn("[Relay] pack host failed:", e.message); }
+    }
+    return { success: true, address: shownAddr, port: session.port, directAddress, resourcePack };
   } catch (err) {
     console.error("[Relay] open failed:", err);
     return { success: false, error: err.message };
@@ -2750,6 +2915,8 @@ ipcMain.handle("relay:close", async (event, { key, name }) => {
     try { s.close(); } catch { /* ignore */ }
     if (s.upnpMapped) { try { await upnp.closePort(Number(s.localPort)); } catch { /* ignore */ } }
     activeRelays.delete(k);
+    // Tear down the pack host + drop the (now-dead) public URL from the server.
+    if (name && k === name) { stopPackHttp(name); setServerRpProps(name, null); }
   }
   return { success: true };
 });
@@ -2905,14 +3072,11 @@ ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType 
 
     await downloadFile(fileUrl, dest);
 
-    // Special case: server-side resourcepack
+    // Server-side resource packs are now managed as an ordered, merged list
+    // (hosted through the relay), so register the download in the pack order
+    // rather than pointing server.properties straight at the Modrinth URL.
     if (server && projectType === "resourcepack") {
-      const serverPropsPath = path.join(baseDir, "server.properties");
-      let props = "";
-      if (fs.existsSync(serverPropsPath)) props = fs.readFileSync(serverPropsPath, "utf8");
-      const lines = props.split(/\r?\n/).filter(l => !l.startsWith("resource-pack="));
-      lines.push(`resource-pack=${fileUrl}`);
-      fs.writeFileSync(serverPropsPath, lines.join("\n"), "utf8");
+      try { const cfg = loadPackCfg(id); if (!cfg.order.includes(fileName)) { cfg.order.push(fileName); savePackCfg(id, cfg); } } catch { /* ignore */ }
     }
 
     return { success: true, path: dest };
