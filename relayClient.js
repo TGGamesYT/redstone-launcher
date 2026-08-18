@@ -101,11 +101,11 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
         resolve({
           address: info.address, port: info.port,
           close: () => { if (keepalive) clearInterval(keepalive); try { sock.end(); } catch { /* ignore */ } },
-          // Ask the relay to open a public HTTP port forwarding to our local pack
-          // server (`localHttpPort`). Resolves the assigned public port (or null).
-          openHttp: (localHttpPort) => new Promise((res) => {
+          // Register our local pack server (`localHttpPort`) under `token` for
+          // public hosting; resolves the relay's shared HTTP port (or null).
+          openHttp: (localHttpPort, token) => new Promise((res) => {
             httpResolver = res;
-            send(T.HTTP, 0, Buffer.from(JSON.stringify({ localHttpPort })));
+            send(T.HTTP, 0, Buffer.from(JSON.stringify({ localHttpPort, token })));
             setTimeout(() => { if (httpResolver) { httpResolver(null); httpResolver = null; } }, 15000);
           }),
         });

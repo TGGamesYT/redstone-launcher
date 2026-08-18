@@ -44,41 +44,17 @@ process.on("uncaughtException", (err) => { try { log("[uncaught]", err && err.st
 process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.stack || err); } catch { /* ignore */ } });
 
 // ───────────────────────── control mux protocol ─────────────────────────
-// HTTP (13): a host asks for a dedicated public TCP port that forwards to its
-// local resource-pack HTTP server. Connections there become mux streams exactly
-// like Minecraft ones, but the OPEN frame carries the host's local target port.
+// HTTP (13): a host registers its resource pack for public hosting. Every shared
+// pack is multiplexed over ONE fixed public port (below) and routed by the token
+// in the request URL, so only that single port needs opening on the VPS firewall.
 const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13 };
 
-// A random high port (10000–65535) for a host's public resource-pack endpoint —
-// deliberately not a common/low port. UFW on the VPS must allow this range.
-function randomHttpPort() { return 10000 + Math.floor(Math.random() * (65535 - 10000)); }
-function openHttpTunnel(state, send, onReady) {
-  let attempts = 0;
-  const tryOnce = () => {
-    const port = randomHttpPort();
-    const srv = net.createServer((conn) => {
-      try { conn.setNoDelay(true); } catch { /* ignore */ }
-      const streamId = (state.nextStream++) >>> 0 || 1;
-      state.streams.set(streamId, conn);
-      // Tell the host which LOCAL port to pipe this stream to (its pack server).
-      send(T.OPEN, streamId, Buffer.from(JSON.stringify({ port: state.httpLocalPort })));
-      conn.on("data", (d) => send(T.DATA, streamId, d));
-      conn.on("close", () => { if (state.streams.delete(streamId)) send(T.CLOSE, streamId, null); });
-      conn.on("error", () => { /* ignore */ });
-    });
-    srv.on("error", (e) => {
-      if (e && e.code === "EADDRINUSE" && attempts++ < 10) { tryOnce(); return; }
-      log("[http tunnel] listen failed:", e && e.message);
-      try { onReady(null); } catch { /* ignore */ }
-    });
-    srv.listen(port, "0.0.0.0", () => {
-      state.httpServer = srv; state.httpPort = port;
-      log("http tunnel", state.host, "public :" + port, "-> local :" + state.httpLocalPort);
-      try { onReady(port); } catch { /* ignore */ }
-    });
-  };
-  tryOnce();
-}
+// The one public resource-pack port. Rolled once to a high, uncommon value (NOT
+// 80/3000/8080/etc.) and hardcoded here — open THIS single port in UFW. Override
+// with RELAY_HTTP_PORT if it ever clashes.
+const HTTP_PORT = parseInt(process.env.RELAY_HTTP_PORT || "52642", 10);
+// URL token (the "random safety token" in the pack path) -> the host serving it.
+const packRoutes = new Map();
 
 // Cloudflare DNS (optional). When a host reports a working UPnP public endpoint,
 // we point <sub>.redstonemc.net straight at the host's IP so players connect
@@ -390,12 +366,17 @@ const control = tls.createServer(tlsOptions, (sock) => {
       }
     }
     else if (type === T.HTTP) {
-      // Host wants a public HTTP port for its resource pack. One per host: if we
-      // already opened one, just re-report it.
-      if (state.httpServer) { send(T.HTTP, 0, Buffer.from(JSON.stringify({ port: state.httpPort }))); return; }
+      // Register this host's pack under its URL token; served on the shared
+      // HTTP_PORT. Re-registering with a new token replaces the old one.
       let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
-      state.httpLocalPort = info.localHttpPort;
-      openHttpTunnel(state, send, (port) => send(T.HTTP, 0, Buffer.from(JSON.stringify({ port }))));
+      if (info.token) {
+        if (state.packToken && state.packToken !== info.token) packRoutes.delete(state.packToken);
+        state.packToken = info.token;
+        state.httpLocalPort = info.localHttpPort;
+        packRoutes.set(info.token, { state, send, localHttpPort: info.localHttpPort });
+        log("pack route", String(info.token).slice(0, 8), "->", state.host, ":" + info.localHttpPort);
+      }
+      send(T.HTTP, 0, Buffer.from(JSON.stringify({ port: HTTP_PORT })));
     }
   }, (e) => { log("[control frame]", e && e.message); try { sock.destroy(); } catch { /* ignore */ } });
 
@@ -404,7 +385,7 @@ const control = tls.createServer(tlsOptions, (sock) => {
     try {
       if (state.host && hosts.get(state.host)?.send === send) { hosts.delete(state.host); recentSubs[state.host] = Date.now(); saveState(); log("unregistered", state.host); }
       if (state.cfRecord) cfRemoveDirect(state.cfRecord); // restore wildcard -> VPS
-      if (state.httpServer) { try { state.httpServer.close(); } catch { /* ignore */ } state.httpServer = null; }
+      if (state.packToken) packRoutes.delete(state.packToken);
       for (const p of state.streams.values()) { try { p.destroy(); } catch { /* ignore */ } }
     } catch (e) { log("[close]", e.message); }
   });
@@ -451,3 +432,38 @@ const mc = net.createServer((client) => {
   client.on("error", () => {});
 });
 mc.listen(MC_PORT, () => log(`public Minecraft on :${MC_PORT} for *.${DOMAIN} (auth ${adminUuids.size} admins)`));
+
+// ───────────────────────── public resource-pack HTTP port ────────────────
+// One fixed port serves EVERY shared pack. We peek the HTTP request line, read
+// the token (2nd path segment: /<player>/<token>/<pack>.zip), find the matching
+// host, and mux the raw connection straight to that host's local pack server.
+const packHttp = net.createServer((conn) => {
+  try { conn.setNoDelay(true); } catch { /* ignore */ }
+  let routed = false, acc = Buffer.alloc(0);
+  const onData = (chunk) => {
+    if (routed) return;
+    acc = acc.length ? Buffer.concat([acc, chunk]) : chunk;
+    const nl = acc.indexOf(0x0a); // end of the HTTP request line
+    if (nl < 0) { if (acc.length > 16384) { try { conn.destroy(); } catch { /* ignore */ } } return; }
+    routed = true; conn.removeListener("data", onData);
+    const line = acc.toString("latin1", 0, nl);              // "GET /player/token/pack.zip HTTP/1.1"
+    const m = line.match(/^[A-Z]+\s+\/[^/\s]+\/([^/\s]+)\//);
+    const route = m && packRoutes.get(m[1]);
+    if (!route) {
+      const body = "Not found";
+      try { conn.end(`HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`); } catch { /* ignore */ }
+      return;
+    }
+    const st = route.state;
+    const streamId = (st.nextStream++) >>> 0 || 1;
+    st.streams.set(streamId, conn);
+    route.send(T.OPEN, streamId, Buffer.from(JSON.stringify({ port: route.localHttpPort })));
+    route.send(T.DATA, streamId, acc);                       // replay the bytes we peeked
+    conn.on("data", (d) => route.send(T.DATA, streamId, d));
+    conn.on("close", () => { if (st.streams.delete(streamId)) route.send(T.CLOSE, streamId, null); });
+    conn.on("error", () => { /* ignore */ });
+  };
+  conn.on("data", onData);
+  conn.on("error", () => {});
+});
+packHttp.listen(HTTP_PORT, "0.0.0.0", () => log(`public resource-pack HTTP on :${HTTP_PORT}`));

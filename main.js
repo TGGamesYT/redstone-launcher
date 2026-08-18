@@ -2746,8 +2746,11 @@ async function ensureServerPack(name, player) {
   if (!info) return null;
   let base;
   if (relay && typeof relay.openHttp === "function") {
-    if (!relay.httpPublicPort) { try { relay.httpPublicPort = await relay.openHttp(info.port); } catch { relay.httpPublicPort = null; } }
-    if (relay.httpPublicPort) base = `http://${RELAY_DEFAULTS.host}:${relay.httpPublicPort}`;
+    // Register this build's token with the relay; it returns the one shared
+    // public HTTP port. (Re-registers each build since the token changes.)
+    let publicPort = null;
+    try { publicPort = await relay.openHttp(info.port, info.token); } catch { publicPort = null; }
+    if (publicPort) base = `http://${RELAY_DEFAULTS.host}:${publicPort}`;
   }
   if (!base) base = `http://${lanIp()}:${info.port}`;
   const url = `${base}${info.wantPath}`;
