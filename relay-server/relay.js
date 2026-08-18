@@ -44,17 +44,15 @@ process.on("uncaughtException", (err) => { try { log("[uncaught]", err && err.st
 process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.stack || err); } catch { /* ignore */ } });
 
 // ───────────────────────── control mux protocol ─────────────────────────
-// HTTP (13): a host registers its resource pack for public hosting. Every shared
-// pack is multiplexed over ONE fixed public port (below) and routed by the token
-// in the request URL, so only that single port needs opening on the VPS firewall.
+// HTTP (13): a host registers its resource pack for public hosting. Packs are
+// served on the SAME public port as Minecraft (25565) — a Minecraft handshake
+// never begins with an HTTP method, so we can tell the two apart from the first
+// bytes and route by the token in the request URL. No extra port to open.
 const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13 };
 
-// The one public resource-pack port. Rolled once to a high, uncommon value (NOT
-// 80/3000/8080/etc.) and hardcoded here — open THIS single port in UFW. Override
-// with RELAY_HTTP_PORT if it ever clashes.
-const HTTP_PORT = parseInt(process.env.RELAY_HTTP_PORT || "52642", 10);
 // URL token (the "random safety token" in the pack path) -> the host serving it.
 const packRoutes = new Map();
+const HTTP_RE = /^(GET|HEAD|POST|PUT|DELETE|OPTIONS|PATCH|TRACE|CONNECT) /;
 
 // Cloudflare DNS (optional). When a host reports a working UPnP public endpoint,
 // we point <sub>.redstonemc.net straight at the host's IP so players connect
@@ -376,7 +374,8 @@ const control = tls.createServer(tlsOptions, (sock) => {
         packRoutes.set(info.token, { state, send, localHttpPort: info.localHttpPort });
         log("pack route", String(info.token).slice(0, 8), "->", state.host, ":" + info.localHttpPort);
       }
-      send(T.HTTP, 0, Buffer.from(JSON.stringify({ port: HTTP_PORT })));
+      // Packs are served on the public Minecraft port itself.
+      send(T.HTTP, 0, Buffer.from(JSON.stringify({ port: MC_PORT })));
     }
   }, (e) => { log("[control frame]", e && e.message); try { sock.destroy(); } catch { /* ignore */ } });
 
@@ -393,7 +392,30 @@ const control = tls.createServer(tlsOptions, (sock) => {
 });
 control.listen(CONTROL_PORT, () => log(`control TLS on :${CONTROL_PORT}`));
 
-// ───────────────────────── public MC port ───────────────────────────────
+// Serve a resource-pack HTTP request that arrived on the public MC port. Reads
+// the token from the URL (/<player>/<token>/<pack>.zip), finds the host that
+// registered it, and muxes the raw connection to that host's local pack server.
+function servePackHttp(conn, acc) {
+  const nl = acc.indexOf(0x0a);
+  const line = acc.toString("latin1", 0, nl < 0 ? acc.length : nl);
+  const m = line.match(/^[A-Z]+\s+\/[^/\s]+\/([^/\s]+)\//);
+  const route = m && packRoutes.get(m[1]);
+  if (!route) {
+    const body = "Not found";
+    try { conn.end(`HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`); } catch { /* ignore */ }
+    return;
+  }
+  const st = route.state;
+  const streamId = (st.nextStream++) >>> 0 || 1;
+  st.streams.set(streamId, conn);
+  route.send(T.OPEN, streamId, Buffer.from(JSON.stringify({ port: route.localHttpPort })));
+  route.send(T.DATA, streamId, acc); // replay the request bytes we peeked
+  conn.on("data", (d) => route.send(T.DATA, streamId, d));
+  conn.on("close", () => { if (st.streams.delete(streamId)) route.send(T.CLOSE, streamId, null); });
+  conn.on("error", () => { /* ignore */ });
+}
+
+// ───────────────────────── public MC port (+ pack HTTP) ──────────────────
 const mc = net.createServer((client) => {
   try { client.setNoDelay(true); } catch { /* ignore */ } // no Nagle → low latency
   let routed = false;
@@ -401,6 +423,15 @@ const mc = net.createServer((client) => {
   const onData = (chunk) => {
     if (routed) return;
     acc = Buffer.concat([acc, chunk]);
+    if (acc.length < 5) return; // not enough bytes to classify yet
+    // A resource-pack HTTP request? (Minecraft handshakes never start this way.)
+    if (HTTP_RE.test(acc.toString("latin1", 0, Math.min(acc.length, 10)))) {
+      const nl = acc.indexOf(0x0a);
+      if (nl < 0) { if (acc.length > 16384) { try { client.destroy(); } catch { /* ignore */ } } return; }
+      routed = true; client.removeListener("data", onData);
+      servePackHttp(client, acc);
+      return;
+    }
     let hs;
     try { hs = parseHandshake(acc); } catch { client.destroy(); return; }
     if (!hs) return; // wait for more bytes
@@ -431,39 +462,4 @@ const mc = net.createServer((client) => {
   client.on("data", onData);
   client.on("error", () => {});
 });
-mc.listen(MC_PORT, () => log(`public Minecraft on :${MC_PORT} for *.${DOMAIN} (auth ${adminUuids.size} admins)`));
-
-// ───────────────────────── public resource-pack HTTP port ────────────────
-// One fixed port serves EVERY shared pack. We peek the HTTP request line, read
-// the token (2nd path segment: /<player>/<token>/<pack>.zip), find the matching
-// host, and mux the raw connection straight to that host's local pack server.
-const packHttp = net.createServer((conn) => {
-  try { conn.setNoDelay(true); } catch { /* ignore */ }
-  let routed = false, acc = Buffer.alloc(0);
-  const onData = (chunk) => {
-    if (routed) return;
-    acc = acc.length ? Buffer.concat([acc, chunk]) : chunk;
-    const nl = acc.indexOf(0x0a); // end of the HTTP request line
-    if (nl < 0) { if (acc.length > 16384) { try { conn.destroy(); } catch { /* ignore */ } } return; }
-    routed = true; conn.removeListener("data", onData);
-    const line = acc.toString("latin1", 0, nl);              // "GET /player/token/pack.zip HTTP/1.1"
-    const m = line.match(/^[A-Z]+\s+\/[^/\s]+\/([^/\s]+)\//);
-    const route = m && packRoutes.get(m[1]);
-    if (!route) {
-      const body = "Not found";
-      try { conn.end(`HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`); } catch { /* ignore */ }
-      return;
-    }
-    const st = route.state;
-    const streamId = (st.nextStream++) >>> 0 || 1;
-    st.streams.set(streamId, conn);
-    route.send(T.OPEN, streamId, Buffer.from(JSON.stringify({ port: route.localHttpPort })));
-    route.send(T.DATA, streamId, acc);                       // replay the bytes we peeked
-    conn.on("data", (d) => route.send(T.DATA, streamId, d));
-    conn.on("close", () => { if (st.streams.delete(streamId)) route.send(T.CLOSE, streamId, null); });
-    conn.on("error", () => { /* ignore */ });
-  };
-  conn.on("data", onData);
-  conn.on("error", () => {});
-});
-packHttp.listen(HTTP_PORT, "0.0.0.0", () => log(`public resource-pack HTTP on :${HTTP_PORT}`));
+mc.listen(MC_PORT, () => log(`public Minecraft + pack HTTP on :${MC_PORT} for *.${DOMAIN} (auth ${adminUuids.size} admins)`));
