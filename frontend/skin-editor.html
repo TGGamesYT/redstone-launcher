@@ -1486,13 +1486,25 @@
       const colors = (template && crInfo.cosmetics.colors[template]) || [];
       if (!colors.length) { const m = document.createElement('div'); m.className = 'cr-none-msg'; m.textContent = 'No colours for this option.'; return m; }
       const grid = document.createElement('div'); grid.className = 'cr-colors';
+      const cur = crState[sec.param];
+      const isCustom = typeof cur === 'string' && cur[0] === '$';
       colors.forEach(color => {
-        const b = document.createElement('div'); b.className = 'cr-bucket' + (crState[sec.param] === color ? ' active' : ''); b.title = crTitle(color);
+        const b = document.createElement('div'); b.className = 'cr-bucket' + (cur === color ? ' active' : ''); b.title = crTitle(color);
         const img = document.createElement('img'); img.loading = 'lazy'; img.src = `${CR_API}/dev-tools/skin-creator-color/${color}.webp?colorLibrary=${template}`;
         b.appendChild(img);
         b.onclick = () => { crState[sec.param] = color; renderCatOptions(cat); crGenerate(); };
         grid.appendChild(b);
       });
+      // Custom colour: the brush bucket opens a colour picker (API takes $rrggbb).
+      const cb = document.createElement('div'); cb.className = 'cr-bucket cr-custom' + (isCustom ? ' active' : ''); cb.title = 'Custom colour';
+      if (isCustom) cb.style.background = '#' + cur.slice(1);
+      else cb.innerHTML = '<img src="assets/creator/custom.png" alt="Custom">';
+      const picker = document.createElement('input'); picker.type = 'color'; picker.value = isCustom ? '#' + cur.slice(1) : '#ffffff';
+      picker.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;';
+      picker.oninput = () => { crState[sec.param] = '$' + picker.value.slice(1); crGenerate(); cb.style.background = picker.value; cb.innerHTML = ''; cb.classList.add('active'); grid.querySelectorAll('.cr-bucket').forEach(x => { if (x !== cb) x.classList.remove('active'); }); };
+      picker.onchange = () => renderCatOptions(cat);
+      cb.onclick = () => picker.click();
+      cb.appendChild(picker); grid.appendChild(cb);
       return grid;
     }
     function crBuildRequest() {
