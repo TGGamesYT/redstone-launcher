@@ -125,6 +125,10 @@
     .cr-bucket.active { border-color: var(--base-color); }
     .cr-none-msg { opacity: 0.5; font-size: 13px; }
     #cr-busy { position: absolute; top: 8px; right: 16px; font-size: 12px; opacity: 0.8; display: none; background: var(--menu-bg); padding: 4px 10px; border-radius: 20px; z-index: 5; }
+    /* Hover credits popup (name + who made / remixed it / where it's from). */
+    #cr-tooltip { position: fixed; z-index: 7000; pointer-events: none; display: none; background: color-mix(in srgb, var(--very-dark) 92%, black); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 7px 10px; font-size: 12px; max-width: 220px; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+    #cr-tooltip .cr-tt-name { font-weight: bold; margin-bottom: 2px; }
+    #cr-tooltip .cr-tt-credit { opacity: 0.75; font-size: 11px; }
     /* Image import modal */
     /* Leaves the left 3D panel (≈340px) visible as the live wrap preview. */
     .ed-modal-overlay { position: fixed; inset: 44px 0 0 340px; background: rgba(0,0,0,0.35); backdrop-filter: blur(2px); display: none; align-items: center; justify-content: center; z-index: 3000; }
@@ -272,6 +276,7 @@
       <div id="cr-options-body"></div>
     </div>
   </div>
+  <div id="cr-tooltip"></div>
 
   <!-- Image → skin modal (body wrap). Leaves the left 3D panel visible as the
        live preview, so the modal only covers the area to its right. -->
@@ -1415,6 +1420,31 @@
     }
     function selectCat(cat) { crActiveCat = cat; CR_CATS.forEach(c => c._btn && c._btn.classList.toggle('active', c === cat)); renderCatOptions(cat); }
 
+    // Hover credits popup, mirroring the tool (created by / remixed by / from).
+    const crTooltip = document.getElementById('cr-tooltip');
+    function crCreditLines(props) {
+      const lines = [];
+      if (props.created) lines.push('Created by ' + props.created);
+      if (props.remixed) lines.push('Remixed by ' + props.remixed);
+      if (props.from) lines.push('From ' + crTitle(props.from));
+      return lines;
+    }
+    function crAttachTip(el, name, props) {
+      const credits = crCreditLines(props);
+      el.addEventListener('mouseenter', () => {
+        crTooltip.innerHTML = `<div class="cr-tt-name">${crTitle(name)}</div>` + credits.map(c => `<div class="cr-tt-credit">${c}</div>`).join('');
+        crTooltip.style.display = 'block';
+      });
+      el.addEventListener('mousemove', (e) => {
+        const pad = 14; let x = e.clientX + pad, y = e.clientY + pad;
+        const r = crTooltip.getBoundingClientRect();
+        if (x + r.width > window.innerWidth) x = e.clientX - r.width - pad;
+        if (y + r.height > window.innerHeight) y = e.clientY - r.height - pad;
+        crTooltip.style.left = x + 'px'; crTooltip.style.top = y + 'px';
+      });
+      el.addEventListener('mouseleave', () => { crTooltip.style.display = 'none'; });
+    }
+
     function renderCatOptions(cat) {
       const body = document.getElementById('cr-options-body'); body.innerHTML = '';
       cat.secs.forEach(sec => {
@@ -1454,13 +1484,14 @@
           card.onclick = () => { crState[sec.param] = 'none'; renderCatOptions(cat); crGenerate(); };
           grid.appendChild(card); return;
         }
-        const card = document.createElement('div'); card.className = 'cr-card' + (crState[sec.param] === name ? ' active' : ''); card.title = crTitle(name);
+        const props = crCosProps(sec.list, name);
+        const card = document.createElement('div'); card.className = 'cr-card' + (crState[sec.param] === name ? ' active' : '');
         const img = document.createElement('img'); img.loading = 'lazy'; img.src = `${CR_API}/render/skin-creator/${crop}/${sec.list}/${name}`;
         card.appendChild(img);
+        crAttachTip(card, name, props);   // hover: name + credits
         card.onclick = () => {
           crState[sec.param] = name;
           // Apply the option's preview colours so it looks like its thumbnail.
-          const props = crCosProps(sec.list, name);
           if (props.preview_attributes) Object.assign(crState, props.preview_attributes);
           renderCatOptions(cat); crGenerate();
         };
