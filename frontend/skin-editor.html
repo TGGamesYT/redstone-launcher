@@ -124,6 +124,9 @@
     .cr-bucket:hover { border-color: var(--base-color); }
     .cr-bucket.active { border-color: var(--base-color); }
     .cr-none-msg { opacity: 0.5; font-size: 13px; }
+    .cr-reset-btn { display: inline-flex; align-items: center; gap: 5px; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 5px 10px; font-family: var(--text-font); font-size: 12px; margin-bottom: 8px; }
+    .cr-reset-btn:hover { border-color: var(--base-color); }
+    .cr-reset-btn .material-icons { font-size: 15px; }
     #cr-busy { position: absolute; top: 8px; right: 16px; font-size: 12px; opacity: 0.8; display: none; background: var(--menu-bg); padding: 4px 10px; border-radius: 20px; z-index: 5; }
     /* Hover credits popup (name + who made / remixed it / where it's from). */
     #cr-tooltip { position: fixed; z-index: 7000; pointer-events: none; display: none; background: color-mix(in srgb, var(--very-dark) 92%, black); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 7px 10px; font-size: 12px; max-width: 220px; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
@@ -1516,6 +1519,13 @@
       const template = crColorTemplate(sec.tex);
       const colors = (template && crInfo.cosmetics.colors[template]) || [];
       if (!colors.length) { const m = document.createElement('div'); m.className = 'cr-none-msg'; m.textContent = 'No colours for this option.'; return m; }
+      const box = document.createElement('div');
+      // Reset-to-default: the selected texture's preview colour for this slot.
+      const def = crDefaultColor(sec);
+      const reset = document.createElement('button'); reset.className = 'cr-reset-btn';
+      reset.innerHTML = '<i class="material-icons">restart_alt</i> Reset to default';
+      reset.onclick = () => { if (def) crState[sec.param] = def; else delete crState[sec.param]; renderCatOptions(cat); crGenerate(); };
+      box.appendChild(reset);
       const grid = document.createElement('div'); grid.className = 'cr-colors';
       const cur = crState[sec.param];
       const isCustom = typeof cur === 'string' && cur[0] === '$';
@@ -1536,7 +1546,13 @@
       picker.onchange = () => renderCatOptions(cat);
       cb.onclick = () => picker.click();
       cb.appendChild(picker); grid.appendChild(cb);
-      return grid;
+      box.appendChild(grid);
+      return box;
+    }
+    // The default colour for a colour slot = the selected texture's preview colour.
+    function crDefaultColor(sec) {
+      const props = crCosProps(CR_TEX_LIST[sec.tex], crState[sec.tex]);
+      return (props.preview_attributes && props.preview_attributes[sec.param]) || null;
     }
     function crBuildRequest() {
       const bt = crState.base_texture || 'male', bc = crState.base_color || 'tan', st = crState.skin_type || 'wide';
