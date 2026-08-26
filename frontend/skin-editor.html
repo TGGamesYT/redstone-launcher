@@ -85,36 +85,46 @@
     .efm-src.active { outline: 2px solid var(--base-color); }
     .efm-src canvas { width: 100%; aspect-ratio: 1/1; image-rendering: pixelated; border-radius: 4px; display: block; cursor: pointer; }
     .efm-src .efm-sname { font-size: 11px; margin-top: 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    /* ── Simple creator (Starlight dress-up). 3D on the left, category list in the
-       middle, the selected category's options on the right. ── */
-    #creator-wrap { display: none; gap: 16px; padding: 8px 20px 0 0; height: calc(100vh - 110px); max-width: 100%; box-sizing: border-box; overflow: hidden; }
+    /* ── Simple creator (Starlight dress-up), a faithful port. 3D on the left,
+       the grouped category list, then the selected category's sections. All
+       three columns fill the available height; only the sections scroll. ── */
+    #creator-wrap { display: none; gap: 14px; padding: 6px 20px 10px 0; height: calc(100vh - 120px); max-width: 100%; box-sizing: border-box; overflow: hidden; }
     #creator-wrap.active { display: flex; }
-    #cr-left { flex: 0 0 400px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
-    #cr-3d { width: 400px; height: 520px; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); }
-    #cr-cats { flex: 0 0 190px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
-    .cr-cat { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 9px 12px; text-align: left; font-family: var(--text-font); font-size: 13px; display: flex; align-items: center; gap: 9px; }
-    .cr-cat .material-icons { font-size: 18px; opacity: 0.9; }
+    #cr-left { flex: 0 0 360px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+    #cr-3d { width: 360px; height: 480px; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); }
+    #cr-actions { display: flex; gap: 12px; padding: 6px 0 2px; }
+    .cr-round { width: 46px; height: 46px; border-radius: 50%; border: 2px solid var(--border-dark); background: var(--menu-bg); color: var(--text-color); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .cr-round:hover { border-color: var(--base-color); }
+    .cr-round.primary { background: var(--base-color); border-color: var(--text-color); }
+    .cr-round .material-icons { font-size: 22px; }
+    /* Category list (grouped Body / Style), fills height. */
+    #cr-cats { flex: 0 0 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
+    .cr-group-label { font-size: 15px; font-weight: bold; opacity: 0.85; margin: 12px 4px 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .cr-group-label:first-child { margin-top: 2px; }
+    .cr-cat { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 9px 12px; text-align: left; font-family: var(--text-font); font-size: 14px; display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+    .cr-cat img { width: 22px; height: 22px; image-rendering: pixelated; }
     .cr-cat:hover { border-color: var(--base-color); }
     .cr-cat.active { background: var(--base-color); border-color: var(--text-color); }
-    .cr-seg { display: flex; gap: 6px; flex-wrap: wrap; }
-    .cr-seg button { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 8px 14px; font-family: var(--text-font); font-size: 13px; }
-    .cr-seg button:hover { border-color: var(--base-color); }
-    .cr-seg button.active { background: var(--base-color); border-color: var(--text-color); }
-    .cr-swatch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 6px; }
-    .cr-swatch { aspect-ratio: 1/1; border: 2px solid var(--border-dark); border-radius: 6px; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; }
-    .cr-swatch:hover { border-color: var(--base-color); }
-    .cr-swatch.active { border-color: var(--text-color); box-shadow: 0 0 0 2px var(--base-color); }
-    .cr-swatch .material-icons { font-size: 18px; opacity: 0.6; }
-    #cr-options { flex: 1; min-width: 0; overflow-y: auto; padding-right: 6px; }
-    #cr-options h3 { margin: 0 0 12px; }
-    .cr-opt-row { margin-bottom: 14px; }
-    .cr-opt-row label { display: block; font-size: 12px; opacity: 0.8; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.3px; }
-    .cr-opt-row select { width: 100%; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); padding: 8px; font-family: var(--text-font); }
-    .cr-tex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
-    .cr-tex { background: color-mix(in srgb, var(--third-color) 55%, transparent); border: 2px solid transparent; border-radius: var(--border-radius); padding: 8px 4px; cursor: pointer; font-size: 11px; text-align: center; }
-    .cr-tex:hover { border-color: var(--base-color); }
-    .cr-tex.active { border-color: var(--text-color); background: var(--base-color); }
-    #cr-busy { position: absolute; top: 10px; right: 20px; font-size: 12px; opacity: 0.7; display: none; }
+    /* Sections panel. */
+    #cr-options { flex: 1; min-width: 0; overflow-y: auto; padding: 0 8px; background: color-mix(in srgb, var(--very-dark) 60%, transparent); border-radius: var(--border-radius); }
+    .cr-sec { margin: 14px 0; }
+    .cr-sec-title { font-size: 20px; font-weight: bold; margin: 0 0 10px; }
+    .cr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+    /* Texture cards: rendered thumbnails from the API, like the site. */
+    .cr-card { background: color-mix(in srgb, var(--very-dark) 92%, black); border: 3px solid transparent; border-radius: var(--border-radius); cursor: pointer; aspect-ratio: 1/1; overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative; }
+    .cr-card img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+    .cr-card:hover { border-color: var(--base-color); }
+    .cr-card.active { border-color: var(--base-color); box-shadow: 0 0 0 1px var(--base-color) inset; }
+    .cr-card.cr-none { color: var(--text-color); opacity: 0.7; font-size: 12px; }
+    .cr-card.cr-none .material-icons { font-size: 30px; opacity: 0.5; }
+    /* Colour buckets: the API's colour swatch images. */
+    .cr-colors { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 6px; }
+    .cr-bucket { aspect-ratio: 1/1; border: 3px solid transparent; border-radius: var(--border-radius); cursor: pointer; overflow: hidden; background: color-mix(in srgb, var(--very-dark) 90%, black); }
+    .cr-bucket img { width: 100%; height: 100%; image-rendering: pixelated; object-fit: contain; }
+    .cr-bucket:hover { border-color: var(--base-color); }
+    .cr-bucket.active { border-color: var(--base-color); }
+    .cr-none-msg { opacity: 0.5; font-size: 13px; }
+    #cr-busy { position: absolute; top: 8px; right: 16px; font-size: 12px; opacity: 0.8; display: none; background: var(--menu-bg); padding: 4px 10px; border-radius: 20px; z-index: 5; }
     /* Image import modal */
     /* Leaves the left 3D panel (≈340px) visible as the live wrap preview. */
     .ed-modal-overlay { position: fixed; inset: 44px 0 0 340px; background: rgba(0,0,0,0.35); backdrop-filter: blur(2px); display: none; align-items: center; justify-content: center; z-index: 3000; }
@@ -249,12 +259,11 @@
   <div id="creator-wrap">
     <div id="cr-left">
       <canvas id="cr-3d"></canvas>
-      <div class="ed-hint" style="margin-top:-2px;">Drag to rotate.</div>
-      <div class="ed-group">
-        <div class="ed-row"><label>Name</label><input type="text" id="cr-name" placeholder="My skin" style="flex:1;"></div>
-        <button class="ed-btn primary" id="cr-save" style="margin-top:6px;"><i class="material-icons">save</i> Save to library</button>
-        <button class="ed-btn" id="cr-random" style="margin-top:6px;"><i class="material-icons">casino</i> Randomize</button>
-        <button class="ed-btn" id="cr-reset" style="margin-top:6px;"><i class="material-icons">restart_alt</i> Reset</button>
+      <div class="ed-hint" style="margin-top:-2px; text-align:center;">Drag to rotate.</div>
+      <div id="cr-actions">
+        <button class="cr-round" id="cr-save" title="Save to library"><i class="material-icons">save</i></button>
+        <button class="cr-round" id="cr-random" title="Randomize"><i class="material-icons">casino</i></button>
+        <button class="cr-round" id="cr-reset" title="Reset"><i class="material-icons">restart_alt</i></button>
       </div>
     </div>
     <div id="cr-cats"></div>
@@ -1035,7 +1044,7 @@
             document.getElementById('ed-title').textContent = 'Editing: ' + name; document.getElementById('ed-save-copy').style.display = '';
             editedType = s.editorType || 'advanced';
             // A simple-creator skin re-opens in the creator with its saved options.
-            if (editedType === 'simple' && s.creatorState) { crState = { ...CR_DEFAULT, ...s.creatorState }; document.getElementById('cr-name').value = name; }
+            if (editedType === 'simple' && s.creatorState) { crState = { ...CR_DEFAULT, ...s.creatorState }; crName = name; }
           }
         } catch { }
       } else if (mode === 'new' && params.get('template') === '1') {
@@ -1192,7 +1201,7 @@
       const r = new FileReader(); r.onload = () => efmAddSource(f.name.replace(/\.[^.]+$/, ''), r.result); r.readAsDataURL(f); e.target.value = '';
     };
     // Promise-based text prompt (Electron's window.prompt is unsupported).
-    function edAskText(title, placeholder) {
+    function edAskText(title, placeholder, def) {
       return new Promise((resolve) => {
         const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.inset = '44px 0 0 70px'; ov.style.zIndex = 6000;
         const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '360px';
@@ -1201,12 +1210,28 @@
           <div class="ed-btn-row"><button class="ed-btn primary" id="ed-ask-ok">OK</button><button class="ed-btn" id="ed-ask-cancel">Cancel</button></div>`;
         ov.appendChild(box); document.body.appendChild(ov);
         const input = box.querySelector('#ed-ask-input');
+        if (def) input.value = def;
         const done = (v) => { ov.remove(); resolve(v); };
         box.querySelector('#ed-ask-ok').onclick = () => done((input.value || '').trim() || null);
         box.querySelector('#ed-ask-cancel').onclick = () => done(null);
         ov.addEventListener('mousedown', e => { if (e.target === ov) done(null); });
         input.addEventListener('keydown', e => { if (e.key === 'Enter') done((input.value || '').trim() || null); if (e.key === 'Escape') done(null); });
-        setTimeout(() => input.focus(), 30);
+        setTimeout(() => { input.focus(); input.select(); }, 30);
+      });
+    }
+    // Promise-based confirm (returns true/false), so no ugly Electron popup.
+    function edAskConfirm(title, message) {
+      return new Promise((resolve) => {
+        const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.inset = '44px 0 0 70px'; ov.style.zIndex = 6000;
+        const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '380px';
+        box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">${title}</h3></div>
+          <div style="margin:12px 0;font-size:14px;opacity:0.9;">${message}</div>
+          <div class="ed-btn-row"><button class="ed-btn primary" id="ed-cf-ok">Continue</button><button class="ed-btn" id="ed-cf-cancel">Cancel</button></div>`;
+        ov.appendChild(box); document.body.appendChild(ov);
+        const done = (v) => { ov.remove(); resolve(v); };
+        box.querySelector('#ed-cf-ok').onclick = () => done(true);
+        box.querySelector('#ed-cf-cancel').onclick = () => done(false);
+        ov.addEventListener('mousedown', e => { if (e.target === ov) done(false); });
       });
     }
     document.getElementById('efm-add-player').onclick = async () => {
@@ -1249,58 +1274,127 @@
       ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
     }
 
-    // ── Simple creator (Starlight dress-up API) ─────────────────────────────
-    // The default mode for a brand-new skin: pick a category on the middle panel,
-    // set its texture/colour/alignment on the right, and the API renders a full
-    // skin which is loaded into `work` (so Save and the Advanced editor share it).
-    const CR_ALIGN = ['center', 'left', 'right', 'up', 'down'];
-    const CR_CATS = [
-      { key: 'base', label: 'Base', icon: 'accessibility_new', tex: { param: 'base_texture', list: 'base_textures', path: true, noneLabel: 'Plain' }, color: { param: 'base_color', palette: 'base', path: true } },
-      { key: 'skin_type', label: 'Skin Type', icon: 'wc', special: 'skintype' },
-      { key: 'tops', label: 'Tops', icon: 'checkroom', tex: { param: 'top_texture', list: 'top_textures' }, color: { param: 'top_color', palette: 'default' }, color2: { param: 'top_color_secondary', palette: 'default' } },
-      { key: 'top_designs', label: 'Top Designs', icon: 'brush', tex: { param: 'top_designs_texture', list: 'top_designs_textures' }, color: { param: 'top_designs_color', palette: 'default' } },
-      { key: 'bottoms', label: 'Bottoms', icon: 'dry_cleaning', tex: { param: 'bottom_texture', list: 'bottom_textures' }, color: { param: 'bottom_color', palette: 'default' }, color2: { param: 'bottom_color_secondary', palette: 'default' } },
-      { key: 'outerwear', label: 'Outerwear', icon: 'ac_unit', tex: { param: 'outerwear_texture', list: 'outerwear_textures' }, color: { param: 'outerwear_color', palette: 'default' }, color2: { param: 'outerwear_color_secondary', palette: 'default' } },
-      { key: 'footwear', label: 'Footwear', icon: 'ice_skating', tex: { param: 'footwear_texture', list: 'footwear_textures' }, color: { param: 'footwear_color', palette: 'default' } },
-      { key: 'socks', label: 'Socks', icon: 'layers', tex: { param: 'socks_texture', list: 'socks_textures' }, color: { param: 'socks_color', palette: 'default' } },
-      { key: 'gloves', label: 'Gloves', icon: 'back_hand', tex: { param: 'gloves_texture', list: 'gloves_textures' }, color: { param: 'gloves_color', palette: 'default' } },
-      { key: 'hair', label: 'Hair', icon: 'content_cut', tex: { param: 'hair_style_texture', list: 'hair_style_textures' }, color: { param: 'hair_color', palette: 'hair' } },
-      { key: 'headwear', label: 'Headwear', icon: 'military_tech', tex: { param: 'headwear_texture', list: 'headwear_textures' }, color: { param: 'headwear_color', palette: 'default' } },
-      { key: 'eyes', label: 'Eyes', icon: 'visibility', tex: { param: 'eyes_texture', list: 'eyes_textures' }, color: { param: 'eyes_color', palette: 'eyes' }, color2: { param: 'eyes_color_secondary', palette: 'eyes' }, align: 'eyes_alignment' },
-      { key: 'eyebrows', label: 'Eyebrows', icon: 'face', tex: { param: 'eyebrow_texture', list: 'eyebrow_textures' }, color: { param: 'eyebrow_color', palette: 'hair' } },
-      { key: 'mouths', label: 'Mouths', icon: 'sentiment_satisfied', tex: { param: 'mouth_texture', list: 'mouth_textures' }, color: { param: 'mouth_color', palette: 'default' }, align: 'mouth_alignment' },
-      { key: 'facial_hair', label: 'Facial Hair', icon: 'face_retouching_natural', tex: { param: 'facial_hair_texture', list: 'facial_hair_textures' }, color: { param: 'facial_hair_color', palette: 'hair' } },
-      { key: 'face_items', label: 'Face Items', icon: 'masks', tex: { param: 'face_item_texture', list: 'face_item_textures' }, color: { param: 'face_item_color', palette: 'default' } },
+    // ── Simple creator — a faithful port of the Starlight Skin Creator. ──────
+    // The category list (grouped Body / Style) drives the sections panel; each
+    // texture is a rendered thumbnail card from the API, colours are the API's
+    // bucket swatches (only the palette the selected texture supports), and the
+    // whole skin is generated by the create-skin endpoint.
+    const CR_API = 'https://starlightskins.lunareclipse.studio';
+    const CR_HIDDEN = new Set(['ddigitall', 'enderman_original', 'creeper_original', 'candlehead', 'mr_boots', 'justbellow', 'fennec_fox']);
+    // The site's default skin.
+    const CR_DEFAULT = {
+      base_texture: 'male', base_color: 'tan', base_color_secondary: 'light_gray', skin_type: 'wide',
+      eyes_alignment: 'middle', mouth_alignment: 'high',
+    };
+    // Which render crop each texture list uses (mirrors the tool).
+    const CR_CROP_FACE = new Set(['eyes_textures', 'eyebrow_textures', 'hair_style_textures', 'hair_textures', 'face_item_textures', 'mouth_textures', 'facial_hair_textures', 'headwear_textures', 'ears_textures']);
+    const CR_CROP_LEGS = new Set(['footwear_textures', 'socks_textures', 'bottom_textures']);
+    const crCrop = (list) => CR_CROP_FACE.has(list) ? 'face' : CR_CROP_LEGS.has(list) ? 'legs' : 'bust';
+    // Category structure (grouped, with the site's icons). Each section is a
+    // texture picker, a colour picker (palette follows the linked texture), a
+    // secondary colour (only when the texture supports one), an alignment, or the
+    // body-type picker.
+    const CR_GROUPS = [
+      { label: 'Body', cats: [
+        { key: 'base', label: 'Base', icon: 'base', secs: [
+          { t: 'bodytype', title: 'Body Type' },
+          { t: 'tex', param: 'base_texture', list: 'base_textures', title: 'Skin Base', noNone: true },
+          { t: 'color', param: 'base_color', tex: 'base_texture', title: 'Skin Tone' },
+          { t: 'color2', param: 'base_color_secondary', tex: 'base_texture', title: 'Secondary Skin Tone' },
+          { t: 'tex', param: 'makeup_texture', list: 'makeup_textures', title: 'Skin Makeup' },
+          { t: 'color', param: 'makeup_color', tex: 'makeup_texture', title: 'Makeup Colour' },
+          { t: 'color2', param: 'makeup_color_secondary', tex: 'makeup_texture', title: 'Secondary Makeup Colour' },
+        ] },
+        { key: 'eyes', label: 'Eyes', icon: 'eye', secs: [
+          { t: 'tex', param: 'eyes_texture', list: 'eyes_textures', title: 'Eye Shape' },
+          { t: 'align', param: 'eyes_alignment', title: 'Eye Alignment', opts: ['high', 'middle', 'low'], prefix: 'eyes_' },
+          { t: 'color', param: 'eyes_color', tex: 'eyes_texture', title: 'Eye Iris Colour' },
+          { t: 'color2', param: 'eyes_color_secondary', tex: 'eyes_texture', title: 'Eye Sclera Colour' },
+          { t: 'tex', param: 'eyebrow_texture', list: 'eyebrow_textures', title: 'Eyebrow Shape' },
+          { t: 'color', param: 'eyebrow_color', tex: 'eyebrow_texture', title: 'Eyebrow Colour' },
+        ] },
+        { key: 'mouth', label: 'Mouth', icon: 'facial_hair', secs: [
+          { t: 'tex', param: 'mouth_texture', list: 'mouth_textures', title: 'Mouth Shape' },
+          { t: 'align', param: 'mouth_alignment', title: 'Mouth Alignment', opts: ['high', 'low'], prefix: 'mouth_' },
+          { t: 'color', param: 'mouth_color', tex: 'mouth_texture', title: 'Mouth Colour' },
+          { t: 'tex', param: 'facial_hair_texture', list: 'facial_hair_textures', title: 'Facial Hair Style' },
+          { t: 'color', param: 'facial_hair_color', tex: 'facial_hair_texture', title: 'Facial Hair Colour' },
+        ] },
+        { key: 'hair', label: 'Hair', icon: 'hair', secs: [
+          { t: 'tex', param: 'hair_style_texture', list: 'hair_style_textures', title: 'Hair Style' },
+          { t: 'tex', param: 'hair_pattern_texture', list: 'hair_pattern_textures', title: 'Hair Pattern' },
+          { t: 'color', param: 'hair_style_color', tex: 'hair_style_texture', title: 'Hair Colour' },
+          { t: 'color2', param: 'hair_style_color_secondary', tex: 'hair_style_texture', title: 'Secondary Hair Colour' },
+        ] },
+        { key: 'ears', label: 'Ears', icon: 'ears', secs: [
+          { t: 'tex', param: 'ears_texture', list: 'ears_textures', title: 'Ears' },
+          { t: 'color', param: 'ears_color', tex: 'ears_texture', title: 'Ears Colour' },
+          { t: 'color2', param: 'ears_color_secondary', tex: 'ears_texture', title: 'Secondary Ears Colour' },
+        ] },
+      ] },
+      { label: 'Style', cats: [
+        { key: 'headwear', label: 'Headwear', icon: 'headwear', secs: [
+          { t: 'tex', param: 'headwear_texture', list: 'headwear_textures', title: 'Headwear' },
+          { t: 'color', param: 'headwear_color', tex: 'headwear_texture', title: 'Headwear Colour' },
+          { t: 'color2', param: 'headwear_color_secondary', tex: 'headwear_texture', title: 'Secondary Headwear Colour' },
+        ] },
+        { key: 'faceitems', label: 'Face Items', icon: 'face_item', secs: [
+          { t: 'tex', param: 'face_item_texture', list: 'face_item_textures', title: 'Face Item' },
+          { t: 'color', param: 'face_item_color', tex: 'face_item_texture', title: 'Face Item Colour' },
+          { t: 'color2', param: 'face_item_color_secondary', tex: 'face_item_texture', title: 'Secondary Face Item Colour' },
+        ] },
+        { key: 'tops', label: 'Tops', icon: 'top', secs: [
+          { t: 'tex', param: 'top_texture', list: 'top_textures', title: 'Top' },
+          { t: 'color', param: 'top_color', tex: 'top_texture', title: 'Top Colour' },
+          { t: 'color2', param: 'top_color_secondary', tex: 'top_texture', title: 'Secondary Top Colour' },
+          { t: 'tex', param: 'top_designs_texture', list: 'top_designs_textures', title: 'Top Design' },
+          { t: 'color', param: 'top_designs_color', tex: 'top_designs_texture', title: 'Top Design Colour' },
+          { t: 'tex', param: 'middlewear_texture', list: 'middlewear_textures', title: 'Middlewear' },
+          { t: 'color', param: 'middlewear_color', tex: 'middlewear_texture', title: 'Middlewear Colour' },
+        ] },
+        { key: 'outerwear', label: 'Outerwear', icon: 'outerwear', secs: [
+          { t: 'tex', param: 'outerwear_texture', list: 'outerwear_textures', title: 'Outerwear' },
+          { t: 'color', param: 'outerwear_color', tex: 'outerwear_texture', title: 'Outerwear Colour' },
+          { t: 'color2', param: 'outerwear_color_secondary', tex: 'outerwear_texture', title: 'Secondary Outerwear Colour' },
+        ] },
+        { key: 'gloves', label: 'Gloves', icon: 'glove', secs: [
+          { t: 'tex', param: 'gloves_texture', list: 'gloves_textures', title: 'Gloves' },
+          { t: 'color', param: 'gloves_color', tex: 'gloves_texture', title: 'Gloves Colour' },
+          { t: 'color2', param: 'gloves_color_secondary', tex: 'gloves_texture', title: 'Secondary Gloves Colour' },
+        ] },
+        { key: 'bottoms', label: 'Bottoms', icon: 'bottom', secs: [
+          { t: 'tex', param: 'bottom_texture', list: 'bottom_textures', title: 'Bottoms' },
+          { t: 'color', param: 'bottom_color', tex: 'bottom_texture', title: 'Bottoms Colour' },
+          { t: 'color2', param: 'bottom_color_secondary', tex: 'bottom_texture', title: 'Secondary Bottoms Colour' },
+        ] },
+        { key: 'socks', label: 'Socks', icon: 'socks', secs: [
+          { t: 'tex', param: 'socks_texture', list: 'socks_textures', title: 'Socks' },
+          { t: 'color', param: 'socks_color', tex: 'socks_texture', title: 'Socks Colour' },
+          { t: 'color2', param: 'socks_color_secondary', tex: 'socks_texture', title: 'Secondary Socks Colour' },
+        ] },
+        { key: 'footwear', label: 'Footwear', icon: 'footwear', secs: [
+          { t: 'tex', param: 'footwear_texture', list: 'footwear_textures', title: 'Footwear' },
+          { t: 'color', param: 'footwear_color', tex: 'footwear_texture', title: 'Footwear Colour' },
+          { t: 'color2', param: 'footwear_color_secondary', tex: 'footwear_texture', title: 'Secondary Footwear Colour' },
+        ] },
+      ] },
     ];
+    const CR_CATS = CR_GROUPS.flatMap(g => g.cats);
+    const CR_TEX_LIST = {}; // param -> list key
+    CR_CATS.forEach(c => c.secs.forEach(s => { if (s.t === 'tex') CR_TEX_LIST[s.param] = s.list; }));
+
     let crInfo = null, crViewer = null, crActiveCat = null, crGenTimer = null, crGenSeq = 0;
-    const CR_DEFAULT = { base_texture: 'none', base_color: 'pale', skin_type: 'wide' };
+    let crName = 'My skin';
     let crState = { ...CR_DEFAULT };
-    // Named colours → hex, for the bucket swatches (the API only gives names).
-    const CR_HEX = {
-      pale: '#f8d9b8', tan: '#e5b887', tan_medium: '#d9a066', tan_dark: '#b97a56', medium: '#c68642', medium_dark: '#8d5524',
-      dark: '#6b4423', dark_darker: '#4b2e17', creeper_green: '#54a832', enderman_black: '#1a1a1a', enderman_purple: '#a000c0',
-      piglin_tan: '#e0b090', bone: '#e8e0cf', chain: '#8a8a8a', metal: '#9aa0a6', artic: '#dff0f5',
-      red: '#d84343', crimson: '#8a1f1f', orange: '#e07b2a', pumpkin_orange: '#e8791a', gold: '#e6c229', yellow: '#e6d94a',
-      light_yellow: '#f2ea9a', banana: '#f5e05a', beige: '#e8d8b0', green: '#4a9d3f', military_green: '#5b6b3a', lime: '#8fd44a',
-      blue: '#3f6fd8', light_blue: '#6fa8e0', sky_blue: '#8fd0f0', infinite_temperature: '#7fd0e8', purple: '#8a3fd8', magenta: '#c84ac8',
-      pink: '#e88fc0', brown: '#7a5230', brown_dark: '#5a3a20', brown_darker: '#3f2915', black: '#1c1c1c', gray: '#7a7a7a',
-      light_gray: '#b4b4b4', white: '#f2f2f2', black_and_white: '#888888', blonde: '#e8c860', blonde_light: '#f0dd90',
-      blonde_lighter: '#f5ead0', ash_blonde: '#cdbd8e', eyeliner: '#222222',
-    };
-    const crHex = (name) => {
-      if (CR_HEX[name]) return CR_HEX[name];
-      // Fallback: hash the name into a stable colour.
-      let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffff;
-      return '#' + (h | 0x404040).toString(16).padStart(6, '0').slice(0, 6);
-    };
     const crTitle = (s) => String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    const crColors = (pal) => (crInfo && crInfo.cosmetics && crInfo.cosmetics.colors && crInfo.cosmetics.colors[pal]) || [];
-    const crTexList = (k) => { const o = crInfo && crInfo.cosmetics && crInfo.cosmetics[k]; return o ? Object.keys(o) : []; };
+    const crCosProps = (list, name) => { try { return crInfo.cosmetics[list][name] || {}; } catch { return {}; } };
+    const crTexList = (list) => { try { return Object.keys(crInfo.cosmetics[list]); } catch { return []; } };
+    const crColorTemplate = (texParam) => { const list = CR_TEX_LIST[texParam]; const p = crCosProps(list, crState[texParam]); return p.color_template || null; };
 
     async function crInit() {
       const info = await ipcRenderer.invoke('starlight:info');
       if (!info || info.error || !info.cosmetics) {
-        document.getElementById('cr-options-body').innerHTML = '<div class="ed-hint">Couldn\'t load the skin creator options (are you offline?). Switch to the Advanced editor instead.</div>';
+        document.getElementById('cr-options-body').innerHTML = '<div class="cr-none-msg" style="padding:20px;">Couldn\'t load the skin creator (are you offline?). Switch to the Advanced editor instead.</div>';
         return;
       }
       crInfo = info;
@@ -1310,73 +1404,105 @@
     }
     function buildCatTabs() {
       const wrap = document.getElementById('cr-cats'); wrap.innerHTML = '';
-      CR_CATS.forEach(cat => {
-        const b = document.createElement('button'); b.className = 'cr-cat';
-        b.innerHTML = `<i class="material-icons">${cat.icon || 'tune'}</i><span>${cat.label}</span>`;
-        b.onclick = () => selectCat(cat); cat._btn = b; wrap.appendChild(b);
+      CR_GROUPS.forEach(group => {
+        const gl = document.createElement('div'); gl.className = 'cr-group-label'; gl.textContent = group.label; wrap.appendChild(gl);
+        group.cats.forEach(cat => {
+          const b = document.createElement('button'); b.className = 'cr-cat';
+          b.innerHTML = `<span>${cat.label}</span><img src="assets/creator/${cat.icon}.png" alt="">`;
+          b.onclick = () => selectCat(cat); cat._btn = b; wrap.appendChild(b);
+        });
       });
     }
     function selectCat(cat) { crActiveCat = cat; CR_CATS.forEach(c => c._btn && c._btn.classList.toggle('active', c === cat)); renderCatOptions(cat); }
-    // A segmented button row (skin type / alignment) — never a dropdown.
-    function crSegRow(label, opts, cur, onChange) {
-      const row = document.createElement('div'); row.className = 'cr-opt-row';
-      const l = document.createElement('label'); l.textContent = label; row.appendChild(l);
-      const seg = document.createElement('div'); seg.className = 'cr-seg';
-      opts.forEach(o => { const b = document.createElement('button'); b.textContent = crTitle(o.label != null ? o.label : o); b.className = (o.value != null ? o.value : o) === cur ? 'active' : ''; b.onclick = () => onChange(o.value != null ? o.value : o); seg.appendChild(b); });
-      row.appendChild(seg); return row;
-    }
-    // Colour bucket swatches (like the site) with a "Default" (let the API pick).
-    function crColorRow(label, cfg) {
-      const cols = crColors(cfg.palette);
-      const cur = crState[cfg.param];              // undefined = API default
-      const row = document.createElement('div'); row.className = 'cr-opt-row';
-      row.innerHTML = `<label>${label}</label>`;
-      const grid = document.createElement('div'); grid.className = 'cr-swatch-grid';
-      const mk = (name, hex, isDefault) => {
-        const s = document.createElement('button'); s.className = 'cr-swatch' + ((isDefault ? !cur : cur === name) ? ' active' : '');
-        s.title = isDefault ? 'Default' : crTitle(name);
-        s.style.background = isDefault ? 'transparent' : hex;
-        if (isDefault) s.innerHTML = '<i class="material-icons">block</i>';
-        s.onclick = () => { if (isDefault) delete crState[cfg.param]; else crState[cfg.param] = name; renderCatOptions(crActiveCat); crGenerate(); };
-        grid.appendChild(s);
-      };
-      mk(null, null, true);
-      cols.forEach(name => mk(name, crHex(name), false));
-      row.appendChild(grid); return row;
-    }
+
     function renderCatOptions(cat) {
       const body = document.getElementById('cr-options-body'); body.innerHTML = '';
-      const h = document.createElement('h3'); h.innerHTML = `<i class="material-icons" style="vertical-align:-4px;margin-right:6px;">${cat.icon || 'tune'}</i>${cat.label}`; body.appendChild(h);
-      if (cat.special === 'skintype') { body.appendChild(crSegRow('Model', [{ label: 'Male (wide)', value: 'wide' }, { label: 'Female (slim)', value: 'slim' }], crState.skin_type, v => { crState.skin_type = v; crGenerate(); })); return; }
-      if (cat.tex) {
-        const list = crTexList(cat.tex.list);
-        const cur = crState[cat.tex.param] || 'none';
-        const row = document.createElement('div'); row.className = 'cr-opt-row'; row.innerHTML = '<label>Style</label>';
-        const grid = document.createElement('div'); grid.className = 'cr-tex-grid';
-        list.forEach(name => {
-          const t = document.createElement('div'); t.className = 'cr-tex' + (name === cur ? ' active' : '');
-          t.textContent = (name === 'none' && cat.tex.noneLabel) ? cat.tex.noneLabel : crTitle(name);
-          t.onclick = () => { crState[cat.tex.param] = name; renderCatOptions(cat); crGenerate(); }; grid.appendChild(t);
-        });
-        row.appendChild(grid); body.appendChild(row);
-      }
-      const chosen = cat.tex ? (crState[cat.tex.param] && crState[cat.tex.param] !== 'none') : true;
-      if (cat.color && (chosen || cat.color.path)) body.appendChild(crColorRow('Colour', cat.color));
-      if (cat.color2 && chosen) body.appendChild(crColorRow('Secondary colour', cat.color2));
-      if (cat.align && chosen) body.appendChild(crSegRow('Alignment', CR_ALIGN, crState[cat.align] || 'center', v => { crState[cat.align] = v; crGenerate(); }));
+      cat.secs.forEach(sec => {
+        if (sec.t === 'tex' && !crTexList(sec.list).length) return;      // list not in data
+        if (sec.t === 'color2') {                                        // only when supported
+          const props = crCosProps(CR_TEX_LIST[sec.tex], crState[sec.tex]);
+          if (!props.uses_secondary_color) return;
+        }
+        const wrap = document.createElement('div'); wrap.className = 'cr-sec';
+        const h = document.createElement('div'); h.className = 'cr-sec-title'; h.textContent = sec.title; wrap.appendChild(h);
+        if (sec.t === 'bodytype') wrap.appendChild(crBodyType());
+        else if (sec.t === 'tex') wrap.appendChild(crTexGrid(sec, cat));
+        else if (sec.t === 'align') wrap.appendChild(crAlign(sec));
+        else wrap.appendChild(crColorGrid(sec, cat));
+        body.appendChild(wrap);
+      });
+    }
+    function crBodyType() {
+      const grid = document.createElement('div'); grid.className = 'cr-grid';
+      [['wide', 'Wide (male)'], ['slim', 'Slim (female)']].forEach(([v, label]) => {
+        const card = document.createElement('div'); card.className = 'cr-card' + (crState.skin_type === v ? ' active' : ''); card.title = label;
+        card.innerHTML = `<img src="assets/creator/${v}.png" alt="${label}">`;
+        card.onclick = () => { crState.skin_type = v; renderCatOptions(crActiveCat); crGenerate(); };
+        grid.appendChild(card);
+      });
+      return grid;
+    }
+    function crTexGrid(sec, cat) {
+      const grid = document.createElement('div'); grid.className = 'cr-grid';
+      const crop = crCrop(sec.list);
+      const list = crTexList(sec.list).filter(n => !CR_HIDDEN.has(n));
+      list.forEach(name => {
+        if (name === 'none') {
+          if (sec.noNone) return;
+          const card = document.createElement('div'); card.className = 'cr-card cr-none' + (crState[sec.param] === 'none' ? ' active' : ''); card.title = 'None';
+          card.innerHTML = '<i class="material-icons">block</i>';
+          card.onclick = () => { crState[sec.param] = 'none'; renderCatOptions(cat); crGenerate(); };
+          grid.appendChild(card); return;
+        }
+        const card = document.createElement('div'); card.className = 'cr-card' + (crState[sec.param] === name ? ' active' : ''); card.title = crTitle(name);
+        const img = document.createElement('img'); img.loading = 'lazy'; img.src = `${CR_API}/render/skin-creator/${crop}/${sec.list}/${name}`;
+        card.appendChild(img);
+        card.onclick = () => {
+          crState[sec.param] = name;
+          // Apply the option's preview colours so it looks like its thumbnail.
+          const props = crCosProps(sec.list, name);
+          if (props.preview_attributes) Object.assign(crState, props.preview_attributes);
+          renderCatOptions(cat); crGenerate();
+        };
+        grid.appendChild(card);
+      });
+      return grid;
+    }
+    function crAlign(sec) {
+      const grid = document.createElement('div'); grid.className = 'cr-grid';
+      sec.opts.forEach(v => {
+        const card = document.createElement('div'); card.className = 'cr-card' + (crState[sec.param] === v ? ' active' : ''); card.title = crTitle(v);
+        card.innerHTML = `<img src="assets/creator/${sec.prefix}${v}.webp" alt="${v}">`;
+        card.onclick = () => { crState[sec.param] = v; renderCatOptions(crActiveCat); crGenerate(); };
+        grid.appendChild(card);
+      });
+      return grid;
+    }
+    function crColorGrid(sec, cat) {
+      // Palette follows the linked texture; nothing selected → nothing to colour.
+      const sel = crState[sec.tex];
+      if (!sel || sel === 'none') { const m = document.createElement('div'); m.className = 'cr-none-msg'; m.textContent = 'No cosmetic selected.'; return m; }
+      const template = crColorTemplate(sec.tex);
+      const colors = (template && crInfo.cosmetics.colors[template]) || [];
+      if (!colors.length) { const m = document.createElement('div'); m.className = 'cr-none-msg'; m.textContent = 'No colours for this option.'; return m; }
+      const grid = document.createElement('div'); grid.className = 'cr-colors';
+      colors.forEach(color => {
+        const b = document.createElement('div'); b.className = 'cr-bucket' + (crState[sec.param] === color ? ' active' : ''); b.title = crTitle(color);
+        const img = document.createElement('img'); img.loading = 'lazy'; img.src = `${CR_API}/dev-tools/skin-creator-color/${color}.webp?colorLibrary=${template}`;
+        b.appendChild(img);
+        b.onclick = () => { crState[sec.param] = color; renderCatOptions(cat); crGenerate(); };
+        grid.appendChild(b);
+      });
+      return grid;
     }
     function crBuildRequest() {
-      const bt = crState.base_texture || 'none', bc = crState.base_color || 'pale', st = crState.skin_type || 'wide';
+      const bt = crState.base_texture || 'male', bc = crState.base_color || 'tan', st = crState.skin_type || 'wide';
       const pathSeg = `${encodeURIComponent(bt)}/${encodeURIComponent(bc)}/${encodeURIComponent(st)}`;
       const query = {};
-      CR_CATS.forEach(cat => {
-        if (cat.special || !cat.tex || cat.tex.path) return;
-        const v = crState[cat.tex.param];
-        if (!v || v === 'none') return;
-        query[cat.tex.param] = v;
-        if (cat.color && crState[cat.color.param]) query[cat.color.param] = crState[cat.color.param];
-        if (cat.color2 && crState[cat.color2.param]) query[cat.color2.param] = crState[cat.color2.param];
-        if (cat.align && crState[cat.align]) query[cat.align] = crState[cat.align];
+      Object.keys(crState).forEach(k => {
+        if (k === 'base_texture' || k === 'base_color' || k === 'skin_type') return;
+        const v = crState[k];
+        if (v != null && v !== '') query[k] = v;
       });
       return { pathSeg, query };
     }
@@ -1395,39 +1521,40 @@
         await crLoadIntoWork('data:image/png;base64,' + r.base64);
         workFromCreator = true;
         variant = crState.skin_type === 'slim' ? 'slim' : 'classic';
-        if (!crViewer && typeof skinview3d !== 'undefined') { try { crViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('cr-3d'), width: 400, height: 520 }); } catch { } }
+        if (!crViewer && typeof skinview3d !== 'undefined') { try { crViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('cr-3d'), width: 360, height: 480 }); } catch { } }
         if (crViewer) { try { crViewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
       }, 250);
     }
     function crRandomize() {
       crState = { ...CR_DEFAULT };
       const rnd = (a) => a[Math.floor(Math.random() * a.length)];
-      crState.base_color = rnd(crColors('base') .length ? crColors('base') : ['pale']);
-      CR_CATS.forEach(cat => {
-        if (cat.special || !cat.tex || cat.tex.path) return;
-        // ~55% chance to add each cosmetic, chosen from its non-"none" options.
-        const list = crTexList(cat.tex.list).filter(n => n !== 'none');
-        if (list.length && Math.random() < 0.55) {
-          crState[cat.tex.param] = rnd(list);
-          if (cat.color) { const c = crColors(cat.color.palette); if (c.length) crState[cat.color.param] = rnd(c); }
+      // Random base + a random skin tone from its palette.
+      const bases = crTexList('base_textures').filter(n => n !== 'none' && !CR_HIDDEN.has(n));
+      if (bases.length) { crState.base_texture = rnd(bases); const props = crCosProps('base_textures', crState.base_texture); if (props.preview_attributes) Object.assign(crState, props.preview_attributes); }
+      CR_CATS.forEach(cat => cat.secs.forEach(sec => {
+        if (sec.t !== 'tex' || sec.noNone) return;
+        const list = crTexList(sec.list).filter(n => n !== 'none' && !CR_HIDDEN.has(n));
+        if (list.length && Math.random() < 0.5) {
+          crState[sec.param] = rnd(list);
+          const props = crCosProps(sec.list, crState[sec.param]);
+          if (props.preview_attributes) Object.assign(crState, props.preview_attributes);
         }
-      });
+      }));
       if (crActiveCat) renderCatOptions(crActiveCat);
       crGenerate();
     }
     async function crSave() {
-      const btn = document.getElementById('cr-save');
-      const nm = (document.getElementById('cr-name').value || 'My skin').trim();
+      const nm = await edAskText('Save skin', 'My skin', crName || 'My skin');
+      if (!nm) return;
+      crName = nm;
+      const btn = document.getElementById('cr-save'); btn.classList.add('primary');
       const dataUrl = work.toDataURL('image/png');
-      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
       try {
-        // Tag the library entry as a simple-creator skin + stash the options so
-        // it re-opens in the creator (and can be tweaked) when edited later.
         const meta = { editorType: 'simple', creatorState: crState };
         if (mode === 'edit' && editSkinId && uuid) await ipcRenderer.invoke('skins:update', { uuid, id: editSkinId, base64: dataUrl, variant, name: nm, ...meta });
         else if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm, ...meta });
         window.location.href = 'profile-manager.html';
-      } catch (e) { alert('Save failed: ' + (e.message || e)); btn.disabled = false; btn.innerHTML = '<i class="material-icons">save</i> Save to library'; }
+      } catch (e) { alert('Save failed: ' + (e.message || e)); btn.classList.remove('primary'); }
     }
     document.getElementById('cr-save').onclick = crSave;
     document.getElementById('cr-random').onclick = crRandomize;
@@ -1439,13 +1566,14 @@
     // (so switching to the creator would REPLACE it and needs a confirm).
     let curEditorMode = 'advanced';
     let workFromCreator = false;
-    function setEditorMode(m, opts) {
+    async function setEditorMode(m, opts) {
       opts = opts || {};
       const cw = document.getElementById('creator-wrap'), ew = document.getElementById('editor-wrap');
       const tl = document.getElementById('mode-toggle-label');
       if (m === 'creator') {
         if (!opts.initial && !workFromCreator) {
-          if (!confirm('The simple creator rebuilds the skin from options and will replace the current one. Continue?')) return;
+          const ok = await edAskConfirm('Switch to the simple creator?', 'The simple creator rebuilds the skin from options and will replace the current one.');
+          if (!ok) return;
         }
         curEditorMode = 'creator';
         cw.classList.add('active'); ew.style.display = 'none';
@@ -1455,7 +1583,7 @@
         curEditorMode = 'advanced';
         cw.classList.remove('active'); ew.style.display = '';
         tl.textContent = 'Simple creator';
-        try { const cn = document.getElementById('cr-name').value; if (cn && !document.getElementById('ed-name').value) document.getElementById('ed-name').value = cn; } catch { }
+        try { if (crName && !document.getElementById('ed-name').value) document.getElementById('ed-name').value = crName; } catch { }
         setVariant(variant); render(); update3D(true);
       }
     }
