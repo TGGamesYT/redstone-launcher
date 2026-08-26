@@ -2165,9 +2165,18 @@
               // manual text selection / scroll-up isn't yanked away by new logs.
               const isAtBottom = () =>
                 logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight < 40;
+              // Deobfuscation: for Fabric/Quilt dev-mod instances, rewrite Yarn
+              // intermediary names (class_1234 / method_5678 / field_9012) into the
+              // readable names you'd see in a dev environment. Loaded below.
+              let deobfMaps = null;
+              const deobfLine = (l) => deobfMaps
+                ? String(l).replace(/\bclass_\d+\b/g, m => deobfMaps.classes[m] || m)
+                  .replace(/\bmethod_\d+\b/g, m => deobfMaps.methods[m] || m)
+                  .replace(/\bfield_\d+\b/g, m => deobfMaps.fields[m] || m)
+                : l;
               const appendLine = (line) => {
                 const stick = isAtBottom();
-                logsEl.textContent += line + "\n";
+                logsEl.textContent += deobfLine(line) + "\n";
                 // Cap the console size — an unbounded <pre> makes every append a
                 // huge reflow, which is a big source of lag while launching.
                 if (logsEl.textContent.length > 400000) {
@@ -2178,13 +2187,22 @@
 
               logsEl.textContent = "Loading history...\n";
 
-              // Load this instance's history only.
-              ipcRenderer.invoke('get-instance-logs', profile.id).then(history => {
+              // Load deobfuscation maps first (best-effort), then the history.
+              (async () => {
+                try {
+                  const loader = (profile.loader || '').toLowerCase();
+                  if ((loader === 'fabric' || loader === 'quilt') && profile.version) {
+                    const dev = await ipcRenderer.invoke('devmod:get', { type: 'instance', id: profile.id });
+                    if (dev && dev.enabled) { const maps = await ipcRenderer.invoke('deobf:get', profile.version); if (maps && !maps.error) deobfMaps = maps; }
+                  }
+                } catch { /* ignore */ }
                 if (!ensureStillActive()) return;
-                const lines = Array.isArray(history) ? history : [];
+                const history = await ipcRenderer.invoke('get-instance-logs', profile.id);
+                if (!ensureStillActive()) return;
+                const lines = (Array.isArray(history) ? history : []).map(deobfLine);
                 logsEl.textContent = lines.length ? lines.join("\n") + "\n" : "";
                 logsEl.scrollTop = logsEl.scrollHeight;
-              });
+              })();
 
               let gotLiveLog = false;
               ipcRenderer.removeAllListeners('launcher-log');
@@ -2207,8 +2225,8 @@
                 if (!running || gotLiveLog) return;
                 const hist = await ipcRenderer.invoke('get-instance-logs', profile.id);
                 if (!ensureStillActive() || gotLiveLog) return;
-                const text = (Array.isArray(hist) ? hist : []).join("\n") + "\n";
-                if (text.length !== logsEl.textContent.length) {
+                const text = (Array.isArray(hist) ? hist : []).map(deobfLine).join("\n") + "\n";
+                if (text !== logsEl.textContent) {
                   const stick = isAtBottom();
                   logsEl.textContent = text;
                   if (stick) logsEl.scrollTop = logsEl.scrollHeight;

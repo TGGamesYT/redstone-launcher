@@ -5047,6 +5047,33 @@ ipcMain.handle("devmod:remove", (event, { type, id, folder }) => {
   return { success: true, mods: (store[k] && store[k].mods) || [] };
 });
 
+// Deobfuscation maps for a Fabric/Quilt MC version: intermediary names
+// (class_1234 / method_5678 / field_9012) → readable Yarn names, so crash logs
+// read like a dev environment instead of raw intermediary. Cached to disk.
+ipcMain.handle("deobf:get", async (event, mcVersion) => {
+  try {
+    if (!mcVersion) return { error: "no version" };
+    const cacheFile = path.join(dataDir, `deobf-${String(mcVersion).replace(/[^0-9a-zA-Z.\-]/g, "_")}.json`);
+    if (fs.existsSync(cacheFile)) { try { return JSON.parse(fs.readFileSync(cacheFile, "utf8")); } catch { /* rebuild */ } }
+    const list = await (await fetch(`https://meta.fabricmc.net/v2/versions/yarn/${encodeURIComponent(mcVersion)}`)).json();
+    if (!Array.isArray(list) || !list.length) return { error: "No Yarn mappings for " + mcVersion };
+    const ver = list[0].version; // newest build
+    const jarBuf = Buffer.from(await (await fetch(`https://maven.fabricmc.net/net/fabricmc/yarn/${ver}/yarn-${ver}-v2.jar`)).arrayBuffer());
+    const entry = new AdmZip(jarBuf).getEntry("mappings/mappings.tiny");
+    if (!entry) return { error: "mappings.tiny missing" };
+    const text = entry.getData().toString("utf8");
+    const classes = {}, methods = {}, fields = {};
+    for (const line of text.split("\n")) {
+      if (line.startsWith("c\t")) { const p = line.split("\t"); const i = (p[1] || "").split("/").pop(); const n = (p[2] || "").split("/").pop(); if (i && n && i !== n) classes[i] = n; }
+      else if (line.startsWith("\tm\t")) { const p = line.split("\t"); if (p[3] && p[4] && p[3] !== p[4]) methods[p[3]] = p[4]; }
+      else if (line.startsWith("\tf\t")) { const p = line.split("\t"); if (p[3] && p[4] && p[3] !== p[4]) fields[p[3]] = p[4]; }
+    }
+    const out = { classes, methods, fields, yarn: ver };
+    try { fs.writeFileSync(cacheFile, JSON.stringify(out)); } catch { /* ignore */ }
+    return out;
+  } catch (e) { return { error: e.message }; }
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Instance version changes + the ".toupdate" system.
 //
