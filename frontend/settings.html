@@ -317,6 +317,9 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <div id="ram-servers-slider" style="margin-right: 40%;"></div>
       <br>
       <div class="slider-value" id="ram-servers-value"></div>
+      <br><br><br>
+      <h3>Developer</h3>
+      <label class="setting-toggle"><input type="checkbox" id="dev-mode"> Developer mode (enables DevTools with F12 / Ctrl+Shift+I, and dev-mod tools)</label>
     </div>
   </div>
 <p>Version 1.16.0</p>
@@ -773,6 +776,12 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       const gridView = document.getElementById('grid-view');
       gridView.checked = getSetting('gridView');
       gridView.addEventListener('change', () => ipcRenderer.send('save-settings', { gridView: gridView.checked }));
+
+      const devMode = document.getElementById('dev-mode');
+      if (devMode) {
+        devMode.checked = !!getSetting('devMode');
+        devMode.addEventListener('change', () => ipcRenderer.send('save-settings', { devMode: devMode.checked }));
+      }
 
       const predefinedThemeSync = document.getElementById('predefined-theme-sync');
       predefinedThemeSync.checked = getSetting('predefinedThemeSync');

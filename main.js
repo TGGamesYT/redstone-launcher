@@ -706,6 +706,22 @@ function createWindow() {
   if (typeof win.setAccentColor === "function") {
     win.setAccentColor(color);
   }
+  // Developer tools are gated behind the "Developer mode" setting: block the
+  // F12 / Ctrl+Shift+I shortcuts unless it's on (and toggle them when it is).
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const key = String(input.key || "");
+    const combo = input.control && input.shift && key.toLowerCase() === "i";
+    if (combo || key === "F12") {
+      event.preventDefault();
+      if (settings.get("devMode", false)) win.webContents.toggleDevTools();
+    }
+  });
+  // Belt-and-suspenders: if devtools get opened some other way while dev mode is
+  // off, close them again.
+  win.webContents.on("devtools-opened", () => {
+    if (!settings.get("devMode", false)) { try { win.webContents.closeDevTools(); } catch { /* ignore */ } }
+  });
   win.loadFile('frontend/index.html');
   win.on("maximize", () => {
     win.webContents.send("window-maximized");
@@ -949,6 +965,11 @@ ipcMain.handle('get-settings', () => {
 });
 
 ipcMain.handle('get-setting', (event, key) => {
+  return settings.get(key);
+});
+
+ipcMain.handle('set-setting', (event, key, value) => {
+  settings.set(key, value);
   return settings.get(key);
 });
 
