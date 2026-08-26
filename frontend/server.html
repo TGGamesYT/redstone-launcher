@@ -274,7 +274,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <div class="tab-action-bar" style="display:flex; gap:8px; margin-bottom:10px;">
           <button id="srvInstallMods"><i class="material-icons" style="font-size:16px;vertical-align:middle;">add</i> Install Mods</button>
           <button id="srvOpenModsFolder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder</i> Open mods folder</button>
-          <button id="srvDevMods" style="display:none;"><i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Dev mods</button>
+          <label id="srvDevModsWrap" style="display:none; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="srvDevModsEnable"> Dev mods</label>
+          <button id="srvDevMods" style="display:none;"><i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Manage dev mods</button>
         </div>
         <ul id="srvModsList" style="list-style:none; margin:0; padding:0; flex:1; min-height:0; overflow-y:auto;"></ul>
       </div>
@@ -883,15 +884,35 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     // Plain-text + raw-view auto-save.
     $('fileEditorArea').addEventListener('input', scheduleSave);
 
+    // Promise-based text prompt (Electron's window.prompt is unsupported).
+    function askText(title, placeholder) {
+      return new Promise((resolve) => {
+        const ov = document.createElement('div'); ov.className = 'modal-overlay active'; ov.style.zIndex = 6000;
+        ov.innerHTML = `<div class="modal-content" style="max-width:420px;">
+          <div class="modal-header"><h2>${title}</h2></div>
+          <input id="ask-input" type="text" placeholder="${placeholder || ''}" style="width:100%;" />
+          <div class="modal-actions" style="margin-top:12px;"><button type="button" id="ask-ok">OK</button><button type="button" id="ask-cancel">Cancel</button></div>
+        </div>`;
+        document.body.appendChild(ov);
+        const input = ov.querySelector('#ask-input');
+        const done = (v) => { ov.remove(); resolve(v); };
+        ov.querySelector('#ask-ok').onclick = () => done((input.value || '').trim() || null);
+        ov.querySelector('#ask-cancel').onclick = () => done(null);
+        ov.addEventListener('mousedown', e => { if (e.target === ov) done(null); });
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') done((input.value || '').trim() || null); if (e.key === 'Escape') done(null); });
+        setTimeout(() => input.focus(), 30);
+      });
+    }
+
     // File-manager toolbar actions.
     $('fbOpenExplorer').onclick = () => ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false, sub: sfCurrentDir });
     $('fbNewFile').onclick = async () => {
-      const nm = prompt('New file name:'); if (!nm) return;
+      const nm = await askText('New file', 'name.txt'); if (!nm) return;
       const r = await ipcRenderer.invoke('server-fs:newfile', { name: selectedServer.name, path: sfCurrentDir, file: nm });
       if (r && r.error) alert(r.error); else loadFiles(sfCurrentDir);
     };
     $('fbNewFolder').onclick = async () => {
-      const nm = prompt('New folder name:'); if (!nm) return;
+      const nm = await askText('New folder', 'folder name'); if (!nm) return;
       const r = await ipcRenderer.invoke('server-fs:mkdir', { name: selectedServer.name, path: sfCurrentDir, folder: nm });
       if (r && r.error) alert(r.error); else loadFiles(sfCurrentDir);
     };
@@ -904,15 +925,27 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       ov.innerHTML = `<div class="modal-content" style="max-width:560px;">
         <div class="modal-header"><h2>Dev mods</h2></div>
         <div style="opacity:.7;font-size:13px;margin-bottom:10px;">Point to your mod's build-output folder. When a new compatible jar is built there it's hot-swapped into this server, replacing the old build of the same mod id.</div>
-        <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px;"><input type="checkbox" id="dm-enabled"> Enable dev-mod hot-swapping</label>
         <div id="dm-list" style="margin:8px 0;"></div>
+        <div id="dm-addform" style="display:none; background:var(--menu-bg); padding:10px; border-radius:6px; margin:8px 0;">
+          <div style="opacity:.65;font-size:12px;word-break:break-all;margin-bottom:8px;" id="dm-folder"></div>
+          <label style="font-size:12px;opacity:.8;display:block;margin-bottom:4px;">Mod id</label>
+          <div style="display:flex;gap:8px;">
+            <input id="dm-modid" type="text" placeholder="modid" style="flex:1;" />
+            <button type="button" id="dm-confirm">Add</button>
+            <button type="button" id="dm-cancel">Cancel</button>
+          </div>
+          <div id="dm-addmsg" style="font-size:12px;opacity:.7;margin-top:6px;"></div>
+        </div>
         <button type="button" id="dm-add"><i class="material-icons" style="vertical-align:middle;font-size:18px;">create_new_folder</i> Add mod folder</button>
         <div class="modal-actions" style="margin-top:14px;"><button type="button" id="dm-close">Done</button></div>
       </div>`;
       document.body.appendChild(ov);
-      const enabled = ov.querySelector('#dm-enabled'); enabled.checked = !!state.enabled;
-      enabled.onchange = () => ipcRenderer.invoke('devmod:setEnabled', { type, id, enabled: enabled.checked });
       const listEl = ov.querySelector('#dm-list');
+      const addForm = ov.querySelector('#dm-addform');
+      const folderEl = ov.querySelector('#dm-folder');
+      const modIdEl = ov.querySelector('#dm-modid');
+      const addMsg = ov.querySelector('#dm-addmsg');
+      let pendingFolder = null;
       const draw = (mods) => {
         listEl.innerHTML = '';
         (mods || []).forEach(m => {
@@ -927,13 +960,20 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       draw(state.mods);
       ov.querySelector('#dm-add').onclick = async () => {
         const pick = await ipcRenderer.invoke('devmod:pickFolder'); if (!pick || pick.canceled) return;
-        const modId = prompt('Mod id of the built mod:', pick.modId || '');
-        if (!modId) return;
-        const r = await ipcRenderer.invoke('devmod:add', { type, id, folder: pick.folder, modId: modId.trim() });
-        enabled.checked = true; draw(r.mods);
+        pendingFolder = pick.folder; folderEl.textContent = pick.folder; modIdEl.value = pick.modId || '';
+        addMsg.textContent = pick.modId ? '' : "Couldn't auto-detect a mod id — enter it manually.";
+        addForm.style.display = ''; modIdEl.focus();
+      };
+      ov.querySelector('#dm-cancel').onclick = () => { addForm.style.display = 'none'; pendingFolder = null; };
+      const doAdd = async () => {
+        const modId = (modIdEl.value || '').trim(); if (!modId || !pendingFolder) { addMsg.textContent = 'Enter a mod id.'; return; }
+        const r = await ipcRenderer.invoke('devmod:add', { type, id, folder: pendingFolder, modId });
+        draw(r.mods); addForm.style.display = 'none'; pendingFolder = null; addMsg.textContent = '';
         if (r.swap && r.swap.success === false && r.swap.error) alert('Registered, but nothing swapped yet: ' + r.swap.error);
         onChange && onChange();
       };
+      ov.querySelector('#dm-confirm').onclick = doAdd;
+      modIdEl.addEventListener('keydown', e => { if (e.key === 'Enter') doAdd(); });
       const close = () => { ov.remove(); onChange && onChange(); };
       ov.querySelector('#dm-close').onclick = close;
       ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
@@ -941,11 +981,17 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
     async function loadServerMods() {
       if (!selectedServer) return;
-      const dm = $('srvDevMods');
-      if (dm) {
+      // Dev mods: the enable toggle shows only with global Developer mode on; the
+      // Manage button shows only when THIS server has dev mods enabled.
+      const wrap = $('srvDevModsWrap'), enableCb = $('srvDevModsEnable'), manageBtn = $('srvDevMods');
+      if (wrap && enableCb && manageBtn) {
         const dev = await ipcRenderer.invoke('get-setting', 'devMode');
-        dm.style.display = dev ? '' : 'none';
-        dm.onclick = () => openDevModsModal('server', selectedServer.name, () => loadServerMods());
+        wrap.style.display = dev ? 'flex' : 'none';
+        const dm = await ipcRenderer.invoke('devmod:get', { type: 'server', id: selectedServer.name });
+        enableCb.checked = !!(dm && dm.enabled);
+        manageBtn.style.display = (dev && enableCb.checked) ? '' : 'none';
+        enableCb.onchange = async () => { await ipcRenderer.invoke('devmod:setEnabled', { type: 'server', id: selectedServer.name, enabled: enableCb.checked }); loadServerMods(); };
+        manageBtn.onclick = () => openDevModsModal('server', selectedServer.name, () => loadServerMods());
       }
       const ul = $('srvModsList');
       ul.innerHTML = '<li style="opacity:0.6;padding:10px;">Loading…</li>';
@@ -1104,6 +1150,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           await ipcRenderer.invoke('make-server', { name, version, type, launchArgs, loaderVersion, icon: newSrvIconData || '' });
           $('createServerModal').classList.remove('active');
           await loadServers();
+          // Open the newly created server's detail straight away.
+          try { const created = (await ipcRenderer.invoke('list-servers') || []).find(s => s.name === name); if (created) openDetail(created); } catch { /* ignore */ }
         }
       } catch (e) { alert((wasEdit ? 'Failed to edit server: ' : 'Failed to create server: ') + (e.message || e)); }
       finally { btn.disabled = false; btn.textContent = wasEdit ? 'Save' : 'Create'; editingServer = null; }

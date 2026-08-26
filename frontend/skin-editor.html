@@ -1191,8 +1191,26 @@
       const f = e.target.files[0]; if (!f) return;
       const r = new FileReader(); r.onload = () => efmAddSource(f.name.replace(/\.[^.]+$/, ''), r.result); r.readAsDataURL(f); e.target.value = '';
     };
+    // Promise-based text prompt (Electron's window.prompt is unsupported).
+    function edAskText(title, placeholder) {
+      return new Promise((resolve) => {
+        const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.inset = '44px 0 0 70px'; ov.style.zIndex = 6000;
+        const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '360px';
+        box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">${title}</h3></div>
+          <input id="ed-ask-input" type="text" placeholder="${placeholder || ''}" style="width:100%;margin:12px 0;padding:8px;border-radius:var(--border-radius);border:2px solid var(--border-dark);background:var(--menu-bg);color:var(--text-color);" />
+          <div class="ed-btn-row"><button class="ed-btn primary" id="ed-ask-ok">OK</button><button class="ed-btn" id="ed-ask-cancel">Cancel</button></div>`;
+        ov.appendChild(box); document.body.appendChild(ov);
+        const input = box.querySelector('#ed-ask-input');
+        const done = (v) => { ov.remove(); resolve(v); };
+        box.querySelector('#ed-ask-ok').onclick = () => done((input.value || '').trim() || null);
+        box.querySelector('#ed-ask-cancel').onclick = () => done(null);
+        ov.addEventListener('mousedown', e => { if (e.target === ov) done(null); });
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') done((input.value || '').trim() || null); if (e.key === 'Escape') done(null); });
+        setTimeout(() => input.focus(), 30);
+      });
+    }
     document.getElementById('efm-add-player').onclick = async () => {
-      const nm = prompt('Minecraft player name:'); if (!nm) return;
+      const nm = await edAskText('Minecraft player name', 'e.g. Notch'); if (!nm) return;
       const btn = document.getElementById('efm-add-player'); const old = btn.innerHTML;
       btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Fetching…';
       try {

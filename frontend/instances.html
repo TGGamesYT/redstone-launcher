@@ -371,6 +371,9 @@
             <input id="instanceRamMax" type="number" min="512" step="256" placeholder="global default" />
           </div>
         </div>
+        <div class="modal-section" id="devModsSection" style="display:none;">
+          <label class="inline-check"><input type="checkbox" id="devModsCb" /> Enable dev mods (hot-swap a locally-built mod; adds a Dev mods button to the Mods tab)</label>
+        </div>
       </div>
 
       <div class="settings-panel" data-panel="import">
@@ -800,6 +803,8 @@
         modalCreateBtn.textContent = 'Create Instance';
         if (importSection) importSection.style.display = '';
         if (importTabBtn) importTabBtn.style.display = '';
+        // Dev mods need an existing instance id — hidden while creating.
+        const dms = document.getElementById('devModsSection'); if (dms) dms.style.display = 'none';
       }
     }
 
@@ -861,6 +866,19 @@
       document.getElementById('instanceRamMax').value = profile.ramMax || '';
       // Version tab toggles.
       document.getElementById('autoUpdateVersionCb').checked = !!(profile.autoUpdateVersion ?? profile.alwaysUpdate);
+
+      // Dev mods toggle (revealed only when global Developer mode is on). Stored
+      // separately (devmods.json), so it's applied immediately, not on Save.
+      (async () => {
+        const section = document.getElementById('devModsSection');
+        const cb = document.getElementById('devModsCb');
+        const globalDev = await ipcRenderer.invoke('get-setting', 'devMode');
+        section.style.display = globalDev ? '' : 'none';
+        if (!globalDev) return;
+        const dm = await ipcRenderer.invoke('devmod:get', { type: 'instance', id: profile.id });
+        cb.checked = !!(dm && dm.enabled);
+        cb.onchange = () => ipcRenderer.invoke('devmod:setEnabled', { type: 'instance', id: profile.id, enabled: cb.checked });
+      })();
 
       // Reveal the Import tab + modpack-update section for modpack instances.
       const modpackUpdateSection = document.getElementById('modpackUpdateSection');
@@ -1127,10 +1145,12 @@
       }
     }
 
-    // On load → ask backend for saved sort mode
+    // On load → ask backend for saved sort mode. Re-render afterwards so the
+    // restored sort is actually APPLIED (not just shown selected) — otherwise a
+    // list rendered before this resolves stays in default order.
     (async () => {
       const mode = await ipcRenderer.invoke("get-sort-mode");
-      if (mode) sortSelect.value = mode;
+      if (mode && sortSelect.value !== mode) { sortSelect.value = mode; if (typeof renderListOrDetail === 'function') renderListOrDetail(); }
     })();
 
     function applyFilters(list) {
@@ -1701,22 +1721,36 @@
           return installBtn;
         };
 
-        // ── Dev-mods modal: register mod build-output folders to hot-swap from ──
+        // ── Dev-mods modal: register mod build-output folders to hot-swap from.
+        // Enabling/disabling lives in the instance's Advanced settings; this
+        // modal just manages the folders. Uses an inline add form (no prompt()).
         async function openDevModsModal(type, id, onChange) {
           const state = await ipcRenderer.invoke('devmod:get', { type, id });
           const ov = document.createElement('div'); ov.className = 'modal-overlay active'; ov.style.zIndex = 5000;
           ov.innerHTML = `<div class="modal-content" style="max-width:560px;">
             <div class="modal-header"><h2>Dev mods</h2></div>
             <div style="opacity:.7;font-size:13px;margin-bottom:10px;">Point to your mod's build-output folder (e.g. <code>build/libs</code>). When a new compatible jar is built there it's hot-swapped in, replacing the old build of the same mod id.</div>
-            <label class="inline-check" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;"><input type="checkbox" id="dm-enabled"> Enable dev-mod hot-swapping</label>
             <div id="dm-list" style="margin:8px 0;"></div>
+            <div id="dm-addform" style="display:none; background:var(--menu-bg); padding:10px; border-radius:6px; margin:8px 0;">
+              <div style="opacity:.65;font-size:12px;word-break:break-all;margin-bottom:8px;" id="dm-folder"></div>
+              <label style="font-size:12px;opacity:.8;display:block;margin-bottom:4px;">Mod id</label>
+              <div style="display:flex;gap:8px;">
+                <input id="dm-modid" type="text" placeholder="modid" style="flex:1;" />
+                <button type="button" id="dm-confirm">Add</button>
+                <button type="button" id="dm-cancel">Cancel</button>
+              </div>
+              <div id="dm-addmsg" style="font-size:12px;opacity:.7;margin-top:6px;"></div>
+            </div>
             <button type="button" id="dm-add"><i class="material-icons" style="vertical-align:middle;font-size:18px;">create_new_folder</i> Add mod folder</button>
             <div class="modal-actions" style="margin-top:14px;"><button type="button" id="dm-close">Done</button></div>
           </div>`;
           document.body.appendChild(ov);
-          const enabled = ov.querySelector('#dm-enabled'); enabled.checked = !!state.enabled;
-          enabled.onchange = () => ipcRenderer.invoke('devmod:setEnabled', { type, id, enabled: enabled.checked });
           const listEl = ov.querySelector('#dm-list');
+          const addForm = ov.querySelector('#dm-addform');
+          const folderEl = ov.querySelector('#dm-folder');
+          const modIdEl = ov.querySelector('#dm-modid');
+          const addMsg = ov.querySelector('#dm-addmsg');
+          let pendingFolder = null;
           const draw = (mods) => {
             listEl.innerHTML = '';
             (mods || []).forEach(m => {
@@ -1731,13 +1765,21 @@
           draw(state.mods);
           ov.querySelector('#dm-add').onclick = async () => {
             const pick = await ipcRenderer.invoke('devmod:pickFolder'); if (!pick || pick.canceled) return;
-            const modId = prompt('Mod id of the built mod:', pick.modId || '');
-            if (!modId) return;
-            const r = await ipcRenderer.invoke('devmod:add', { type, id, folder: pick.folder, modId: modId.trim() });
-            enabled.checked = true; draw(r.mods);
+            pendingFolder = pick.folder; folderEl.textContent = pick.folder; modIdEl.value = pick.modId || '';
+            addMsg.textContent = pick.modId ? '' : "Couldn't auto-detect a mod id — enter it manually.";
+            addForm.style.display = ''; modIdEl.focus();
+          };
+          ov.querySelector('#dm-cancel').onclick = () => { addForm.style.display = 'none'; pendingFolder = null; };
+          const doAdd = async () => {
+            const modId = (modIdEl.value || '').trim(); if (!modId || !pendingFolder) { addMsg.textContent = 'Enter a mod id.'; return; }
+            const r = await ipcRenderer.invoke('devmod:add', { type, id, folder: pendingFolder, modId });
+            draw(r.mods); addForm.style.display = 'none'; pendingFolder = null;
+            addMsg.textContent = '';
             if (r.swap && r.swap.success === false && r.swap.error) alert('Registered, but nothing swapped yet: ' + r.swap.error);
             onChange && onChange();
           };
+          ov.querySelector('#dm-confirm').onclick = doAdd;
+          modIdEl.addEventListener('keydown', e => { if (e.key === 'Enter') doAdd(); });
           const close = () => { ov.remove(); onChange && onChange(); };
           ov.querySelector('#dm-close').onclick = close;
           ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
@@ -2267,13 +2309,17 @@
                 refreshBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">refresh</i> Refresh`;
                 refreshBtn.onclick = () => renderContentTab();
                 bar.appendChild(refreshBtn);
-                // Dev mods (hot-swap a locally-built mod) — only with Developer mode on.
-                if (tabName === "mods" && await ipcRenderer.invoke("get-setting", "devMode")) {
-                  const devBtn = document.createElement("button");
-                  devBtn.className = "tab-install-btn secondary";
-                  devBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Dev mods`;
-                  devBtn.onclick = () => openDevModsModal("instance", profile.id, () => renderContentTab());
-                  bar.appendChild(devBtn);
+                // Dev mods (hot-swap a locally-built mod) — shown when THIS instance
+                // has dev mods enabled in its Advanced settings.
+                if (tabName === "mods") {
+                  const dm = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id });
+                  if (dm && dm.enabled) {
+                    const devBtn = document.createElement("button");
+                    devBtn.className = "tab-install-btn secondary";
+                    devBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Dev mods`;
+                    devBtn.onclick = () => openDevModsModal("instance", profile.id, () => renderContentTab());
+                    bar.appendChild(devBtn);
+                  }
                 }
                 if (running) {
                   const note = document.createElement("span");
