@@ -879,6 +879,9 @@ if (!gotTheLock) {
 
     if (!mainWindow) createWindow();
 
+    // Resume watching any configured dev-mod build folders.
+    try { startAllDevWatchers(); } catch (e) { devtoolsLog("dev-mod watchers:", e.message); }
+
     if (initialLink) dispatchDeepLink(initialLink);
 
     // Re-detect games still running from a previous launcher session.
@@ -4903,6 +4906,145 @@ ipcMain.handle("delete-instance-mod", async (event, { profileId, tab, filename }
   } catch (err) {
     return { success: false, error: err.message };
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Dev mods: watch a mod project's build-output folder and hot-swap the freshly
+// built jar into an instance/server whenever a new compatible build appears —
+// so you can iterate on your own mod without reinstalling each time.
+const devModsPath = path.join(dataDir, "devmods.json");
+function loadDevModsStore() { try { return JSON.parse(fs.readFileSync(devModsPath, "utf8")); } catch { return {}; } }
+function saveDevModsStore(o) { try { fs.writeFileSync(devModsPath, JSON.stringify(o, null, 2)); } catch { /* ignore */ } }
+const devModKey = (type, id) => `${type}:${id}`;
+
+function devModTarget(type, id) {
+  if (type === "server") {
+    let info = null; try { info = serverManager.getServerInfo(id); } catch { /* ignore */ }
+    return { modsDir: path.join(dataDir, "servers", String(id), "mods"), loader: String((info && info.type) || "").toLowerCase() };
+  }
+  const p = loadProfiles().find(x => String(x.id) === String(id));
+  return { modsDir: path.join(dataDir, "client", String(id), "mods"), loader: String((p && p.loader) || "").toLowerCase() };
+}
+
+// A jar's declared mod id + loader(s), read from its manifest (Fabric/Quilt/
+// Forge/NeoForge/legacy). Returns null if it isn't a recognizable mod jar.
+function readJarModInfo(jarPath) {
+  try {
+    const zip = new AdmZip(jarPath);
+    const get = (n) => { const e = zip.getEntry(n); return e ? e.getData().toString("utf8") : null; };
+    const fmj = get("fabric.mod.json");
+    if (fmj) { try { const j = JSON.parse(fmj); if (j.id) return { id: j.id, loaders: ["fabric", "quilt"] }; } catch { /* ignore */ } }
+    const qmj = get("quilt.mod.json");
+    if (qmj) { try { const j = JSON.parse(qmj); const id = (j.quilt_loader && j.quilt_loader.id) || j.id; if (id) return { id, loaders: ["quilt", "fabric"] }; } catch { /* ignore */ } }
+    const neo = get("META-INF/neoforge.mods.toml");
+    const forge = get("META-INF/mods.toml");
+    const toml = neo || forge;
+    if (toml) { const m = toml.match(/modId\s*=\s*["']([^"']+)["']/); if (m) return { id: m[1], loaders: neo ? ["neoforge"] : ["forge", "neoforge"] }; }
+    const mci = get("mcmod.info");
+    if (mci) { try { const a = JSON.parse(mci); const m = Array.isArray(a) ? a[0] : (a.modList && a.modList[0]); if (m && m.modid) return { id: m.modid, loaders: ["forge"] }; } catch { /* ignore */ } }
+  } catch { /* ignore */ }
+  return null;
+}
+
+// Newest real build jar in a folder (ignores -sources/-dev/-javadoc artifacts).
+function newestJar(folder) {
+  try {
+    const files = fs.readdirSync(folder)
+      .filter(f => /\.jar$/i.test(f) && !/-(sources|dev|javadoc|slim)\.jar$/i.test(f))
+      .map(f => ({ f, m: fs.statSync(path.join(folder, f)).mtimeMs })).sort((a, b) => b.m - a.m);
+    return files.length ? path.join(folder, files[0].f) : null;
+  } catch { return null; }
+}
+
+// Copy the newest matching build into the target's mods folder, replacing any
+// existing jar that declares the same mod id.
+function swapDevMod(type, id, modId, folder) {
+  try {
+    const jar = newestJar(folder);
+    if (!jar) return { success: false, error: "No built jar in that folder yet" };
+    const info = readJarModInfo(jar);
+    if (!info || info.id !== modId) return { success: false, error: `Newest jar's mod id (${info && info.id}) ≠ ${modId}` };
+    const tgt = devModTarget(type, id);
+    if (tgt.loader && info.loaders && !info.loaders.includes(tgt.loader)) return { success: false, error: `Built for ${info.loaders.join("/")}, not ${tgt.loader}` };
+    fs.mkdirSync(tgt.modsDir, { recursive: true });
+    for (const f of fs.readdirSync(tgt.modsDir)) {
+      if (!/\.jar(\.disabled)?$/i.test(f)) continue;
+      const full = path.join(tgt.modsDir, f);
+      const ex = readJarModInfo(full.replace(/\.disabled$/i, ""));
+      if (ex && ex.id === modId) { try { fs.unlinkSync(full); } catch { /* ignore */ } }
+    }
+    const destName = `${modId}-dev.jar`;
+    fs.copyFileSync(jar, path.join(tgt.modsDir, destName));
+    return { success: true, jar: path.basename(jar), dest: destName };
+  } catch (e) { return { success: false, error: e.message }; }
+}
+
+const devWatchers = new Map(); // key -> [ { watcher, timer } ]
+function stopDevWatch(type, id) {
+  const k = devModKey(type, id);
+  (devWatchers.get(k) || []).forEach(w => { try { w.watcher.close(); } catch { /* ignore */ } clearTimeout(w.timer); });
+  devWatchers.delete(k);
+}
+function startDevWatch(type, id) {
+  stopDevWatch(type, id);
+  const entry = loadDevModsStore()[devModKey(type, id)];
+  if (!entry || !entry.enabled || !Array.isArray(entry.mods)) return;
+  const ws = [];
+  entry.mods.forEach(m => {
+    if (!m.folder || !fs.existsSync(m.folder)) return;
+    const w = { watcher: null, timer: null };
+    try {
+      w.watcher = fs.watch(m.folder, { persistent: false }, (ev, fn) => {
+        if (fn && !/\.jar$/i.test(fn)) return;
+        clearTimeout(w.timer);
+        w.timer = setTimeout(() => {
+          const r = swapDevMod(type, id, m.modId, m.folder);
+          if (r.success && type === "instance") broadcastLog(id, `[dev-mod] swapped ${m.modId} → ${r.jar}`);
+          else if (r.success) devtoolsLog(`[dev-mod] ${type} ${id}: swapped ${m.modId} → ${r.jar}`);
+        }, 700); // debounce — a build writes several files
+      });
+      ws.push(w);
+    } catch { /* unwatchable */ }
+  });
+  devWatchers.set(devModKey(type, id), ws);
+}
+function startAllDevWatchers() {
+  const store = loadDevModsStore();
+  Object.keys(store).forEach(k => { const [type, ...rest] = k.split(":"); const id = rest.join(":"); if (store[k] && store[k].enabled) startDevWatch(type, id); });
+}
+
+ipcMain.handle("devmod:get", (event, { type, id }) => loadDevModsStore()[devModKey(type, id)] || { enabled: false, mods: [] });
+ipcMain.handle("devmod:setEnabled", (event, { type, id, enabled }) => {
+  const store = loadDevModsStore(); const k = devModKey(type, id);
+  store[k] = store[k] || { enabled: false, mods: [] };
+  store[k].enabled = !!enabled;
+  saveDevModsStore(store); startDevWatch(type, id);
+  return { success: true, ...store[k] };
+});
+ipcMain.handle("devmod:pickFolder", async () => {
+  const r = await dialog.showOpenDialog({ title: "Select the mod's build-output folder (where the .jar is produced)", properties: ["openDirectory"] });
+  if (r.canceled || !r.filePaths.length) return { canceled: true };
+  const folder = r.filePaths[0];
+  const jar = newestJar(folder);
+  const info = jar ? readJarModInfo(jar) : null;
+  return { folder, modId: (info && info.id) || null };
+});
+ipcMain.handle("devmod:add", (event, { type, id, folder, modId }) => {
+  if (!folder || !modId) return { success: false, error: "Folder and mod id are required" };
+  const store = loadDevModsStore(); const k = devModKey(type, id);
+  store[k] = store[k] || { enabled: true, mods: [] };
+  store[k].enabled = true;
+  store[k].mods = (store[k].mods || []).filter(m => m.folder !== folder);
+  store[k].mods.push({ folder, modId });
+  saveDevModsStore(store);
+  const swap = swapDevMod(type, id, modId, folder);
+  startDevWatch(type, id);
+  return { success: true, mods: store[k].mods, swap };
+});
+ipcMain.handle("devmod:remove", (event, { type, id, folder }) => {
+  const store = loadDevModsStore(); const k = devModKey(type, id);
+  if (store[k]) { store[k].mods = (store[k].mods || []).filter(m => m.folder !== folder); saveDevModsStore(store); startDevWatch(type, id); }
+  return { success: true, mods: (store[k] && store[k].mods) || [] };
 });
 
 // ─────────────────────────────────────────────────────────────────────────

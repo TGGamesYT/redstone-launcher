@@ -1701,6 +1701,48 @@
           return installBtn;
         };
 
+        // ── Dev-mods modal: register mod build-output folders to hot-swap from ──
+        async function openDevModsModal(type, id, onChange) {
+          const state = await ipcRenderer.invoke('devmod:get', { type, id });
+          const ov = document.createElement('div'); ov.className = 'modal-overlay active'; ov.style.zIndex = 5000;
+          ov.innerHTML = `<div class="modal-content" style="max-width:560px;">
+            <div class="modal-header"><h2>Dev mods</h2></div>
+            <div style="opacity:.7;font-size:13px;margin-bottom:10px;">Point to your mod's build-output folder (e.g. <code>build/libs</code>). When a new compatible jar is built there it's hot-swapped in, replacing the old build of the same mod id.</div>
+            <label class="inline-check" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;"><input type="checkbox" id="dm-enabled"> Enable dev-mod hot-swapping</label>
+            <div id="dm-list" style="margin:8px 0;"></div>
+            <button type="button" id="dm-add"><i class="material-icons" style="vertical-align:middle;font-size:18px;">create_new_folder</i> Add mod folder</button>
+            <div class="modal-actions" style="margin-top:14px;"><button type="button" id="dm-close">Done</button></div>
+          </div>`;
+          document.body.appendChild(ov);
+          const enabled = ov.querySelector('#dm-enabled'); enabled.checked = !!state.enabled;
+          enabled.onchange = () => ipcRenderer.invoke('devmod:setEnabled', { type, id, enabled: enabled.checked });
+          const listEl = ov.querySelector('#dm-list');
+          const draw = (mods) => {
+            listEl.innerHTML = '';
+            (mods || []).forEach(m => {
+              const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;align-items:center;margin:6px 0;background:var(--menu-bg);padding:8px;border-radius:6px;';
+              row.innerHTML = `<div style="flex:1;min-width:0;"><div style="font-weight:bold;">${m.modId}</div><div style="opacity:.65;font-size:12px;word-break:break-all;">${m.folder}</div></div>`;
+              const rm = document.createElement('button'); rm.innerHTML = '<i class="material-icons">delete</i>'; rm.title = 'Remove';
+              rm.onclick = async () => { const r = await ipcRenderer.invoke('devmod:remove', { type, id, folder: m.folder }); draw(r.mods); onChange && onChange(); };
+              row.appendChild(rm); listEl.appendChild(row);
+            });
+            if (!(mods || []).length) listEl.innerHTML = '<div style="opacity:.6;font-size:13px;">No dev mods registered yet.</div>';
+          };
+          draw(state.mods);
+          ov.querySelector('#dm-add').onclick = async () => {
+            const pick = await ipcRenderer.invoke('devmod:pickFolder'); if (!pick || pick.canceled) return;
+            const modId = prompt('Mod id of the built mod:', pick.modId || '');
+            if (!modId) return;
+            const r = await ipcRenderer.invoke('devmod:add', { type, id, folder: pick.folder, modId: modId.trim() });
+            enabled.checked = true; draw(r.mods);
+            if (r.swap && r.swap.success === false && r.swap.error) alert('Registered, but nothing swapped yet: ' + r.swap.error);
+            onChange && onChange();
+          };
+          const close = () => { ov.remove(); onChange && onChange(); };
+          ov.querySelector('#dm-close').onclick = close;
+          ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
+        }
+
         // ── Minecraft text-component renderer (resource-pack descriptions) ──
         const MC_LEGACY = { '0':'#000000','1':'#0000AA','2':'#00AA00','3':'#00AAAA','4':'#AA0000','5':'#AA00AA','6':'#FFAA00','7':'#AAAAAA','8':'#555555','9':'#5555FF','a':'#55FF55','b':'#55FFFF','c':'#FF5555','d':'#FF55FF','e':'#FFFF55','f':'#FFFFFF' };
         const MC_NAMED = { black:'#000000', dark_blue:'#0000AA', dark_green:'#00AA00', dark_aqua:'#00AAAA', dark_red:'#AA0000', dark_purple:'#AA00AA', gold:'#FFAA00', gray:'#AAAAAA', grey:'#AAAAAA', dark_gray:'#555555', dark_grey:'#555555', blue:'#5555FF', green:'#55FF55', aqua:'#55FFFF', red:'#FF5555', light_purple:'#FF55FF', yellow:'#FFFF55', white:'#FFFFFF' };
@@ -2207,6 +2249,14 @@
                 refreshBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">refresh</i> Refresh`;
                 refreshBtn.onclick = () => renderContentTab();
                 bar.appendChild(refreshBtn);
+                // Dev mods (hot-swap a locally-built mod) — only with Developer mode on.
+                if (tabName === "mods" && await ipcRenderer.invoke("get-setting", "devMode")) {
+                  const devBtn = document.createElement("button");
+                  devBtn.className = "tab-install-btn secondary";
+                  devBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Dev mods`;
+                  devBtn.onclick = () => openDevModsModal("instance", profile.id, () => renderContentTab());
+                  bar.appendChild(devBtn);
+                }
                 if (running) {
                   const note = document.createElement("span");
                   note.style.cssText = "font-size:12px; opacity:0.7; align-self:center;";

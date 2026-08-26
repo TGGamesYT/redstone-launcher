@@ -274,6 +274,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <div class="tab-action-bar" style="display:flex; gap:8px; margin-bottom:10px;">
           <button id="srvInstallMods"><i class="material-icons" style="font-size:16px;vertical-align:middle;">add</i> Install Mods</button>
           <button id="srvOpenModsFolder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder</i> Open mods folder</button>
+          <button id="srvDevMods" style="display:none;"><i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Dev mods</button>
         </div>
         <ul id="srvModsList" style="list-style:none; margin:0; padding:0; flex:1; min-height:0; overflow-y:auto;"></ul>
       </div>
@@ -896,8 +897,56 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     };
 
     // ---------- Server mods (shown for modded server types) ----------
+    // Dev-mods modal (hot-swap a locally-built mod) — mirrors the instances one.
+    async function openDevModsModal(type, id, onChange) {
+      const state = await ipcRenderer.invoke('devmod:get', { type, id });
+      const ov = document.createElement('div'); ov.className = 'modal-overlay active'; ov.style.zIndex = 5000;
+      ov.innerHTML = `<div class="modal-content" style="max-width:560px;">
+        <div class="modal-header"><h2>Dev mods</h2></div>
+        <div style="opacity:.7;font-size:13px;margin-bottom:10px;">Point to your mod's build-output folder. When a new compatible jar is built there it's hot-swapped into this server, replacing the old build of the same mod id.</div>
+        <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px;"><input type="checkbox" id="dm-enabled"> Enable dev-mod hot-swapping</label>
+        <div id="dm-list" style="margin:8px 0;"></div>
+        <button type="button" id="dm-add"><i class="material-icons" style="vertical-align:middle;font-size:18px;">create_new_folder</i> Add mod folder</button>
+        <div class="modal-actions" style="margin-top:14px;"><button type="button" id="dm-close">Done</button></div>
+      </div>`;
+      document.body.appendChild(ov);
+      const enabled = ov.querySelector('#dm-enabled'); enabled.checked = !!state.enabled;
+      enabled.onchange = () => ipcRenderer.invoke('devmod:setEnabled', { type, id, enabled: enabled.checked });
+      const listEl = ov.querySelector('#dm-list');
+      const draw = (mods) => {
+        listEl.innerHTML = '';
+        (mods || []).forEach(m => {
+          const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;align-items:center;margin:6px 0;background:var(--menu-bg);padding:8px;border-radius:6px;';
+          row.innerHTML = `<div style="flex:1;min-width:0;"><div style="font-weight:bold;">${m.modId}</div><div style="opacity:.65;font-size:12px;word-break:break-all;">${m.folder}</div></div>`;
+          const rm = document.createElement('button'); rm.innerHTML = '<i class="material-icons">delete</i>';
+          rm.onclick = async () => { const r = await ipcRenderer.invoke('devmod:remove', { type, id, folder: m.folder }); draw(r.mods); onChange && onChange(); };
+          row.appendChild(rm); listEl.appendChild(row);
+        });
+        if (!(mods || []).length) listEl.innerHTML = '<div style="opacity:.6;font-size:13px;">No dev mods registered yet.</div>';
+      };
+      draw(state.mods);
+      ov.querySelector('#dm-add').onclick = async () => {
+        const pick = await ipcRenderer.invoke('devmod:pickFolder'); if (!pick || pick.canceled) return;
+        const modId = prompt('Mod id of the built mod:', pick.modId || '');
+        if (!modId) return;
+        const r = await ipcRenderer.invoke('devmod:add', { type, id, folder: pick.folder, modId: modId.trim() });
+        enabled.checked = true; draw(r.mods);
+        if (r.swap && r.swap.success === false && r.swap.error) alert('Registered, but nothing swapped yet: ' + r.swap.error);
+        onChange && onChange();
+      };
+      const close = () => { ov.remove(); onChange && onChange(); };
+      ov.querySelector('#dm-close').onclick = close;
+      ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
+    }
+
     async function loadServerMods() {
       if (!selectedServer) return;
+      const dm = $('srvDevMods');
+      if (dm) {
+        const dev = await ipcRenderer.invoke('get-setting', 'devMode');
+        dm.style.display = dev ? '' : 'none';
+        dm.onclick = () => openDevModsModal('server', selectedServer.name, () => loadServerMods());
+      }
       const ul = $('srvModsList');
       ul.innerHTML = '<li style="opacity:0.6;padding:10px;">Loading…</li>';
       const res = await ipcRenderer.invoke('server-fs:list', { name: selectedServer.name, path: 'mods' });
