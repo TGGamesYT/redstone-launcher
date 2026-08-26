@@ -6113,7 +6113,7 @@ ipcMain.handle("skins:fetchByName", async (event, name) => {
 
 // Add a skin to the library WITHOUT touching Mojang. No-op (returns existing)
 // if a pixel-identical skin is already saved.
-ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name }) => {
+ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name, editorType, creatorState }) => {
   const b = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
   if (!b || !uuid) return loadSkinLib()[uuid] || [];
   const pixelHash = await skinPixelHash(b);
@@ -6122,10 +6122,13 @@ ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name }) => {
   const existing = arr.find(s => s.pixelHash === pixelHash);
   if (existing) {
     // Update the name if a nicer one was provided.
-    if (name && existing.name !== name) { existing.name = name; lib[uuid] = arr; saveSkinLib(lib); }
+    if (name && existing.name !== name) existing.name = name;
+    if (editorType) existing.editorType = editorType;
+    if (creatorState !== undefined) existing.creatorState = creatorState;
+    lib[uuid] = arr; saveSkinLib(lib);
     return arr;
   }
-  arr.unshift({ id: Date.now(), pixelHash, name: name || "Skin", base64: b, variant: (variant || "classic"), addedAt: Date.now() });
+  arr.unshift({ id: Date.now(), pixelHash, name: name || "Skin", base64: b, variant: (variant || "classic"), addedAt: Date.now(), editorType: editorType || "advanced", creatorState: creatorState || null });
   lib[uuid] = arr;
   saveSkinLib(lib);
   return arr;
@@ -6148,7 +6151,7 @@ ipcMain.handle("skins:rename", (event, { uuid, id, name }) => {
 
 // Update an existing library skin in place (from the skin editor). Keeps the id
 // so the same card is edited rather than a duplicate created.
-ipcMain.handle("skins:update", async (event, { uuid, id, base64, variant, name }) => {
+ipcMain.handle("skins:update", async (event, { uuid, id, base64, variant, name, editorType, creatorState }) => {
   const lib = loadSkinLib();
   const arr = lib[uuid] || [];
   const s = arr.find(x => String(x.id) === String(id));
@@ -6160,6 +6163,8 @@ ipcMain.handle("skins:update", async (event, { uuid, id, base64, variant, name }
   }
   if (variant) s.variant = variant;
   if (name) s.name = name;
+  if (editorType) s.editorType = editorType;
+  if (creatorState !== undefined) s.creatorState = creatorState;
   s.updatedAt = Date.now();
   lib[uuid] = arr;
   saveSkinLib(lib);

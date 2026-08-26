@@ -89,12 +89,22 @@
        middle, the selected category's options on the right. ── */
     #creator-wrap { display: none; gap: 16px; padding: 8px 20px 0 0; height: calc(100vh - 110px); max-width: 100%; box-sizing: border-box; overflow: hidden; }
     #creator-wrap.active { display: flex; }
-    #cr-left { flex: 0 0 280px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
-    #cr-3d { width: 280px; height: 360px; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); }
+    #cr-left { flex: 0 0 400px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+    #cr-3d { width: 400px; height: 520px; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); }
     #cr-cats { flex: 0 0 190px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
-    .cr-cat { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 9px 12px; text-align: left; font-family: var(--text-font); font-size: 13px; }
+    .cr-cat { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 9px 12px; text-align: left; font-family: var(--text-font); font-size: 13px; display: flex; align-items: center; gap: 9px; }
+    .cr-cat .material-icons { font-size: 18px; opacity: 0.9; }
     .cr-cat:hover { border-color: var(--base-color); }
     .cr-cat.active { background: var(--base-color); border-color: var(--text-color); }
+    .cr-seg { display: flex; gap: 6px; flex-wrap: wrap; }
+    .cr-seg button { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 8px 14px; font-family: var(--text-font); font-size: 13px; }
+    .cr-seg button:hover { border-color: var(--base-color); }
+    .cr-seg button.active { background: var(--base-color); border-color: var(--text-color); }
+    .cr-swatch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 6px; }
+    .cr-swatch { aspect-ratio: 1/1; border: 2px solid var(--border-dark); border-radius: 6px; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; }
+    .cr-swatch:hover { border-color: var(--base-color); }
+    .cr-swatch.active { border-color: var(--text-color); box-shadow: 0 0 0 2px var(--base-color); }
+    .cr-swatch .material-icons { font-size: 18px; opacity: 0.6; }
     #cr-options { flex: 1; min-width: 0; overflow-y: auto; padding-right: 6px; }
     #cr-options h3 { margin: 0 0 12px; }
     .cr-opt-row { margin-bottom: 14px; }
@@ -154,7 +164,7 @@
     </ul>
   </div>
 
-  <h1 style="margin-left:0; margin-top:14px; display:flex; align-items:center; gap:12px;">
+  <h1 style="margin-left:0; margin-top:0; padding-top:22px; display:flex; align-items:center; gap:12px;">
     <button class="ed-btn" style="width:auto; padding:6px 12px;" onclick="window.location.href='profile-manager.html'"><i class="material-icons">arrow_back</i> Skins</button>
     <span id="ed-title">Skin Editor</span>
     <button class="ed-btn" id="mode-toggle" style="width:auto; padding:6px 12px; margin-left:auto; display:none;"><i class="material-icons">tune</i> <span id="mode-toggle-label">Advanced editor</span></button>
@@ -166,9 +176,9 @@
       <canvas id="ed-3d"></canvas>
       <div class="ed-hint" style="margin-top:-2px;">Click a body part to draw on it; drag empty space to rotate.</div>
       <div class="ed-group">
-        <div class="ed-row" style="margin:0 0 6px;"><label><input type="checkbox" id="ed-show-overlay"> Edit 2nd layer (overlay)</label></div>
+        <div class="ed-row" style="margin:0 0 6px;"><label><input type="checkbox" id="ed-show-overlay" checked> Edit 2nd layer on the 3D model</label></div>
         <div class="ed-row" style="margin:0 0 6px;"><label><input type="checkbox" id="ed-mirror"> Mirror (whole-body symmetry)</label></div>
-        <div class="ed-row" style="margin:0;"><label><input type="checkbox" id="ed-grid" checked> Grid on current layer</label></div>
+        <div class="ed-row" style="margin:0;"><label><input type="checkbox" id="ed-grid"> Grid</label></div>
       </div>
       <div class="ed-group">
         <h4>Show in 3D</h4>
@@ -385,13 +395,16 @@
     const inRect = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
     const rectAt = (rects, x, y) => rects.find(r => inRect(r, x, y)) || null;
     const isOverlayTexel = (x, y) => FACE_OVERLAY.some(r => inRect(r, x, y));
-    const layerFaces = () => (layer === 'overlay' ? FACE_OVERLAY : FACE_BASE);
+    // The 2D editor edits the WHOLE texture (both layers), so painting + grid use
+    // every real face rect, not just one layer's.
+    const allFaces = () => [...FACE_BASE, ...FACE_OVERLAY];
+    const layerFaces = allFaces;
 
     // ── State ──
     let tool = 'brush';
-    let layer = 'base';       // base | overlay
+    let layer = 'base';       // kept for legacy refs; 2D now edits all layers
     let mirror = false;
-    let gridOn = true;
+    let gridOn = false;
     let variant = 'classic';
     buildFaces(); // now that `variant` exists
     let color = { r: 138, g: 90, b: 59 };
@@ -405,7 +418,7 @@
     // ── Undo / redo (edit history only, independent of launcher nav) ──
     let undoStack = [], redoStack = [];
     function snapshot() { return wctx.getImageData(0, 0, SIZE, SIZE); }
-    function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); redoStack = []; }
+    function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); redoStack = []; workFromCreator = false; }
     function restore(imgData) { wctx.putImageData(imgData, 0, 0); render(); liveUpdate(); }
     function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
     function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
@@ -429,9 +442,8 @@
     }
     function renderOverlay() {
       octx.clearRect(0, 0, overlay.width, overlay.height);
-      const rects = layerFaces();
-      const other = layer === 'overlay' ? FACE_BASE : FACE_OVERLAY;
-      // Per-texel grid, drawn only over the ACTIVE layer's FACES, toggleable.
+      const rects = allFaces();
+      // Per-texel grid over every face (both layers), toggleable.
       if (gridOn) {
         octx.strokeStyle = 'rgba(255,255,255,0.16)'; octx.lineWidth = 1;
         rects.forEach(r => {
@@ -439,9 +451,9 @@
           for (let gy = r.y; gy <= r.y + r.h; gy++) { octx.beginPath(); octx.moveTo(r.x * SCALE, gy * SCALE + 0.5); octx.lineTo((r.x + r.w) * SCALE, gy * SCALE + 0.5); octx.stroke(); }
         });
       }
-      // Face outlines for the ACTIVE layer (inactive faint), labelled on fronts.
-      other.forEach(r => outlineRect(r, 'rgba(255,255,255,0.08)', null));
-      rects.forEach(r => outlineRect(r, 'var(--base-color)', r.front ? r.name : null));
+      // Outline every face; label the front faces. 2nd-layer faces are faint.
+      FACE_OVERLAY.forEach(r => outlineRect(r, 'rgba(255,255,255,0.12)', null));
+      FACE_BASE.forEach(r => outlineRect(r, 'var(--base-color)', r.front ? r.name : null));
     }
     function outlineRect(r, stroke, label) {
       octx.strokeStyle = stroke === 'var(--base-color)'
@@ -622,11 +634,12 @@
     document.getElementById('ed-opacity').oninput = (e) => { opacity = (+e.target.value) / 100; document.getElementById('ed-opacity-val').textContent = e.target.value + '%'; };
     document.getElementById('ed-fillwith').onchange = (e) => { fillWith = e.target.value; };
 
-    // The "Edit 2nd layer" toggle both selects the layer being edited and shows/
-    // hides the overlay on the model.
-    document.getElementById('ed-show-overlay').onchange = (e) => {
-      layer = e.target.checked ? 'overlay' : 'base';
-      renderOverlay(); applyPartVisibility(); liveUpdate();
+    // The "Edit 2nd layer on the 3D model" toggle only affects the 3D render:
+    // it shows the overlay meshes (so drawing on the model paints the 2nd layer)
+    // and hides them (so drawing paints the base). The 2D texture always edits
+    // every layer regardless.
+    document.getElementById('ed-show-overlay').onchange = () => {
+      applyPartVisibility(); liveUpdate();
     };
     document.getElementById('ed-mirror').onchange = (e) => { mirror = e.target.checked; };
     document.getElementById('ed-grid').onchange = (e) => { gridOn = e.target.checked; renderOverlay(); liveUpdate(); };
@@ -867,6 +880,7 @@
       liveTex.minFilter = window.THREE.NearestFilter;
       liveTex.flipY = flipY;
       liveTex.needsUpdate = true;
+      tagSkinMeshes();
       ['head', 'body', 'rightArm', 'leftArm', 'rightLeg', 'leftLeg'].forEach(k => {
         const part = skin[k]; if (!part) return;
         [part.innerLayer, part.outerLayer].forEach(l => { if (l && l.material) { l.material.map = liveTex; l.material.transparent = true; l.material.needsUpdate = true; } });
@@ -902,10 +916,32 @@
       );
       const rc = new window.THREE.Raycaster();
       rc.setFromCamera(ndc, viewer.camera);
-      const hits = rc.intersectObject(viewer.playerObject, true);
-      const hit = hits.find(h => h.uv);
-      if (!hit) return null;
-      return { x: Math.floor(hit.uv.x * SIZE), y: Math.floor((1 - hit.uv.y) * SIZE) };
+      const hits = rc.intersectObject(viewer.playerObject, true); // nearest → farthest
+      for (const h of hits) {
+        // Only the six body parts' own layers are paintable — never a cape, ears,
+        // a hidden part, or (crucially) a BACK face seen through the model, which
+        // is what made clicks land on the wrong part/layer.
+        if (!h.uv || !h.object || !h.object.visible) continue;
+        const layerKind = h.object.userData && h.object.userData.skinLayer;
+        if (!layerKind) continue;
+        if (h.face) {
+          const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
+          if (rc.ray.direction.dot(n) >= 0) continue; // facing away → back face, skip
+        }
+        return { x: Math.floor(h.uv.x * SIZE), y: Math.floor((1 - h.uv.y) * SIZE) };
+      }
+      return null;
+    }
+    // Tag the six body parts' inner/outer meshes so the raycaster can tell a real
+    // skin surface (and its layer) from capes/ears/back faces.
+    function tagSkinMeshes() {
+      if (!viewer || !viewer.playerObject || !viewer.playerObject.skin) return;
+      const skin = viewer.playerObject.skin;
+      ['head', 'body', 'rightArm', 'leftArm', 'rightLeg', 'leftLeg'].forEach(k => {
+        const part = skin[k]; if (!part) return;
+        if (part.innerLayer) part.innerLayer.traverse(o => { o.userData.skinLayer = 'base'; });
+        if (part.outerLayer) part.outerLayer.traverse(o => { o.userData.skinLayer = 'overlay'; });
+      });
     }
     function paint3D(e, isDown) {
       const t = texelFromHit(e);
@@ -989,11 +1025,18 @@
       // if we weren't handed it, so saves land in the right place.
       if (!uuid) { try { const prof = await ipcRenderer.invoke('mc:getProfile'); uuid = prof && prof.id; } catch { } }
       let name = 'My skin';
+      let editedType = null;      // which editor this skin was created in
       if (mode === 'edit' && editSkinId && uuid) {
         try {
           const lib = await ipcRenderer.invoke('skins:list', { uuid });
           const s = (lib || []).find(x => String(x.id) === String(editSkinId));
-          if (s) { await loadIntoWork('data:image/png;base64,' + s.base64); name = s.name || name; variant = s.variant || 'classic'; setVariant(variant); document.getElementById('ed-title').textContent = 'Editing: ' + name; document.getElementById('ed-save-copy').style.display = ''; }
+          if (s) {
+            await loadIntoWork('data:image/png;base64,' + s.base64); name = s.name || name; variant = s.variant || 'classic'; setVariant(variant);
+            document.getElementById('ed-title').textContent = 'Editing: ' + name; document.getElementById('ed-save-copy').style.display = '';
+            editedType = s.editorType || 'advanced';
+            // A simple-creator skin re-opens in the creator with its saved options.
+            if (editedType === 'simple' && s.creatorState) { crState = { ...CR_DEFAULT, ...s.creatorState }; document.getElementById('cr-name').value = name; }
+          }
         } catch { }
       } else if (mode === 'new' && params.get('template') === '1') {
         await loadIntoWork('assets/template.png');
@@ -1011,10 +1054,13 @@
       build3D();
       // The mode toggle is available on every editor session.
       document.getElementById('mode-toggle').style.display = '';
-      // A brand-new skin (not a template, not an image import, not an edit) opens
-      // the simple Starlight creator by default; everything else stays advanced.
+      // Pick the initial editor: a brand-new skin (not a template/image/edit) opens
+      // the simple creator; editing a skin re-opens the editor it was made in;
+      // everything else is advanced. setEditorMode(initial) also sets the toggle
+      // label correctly for both directions.
       const plainNew = mode !== 'edit' && mode !== 'image' && params.get('template') !== '1';
-      if (plainNew) setEditorMode('creator');
+      const startCreator = plainNew || editedType === 'simple';
+      setEditorMode(startCreator ? 'creator' : 'advanced', { initial: true });
       const ov = document.getElementById('loading-overlay'); if (ov) { ov.classList.add('fade-out'); setTimeout(() => ov.style.display = 'none', 400); }
     }
 
@@ -1026,9 +1072,9 @@
       btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
       try {
         if (mode === 'edit' && editSkinId && uuid) {
-          await ipcRenderer.invoke('skins:update', { uuid, id: editSkinId, base64: dataUrl, variant, name: nm });
+          await ipcRenderer.invoke('skins:update', { uuid, id: editSkinId, base64: dataUrl, variant, name: nm, editorType: 'advanced', creatorState: null });
         } else if (uuid) {
-          await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm });
+          await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm, editorType: 'advanced' });
         }
         window.location.href = 'profile-manager.html';
       } catch (e) {
@@ -1191,26 +1237,44 @@
     // skin which is loaded into `work` (so Save and the Advanced editor share it).
     const CR_ALIGN = ['center', 'left', 'right', 'up', 'down'];
     const CR_CATS = [
-      { key: 'base', label: 'Base', tex: { param: 'base_texture', list: 'base_textures', path: true }, color: { param: 'base_color', palette: 'base', path: true } },
-      { key: 'skin_type', label: 'Skin Type', special: 'skintype' },
-      { key: 'tops', label: 'Tops', tex: { param: 'top_texture', list: 'top_textures' }, color: { param: 'top_color', palette: 'default' }, color2: { param: 'top_color_secondary', palette: 'default' } },
-      { key: 'top_designs', label: 'Top Designs', tex: { param: 'top_designs_texture', list: 'top_designs_textures' }, color: { param: 'top_designs_color', palette: 'default' } },
-      { key: 'bottoms', label: 'Bottoms', tex: { param: 'bottom_texture', list: 'bottom_textures' }, color: { param: 'bottom_color', palette: 'default' }, color2: { param: 'bottom_color_secondary', palette: 'default' } },
-      { key: 'outerwear', label: 'Outerwear', tex: { param: 'outerwear_texture', list: 'outerwear_textures' }, color: { param: 'outerwear_color', palette: 'default' }, color2: { param: 'outerwear_color_secondary', palette: 'default' } },
-      { key: 'footwear', label: 'Footwear', tex: { param: 'footwear_texture', list: 'footwear_textures' }, color: { param: 'footwear_color', palette: 'default' } },
-      { key: 'socks', label: 'Socks', tex: { param: 'socks_texture', list: 'socks_textures' }, color: { param: 'socks_color', palette: 'default' } },
-      { key: 'gloves', label: 'Gloves', tex: { param: 'gloves_texture', list: 'gloves_textures' }, color: { param: 'gloves_color', palette: 'default' } },
-      { key: 'hair', label: 'Hair', tex: { param: 'hair_style_texture', list: 'hair_style_textures' }, color: { param: 'hair_color', palette: 'hair' } },
-      { key: 'headwear', label: 'Headwear', tex: { param: 'headwear_texture', list: 'headwear_textures' }, color: { param: 'headwear_color', palette: 'default' } },
-      { key: 'eyes', label: 'Eyes', tex: { param: 'eyes_texture', list: 'eyes_textures' }, color: { param: 'eyes_color', palette: 'eyes' }, color2: { param: 'eyes_color_secondary', palette: 'eyes' }, align: 'eyes_alignment' },
-      { key: 'eyebrows', label: 'Eyebrows', tex: { param: 'eyebrow_texture', list: 'eyebrow_textures' }, color: { param: 'eyebrow_color', palette: 'hair' } },
-      { key: 'mouths', label: 'Mouths', tex: { param: 'mouth_texture', list: 'mouth_textures' }, color: { param: 'mouth_color', palette: 'default' }, align: 'mouth_alignment' },
-      { key: 'facial_hair', label: 'Facial Hair', tex: { param: 'facial_hair_texture', list: 'facial_hair_textures' }, color: { param: 'facial_hair_color', palette: 'hair' } },
-      { key: 'face_items', label: 'Face Items', tex: { param: 'face_item_texture', list: 'face_item_textures' }, color: { param: 'face_item_color', palette: 'default' } },
+      { key: 'base', label: 'Base', icon: 'accessibility_new', tex: { param: 'base_texture', list: 'base_textures', path: true, noneLabel: 'Plain' }, color: { param: 'base_color', palette: 'base', path: true } },
+      { key: 'skin_type', label: 'Skin Type', icon: 'wc', special: 'skintype' },
+      { key: 'tops', label: 'Tops', icon: 'checkroom', tex: { param: 'top_texture', list: 'top_textures' }, color: { param: 'top_color', palette: 'default' }, color2: { param: 'top_color_secondary', palette: 'default' } },
+      { key: 'top_designs', label: 'Top Designs', icon: 'brush', tex: { param: 'top_designs_texture', list: 'top_designs_textures' }, color: { param: 'top_designs_color', palette: 'default' } },
+      { key: 'bottoms', label: 'Bottoms', icon: 'dry_cleaning', tex: { param: 'bottom_texture', list: 'bottom_textures' }, color: { param: 'bottom_color', palette: 'default' }, color2: { param: 'bottom_color_secondary', palette: 'default' } },
+      { key: 'outerwear', label: 'Outerwear', icon: 'ac_unit', tex: { param: 'outerwear_texture', list: 'outerwear_textures' }, color: { param: 'outerwear_color', palette: 'default' }, color2: { param: 'outerwear_color_secondary', palette: 'default' } },
+      { key: 'footwear', label: 'Footwear', icon: 'ice_skating', tex: { param: 'footwear_texture', list: 'footwear_textures' }, color: { param: 'footwear_color', palette: 'default' } },
+      { key: 'socks', label: 'Socks', icon: 'layers', tex: { param: 'socks_texture', list: 'socks_textures' }, color: { param: 'socks_color', palette: 'default' } },
+      { key: 'gloves', label: 'Gloves', icon: 'back_hand', tex: { param: 'gloves_texture', list: 'gloves_textures' }, color: { param: 'gloves_color', palette: 'default' } },
+      { key: 'hair', label: 'Hair', icon: 'content_cut', tex: { param: 'hair_style_texture', list: 'hair_style_textures' }, color: { param: 'hair_color', palette: 'hair' } },
+      { key: 'headwear', label: 'Headwear', icon: 'military_tech', tex: { param: 'headwear_texture', list: 'headwear_textures' }, color: { param: 'headwear_color', palette: 'default' } },
+      { key: 'eyes', label: 'Eyes', icon: 'visibility', tex: { param: 'eyes_texture', list: 'eyes_textures' }, color: { param: 'eyes_color', palette: 'eyes' }, color2: { param: 'eyes_color_secondary', palette: 'eyes' }, align: 'eyes_alignment' },
+      { key: 'eyebrows', label: 'Eyebrows', icon: 'face', tex: { param: 'eyebrow_texture', list: 'eyebrow_textures' }, color: { param: 'eyebrow_color', palette: 'hair' } },
+      { key: 'mouths', label: 'Mouths', icon: 'sentiment_satisfied', tex: { param: 'mouth_texture', list: 'mouth_textures' }, color: { param: 'mouth_color', palette: 'default' }, align: 'mouth_alignment' },
+      { key: 'facial_hair', label: 'Facial Hair', icon: 'face_retouching_natural', tex: { param: 'facial_hair_texture', list: 'facial_hair_textures' }, color: { param: 'facial_hair_color', palette: 'hair' } },
+      { key: 'face_items', label: 'Face Items', icon: 'masks', tex: { param: 'face_item_texture', list: 'face_item_textures' }, color: { param: 'face_item_color', palette: 'default' } },
     ];
     let crInfo = null, crViewer = null, crActiveCat = null, crGenTimer = null, crGenSeq = 0;
     const CR_DEFAULT = { base_texture: 'none', base_color: 'pale', skin_type: 'wide' };
     let crState = { ...CR_DEFAULT };
+    // Named colours → hex, for the bucket swatches (the API only gives names).
+    const CR_HEX = {
+      pale: '#f8d9b8', tan: '#e5b887', tan_medium: '#d9a066', tan_dark: '#b97a56', medium: '#c68642', medium_dark: '#8d5524',
+      dark: '#6b4423', dark_darker: '#4b2e17', creeper_green: '#54a832', enderman_black: '#1a1a1a', enderman_purple: '#a000c0',
+      piglin_tan: '#e0b090', bone: '#e8e0cf', chain: '#8a8a8a', metal: '#9aa0a6', artic: '#dff0f5',
+      red: '#d84343', crimson: '#8a1f1f', orange: '#e07b2a', pumpkin_orange: '#e8791a', gold: '#e6c229', yellow: '#e6d94a',
+      light_yellow: '#f2ea9a', banana: '#f5e05a', beige: '#e8d8b0', green: '#4a9d3f', military_green: '#5b6b3a', lime: '#8fd44a',
+      blue: '#3f6fd8', light_blue: '#6fa8e0', sky_blue: '#8fd0f0', infinite_temperature: '#7fd0e8', purple: '#8a3fd8', magenta: '#c84ac8',
+      pink: '#e88fc0', brown: '#7a5230', brown_dark: '#5a3a20', brown_darker: '#3f2915', black: '#1c1c1c', gray: '#7a7a7a',
+      light_gray: '#b4b4b4', white: '#f2f2f2', black_and_white: '#888888', blonde: '#e8c860', blonde_light: '#f0dd90',
+      blonde_lighter: '#f5ead0', ash_blonde: '#cdbd8e', eyeliner: '#222222',
+    };
+    const crHex = (name) => {
+      if (CR_HEX[name]) return CR_HEX[name];
+      // Fallback: hash the name into a stable colour.
+      let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffff;
+      return '#' + (h | 0x404040).toString(16).padStart(6, '0').slice(0, 6);
+    };
     const crTitle = (s) => String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     const crColors = (pal) => (crInfo && crInfo.cosmetics && crInfo.cosmetics.colors && crInfo.cosmetics.colors[pal]) || [];
     const crTexList = (k) => { const o = crInfo && crInfo.cosmetics && crInfo.cosmetics[k]; return o ? Object.keys(o) : []; };
@@ -1228,33 +1292,60 @@
     }
     function buildCatTabs() {
       const wrap = document.getElementById('cr-cats'); wrap.innerHTML = '';
-      CR_CATS.forEach(cat => { const b = document.createElement('button'); b.className = 'cr-cat'; b.textContent = cat.label; b.onclick = () => selectCat(cat); cat._btn = b; wrap.appendChild(b); });
+      CR_CATS.forEach(cat => {
+        const b = document.createElement('button'); b.className = 'cr-cat';
+        b.innerHTML = `<i class="material-icons">${cat.icon || 'tune'}</i><span>${cat.label}</span>`;
+        b.onclick = () => selectCat(cat); cat._btn = b; wrap.appendChild(b);
+      });
     }
     function selectCat(cat) { crActiveCat = cat; CR_CATS.forEach(c => c._btn && c._btn.classList.toggle('active', c === cat)); renderCatOptions(cat); }
-    function crSelRow(label, opts, cur, onChange) {
+    // A segmented button row (skin type / alignment) — never a dropdown.
+    function crSegRow(label, opts, cur, onChange) {
       const row = document.createElement('div'); row.className = 'cr-opt-row';
       const l = document.createElement('label'); l.textContent = label; row.appendChild(l);
-      const s = document.createElement('select');
-      opts.forEach(o => { const op = document.createElement('option'); op.value = o; op.textContent = crTitle(o); if (o === cur) op.selected = true; s.appendChild(op); });
-      s.onchange = () => onChange(s.value); row.appendChild(s); return row;
+      const seg = document.createElement('div'); seg.className = 'cr-seg';
+      opts.forEach(o => { const b = document.createElement('button'); b.textContent = crTitle(o.label != null ? o.label : o); b.className = (o.value != null ? o.value : o) === cur ? 'active' : ''; b.onclick = () => onChange(o.value != null ? o.value : o); seg.appendChild(b); });
+      row.appendChild(seg); return row;
+    }
+    // Colour bucket swatches (like the site) with a "Default" (let the API pick).
+    function crColorRow(label, cfg) {
+      const cols = crColors(cfg.palette);
+      const cur = crState[cfg.param];              // undefined = API default
+      const row = document.createElement('div'); row.className = 'cr-opt-row';
+      row.innerHTML = `<label>${label}</label>`;
+      const grid = document.createElement('div'); grid.className = 'cr-swatch-grid';
+      const mk = (name, hex, isDefault) => {
+        const s = document.createElement('button'); s.className = 'cr-swatch' + ((isDefault ? !cur : cur === name) ? ' active' : '');
+        s.title = isDefault ? 'Default' : crTitle(name);
+        s.style.background = isDefault ? 'transparent' : hex;
+        if (isDefault) s.innerHTML = '<i class="material-icons">block</i>';
+        s.onclick = () => { if (isDefault) delete crState[cfg.param]; else crState[cfg.param] = name; renderCatOptions(crActiveCat); crGenerate(); };
+        grid.appendChild(s);
+      };
+      mk(null, null, true);
+      cols.forEach(name => mk(name, crHex(name), false));
+      row.appendChild(grid); return row;
     }
     function renderCatOptions(cat) {
       const body = document.getElementById('cr-options-body'); body.innerHTML = '';
-      const h = document.createElement('h3'); h.textContent = cat.label; body.appendChild(h);
-      if (cat.special === 'skintype') { body.appendChild(crSelRow('Model', ['wide', 'slim'], crState.skin_type, v => { crState.skin_type = v; crGenerate(); })); return; }
+      const h = document.createElement('h3'); h.innerHTML = `<i class="material-icons" style="vertical-align:-4px;margin-right:6px;">${cat.icon || 'tune'}</i>${cat.label}`; body.appendChild(h);
+      if (cat.special === 'skintype') { body.appendChild(crSegRow('Model', [{ label: 'Male (wide)', value: 'wide' }, { label: 'Female (slim)', value: 'slim' }], crState.skin_type, v => { crState.skin_type = v; crGenerate(); })); return; }
       if (cat.tex) {
         const list = crTexList(cat.tex.list);
         const cur = crState[cat.tex.param] || 'none';
         const row = document.createElement('div'); row.className = 'cr-opt-row'; row.innerHTML = '<label>Style</label>';
         const grid = document.createElement('div'); grid.className = 'cr-tex-grid';
-        list.forEach(name => { const t = document.createElement('div'); t.className = 'cr-tex' + (name === cur ? ' active' : ''); t.textContent = crTitle(name); t.onclick = () => { crState[cat.tex.param] = name; renderCatOptions(cat); crGenerate(); }; grid.appendChild(t); });
+        list.forEach(name => {
+          const t = document.createElement('div'); t.className = 'cr-tex' + (name === cur ? ' active' : '');
+          t.textContent = (name === 'none' && cat.tex.noneLabel) ? cat.tex.noneLabel : crTitle(name);
+          t.onclick = () => { crState[cat.tex.param] = name; renderCatOptions(cat); crGenerate(); }; grid.appendChild(t);
+        });
         row.appendChild(grid); body.appendChild(row);
       }
       const chosen = cat.tex ? (crState[cat.tex.param] && crState[cat.tex.param] !== 'none') : true;
-      const colorRow = (label, cfg) => { const cols = crColors(cfg.palette); const cur = crState[cfg.param] || cols[0] || ''; return crSelRow(label, cols, cur, v => { crState[cfg.param] = v; crGenerate(); }); };
-      if (cat.color && (chosen || cat.color.path)) body.appendChild(colorRow('Colour', cat.color));
-      if (cat.color2 && chosen) body.appendChild(colorRow('Secondary colour', cat.color2));
-      if (cat.align && chosen) body.appendChild(crSelRow('Alignment', CR_ALIGN, crState[cat.align] || 'center', v => { crState[cat.align] = v; crGenerate(); }));
+      if (cat.color && (chosen || cat.color.path)) body.appendChild(crColorRow('Colour', cat.color));
+      if (cat.color2 && chosen) body.appendChild(crColorRow('Secondary colour', cat.color2));
+      if (cat.align && chosen) body.appendChild(crSegRow('Alignment', CR_ALIGN, crState[cat.align] || 'center', v => { crState[cat.align] = v; crGenerate(); }));
     }
     function crBuildRequest() {
       const bt = crState.base_texture || 'none', bc = crState.base_color || 'pale', st = crState.skin_type || 'wide';
@@ -1284,8 +1375,9 @@
         document.getElementById('cr-busy').style.display = 'none';
         if (!r || r.error || !r.base64) return;
         await crLoadIntoWork('data:image/png;base64,' + r.base64);
+        workFromCreator = true;
         variant = crState.skin_type === 'slim' ? 'slim' : 'classic';
-        if (!crViewer && typeof skinview3d !== 'undefined') { try { crViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('cr-3d'), width: 280, height: 360 }); } catch { } }
+        if (!crViewer && typeof skinview3d !== 'undefined') { try { crViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('cr-3d'), width: 400, height: 520 }); } catch { } }
         if (crViewer) { try { crViewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
       }, 250);
     }
@@ -1311,7 +1403,11 @@
       const dataUrl = work.toDataURL('image/png');
       btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
       try {
-        if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm });
+        // Tag the library entry as a simple-creator skin + stash the options so
+        // it re-opens in the creator (and can be tweaked) when edited later.
+        const meta = { editorType: 'simple', creatorState: crState };
+        if (mode === 'edit' && editSkinId && uuid) await ipcRenderer.invoke('skins:update', { uuid, id: editSkinId, base64: dataUrl, variant, name: nm, ...meta });
+        else if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm, ...meta });
         window.location.href = 'profile-manager.html';
       } catch (e) { alert('Save failed: ' + (e.message || e)); btn.disabled = false; btn.innerHTML = '<i class="material-icons">save</i> Save to library'; }
     }
@@ -1320,20 +1416,27 @@
     document.getElementById('cr-reset').onclick = () => { crState = { ...CR_DEFAULT }; if (crActiveCat) renderCatOptions(crActiveCat); crGenerate(); };
 
     // ── Mode switch: simple creator ⇆ advanced editor ──
+    // `workFromCreator` tracks whether the current texture came straight from the
+    // creator (so toggling back and forth is lossless) vs was hand-edited/loaded
+    // (so switching to the creator would REPLACE it and needs a confirm).
     let curEditorMode = 'advanced';
-    function setEditorMode(m) {
-      curEditorMode = m;
+    let workFromCreator = false;
+    function setEditorMode(m, opts) {
+      opts = opts || {};
       const cw = document.getElementById('creator-wrap'), ew = document.getElementById('editor-wrap');
+      const tl = document.getElementById('mode-toggle-label');
       if (m === 'creator') {
+        if (!opts.initial && !workFromCreator) {
+          if (!confirm('The simple creator rebuilds the skin from options and will replace the current one. Continue?')) return;
+        }
+        curEditorMode = 'creator';
         cw.classList.add('active'); ew.style.display = 'none';
-        document.getElementById('mode-toggle-label').textContent = 'Advanced editor';
-        document.getElementById('ed-title').textContent = 'Create a skin';
-        if (!crInfo) crInit();
+        tl.textContent = 'Advanced editor';
+        if (!crInfo) crInit(); else crGenerate();
       } else {
+        curEditorMode = 'advanced';
         cw.classList.remove('active'); ew.style.display = '';
-        document.getElementById('mode-toggle-label').textContent = 'Simple creator';
-        if (document.getElementById('ed-title').textContent === 'Create a skin') document.getElementById('ed-title').textContent = 'Advanced editor';
-        // Carry the creator's design into the advanced editor's 3D + name.
+        tl.textContent = 'Simple creator';
         try { const cn = document.getElementById('cr-name').value; if (cn && !document.getElementById('ed-name').value) document.getElementById('ed-name').value = cn; } catch { }
         setVariant(variant); render(); update3D(true);
       }
