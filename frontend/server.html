@@ -280,7 +280,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
       <div class="srv-panel" data-panel="resourcepacks">
         <div class="tab-action-bar" style="display:flex; gap:8px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
-          <button id="srvAddPack"><i class="material-icons" style="font-size:16px;vertical-align:middle;">add</i> Add pack</button>
+          <button id="srvAddPack"><i class="material-icons" style="font-size:16px;vertical-align:middle;">travel_explore</i> Browse packs</button>
+          <button id="srvAddPackFile"><i class="material-icons" style="font-size:16px;vertical-align:middle;">upload_file</i> From file</button>
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="srvPackRequired"> Required (kick players who decline)</label>
           <span id="srvPackState" style="font-size:12px; opacity:0.75; margin-left:auto;"></span>
         </div>
@@ -964,7 +965,16 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         ul.appendChild(li);
       });
     }
-    $('srvAddPack').onclick = async () => { const r = await ipcRenderer.invoke('server-rp:add', { name: selectedServer.name }); if (r && r.success) loadServerPacks(); };
+    // Browse Modrinth resource packs (no version restriction — packs work on any
+    // version; the installer picks the closest to the server's version).
+    $('srvAddPack').onclick = () => {
+      const params = new URLSearchParams({
+        install: '1', type: 'resourcepack', serverId: selectedServer.name, anyVersion: '1',
+        loader: (selectedServer.type || 'vanilla'), version: selectedServer.version || '', name: selectedServer.name || ''
+      });
+      window.location.href = `modrinth.html?${params.toString()}`;
+    };
+    $('srvAddPackFile').onclick = async () => { const r = await ipcRenderer.invoke('server-rp:add', { name: selectedServer.name }); if (r && r.success) loadServerPacks(); };
     $('srvPackRequired').onchange = async () => {
       await ipcRenderer.invoke('server-rp:setRequired', { name: selectedServer.name, required: $('srvPackRequired').checked });
       // If the server is currently shared, re-apply so the public URL/props update.

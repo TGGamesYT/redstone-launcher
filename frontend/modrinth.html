@@ -222,12 +222,30 @@
       return true; // resource packs / shaders are loader-agnostic
     }
 
-    // Pick the newest version of a project compatible with the install target.
+    // Rough distance between two MC versions (major weighted most) so we can pick
+    // the CLOSEST pack when there's no exact match.
+    function versionDistance(a, b) {
+      const pa = String(a).split('.').map(n => parseInt(n, 10) || 0), pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+      let d = 0; for (let i = 0; i < Math.max(pa.length, pb.length); i++) d += Math.abs((pa[i] || 0) - (pb[i] || 0)) * Math.pow(1000, 2 - Math.min(i, 2));
+      return d;
+    }
+    // Pick the best version for the install target. Mods must match the game
+    // version exactly; resource packs / shaders work regardless of version, so we
+    // take an exact match if there is one, else the CLOSEST game version.
     function pickCompatible(versions, requireLoader) {
-      return (Array.isArray(versions) ? versions : [])
-        .filter(v => v.game_versions.includes(installInstance.version) &&
-          (!requireLoader || v.loaders.includes(installInstance.loader === 'vanilla' ? 'vanilla' : installInstance.loader)))
-        .sort((a, b) => new Date(b.date_published) - new Date(a.date_published))[0];
+      const arr = (Array.isArray(versions) ? versions : []);
+      const loaderOk = (v) => !requireLoader || v.loaders.includes(installInstance.loader === 'vanilla' ? 'vanilla' : installInstance.loader);
+      const exact = arr.filter(v => loaderOk(v) && v.game_versions.includes(installInstance.version))
+        .sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
+      if (exact.length) return exact[0];
+      if (installType === 'mod') return undefined; // mods can't run on the wrong version
+      // Resource packs / shaders: nearest game version, newest as the tiebreak.
+      const scored = arr.filter(loaderOk).map(v => ({
+        v,
+        dist: Math.min(...((v.game_versions && v.game_versions.length ? v.game_versions : ['0']).map(gv => versionDistance(gv, installInstance.version)))),
+        date: new Date(v.date_published),
+      })).sort((a, b) => a.dist - b.dist || b.date - a.date);
+      return scored.length ? scored[0].v : undefined;
     }
 
     // Resolve a version's required/optional dependencies into installable entries,
