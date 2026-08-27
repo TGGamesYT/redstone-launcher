@@ -105,20 +105,20 @@
     .cr-cat img { width: 22px; height: 22px; image-rendering: pixelated; }
     .cr-cat:hover { border-color: var(--base-color); }
     .cr-cat.active { background: var(--base-color); border-color: var(--text-color); }
-    /* Sections panel. */
-    #cr-options { flex: 1; min-width: 0; overflow-y: auto; padding: 0 8px; background: color-mix(in srgb, var(--very-dark) 60%, transparent); border-radius: var(--border-radius); }
-    .cr-sec { margin: 14px 0; }
+    /* Sections panel. overflow-x hidden so the grids never spill sideways. */
+    #cr-options { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 12px; background: color-mix(in srgb, var(--very-dark) 60%, transparent); border-radius: var(--border-radius); }
+    .cr-sec { margin: 16px 0; }
     .cr-sec-title { font-size: 20px; font-weight: bold; margin: 0 0 10px; }
-    .cr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+    .cr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; }
     /* Texture cards: rendered thumbnails from the API, like the site. */
     .cr-card { background: color-mix(in srgb, var(--very-dark) 92%, black); border: 3px solid transparent; border-radius: var(--border-radius); cursor: pointer; aspect-ratio: 1/1; overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative; }
     .cr-card img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
     .cr-card:hover { border-color: var(--base-color); }
     .cr-card.active { border-color: var(--base-color); box-shadow: 0 0 0 1px var(--base-color) inset; }
     .cr-card.cr-none { color: var(--text-color); opacity: 0.7; font-size: 12px; }
-    .cr-card.cr-none .material-icons { font-size: 30px; opacity: 0.5; }
+    .cr-card.cr-none .material-icons { font-size: 34px; opacity: 0.5; }
     /* Colour buckets: the API's colour swatch images. */
-    .cr-colors { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 6px; }
+    .cr-colors { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 8px; }
     .cr-bucket { aspect-ratio: 1/1; border: 3px solid transparent; border-radius: var(--border-radius); cursor: pointer; overflow: hidden; background: color-mix(in srgb, var(--very-dark) 90%, black); }
     .cr-bucket img { width: 100%; height: 100%; image-rendering: pixelated; object-fit: contain; }
     .cr-bucket:hover { border-color: var(--base-color); }
@@ -134,7 +134,7 @@
     #cr-tooltip .cr-tt-credit { opacity: 0.75; font-size: 11px; }
     /* Image import modal */
     /* Leaves the left 3D panel (≈340px) visible as the live wrap preview. */
-    .ed-modal-overlay { position: fixed; inset: 44px 0 0 340px; background: rgba(0,0,0,0.35); backdrop-filter: blur(2px); display: none; align-items: center; justify-content: center; z-index: 3000; }
+    .ed-modal-overlay { position: fixed; inset: 44px 0 0 70px; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); display: none; align-items: center; justify-content: center; z-index: 3000; }
     .ed-modal-overlay.active { display: flex; }
     .ed-modal { background: linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black)); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 18px; width: 420px; max-width: 92%; max-height: 88vh; overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
     .ed-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
@@ -284,11 +284,12 @@
   <!-- Image → skin modal (body wrap). Leaves the left 3D panel visible as the
        live preview, so the modal only covers the area to its right. -->
   <div id="ed-img-modal" class="ed-modal-overlay">
-    <div class="ed-modal">
+    <div class="ed-modal" style="width:640px;">
       <div class="ed-modal-head"><h3 style="margin:0;">Wrap an image onto the skin</h3><button class="ed-btn" style="width:auto;padding:4px 10px;" id="ed-img-x2">✕</button></div>
-      <div class="ed-modal-body">
-        <div class="ed-modal-controls">
-          <div class="ed-hint" style="margin:0 0 10px;">Projects the photo onto the body; the current skin shows on faces the photo doesn't cover. The 3D model on the left is the live preview.</div>
+      <div class="ed-modal-body" style="display:flex; gap:16px;">
+        <canvas id="ed-img-3d" style="width:240px; height:340px; flex:0 0 240px; background:color-mix(in srgb, var(--very-dark) 85%, black); border-radius:var(--border-radius);"></canvas>
+        <div class="ed-modal-controls" style="flex:1; min-width:0;">
+          <div class="ed-hint" style="margin:0 0 10px;">Projects the photo onto the body; the current skin shows on faces the photo doesn't cover.</div>
           <div class="ed-row"><label>Pan X</label><input type="range" id="ed-wrap-px" min="-100" max="100" value="0"></div>
           <div class="ed-row"><label>Pan Y</label><input type="range" id="ed-wrap-py" min="-100" max="100" value="0"></div>
           <div class="ed-row"><label>Zoom X</label><input type="range" id="ed-wrap-sx" min="20" max="300" value="100"></div>
@@ -495,11 +496,9 @@
       return { x, y };
     }
     function paintable(x, y, force) {
-      if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return false;
-      if (force) return true; // 3D painting hits an exact texel; no layer mask
-      // Only real face pixels of the active layer are paintable (so the unused
-      // corners between faces aren't painted).
-      return layerFaces().some(r => inRect(r, x, y));
+      // The whole 64×64 texture is editable in the 2D editor (including the areas
+      // between faces) — only the canvas bounds matter.
+      return x >= 0 && y >= 0 && x < SIZE && y < SIZE;
     }
     function jitter(v, amt) { return Math.max(0, Math.min(255, v + Math.round((Math.random() * 2 - 1) * amt))); }
     function setTexel(x, y, mode, force) {
@@ -844,17 +843,21 @@
       ctx.restore(); ctx.globalAlpha = 1;
     }
 
+    let imgViewer = null;
     function drawImagePreview() {
       if (!imgBitmap) return;
-      // Composite the current skin + the wrap onto a temp canvas and live-preview
-      // it on the 3D model (restored to the real skin on close). No flat preview.
+      // Composite the current skin + the wrap onto a temp canvas and preview it on
+      // the modal's own 3D model.
       const tmp = document.createElement('canvas'); tmp.width = SIZE; tmp.height = SIZE;
       const tc = tmp.getContext('2d'); tc.drawImage(work, 0, 0);
       drawWrap(tc, 4);
-      if (viewer) { try { viewer.loadSkin(tmp.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' }); setTimeout(applyPartVisibility, 20); } catch { } }
+      const url = tmp.toDataURL();
+      if (!imgViewer && typeof skinview3d !== 'undefined') { try { imgViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-img-3d'), width: 240, height: 340 }); } catch { } }
+      if (imgViewer) { try { imgViewer.loadSkin(url, { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
+      if (viewer) { try { viewer.loadSkin(url, { model: variant === 'slim' ? 'slim' : 'default' }); setTimeout(applyPartVisibility, 20); } catch { } }
     }
     ['ed-img-x', 'ed-img-y', 'ed-img-scale', 'ed-img-rot', 'ed-img-op', 'ed-wrap-px', 'ed-wrap-py', 'ed-wrap-sx', 'ed-wrap-sy'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = drawImagePreview; });
-    ['ed-img-mirror', 'ed-wrap-aspect', 'ed-wrap-sides'].forEach(id => { const el = document.getElementById(id); if (el) el.onchange = () => { document.getElementById('ed-wrap-sy').disabled = document.getElementById('ed-wrap-aspect').checked; drawImagePreview(); }; });
+    ['ed-img-mirror', 'ed-wrap-aspect', 'ed-wrap-sides', 'ed-wrap-drop2nd'].forEach(id => { const el = document.getElementById(id); if (el) el.onchange = () => { document.getElementById('ed-wrap-sy').disabled = document.getElementById('ed-wrap-aspect').checked; drawImagePreview(); }; });
     const closeImgModal = () => { imgBitmap = null; imgModal.classList.remove('active'); update3D(true); /* restore the real skin on the model */ };
     document.getElementById('ed-img-cancel').onclick = closeImgModal;
     document.getElementById('ed-img-x2').onclick = closeImgModal;
@@ -968,12 +971,19 @@
       stampAt(t.x, t.y, strokeMode(), true);
       render(); liveUpdate();
     }
+    // Is a modal (image import) or the edit-faces page open? Used to suppress 3D
+    // painting so clicks meant for the modal don't draw on the model behind it.
+    function crModalOpen() {
+      const im = document.getElementById('ed-img-modal'), fm = document.getElementById('ed-faces-mode');
+      return (im && im.classList.contains('active')) || (fm && fm.classList.contains('active'));
+    }
     function attach3DPainting() {
       const c = document.getElementById('ed-3d');
       // Capture phase so we pre-empt the orbit controls: if the click hit a body
       // part we paint (and block the orbit for that drag); if it hit empty space
       // we do nothing and the orbit controls rotate as normal.
       c.addEventListener('pointerdown', (e) => {
+        if (crModalOpen()) return; // a modal (image import, …) is open → don't paint
         const t = texelFromHit(e);
         if (!t) return; // empty space → rotate
         e.preventDefault(); e.stopImmediatePropagation();
@@ -981,7 +991,7 @@
         if (tool !== 'eyedropper' && tool !== 'fill') pushUndo();
         drawing3d = true; paint3D(e, true);
       }, true);
-      c.addEventListener('pointermove', (e) => { if (drawing3d) paint3D(e, false); });
+      c.addEventListener('pointermove', (e) => { if (drawing3d && !crModalOpen()) paint3D(e, false); });
       const end = (e) => { if (drawing3d) { drawing3d = false; try { c.releasePointerCapture(e.pointerId); } catch { } } };
       c.addEventListener('pointerup', end);
       c.addEventListener('pointercancel', end);
