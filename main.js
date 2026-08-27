@@ -2678,12 +2678,17 @@ ipcMain.handle("client-fs:write-nbt", (event, { id, path: rel, json, gzip, type 
 // server.properties can point at http://redstonemc.net:<port>/<player>/<token>/
 // <pack>.zip with a matching sha1. Nothing is stored on the relay.
 function packDir(name) { return path.join(serverRoot(name), "resourcepacks"); }
-function packCfgPath(name) { return path.join(serverRoot(name), "resourcepack-config.json"); }
+// Launcher bookkeeping lives in the meta dir, not in the server folder itself.
+function packCfgPath(name) {
+  const p = path.join(metaDir("servers", name), "resourcepack-config.json");
+  migrateMeta(path.join(serverRoot(name), "resourcepack-config.json"), p);
+  return p;
+}
 function loadPackCfg(name) {
   try { const c = JSON.parse(fs.readFileSync(packCfgPath(name), "utf8")); return { order: c.order || [], required: !!c.required, disabled: c.disabled || [] }; }
   catch { return { order: [], required: false, disabled: [] }; }
 }
-function savePackCfg(name, cfg) { try { fs.mkdirSync(serverRoot(name), { recursive: true }); fs.writeFileSync(packCfgPath(name), JSON.stringify(cfg)); } catch { /* ignore */ } }
+function savePackCfg(name, cfg) { try { const p = packCfgPath(name); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(cfg)); } catch { /* ignore */ } }
 // Ordered, existing .zip packs (order file first, then any not yet listed).
 function packList(name) {
   const dir = packDir(name);
@@ -3962,6 +3967,21 @@ ipcMain.on("open-folder-path", async (event, { pather }) => {
 });
 
 // check tab
+// Launcher-created bookkeeping (the mod index + the legacy hash cache) must NOT
+// live inside mods/ (or any content folder) — those are for the actual content.
+// They go in a per-target metadata dir instead, and any pre-existing copies are
+// migrated out on first access.
+function metaDir(kind, id) { return path.join(dataDir, "meta", kind, String(id)); }
+function tabMetaFile(kind, id, tab, base) { return path.join(metaDir(kind, id), `${tab}.${base}`); }
+function migrateMeta(oldPath, newPath) {
+  try {
+    if (fs.existsSync(oldPath)) {
+      if (!fs.existsSync(newPath)) { fs.mkdirSync(path.dirname(newPath), { recursive: true }); fs.renameSync(oldPath, newPath); }
+      else { try { fs.unlinkSync(oldPath); } catch { /* ignore */ } } // stale in-folder copy
+    }
+  } catch { /* best effort */ }
+}
+
 ipcMain.handle("check-instance-tab", async (event, { profileId, tab }) => {
   const basePath = path.join(dataDir, 'client', profileId.toString(), tab);
   if (!fs.existsSync(basePath)) return false;
@@ -3982,7 +4002,8 @@ ipcMain.handle("get-instance-tab-files", async (event, { profileId, tab }) => {
 ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, filename }) => {
   const basePath = path.join(dataDir, "client", profileId.toString(), tab);
   const fullPath = path.join(basePath, filename);
-  const cacheFile = path.join(basePath, "mods.json");
+  const cacheFile = tabMetaFile("client", profileId, tab, "mods.json");
+  migrateMeta(path.join(basePath, "mods.json"), cacheFile);
 
   if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
     const mcmetaPath = path.join(fullPath, "pack.mcmeta");
@@ -4085,6 +4106,7 @@ ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, fil
 
   // 4️⃣ Save updated cache (safe write)
   try {
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
     fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 2));
   } catch (err) {
     console.warn("Failed to write mods.json:", err);
@@ -4233,7 +4255,8 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
   const enabledPacks = tab === "resourcepacks" ? readEnabledResourcePacks(profileId) : null;
 
   const MOD_INDEX_VERSION = 3; // bump to force a rebuild when the entry shape changes
-  const indexFile = path.join(basePath, MOD_INDEX_FILE);
+  const indexFile = tabMetaFile("client", profileId, tab, "modindex.json");
+  migrateMeta(path.join(basePath, MOD_INDEX_FILE), indexFile);
   let index = { version: MOD_INDEX_VERSION, entries: {} };
   if (fs.existsSync(indexFile)) {
     try {
@@ -4443,7 +4466,7 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     delete r._filename;
   }
 
-  try { fs.writeFileSync(indexFile, JSON.stringify(index)); } catch { /* best effort */ }
+  try { fs.mkdirSync(path.dirname(indexFile), { recursive: true }); fs.writeFileSync(indexFile, JSON.stringify(index)); } catch { /* best effort */ }
   return results;
 });
 
