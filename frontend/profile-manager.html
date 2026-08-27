@@ -387,8 +387,9 @@
     </div>
   </div>
 
-  <!-- Apply-to-Mojang button, bottom-left -->
+  <!-- Apply-to-Mojang buttons, bottom-left -->
   <button id="applySkinBtn" style="display:none; position:fixed; bottom:20px; left:90px; z-index:1500; background:var(--base-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 22px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Apply skin</button>
+  <button id="applyCapeBtn" style="display:none; position:fixed; bottom:20px; left:230px; z-index:1500; background:var(--base-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 22px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Apply cape</button>
   <script src="skinview3d.bundle.js"></script>
   <script>
     function createSkinCanvas(skin) {
@@ -689,38 +690,53 @@
 
       refreshSelectionUI();
 
-      // ---- Capes: a "None" card to disable, then the owned capes ----
-      const noneCard = createCard("None (disable)", async () => {
-        try {
-          await ipcRenderer.invoke("mc:disableCape");
-          if (window.skinViewer && window.skinViewer.loadCape) window.skinViewer.loadCape(null);
-          updateSKin();
-        } catch (err) { console.error("disable cape fail:", err); }
-      }, null);
-      if (!activeCape) noneCard.classList.add("selected");
+      // ---- Capes: a "None" card to disable, then the owned capes. Clicking a
+      // cape TEMP-selects it (preview only); "Apply cape" commits it, like skins.
+      activeCapeId = activeCape ? activeCape.id : null;
+      const noneCard = createCard("None (disable)", () => selectCape({ id: null }), null);
+      noneCard.dataset.capeid = "__none__";
       capesDiv.appendChild(noneCard);
 
-      // Dedup owned capes by id so the active one doesn't appear twice.
       const seenCapes = new Set();
       (profile.capes || []).filter(c => { if (seenCapes.has(c.id)) return false; seenCapes.add(c.id); return true; }).forEach(cape => {
         const preview = createCapeCanvas(cape);
-        const card = createCard(
-          cape.alias || "Cape",
-          () => ipcRenderer.invoke("mc:applyCape", cape.id)
-            .then(() => {
-              if (window.skinViewer) {
-                const capeUrl = cape.base64 ? ("data:image/png;base64," + cape.base64) : cape.url;
-                window.skinViewer.loadCape(capeUrl);
-              }
-              updateSKin();
-            })
-            .catch(err => console.error("cape fail:", err)),
-          preview
-        );
-        if (activeCape && cape.id === activeCape.id) card.classList.add("selected");
+        const capeUrl = cape.base64 ? ("data:image/png;base64," + cape.base64) : cape.url;
+        const card = createCard(cape.alias || "Cape", () => selectCape({ id: cape.id, url: capeUrl }), preview);
+        card.dataset.capeid = String(cape.id);
         capesDiv.appendChild(card);
       });
+      refreshCapeUI();
     }
+    let pendingCape = null;   // { id, url } chosen but not applied; id null = disable
+    let activeCapeId = null;
+    function selectCape(cape) {
+      pendingCape = cape;
+      try { if (window.skinViewer && window.skinViewer.loadCape) window.skinViewer.loadCape(cape.id ? cape.url : null); } catch { }
+      refreshCapeUI();
+    }
+    function refreshCapeUI() {
+      const cards = [...document.querySelectorAll('#capes .card[data-capeid]')];
+      cards.forEach(c => c.classList.remove("selected"));
+      const wantId = pendingCape ? pendingCape.id : activeCapeId;
+      const key = wantId == null ? "__none__" : String(wantId);
+      const match = cards.find(c => c.dataset.capeid === key);
+      if (match) match.classList.add("selected");
+      const changed = pendingCape && (pendingCape.id || null) !== (activeCapeId || null);
+      document.getElementById('applyCapeBtn').style.display = changed ? "" : "none";
+    }
+    document.getElementById('applyCapeBtn').onclick = async () => {
+      if (!pendingCape) return;
+      const btn = document.getElementById('applyCapeBtn'); const label = btn.textContent;
+      btn.disabled = true; btn.textContent = "Applying…";
+      try {
+        if (pendingCape.id) await ipcRenderer.invoke("mc:applyCape", pendingCape.id);
+        else await ipcRenderer.invoke("mc:disableCape");
+        activeCapeId = pendingCape.id || null;
+        pendingCape = null;
+        await updateSKin();
+      } catch (err) { alert("Failed to apply cape: " + (err.message || err)); }
+      finally { btn.disabled = false; btn.textContent = label; }
+    };
 
     function iconEl(name) {
       const i = document.createElement("i");
