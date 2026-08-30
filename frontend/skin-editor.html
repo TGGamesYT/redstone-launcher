@@ -271,6 +271,8 @@
         <button class="cr-round" id="cr-save" title="Save to library"><i class="material-icons">save</i></button>
         <button class="cr-round" id="cr-random" title="Randomize"><i class="material-icons">casino</i></button>
         <button class="cr-round" id="cr-reset" title="Reset"><i class="material-icons">restart_alt</i></button>
+        <button class="cr-round" id="cr-savecode" title="Copy skin code link"><i class="material-icons">link</i></button>
+        <button class="cr-round" id="cr-loadcode" title="Load a skin code / link"><i class="material-icons">input</i></button>
       </div>
     </div>
     <div id="cr-cats"></div>
@@ -1404,6 +1406,42 @@
     let crInfo = null, crViewer = null, crActiveCat = null, crGenTimer = null, crGenSeq = 0;
     let crName = 'My skin';
     let crState = { ...CR_DEFAULT };
+    // The full default option set, in the SAME order the Starlight skin code uses
+    // (positional). Used to encode/decode skin codes exactly like the site.
+    const CR_FULL_DEFAULT = {
+      base_texture: 'male', base_color: 'tan', skin_type: 'wide', eyes_alignment: 'middle', eyes_texture: 'none', eyes_color: 'gray', eyes_color_secondary: 'white',
+      hair_style_texture: 'none', hair_style_color: 'brown', face_item_texture: 'none', face_item_color: 'black', top_texture: 'none', top_color: 'black',
+      top_designs_texture: 'none', top_designs_color: 'purple', bottom_texture: 'none', bottom_color: 'gray', footwear_texture: 'none', footwear_color: 'red',
+      outerwear_texture: 'none', outerwear_color: 'red', eyebrow_texture: 'none', eyebrow_color: 'brown', headwear_texture: 'none', headwear_color: 'yellow',
+      mouth_alignment: 'high', mouth_texture: 'none', mouth_color: 'tan', facial_hair_texture: 'none', facial_hair_color: 'brown', socks_texture: 'none', socks_color: 'gray',
+      gloves_texture: 'none', gloves_color: 'brown', top_color_secondary: 'white', outerwear_color_secondary: 'gray', bottom_color_secondary: 'black',
+      socks_color_secondary: 'purple', gloves_color_secondary: 'red', footwear_color_secondary: 'white', ears_texture: 'none', ears_color: 'gray',
+      ears_color_secondary: 'white', base_color_secondary: 'light_gray', makeup_texture: 'none', makeup_color: 'gray', makeup_color_secondary: 'gray',
+      headwear_color_secondary: 'purple', hair_style_color_secondary: 'black', hair_extension_front_texture: 'none', hair_extension_back_texture: 'none',
+      hair_texture: 'neat', hair_pattern_texture: 'none', face_item_color_secondary: 'white', middlewear_texture: 'none', middlewear_color: 'red', middlewear_color_secondary: 'gray',
+    };
+    const CR_CODE_ORDER = Object.keys(CR_FULL_DEFAULT);
+    function crEncodeCode() {
+      const full = { ...CR_FULL_DEFAULT, ...crState };
+      const arr = CR_CODE_ORDER.map(k => {
+        if (k === 'skin_type') { try { return crInfo.cosmetics.skin_type[full[k]].id; } catch { return full[k] === 'slim' ? 2 : 1; } }
+        if (k.endsWith('_texture')) { try { return crInfo.cosmetics[k + 's'][full[k]].id; } catch { return 0; } }
+        return full[k];
+      });
+      return btoa(JSON.stringify(arr));
+    }
+    function crDecodeCode(code) {
+      let arr; try { arr = JSON.parse(atob(code)); } catch { return null; }
+      if (!Array.isArray(arr)) return null;
+      const state = {};
+      CR_CODE_ORDER.forEach((k, i) => {
+        const v = arr[i]; if (v === undefined) return;
+        if (k === 'skin_type') { const st = crInfo.cosmetics.skin_type; const name = Object.keys(st).find(n => st[n].id === v); state[k] = name || (v === 2 ? 'slim' : 'wide'); }
+        else if (k.endsWith('_texture')) { const list = crInfo.cosmetics[k + 's'] || {}; const name = Object.keys(list).find(n => list[n].id === v); state[k] = name || 'none'; }
+        else state[k] = v;
+      });
+      return state;
+    }
     const crTitle = (s) => String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     const crCosProps = (list, name) => { try { return crInfo.cosmetics[list][name] || {}; } catch { return {}; } };
     const crTexList = (list) => { try { return Object.keys(crInfo.cosmetics[list]); } catch { return []; } };
@@ -1628,6 +1666,25 @@
     document.getElementById('cr-save').onclick = crSave;
     document.getElementById('cr-random').onclick = crRandomize;
     document.getElementById('cr-reset').onclick = () => { crState = { ...CR_DEFAULT }; if (crActiveCat) renderCatOptions(crActiveCat); crGenerate(); };
+    // Save skin code: copy a shareable Starlight link to the clipboard.
+    document.getElementById('cr-savecode').onclick = async () => {
+      try {
+        const link = `https://starlightskins.lunareclipse.studio/apps/skin-creator?skinCode=${crEncodeCode()}`;
+        await navigator.clipboard.writeText(link);
+        const b = document.getElementById('cr-savecode'); const html = b.innerHTML; b.innerHTML = '<i class="material-icons">check</i>'; setTimeout(() => b.innerHTML = html, 1200);
+      } catch (e) { alert('Copy failed: ' + (e.message || e)); }
+    };
+    // Load skin code: accepts a full link or just the code.
+    document.getElementById('cr-loadcode').onclick = async () => {
+      const raw = await edAskText('Load a skin code', 'Paste a skin code or link');
+      if (!raw) return;
+      const code = raw.replace(/^.*skinCode=/, '').replace(/[&#].*$/, '').replace(/%3D/gi, '=').trim();
+      const state = crDecodeCode(code);
+      if (!state) { alert('That doesn\'t look like a valid skin code.'); return; }
+      crState = { ...CR_DEFAULT, ...state };
+      if (crActiveCat) renderCatOptions(crActiveCat);
+      crGenerate();
+    };
 
     // ── Mode switch: simple creator ⇆ advanced editor ──
     // `workFromCreator` tracks whether the current texture came straight from the
