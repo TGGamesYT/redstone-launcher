@@ -6324,6 +6324,41 @@ ipcMain.handle("skins:fetchByName", async (event, name) => {
   } catch (e) { return { error: e.message }; }
 });
 
+// Download a skin PNG from any URL and return it as base64 (for the skin browser).
+ipcMain.handle("skins:fetchUrl", async (event, { url }) => {
+  try {
+    if (!/^https?:\/\//i.test(String(url || ""))) return { error: "Bad URL" };
+    const res = await fetch(url, { headers: { "User-Agent": LAUNCHER_UA } });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 8 || buf[0] !== 0x89 || buf[1] !== 0x50) return { error: "Not a PNG" };
+    return { base64: buf.toString("base64") };
+  } catch (e) { return { error: e.message }; }
+});
+
+// Browse a public skin library (MineSkin's gallery) — real JSON API. Returns a
+// page of skins with their texture URL (rendered client-side).
+ipcMain.handle("skins:search", async (event, { query, page }) => {
+  try {
+    const p = Math.max(1, parseInt(page, 10) || 1);
+    // MineSkin's gallery has no keyword search, so a query narrows to a name
+    // match on the returned page (best effort); browsing works regardless.
+    const res = await fetch(`https://api.mineskin.org/v2/skins?size=30&page=${p}`, { headers: { "User-Agent": LAUNCHER_UA } });
+    if (!res.ok) return { error: `HTTP ${res.status}`, results: [] };
+    const j = await res.json();
+    let skins = Array.isArray(j.skins) ? j.skins : [];
+    const q = String(query || "").trim().toLowerCase();
+    if (q) skins = skins.filter(s => (s.name || "").toLowerCase().includes(q) || (s.shortId || "").toLowerCase().includes(q));
+    const results = skins.map(s => ({
+      id: s.uuid || s.shortId,
+      title: s.name || ("Skin " + (s.shortId || "")),
+      model: s.variant === "slim" ? "slim" : "classic",
+      skin: s.texture ? `https://textures.minecraft.net/texture/${s.texture}` : s.url,
+    })).filter(s => s.skin);
+    return { results, page: p, more: skins.length >= 30 };
+  } catch (e) { return { error: e.message, results: [] }; }
+});
+
 // Add a skin to the library WITHOUT touching Mojang. No-op (returns existing)
 // if a pixel-identical skin is already saved.
 ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name, editorType, creatorState }) => {
@@ -6345,6 +6380,20 @@ ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name, editorT
   lib[uuid] = arr;
   saveSkinLib(lib);
   return arr;
+});
+
+// Save a skin PNG (base64) into the user's Downloads folder.
+ipcMain.handle("skins:download", (event, { base64, name }) => {
+  try {
+    const b = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
+    if (!b) return { success: false, error: "No image" };
+    const safe = String(name || "skin").replace(/[^a-z0-9_\-]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "skin";
+    const dir = app.getPath("downloads");
+    let dest = path.join(dir, safe + ".png"), i = 1;
+    while (fs.existsSync(dest)) dest = path.join(dir, `${safe}-${i++}.png`);
+    fs.writeFileSync(dest, Buffer.from(b, "base64"));
+    return { success: true, path: dest };
+  } catch (e) { return { success: false, error: e.message }; }
 });
 
 ipcMain.handle("skins:remove", (event, { uuid, id }) => {

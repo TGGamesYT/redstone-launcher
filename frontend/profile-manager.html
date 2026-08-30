@@ -223,6 +223,23 @@
 
     .card .skin-card-actions button:hover { background: var(--base-color); }
     .card .skin-card-actions .material-icons { font-size: 16px; }
+    .add-skin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .add-opt { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 14px 8px; font-family: var(--text-font); }
+    .add-opt:hover { border-color: var(--base-color); }
+    .add-opt .material-icons { font-size: 30px; }
+    .add-opt span { font-size: 14px; font-weight: bold; }
+    .add-opt small { font-size: 11px; opacity: 0.65; }
+    .create-new-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .create-opt { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 12px; font-family: var(--text-font); }
+    .create-opt:hover { border-color: var(--base-color); }
+    .create-opt span { font-size: 14px; font-weight: bold; }
+    .create-opt small { font-size: 11px; opacity: 0.65; }
+    .create-prev { width: 100%; aspect-ratio: 1/1; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    .create-prev canvas, .create-prev img { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
+    .browse-card { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); cursor: pointer; overflow: hidden; aspect-ratio: 3/4; display: flex; align-items: center; justify-content: center; }
+    .browse-card:hover { border-color: var(--base-color); }
+    .browse-card.selected { border-color: var(--base-color); }
+    .browse-card img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
   </style>
 </head>
 
@@ -300,16 +317,60 @@
 
   <!-- Add-skin menu -->
   <div id="addSkinModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2000; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
-    <div class="skin-modal-card" style="width:360px;">
+    <div class="skin-modal-card" style="width:560px; max-width:92%;">
       <h3 style="margin-top:0; margin-bottom:14px;">Add a skin</h3>
-      <div style="display:flex; flex-direction:column; gap:8px;">
-        <button class="pm-btn" id="addUploadBtn" style="text-align:left; display:flex; align-items:center; gap:8px;"><i class="material-icons">upload</i> Upload a skin (PNG)</button>
-        <button class="pm-btn" id="addTemplateBtn" style="text-align:left; display:flex; align-items:center; gap:8px;"><i class="material-icons">person</i> Create new — start from template</button>
-        <button class="pm-btn" id="addEmptyBtn" style="text-align:left; display:flex; align-items:center; gap:8px;"><i class="material-icons">add_box</i> Create new — empty skin</button>
-        <button class="pm-btn" id="addImageBtn" style="text-align:left; display:flex; align-items:center; gap:8px;"><i class="material-icons">image</i> Convert a regular image</button>
+      <div class="add-skin-grid">
+        <button class="add-opt" id="addUploadBtn"><i class="material-icons">upload</i><span>Upload skin</span><small>From a PNG file</small></button>
+        <button class="add-opt" id="addCreateNewBtn"><i class="material-icons">auto_fix_high</i><span>Create new</span><small>Creator, image, or template</small></button>
+        <button class="add-opt" id="addDefaultBtn"><i class="material-icons">groups</i><span>Select default</span><small>Minecraft's default skins</small></button>
+        <button class="add-opt" id="addUsernameBtn"><i class="material-icons">person_search</i><span>By username</span><small>Grab another player's skin</small></button>
+        <button class="add-opt" id="addBrowseBtn"><i class="material-icons">travel_explore</i><span>Browse skins</span><small>Search a skin library</small></button>
       </div>
       <div style="display:flex; gap:8px; margin-top:16px; justify-content:flex-end;">
         <button class="pm-btn" id="addSkinCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create-new sub-modal: three ways to make a new skin, each with a preview. -->
+  <div id="createNewModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2100; backdrop-filter:blur(5px);">
+    <div class="skin-modal-card" style="width:640px; max-width:94%;">
+      <h3 style="margin-top:0; margin-bottom:14px;">Create a new skin</h3>
+      <div class="create-new-grid">
+        <button class="create-opt" id="cnCreate"><div class="create-prev" id="cnCreatePrev"></div><span>Create a skin</span><small>Simple dress-up creator</small></button>
+        <button class="create-opt" id="cnImage"><div class="create-prev" id="cnImagePrev"></div><span>Convert an image</span><small>Wrap a photo onto a skin</small></button>
+        <button class="create-opt" id="cnTemplate"><div class="create-prev" id="cnTemplatePrev"></div><span>From template <span style="opacity:.6;">(advanced)</span></span><small>Blank guide template</small></button>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:16px; justify-content:flex-end;">
+        <button class="pm-btn" id="cnCancel">Back</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- By-username modal -->
+  <div id="usernameModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2100; backdrop-filter:blur(5px);">
+    <div class="skin-modal-card" style="width:420px; max-width:92%;">
+      <h3 style="margin-top:0; margin-bottom:14px;">Add a skin by username</h3>
+      <input id="usernameInput" type="text" placeholder="Minecraft username" style="width:100%; padding:9px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);" />
+      <div id="usernamePreview" style="display:flex; justify-content:center; margin:12px 0; min-height:20px;"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="pm-btn" id="usernameCancel">Cancel</button>
+        <button class="pm-btn" id="usernameAdd" style="background:var(--base-color);">Add to library</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Browse-skins modal -->
+  <div id="browseModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2100; backdrop-filter:blur(5px);">
+    <div class="skin-modal-card" style="width:820px; max-width:96%; height:80vh; display:flex; flex-direction:column;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+        <h3 style="margin:0; flex:1;">Browse skins</h3>
+        <input id="browseSearch" type="text" placeholder="Search skins…" style="flex:2; padding:8px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);" />
+        <button class="pm-btn" id="browseClose">Close</button>
+      </div>
+      <div id="browseBody" style="flex:1; min-height:0; display:flex; gap:12px;">
+        <div id="browseResults" style="flex:1; min-width:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:10px; align-content:start;"></div>
+        <div id="browseDetail" style="flex:0 0 260px; display:none; overflow-y:auto; border-left:2px solid var(--border-dark); padding-left:12px;"></div>
       </div>
     </div>
   </div>
@@ -387,9 +448,8 @@
     </div>
   </div>
 
-  <!-- Apply-to-Mojang buttons, bottom-left -->
-  <button id="applySkinBtn" style="display:none; position:fixed; bottom:20px; left:90px; z-index:1500; background:var(--base-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 22px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Apply skin</button>
-  <button id="applyCapeBtn" style="display:none; position:fixed; bottom:20px; left:230px; z-index:1500; background:var(--base-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 22px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Apply cape</button>
+  <!-- Apply-to-Mojang button, bottom-left. Applies the pending skin and/or cape. -->
+  <button id="applySkinBtn" style="display:none; position:fixed; bottom:20px; left:90px; z-index:1500; background:var(--base-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 22px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Apply</button>
   <script src="skinview3d.bundle.js"></script>
   <script>
     function createSkinCanvas(skin) {
@@ -626,16 +686,13 @@
       skinsDiv.innerHTML = "";
       capesDiv.innerHTML = "";
 
-      // Action cards, in order: Add skin · Default Skins · Reset.
+      // Two action cards: Add skin · Reset skin. (Default skins now live inside
+      // the Add-skin modal's "Select default" option.)
       const uploadCard = createCard("Add skin", openAddSkinMenu, iconEl("add"));
       uploadCard.classList.add("action-card");
       skinsDiv.appendChild(uploadCard);
 
-      const defaultCard = createCard("Default Skins", openDefaultSkinsModal, iconEl("groups"));
-      defaultCard.classList.add("action-card");
-      skinsDiv.appendChild(defaultCard);
-
-      const resetCard = createCard("Reset to Default", resetSkin, iconEl("restart_alt"));
+      const resetCard = createCard("Reset skin", resetSkin, iconEl("restart_alt"));
       resetCard.classList.add("action-card");
       skinsDiv.appendChild(resetCard);
 
@@ -679,10 +736,17 @@
         const renameBtn = document.createElement("button");
         renameBtn.title = "Rename"; renameBtn.appendChild(iconEl("drive_file_rename_outline"));
         renameBtn.onclick = (e) => { e.stopPropagation(); openSkinRename(uuid, skin); };
+        const dlBtn = document.createElement("button");
+        dlBtn.title = "Download to your Downloads folder"; dlBtn.appendChild(iconEl("download"));
+        dlBtn.onclick = async (e) => {
+          e.stopPropagation();
+          const r = await ipcRenderer.invoke("skins:download", { base64: skin.base64, name: skin.name });
+          if (window.notify) window.notify(r && r.success ? "Skin downloaded" : ("Download failed" + (r && r.error ? ": " + r.error : "")), r && r.success ? "success" : "error");
+        };
         const delBtn = document.createElement("button");
         delBtn.title = "Delete"; delBtn.appendChild(iconEl("delete"));
         delBtn.onclick = (e) => { e.stopPropagation(); openSkinDelete(uuid, skin); };
-        acts.append(editBtn, renameBtn, delBtn);
+        acts.append(editBtn, dlBtn, renameBtn, delBtn);
         card.appendChild(acts);
 
         skinsDiv.appendChild(card);
@@ -721,22 +785,9 @@
       const key = wantId == null ? "__none__" : String(wantId);
       const match = cards.find(c => c.dataset.capeid === key);
       if (match) match.classList.add("selected");
-      const changed = pendingCape && (pendingCape.id || null) !== (activeCapeId || null);
-      document.getElementById('applyCapeBtn').style.display = changed ? "" : "none";
+      updateApplyButton();
     }
-    document.getElementById('applyCapeBtn').onclick = async () => {
-      if (!pendingCape) return;
-      const btn = document.getElementById('applyCapeBtn'); const label = btn.textContent;
-      btn.disabled = true; btn.textContent = "Applying…";
-      try {
-        if (pendingCape.id) await ipcRenderer.invoke("mc:applyCape", pendingCape.id);
-        else await ipcRenderer.invoke("mc:disableCape");
-        activeCapeId = pendingCape.id || null;
-        pendingCape = null;
-        await updateSKin();
-      } catch (err) { alert("Failed to apply cape: " + (err.message || err)); }
-      finally { btn.disabled = false; btn.textContent = label; }
-    };
+    const capePending = () => pendingCape && (pendingCape.id || null) !== (activeCapeId || null);
 
     function iconEl(name) {
       const i = document.createElement("i");
@@ -776,30 +827,38 @@
       updateApplyButton();
     }
 
+    const skinPending = () => pendingSelection && pendingSelection.pixelHash && pendingSelection.pixelHash !== activePixelHash;
     function updateApplyButton() {
-      const btn = document.getElementById('applySkinBtn');
-      const show = pendingSelection && pendingSelection.pixelHash && pendingSelection.pixelHash !== activePixelHash;
-      btn.style.display = show ? "" : "none";
+      // One button applies the pending skin and/or cape.
+      const show = skinPending() || (typeof capePending === 'function' && capePending());
+      document.getElementById('applySkinBtn').style.display = show ? "" : "none";
     }
 
     document.getElementById('applySkinBtn').onclick = async () => {
-      if (!pendingSelection) return;
+      if (!skinPending() && !(typeof capePending === 'function' && capePending())) return;
       const btn = document.getElementById('applySkinBtn');
-      const label = btn.textContent;
       btn.disabled = true; btn.textContent = "Applying…";
       try {
-        await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
-        activePixelHash = pendingSelection.pixelHash;
-        // Remember which library skin is now applied so it highlights even if
-        // Mojang re-encodes it (which changes the pixel hash).
-        if (pendingSelection.id != null) localStorage.setItem('appliedSkin_' + currentUuid, String(pendingSelection.id));
-        pendingSelection = null;
-        bustPlayerHead();
+        if (skinPending()) {
+          await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
+          activePixelHash = pendingSelection.pixelHash;
+          // Remember which library skin is now applied so it highlights even if
+          // Mojang re-encodes it (which changes the pixel hash).
+          if (pendingSelection.id != null) localStorage.setItem('appliedSkin_' + currentUuid, String(pendingSelection.id));
+          pendingSelection = null;
+          bustPlayerHead();
+        }
+        if (typeof capePending === 'function' && capePending()) {
+          if (pendingCape.id) await ipcRenderer.invoke("mc:applyCape", pendingCape.id);
+          else await ipcRenderer.invoke("mc:disableCape");
+          activeCapeId = pendingCape.id || null;
+          pendingCape = null;
+        }
         await updateSKin();
       } catch (err) {
-        alert("Failed to apply skin: " + (err.message || err));
+        alert("Failed to apply: " + (err.message || err));
       } finally {
-        btn.disabled = false; btn.textContent = label;
+        btn.disabled = false; btn.textContent = "Apply";
       }
     };
 
@@ -920,9 +979,161 @@
     document.getElementById('addSkinCancelBtn').onclick = closeAddSkinMenu;
     document.getElementById('addSkinModal').addEventListener('mousedown', (e) => { if (e.target.id === 'addSkinModal') closeAddSkinMenu(); });
     document.getElementById('addUploadBtn').onclick = () => { closeAddSkinMenu(); openUploadModal(); };
-    document.getElementById('addTemplateBtn').onclick = () => { closeAddSkinMenu(); openSkinEditor({ mode: 'new', template: 1 }); };
-    document.getElementById('addEmptyBtn').onclick = () => { closeAddSkinMenu(); openSkinEditor({ mode: 'new', template: 0 }); };
-    document.getElementById('addImageBtn').onclick = () => { closeAddSkinMenu(); openSkinEditor({ mode: 'image' }); };
+    document.getElementById('addDefaultBtn').onclick = () => { closeAddSkinMenu(); openDefaultSkinsModal(); };
+    document.getElementById('addCreateNewBtn').onclick = () => { closeAddSkinMenu(); openCreateNewModal(); };
+    document.getElementById('addUsernameBtn').onclick = () => { closeAddSkinMenu(); openUsernameModal(); };
+    document.getElementById('addBrowseBtn').onclick = () => { closeAddSkinMenu(); openBrowseModal(); };
+
+    // ---- Create-new sub-modal (Create skin / Convert image / Template) ----
+    const CN_CREATE_SKIN = { pathSeg: 'male/tan/wide', query: { eyes_texture: 'square', mouth_texture: 'basic', mouth_alignment: 'low', hair_style_texture: 'memo', top_texture: 'medium_striped_shirt', outerwear_texture: 'jacket', bottom_texture: 'high_jeans', footwear_texture: 'boots' } };
+    let cnViewers = [];
+    function miniViewer(el, skinDataUrl, model) {
+      try {
+        el.innerHTML = '';
+        const c = document.createElement('canvas');
+        el.appendChild(c);
+        const v = new skinview3d.SkinViewer({ canvas: c, width: 150, height: 150 });
+        v.loadSkin(skinDataUrl, { model: model === 'slim' ? 'slim' : 'default' });
+        v.zoom = 0.9; try { v.autoRotate = true; v.autoRotateSpeed = 0.6; } catch { }
+        cnViewers.push(v);
+        return v;
+      } catch { el.innerHTML = '<img src="' + skinDataUrl + '">'; }
+    }
+    async function openCreateNewModal() {
+      document.getElementById('createNewModal').style.display = 'flex';
+      cnViewers.forEach(v => { try { v.dispose(); } catch { } }); cnViewers = [];
+      // Template preview.
+      miniViewer(document.getElementById('cnTemplatePrev'), 'assets/template.png', 'classic');
+      // Create-skin preview: generate the showcased simple skin.
+      try {
+        const r = await ipcRenderer.invoke('starlight:generate', CN_CREATE_SKIN);
+        if (r && r.base64) miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + r.base64, 'classic');
+      } catch { }
+      // Convert-image preview: wrap a sample photo the way the tool would.
+      try {
+        const skin = await sampleWrappedSkin();
+        if (skin) miniViewer(document.getElementById('cnImagePrev'), skin, 'classic');
+      } catch { }
+    }
+    function closeCreateNew() { document.getElementById('createNewModal').style.display = 'none'; cnViewers.forEach(v => { try { v.dispose(); } catch { } }); cnViewers = []; }
+    document.getElementById('cnCancel').onclick = closeCreateNew;
+    document.getElementById('createNewModal').addEventListener('mousedown', e => { if (e.target.id === 'createNewModal') closeCreateNew(); });
+    document.getElementById('cnCreate').onclick = () => openSkinEditor({ mode: 'new', template: 0 });
+    document.getElementById('cnImage').onclick = () => openSkinEditor({ mode: 'image' });
+    document.getElementById('cnTemplate').onclick = () => openSkinEditor({ mode: 'new', template: 1 });
+
+    // A quick front-face wrap of a sample photo → a 64×64 skin data URL, for the
+    // convert-image preview (mirrors what the editor's wrap does, front faces).
+    function sampleWrappedSkin() {
+      return new Promise((resolve) => {
+        const im = new Image();
+        im.onload = () => {
+          try {
+            const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+            const c = cv.getContext('2d'); c.imageSmoothingEnabled = true;
+            const bm = im.height / 12, ox = im.width / 2, oy = im.height / 2;
+            const D = (sx, sy, sw, sh, dx, dy, dw, dh) => c.drawImage(im, sx, sy, Math.max(1, sw), Math.max(1, sh), dx, dy, dw, dh);
+            D(ox - bm, oy - 4 * bm, 2 * bm, 2 * bm, 8, 8, 8, 8);         // head front
+            D(ox - bm, oy - 2 * bm, 2 * bm, 3 * bm, 20, 20, 8, 12);      // torso front
+            D(ox + bm, oy - 2 * bm, bm, 3 * bm, 44, 20, 4, 12);          // right arm
+            D(ox - 2 * bm, oy - 2 * bm, bm, 3 * bm, 36, 52, 4, 12);      // left arm
+            D(ox, oy + bm, bm, 3 * bm, 4, 20, 4, 12);                   // right leg
+            D(ox - bm, oy + bm, bm, 3 * bm, 20, 52, 4, 12);             // left leg
+            resolve(cv.toDataURL());
+          } catch { resolve(null); }
+        };
+        im.onerror = () => resolve(null);
+        im.crossOrigin = 'anonymous';
+        im.src = 'https://picsum.photos/256';
+      });
+    }
+
+    // ---- By username ----
+    let usernameFetched = null;
+    function openUsernameModal() { document.getElementById('usernameModal').style.display = 'flex'; usernameFetched = null; document.getElementById('usernamePreview').innerHTML = ''; document.getElementById('usernameInput').value = ''; setTimeout(() => document.getElementById('usernameInput').focus(), 40); }
+    function closeUsernameModal() { document.getElementById('usernameModal').style.display = 'none'; }
+    document.getElementById('usernameCancel').onclick = closeUsernameModal;
+    document.getElementById('usernameModal').addEventListener('mousedown', e => { if (e.target.id === 'usernameModal') closeUsernameModal(); });
+    let usernameTimer = null;
+    document.getElementById('usernameInput').addEventListener('input', () => {
+      clearTimeout(usernameTimer);
+      const name = document.getElementById('usernameInput').value.trim();
+      const prev = document.getElementById('usernamePreview');
+      if (!name) { prev.innerHTML = ''; usernameFetched = null; return; }
+      usernameTimer = setTimeout(async () => {
+        prev.innerHTML = 'Loading…';
+        const r = await ipcRenderer.invoke('skins:fetchByName', name);
+        if (r && r.base64) { usernameFetched = { ...r, name }; prev.innerHTML = ''; miniViewer(prev, 'data:image/png;base64,' + r.base64, r.variant); prev.firstChild && (prev.firstChild.style.margin = '0 auto'); }
+        else { usernameFetched = null; prev.textContent = (r && r.error) || 'Not found'; }
+      }, 450);
+    });
+    document.getElementById('usernameAdd').onclick = async () => {
+      if (!usernameFetched) return;
+      await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + usernameFetched.base64, variant: usernameFetched.variant, name: usernameFetched.name });
+      closeUsernameModal(); updateSKin();
+    };
+
+    // ---- Browse skins (MineSkin gallery). 2D avatar previews; 3D detail. ----
+    let browsePage = 1, browseBusy = false, browseDetailViewer = null;
+    function openBrowseModal() {
+      document.getElementById('browseModal').style.display = 'flex';
+      document.getElementById('browseSearch').value = '';
+      document.getElementById('browseResults').innerHTML = '';
+      document.getElementById('browseDetail').style.display = 'none';
+      browsePage = 1; runBrowse(true);
+    }
+    function closeBrowseModal() { document.getElementById('browseModal').style.display = 'none'; if (browseDetailViewer) { try { browseDetailViewer.dispose(); } catch { } browseDetailViewer = null; } }
+    document.getElementById('browseClose').onclick = closeBrowseModal;
+    document.getElementById('browseModal').addEventListener('mousedown', e => { if (e.target.id === 'browseModal') closeBrowseModal(); });
+    let browseTimer = null;
+    document.getElementById('browseSearch').addEventListener('input', () => { clearTimeout(browseTimer); browseTimer = setTimeout(() => { browsePage = 1; runBrowse(true); }, 400); });
+    async function runBrowse(reset) {
+      if (browseBusy) return; browseBusy = true;
+      const res = document.getElementById('browseResults');
+      if (reset) res.innerHTML = '<div style="opacity:.6;">Loading skins…</div>';
+      const q = document.getElementById('browseSearch').value.trim();
+      const r = await ipcRenderer.invoke('skins:search', { query: q, page: browsePage });
+      if (reset) res.innerHTML = '';
+      // remove any old "load more" button
+      const oldMore = document.getElementById('browseMore'); if (oldMore) oldMore.remove();
+      const results = (r && r.results) || [];
+      if (reset && !results.length) { res.innerHTML = '<div style="opacity:.6;">' + ((r && r.error) || 'No skins found.') + '</div>'; browseBusy = false; return; }
+      results.forEach(item => {
+        const card = document.createElement('div'); card.className = 'browse-card';
+        const cv = createSkinCanvas({ url: item.skin, variant: item.model === 'slim' ? 'SLIM' : 'CLASSIC' });
+        cv.style.width = 'auto'; cv.style.height = '100%';
+        card.appendChild(cv);
+        card.onclick = () => showBrowseDetail(item, card);
+        res.appendChild(card);
+      });
+      if (r && r.more) {
+        const more = document.createElement('button'); more.id = 'browseMore'; more.className = 'pm-btn'; more.textContent = 'Load more';
+        more.style.cssText = 'grid-column:1/-1;'; more.onclick = () => { browsePage++; runBrowse(false); };
+        res.appendChild(more);
+      }
+      browseBusy = false;
+    }
+    function showBrowseDetail(item, card) {
+      document.querySelectorAll('#browseResults .browse-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      const d = document.getElementById('browseDetail'); d.style.display = '';
+      d.innerHTML = `<div id="browseDetail3d" style="width:100%;aspect-ratio:3/4;background:color-mix(in srgb,var(--very-dark) 85%,black);border-radius:var(--border-radius);"></div>
+        <div style="font-weight:bold;margin:8px 0 2px;">${item.title || 'Skin'}</div>
+        <div style="opacity:.65;font-size:12px;margin-bottom:10px;">${item.model === 'slim' ? 'Slim' : 'Classic'} model</div>
+        <button class="pm-btn" id="browseAdd" style="width:100%;background:var(--base-color);">Add to library</button>`;
+      if (browseDetailViewer) { try { browseDetailViewer.dispose(); } catch { } browseDetailViewer = null; }
+      try {
+        const host = document.getElementById('browseDetail3d'); const c = document.createElement('canvas'); host.appendChild(c);
+        browseDetailViewer = new skinview3d.SkinViewer({ canvas: c, width: 236, height: 314 });
+        browseDetailViewer.loadSkin(item.skin, { model: item.model === 'slim' ? 'slim' : 'default' });
+        try { browseDetailViewer.autoRotate = true; browseDetailViewer.autoRotateSpeed = 0.6; } catch { }
+      } catch { }
+      d.querySelector('#browseAdd').onclick = async () => {
+        const r = await ipcRenderer.invoke('skins:fetchUrl', { url: item.skin });
+        if (r && r.base64) { await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + r.base64, variant: item.model === 'slim' ? 'slim' : 'classic', name: item.title || 'Skin' }); closeBrowseModal(); updateSKin(); }
+        else alert('Could not download that skin.' + (r && r.error ? ' ' + r.error : ''));
+      };
+    }
 
     // ---- Upload flow: saves to the local library only (no Mojang) ----
     let pendingSkinBase64 = null;
