@@ -73,18 +73,22 @@
     .efm-top { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
     #efm-3d { width: 300px; height: 380px; background: color-mix(in srgb, var(--very-dark) 85%, black); border-radius: var(--border-radius); flex: 0 0 auto; }
     .efm-target { flex: 1; min-width: 320px; }
-    .efm-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
-    .efm-face { background: color-mix(in srgb, var(--third-color) 55%, transparent); border-radius: var(--border-radius); padding: 6px; text-align: center; font-size: 10px; }
-    .efm-face canvas { width: 100%; aspect-ratio: 1/1; image-rendering: pixelated; border-radius: 4px; display: block; background: repeating-conic-gradient(#0003 0% 25%, transparent 0% 50%) 50% / 12px 12px; cursor: pointer; }
-    .efm-face.pick canvas { outline: 2px solid var(--base-color); }
-    .efm-face .efm-flabel { margin-top: 3px; opacity: 0.8; }
-    .efm-sources { margin-top: 16px; }
-    .efm-src-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-    .efm-src-list { display: flex; gap: 10px; flex-wrap: wrap; }
-    .efm-src { background: color-mix(in srgb, var(--third-color) 55%, transparent); border-radius: var(--border-radius); padding: 8px; width: 150px; }
-    .efm-src.active { outline: 2px solid var(--base-color); }
-    .efm-src canvas { width: 100%; aspect-ratio: 1/1; image-rendering: pixelated; border-radius: 4px; display: block; cursor: pointer; }
-    .efm-src .efm-sname { font-size: 11px; margin-top: 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Front-view body figure: real per-part proportions (no square-stretch). */
+    .efm-body { display: grid; grid-template-columns: auto auto auto; grid-template-rows: auto auto auto; gap: 3px; justify-content: center; align-content: start; }
+    .efm-part { position: relative; }
+    .efm-part canvas { image-rendering: pixelated; border-radius: 3px; display: block; background: repeating-conic-gradient(#0003 0% 25%, transparent 0% 50%) 50% / 10px 10px; }
+    .efm-part.clickable canvas { cursor: pointer; transition: outline .08s; }
+    .efm-part.clickable:hover canvas { outline: 2px solid var(--base-color); }
+    .efm-legs { display: flex; gap: 3px; }
+    .efm-reset { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--border-dark); background: var(--very-dark); color: var(--text-color); cursor: pointer; display: none; align-items: center; justify-content: center; padding: 0; }
+    .efm-part:hover > .efm-reset { display: flex; }
+    .efm-reset i { font-size: 12px; }
+    .efm-sources { margin-top: 20px; }
+    .efm-src-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+    .efm-src-list { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+    .efm-src { background: color-mix(in srgb, var(--third-color) 55%, transparent); border-radius: var(--border-radius); padding: 12px; }
+    .efm-src .efm-sname { font-size: 12px; margin: 8px 0 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+    .efm-src-actions { display: flex; gap: 6px; justify-content: center; }
     /* ── Simple creator (Starlight dress-up), a faithful port. 3D on the left,
        the grouped category list, then the selected category's sections. All
        three columns fill the available height; only the sections scroll. ── */
@@ -323,8 +327,8 @@
     <div class="efm-top">
       <canvas id="efm-3d"></canvas>
       <div class="efm-target">
-        <div class="ed-hint" style="margin:0 0 8px;">Your skin. Pick a source skin below, then click a source face to stamp it onto the matching face here.</div>
-        <div class="efm-faces" id="efm-target-faces"></div>
+        <div class="ed-hint" style="margin:0 0 8px;">Your skin. Add a source skin below and click any of its body parts to copy that whole part here. Hover a part on your skin to reset it to how it was when you opened this screen.</div>
+        <div id="efm-target-faces"></div>
       </div>
     </div>
     <div class="efm-sources">
@@ -1131,60 +1135,84 @@
     // (or whole skins) from other skins — file / library (all accounts) / player
     // name — onto the working skin. Every Minecraft skin shares the same UV layout,
     // so a face copy is just a same-coordinate rect blit. ──
-    const efm = { el: document.getElementById('ed-faces-mode'), viewer: null, sources: [], showOverlay: false };
-    function efmFaceList() { return efm.showOverlay ? FACE_OVERLAY : FACE_BASE; }
-    function efmDrawThumb(cv, srcCanvas, f) {
-      cv.width = f.w; cv.height = f.h;
-      const c = cv.getContext('2d'); c.imageSmoothingEnabled = false;
-      c.clearRect(0, 0, f.w, f.h);
-      c.drawImage(srcCanvas, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+    const efm = { el: document.getElementById('ed-faces-mode'), viewer: null, sources: [], showOverlay: false, original: null };
+    // Whole body parts (base + matching 2nd-layer), laid out like a front-facing
+    // person so proportions read correctly. gc/gr = grid column/row in the figure.
+    const EFM_LAYOUT = [
+      { key: 'Head', ov: 'Hat', gc: 2, gr: 1 },
+      { key: 'R Arm', ov: 'R Arm 2', gc: 1, gr: 2 },
+      { key: 'Body', ov: 'Jacket', gc: 2, gr: 2 },
+      { key: 'L Arm', ov: 'L Arm 2', gc: 3, gr: 2 },
+    ];
+    const EFM_LEG_R = { key: 'R Leg', ov: 'R Leg 2' };
+    const EFM_LEG_L = { key: 'L Leg', ov: 'L Leg 2' };
+    // All faces of a part group (both layers) — copied/reset together so the whole limb moves.
+    function efmPartFaces(part) {
+      return [...FACE_BASE, ...FACE_OVERLAY].filter(f => f.name === part.key || f.name === part.ov);
     }
     function efmRefreshViewer() {
       if (efm.viewer) { try { efm.viewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
     }
-    function efmCopyFaces(src, faces) {
+    function efmStamp(srcCanvas, faces) {
       pushUndo();
-      faces.forEach(f => { wctx.clearRect(f.x, f.y, f.w, f.h); wctx.drawImage(src.canvas, f.x, f.y, f.w, f.h, f.x, f.y, f.w, f.h); });
+      faces.forEach(f => { wctx.clearRect(f.x, f.y, f.w, f.h); wctx.drawImage(srcCanvas, f.x, f.y, f.w, f.h, f.x, f.y, f.w, f.h); });
       render(); liveUpdate(); efmRenderTarget(); efmRefreshViewer();
     }
+    function efmCopyPart(src, part) { efmStamp(src.canvas, efmPartFaces(part)); }
+    function efmResetPart(part) { if (efm.original) efmStamp(efm.original, efmPartFaces(part)); }
+    // Draw one part's FRONT face at real texel proportions, scaled by `sc` px/texel.
+    function efmDrawPart(cv, srcCanvas, part, sc) {
+      const layerName = efm.showOverlay ? part.ov : part.key;
+      const f = FACE_INDEX[`${layerName}|front`]; if (!f) return;
+      cv.width = f.w; cv.height = f.h;
+      cv.style.width = (f.w * sc) + 'px'; cv.style.height = (f.h * sc) + 'px';
+      const c = cv.getContext('2d'); c.imageSmoothingEnabled = false;
+      c.clearRect(0, 0, f.w, f.h);
+      c.drawImage(srcCanvas, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+    }
+    // Build the humanoid figure of one skin. onPart => clickable source; withReset => target hover-reset.
+    function efmBuildFigure(container, srcCanvas, sc, onPart, withReset) {
+      container.innerHTML = '';
+      const fig = document.createElement('div'); fig.className = 'efm-body';
+      const makePart = (part) => {
+        const wrap = document.createElement('div'); wrap.className = 'efm-part' + (onPart ? ' clickable' : '');
+        const cv = document.createElement('canvas'); efmDrawPart(cv, srcCanvas, part, sc);
+        cv.title = part.key;
+        if (onPart) cv.onclick = () => onPart(part);
+        wrap.appendChild(cv);
+        if (withReset) {
+          const rb = document.createElement('button'); rb.className = 'efm-reset'; rb.title = 'Reset ' + part.key;
+          rb.innerHTML = '<i class="material-icons">undo</i>';
+          rb.onclick = (e) => { e.stopPropagation(); efmResetPart(part); };
+          wrap.appendChild(rb);
+        }
+        return wrap;
+      };
+      EFM_LAYOUT.forEach(p => { const w = makePart(p); w.style.gridColumn = p.gc; w.style.gridRow = p.gr; fig.appendChild(w); });
+      const legs = document.createElement('div'); legs.className = 'efm-legs'; legs.style.gridColumn = 2; legs.style.gridRow = 3;
+      legs.appendChild(makePart(EFM_LEG_R)); legs.appendChild(makePart(EFM_LEG_L));
+      fig.appendChild(legs);
+      container.appendChild(fig);
+    }
     function efmRenderTarget() {
-      const g = document.getElementById('efm-target-faces'); if (!g) return; g.innerHTML = '';
-      efmFaceList().forEach(f => {
-        const cell = document.createElement('div'); cell.className = 'efm-face';
-        const cv = document.createElement('canvas'); efmDrawThumb(cv, work, f);
-        const lab = document.createElement('div'); lab.className = 'efm-flabel'; lab.textContent = f.name + ' · ' + f.face;
-        cell.append(cv, lab); g.appendChild(cell);
-      });
+      const g = document.getElementById('efm-target-faces'); if (!g) return;
+      efmBuildFigure(g, work, 6, null, true);
     }
     function efmRenderSources() {
       const list = document.getElementById('efm-src-list'); if (!list) return; list.innerHTML = '';
-      if (!efm.sources.length) { list.innerHTML = '<div class="ed-hint">Add a skin above to copy faces from it.</div>'; return; }
+      if (!efm.sources.length) { list.innerHTML = '<div class="ed-hint">Add a skin above, then click any of its body parts to copy that part onto your skin.</div>'; return; }
       efm.sources.forEach((s, i) => {
-        const card = document.createElement('div'); card.className = 'efm-src' + (s.active ? ' active' : '');
-        const thumb = document.createElement('canvas'); thumb.width = SIZE; thumb.height = SIZE;
-        const tc = thumb.getContext('2d'); tc.imageSmoothingEnabled = false; tc.drawImage(s.canvas, 0, 0);
-        thumb.title = 'Select this skin';
-        thumb.onclick = () => { efm.sources.forEach(x => x.active = false); s.active = true; efmRenderSources(); };
+        const card = document.createElement('div'); card.className = 'efm-src';
+        const fig = document.createElement('div');
+        efmBuildFigure(fig, s.canvas, 4, (part) => efmCopyPart(s, part), false);
         const nm = document.createElement('div'); nm.className = 'efm-sname'; nm.textContent = s.name;
-        card.append(thumb, nm);
-        const bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:4px;margin-top:6px;';
-        const allBtn = document.createElement('button'); allBtn.className = 'ed-btn'; allBtn.style.cssText = 'font-size:11px;padding:5px;'; allBtn.textContent = 'Copy whole skin';
-        allBtn.onclick = () => efmCopyFaces(s, [...FACE_BASE, ...FACE_OVERLAY]);
-        const rm = document.createElement('button'); rm.className = 'ed-btn'; rm.style.cssText = 'font-size:11px;padding:5px;width:auto;'; rm.innerHTML = '<i class="material-icons" style="font-size:15px;">close</i>';
+        const act = document.createElement('div'); act.className = 'efm-src-actions';
+        const allBtn = document.createElement('button'); allBtn.className = 'ed-btn'; allBtn.style.cssText = 'font-size:11px;padding:5px 8px;width:auto;'; allBtn.textContent = 'Copy whole skin';
+        allBtn.onclick = () => efmStamp(s.canvas, [...FACE_BASE, ...FACE_OVERLAY]);
+        const rm = document.createElement('button'); rm.className = 'ed-btn'; rm.style.cssText = 'font-size:11px;padding:5px;width:auto;'; rm.innerHTML = '<i class="material-icons" style="font-size:16px;">close</i>';
         rm.title = 'Remove source'; rm.onclick = () => { efm.sources.splice(i, 1); efmRenderSources(); };
-        bar.append(allBtn, rm); card.append(bar);
-        if (s.active) {
-          const fg = document.createElement('div'); fg.className = 'efm-faces'; fg.style.marginTop = '8px';
-          efmFaceList().forEach(f => {
-            const cell = document.createElement('div'); cell.className = 'efm-face';
-            const cv = document.createElement('canvas'); efmDrawThumb(cv, s.canvas, f);
-            cv.title = 'Copy this face onto your skin';
-            cv.onclick = () => efmCopyFaces(s, [f]);
-            const lab = document.createElement('div'); lab.className = 'efm-flabel'; lab.textContent = f.face;
-            cell.append(cv, lab); fg.appendChild(cell);
-          });
-          card.append(fg);
-        }
+        act.append(allBtn, rm);
+        card.append(fig, nm, act);
         list.appendChild(card);
       });
     }
@@ -1195,8 +1223,7 @@
           const cv = document.createElement('canvas'); cv.width = SIZE; cv.height = SIZE;
           const c = cv.getContext('2d'); c.imageSmoothingEnabled = false;
           if (im.width === 64 && im.height === 32) c.drawImage(im, 0, 0, 64, 32, 0, 0, 64, 32); else c.drawImage(im, 0, 0, SIZE, SIZE);
-          efm.sources.forEach(x => x.active = false);
-          efm.sources.unshift({ name: name || 'Skin', canvas: cv, active: true });
+          efm.sources.unshift({ name: name || 'Skin', canvas: cv });
           efmRenderSources(); res(true);
         };
         im.onerror = () => res(false);
@@ -1205,6 +1232,9 @@
     }
     function openFacesMode() {
       efm.el.classList.add('active');
+      // Snapshot the skin as it is now, so each part can be reset back to this.
+      const oc = document.createElement('canvas'); oc.width = SIZE; oc.height = SIZE;
+      oc.getContext('2d').drawImage(work, 0, 0); efm.original = oc;
       efmRenderTarget(); efmRenderSources();
       if (!efm.viewer && typeof skinview3d !== 'undefined') {
         try { efm.viewer = new skinview3d.SkinViewer({ canvas: document.getElementById('efm-3d'), width: 300, height: 380 }); } catch { }
