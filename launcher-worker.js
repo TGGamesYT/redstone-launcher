@@ -58,8 +58,9 @@ async function runLaunch(cfg) {
   if (!child || !child.pid) { post({ type: "error", error: "The game process failed to start" }); return; }
   try { child.unref(); } catch { /* ignore */ }
   post({ type: "spawned", pid: child.pid });
-  if (child.stdout) child.stdout.on("data", (d) => post({ type: "gamelog", line: d.toString() }));
-  if (child.stderr) child.stderr.on("data", (d) => post({ type: "gamelog", line: d.toString() }));
+  // NOTE: minecraft-launcher-core already forwards the child's stdout AND stderr
+  // through its own "data" event (wired above), so capturing child.stdout/stderr
+  // here as well would emit every game line twice. Don't re-capture them.
   child.on("exit", (code) => post({ type: "exit", pid: child.pid, code }));
   child.on("error", (e) => post({ type: "log", line: "ERROR: " + (e?.message || e) }));
 }
