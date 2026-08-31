@@ -6486,6 +6486,36 @@ ipcMain.handle("skins:search", async (event, { query, after }) => {
   } catch (e) { return { error: e.message, results: [] }; }
 });
 
+// Look up whether a saved multiplayer server (by IP) has a Modrinth "server"
+// project page — Modrinth's minecraft_java_server projects carry the address the
+// server is reachable at. Returns the matching search hit (for the detail page)
+// or null. Prefers an exact address match, falling back to a hostname match.
+ipcMain.handle("modrinth:findServerByIp", async (event, { ip }) => {
+  try {
+    const norm = (a) => String(a || "").trim().toLowerCase().replace(/\s+/g, "").replace(/:25565$/, "");
+    const target = norm(ip); if (!target) return null;
+    const host = target.split(":")[0];
+    const facets = encodeURIComponent(JSON.stringify([["project_type:minecraft_java_server"]]));
+    const url = `https://api.modrinth.com/v2/search?facets=${facets}&limit=20&query=${encodeURIComponent(host)}`;
+    const r = await fetch(url, { headers: { "User-Agent": LAUNCHER_UA } });
+    if (!r.ok) return null;
+    const hits = ((await r.json()).hits) || [];
+    let hostMatch = null;
+    for (const h of hits) {
+      const slug = h.slug || h.project_id;
+      try {
+        const full = await (await fetch(`https://api.modrinth.com/v3/project/${slug}`, { headers: { "User-Agent": LAUNCHER_UA } })).json();
+        const addr = full && full.minecraft_java_server && full.minecraft_java_server.address;
+        if (!addr) continue;
+        const na = norm(addr);
+        if (na === target) return h;                       // exact address match wins
+        if (!hostMatch && na.split(":")[0] === host) hostMatch = h;
+      } catch { /* skip this hit */ }
+    }
+    return hostMatch;
+  } catch { return null; }
+});
+
 // Add a skin to the library WITHOUT touching Mojang. No-op (returns existing)
 // if a pixel-identical skin is already saved.
 ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name, editorType, creatorState }) => {

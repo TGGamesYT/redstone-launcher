@@ -2666,7 +2666,25 @@
                     }
                   });
 
-                  // Row click no longer opens the folder (that was surprising).
+                  // Clicking the row checks if this server has a Modrinth page
+                  // (matched by its address) and, if so, opens that project's
+                  // detail — the same page as the mod browser's Servers tab.
+                  li.style.cursor = "pointer";
+                  li.onclick = async () => {
+                    if (!s.ip) return;
+                    const prev = details.textContent; details.textContent = "Looking up Modrinth page…";
+                    let proj = null;
+                    try { proj = await ipcRenderer.invoke("modrinth:findServerByIp", { ip: s.ip }); } catch { }
+                    details.textContent = prev;
+                    if (proj && proj.project_id) {
+                      localStorage.setItem("selectedModrinthProject", JSON.stringify(proj));
+                      localStorage.setItem("selectedProjectType", "server");
+                      localStorage.removeItem("installTargetInstance");
+                      window.location.href = "modrinth_project.html";
+                    } else if (window.notify) {
+                      window.notify("No Modrinth server page found for this address.", "info");
+                    }
+                  };
                   ul.appendChild(li);
 
                   // Fetch live status → replace the "Pinging…" line and favicon.
