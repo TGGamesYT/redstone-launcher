@@ -137,18 +137,32 @@
     }
 
     /* Highlight the currently-selected skin/cape. */
+    .card { position: relative; }
     .card.selected {
       outline: 3px solid var(--text-color);
       outline-offset: 2px;
     }
 
-    .card.selected::after {
-      content: "✓ Selected";
-      display: block;
-      font-size: 11px;
-      opacity: 0.85;
-      margin-top: 2px;
+    /* Badges (Selected / Pending) overlay the bottom of the image, so they never
+       change the card's height. */
+    .card-img-wrap { position: relative; }
+    .card-badge {
+      position: absolute;
+      left: 6px; right: 6px; bottom: 6px;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff; font-size: 11px; font-weight: bold;
+      border-radius: 6px; padding: 2px 0; text-align: center;
+      pointer-events: none;
     }
+    .card-badge.pending { background: rgba(180, 120, 20, 0.85); }
+
+    /* Add skin · Reset skin take up their own full row above the skins. */
+    .skin-actions-row { flex-basis: 100%; width: 100%; display: flex; gap: 12px; margin: 10px; }
+    .skin-actions-row .card.action-card { flex: 1; width: auto; margin: 0; }
+
+    /* Live 3D spin preview swapped in on hover. */
+    .card-img-wrap .hover-spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+    .card-img-wrap .hover-spin canvas { width: 100% !important; height: 100% !important; }
 
     /* Action cards (Upload / Reset) match the skin cards but read as buttons. */
     .card.action-card {
@@ -361,17 +375,17 @@
   </div>
 
   <!-- Browse-skins modal -->
-  <div id="browseModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2100; backdrop-filter:blur(5px);">
-    <div class="skin-modal-card" style="width:820px; max-width:96%; height:80vh; display:flex; flex-direction:column;">
-      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-        <h3 style="margin:0; flex:1;">Browse skins</h3>
-        <input id="browseSearch" type="text" placeholder="Search skins…" style="flex:2; padding:8px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);" />
-        <button class="pm-btn" id="browseClose">Close</button>
-      </div>
-      <div id="browseBody" style="flex:1; min-height:0; display:flex; gap:12px;">
-        <div id="browseResults" style="flex:1; min-width:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:10px; align-content:start;"></div>
-        <div id="browseDetail" style="flex:0 0 260px; display:none; overflow-y:auto; border-left:2px solid var(--border-dark); padding-left:12px;"></div>
-      </div>
+  <!-- Browse-skins mode: a full-page panel, not a floating card. -->
+  <div id="browseModal" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:var(--very-dark); display:none; flex-direction:column; z-index:2100; padding:16px 22px;">
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+      <button class="pm-btn" id="browseClose" style="display:flex; align-items:center; gap:6px;"><i class="material-icons" style="font-size:18px;">arrow_back</i> Back</button>
+      <h3 style="margin:0;">Browse skins</h3>
+      <input id="browseSearch" type="text" placeholder="Search skins…" style="flex:1; max-width:520px; margin-left:auto; padding:9px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);" />
+    </div>
+    <div id="browseChips" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;"></div>
+    <div id="browseBody" style="flex:1; min-height:0; display:flex; gap:16px;">
+      <div id="browseResults" style="flex:1; min-width:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:12px; align-content:start;"></div>
+      <div id="browseDetail" style="flex:0 0 300px; display:none; overflow-y:auto; border-left:2px solid var(--border-dark); padding-left:16px;"></div>
     </div>
   </div>
 
@@ -554,7 +568,11 @@
       card.onclick = onClick;
 
       if (previewElement) {
-        card.appendChild(previewElement);
+        const wrap = document.createElement("div");
+        wrap.className = "card-img-wrap";
+        wrap.appendChild(previewElement);
+        card.appendChild(wrap);
+        card._imgWrap = wrap;
       }
 
       const label = document.createElement("div");
@@ -563,6 +581,64 @@
       card.appendChild(label);
 
       return card;
+    }
+
+    // Overlay a small badge (Selected / Pending / …) on the bottom of a card's
+    // image, without pushing the card taller. Pass a falsy text to clear it.
+    function setCardBadge(card, text, cls) {
+      const wrap = card && card._imgWrap; if (!wrap) return;
+      let b = wrap.querySelector(".card-badge");
+      if (!text) { if (b) b.remove(); return; }
+      if (!b) { b = document.createElement("div"); wrap.appendChild(b); }
+      b.className = "card-badge" + (cls ? " " + cls : "");
+      b.textContent = text;
+    }
+
+    // ── Hover-to-spin 3D preview. One shared live SkinViewer is moved into the
+    // hovered card (WebGL contexts are limited, so we never create one per card).
+    // On leave it eases back to facing forward, then detaches.
+    let hoverSpin = null; // { host, viewer, raf }
+    function ensureHoverSpin() {
+      if (hoverSpin) return hoverSpin;
+      try {
+        const host = document.createElement("div"); host.className = "hover-spin";
+        const c = document.createElement("canvas");
+        host.appendChild(c);
+        const viewer = new skinview3d.SkinViewer({ canvas: c, width: 120, height: 240 });
+        viewer.zoom = 0.9;
+        hoverSpin = { host, viewer, raf: null, easing: false };
+      } catch { hoverSpin = null; }
+      return hoverSpin;
+    }
+    function attachHoverSpin(card, src, model) {
+      const wrap = card && card._imgWrap; if (!wrap || !src) return;
+      card.addEventListener("mouseenter", () => {
+        const hs = ensureHoverSpin(); if (!hs) return;
+        if (hs.raf) { cancelAnimationFrame(hs.raf); hs.raf = null; }
+        hs.easing = false;
+        try {
+          hs.viewer.loadSkin(src, { model: model === "slim" ? "slim" : "default" });
+          hs.viewer.playerObject.rotation.y = 0;
+          hs.viewer.autoRotate = true; hs.viewer.autoRotateSpeed = 1.0;
+        } catch { }
+        wrap.appendChild(hs.host);
+      });
+      card.addEventListener("mouseleave", () => {
+        const hs = hoverSpin; if (!hs || hs.host.parentNode !== wrap) return;
+        try { hs.viewer.autoRotate = false; } catch { }
+        // Ease the rotation back to front, then detach.
+        hs.easing = true;
+        const step = () => {
+          if (!hs.easing) return;
+          let y = hs.viewer.playerObject.rotation.y;
+          // normalise to [-PI, PI] and move toward 0
+          y = Math.atan2(Math.sin(y), Math.cos(y));
+          if (Math.abs(y) < 0.05) { hs.viewer.playerObject.rotation.y = 0; if (hs.host.parentNode) hs.host.parentNode.removeChild(hs.host); hs.easing = false; hs.raf = null; return; }
+          hs.viewer.playerObject.rotation.y = y * 0.72;
+          hs.raf = requestAnimationFrame(step);
+        };
+        hs.raf = requestAnimationFrame(step);
+      });
     }
 
     players = [];
@@ -633,11 +709,15 @@
         if (window.skinViewer) {
           window.skinViewer.dispose();
         }
+        // Fill the available column height; keep the canvas narrow enough that the
+        // player never clips into the left/right edges (and zoom out a touch).
+        const vh = Math.max(520, Math.min(window.innerHeight - 70, 900));
         window.skinViewer = new skinview3d.SkinViewer({
           canvas: document.getElementById("skin_container"),
-          width: 600,
-          height: 800
+          width: Math.round(vh * 0.5),
+          height: vh
         });
+        try { window.skinViewer.zoom = 0.82; } catch { }
 
         if (pendingSelection) {
           window.skinViewer.loadSkin("data:image/png;base64," + pendingSelection.base64, { model: pendingSelection.variant === "slim" ? "slim" : "default" });
@@ -686,15 +766,16 @@
       skinsDiv.innerHTML = "";
       capesDiv.innerHTML = "";
 
-      // Two action cards: Add skin · Reset skin. (Default skins now live inside
-      // the Add-skin modal's "Select default" option.)
+      // Two action cards: Add skin · Reset skin — filling their own full row.
+      const actionsRow = document.createElement("div");
+      actionsRow.className = "skin-actions-row";
       const uploadCard = createCard("Add skin", openAddSkinMenu, iconEl("add"));
       uploadCard.classList.add("action-card");
-      skinsDiv.appendChild(uploadCard);
-
-      const resetCard = createCard("Reset skin", resetSkin, iconEl("restart_alt"));
+      const resetCard = createCard("Reset skin", () => selectReset(), iconEl("restart_alt"));
       resetCard.classList.add("action-card");
-      skinsDiv.appendChild(resetCard);
+      resetCard.dataset.reset = "1";
+      actionsRow.append(uploadCard, resetCard);
+      skinsDiv.appendChild(actionsRow);
 
       // Saved local library. Clicking selects locally (no upload); Apply applies.
       // Dedup any pixel-identical entries left over from older versions.
@@ -718,6 +799,20 @@
         const card = createCard(`Current skin (${variantLabel(av)})`, () => selectSkin({ base64: activeSkinB64, variant: av, name: "Current skin", pixelHash: activePixelHash, id: "__active__" }), preview);
         card.dataset.pixelhash = activePixelHash || "";
         card.dataset.skinid = "__active__";
+        // Not in the library yet — offer a single "+" to save it, rather than the
+        // usual edit/download/rename/delete row.
+        const acts = document.createElement("div");
+        acts.className = "skin-card-actions";
+        const addBtn = document.createElement("button");
+        addBtn.title = "Add this skin to your library"; addBtn.appendChild(iconEl("add"));
+        addBtn.onclick = async (e) => {
+          e.stopPropagation();
+          await ipcRenderer.invoke("skins:add", { uuid, base64: "data:image/png;base64," + activeSkinB64, variant: av, name: "My skin" });
+          await updateSKin();
+        };
+        acts.appendChild(addBtn);
+        card.appendChild(acts);
+        attachHoverSpin(card, "data:image/png;base64," + activeSkinB64, av);
         skinsDiv.appendChild(card);
       }
 
@@ -748,6 +843,7 @@
         delBtn.onclick = (e) => { e.stopPropagation(); openSkinDelete(uuid, skin); };
         acts.append(editBtn, dlBtn, renameBtn, delBtn);
         card.appendChild(acts);
+        attachHoverSpin(card, "data:image/png;base64," + skin.base64, skin.variant === "slim" ? "slim" : "classic");
 
         skinsDiv.appendChild(card);
       });
@@ -780,11 +876,11 @@
     }
     function refreshCapeUI() {
       const cards = [...document.querySelectorAll('#capes .card[data-capeid]')];
-      cards.forEach(c => c.classList.remove("selected"));
+      cards.forEach(c => { c.classList.remove("selected"); if (!c.dataset.pending) setCardBadge(c, ""); });
       const wantId = pendingCape ? pendingCape.id : activeCapeId;
       const key = wantId == null ? "__none__" : String(wantId);
       const match = cards.find(c => c.dataset.capeid === key);
-      if (match) match.classList.add("selected");
+      if (match) { match.classList.add("selected"); if (!match.dataset.pending) setCardBadge(match, "✓ Selected"); }
       updateApplyButton();
     }
     const capePending = () => pendingCape && (pendingCape.id || null) !== (activeCapeId || null);
@@ -808,7 +904,15 @@
     // the active Mojang skin. Only the first match is marked.
     function refreshSelectionUI() {
       const cards = [...document.querySelectorAll('#skins .card[data-skinid]')];
-      cards.forEach(c => c.classList.remove("selected"));
+      cards.forEach(c => { c.classList.remove("selected"); setCardBadge(c, ""); });
+      const resetCard = document.querySelector('#skins .card[data-reset]');
+      if (resetCard) { resetCard.classList.remove("selected"); }
+      // Pending "reset to default" wins.
+      if (pendingSelection && pendingSelection.reset) {
+        if (resetCard) resetCard.classList.add("selected");
+        updateApplyButton();
+        return;
+      }
       let match = null;
       if (pendingSelection && pendingSelection.id != null) {
         match = cards.find(c => c.dataset.skinid === String(pendingSelection.id));
@@ -823,11 +927,11 @@
         const appliedId = localStorage.getItem('appliedSkin_' + (currentUuid || ''));
         if (appliedId) match = cards.find(c => c.dataset.skinid === appliedId);
       }
-      if (match) match.classList.add("selected");
+      if (match) { match.classList.add("selected"); setCardBadge(match, "✓ Selected"); }
       updateApplyButton();
     }
 
-    const skinPending = () => pendingSelection && pendingSelection.pixelHash && pendingSelection.pixelHash !== activePixelHash;
+    const skinPending = () => pendingSelection && (pendingSelection.reset || (pendingSelection.pixelHash && pendingSelection.pixelHash !== activePixelHash));
     function updateApplyButton() {
       // One button applies the pending skin and/or cape.
       const show = skinPending() || (typeof capePending === 'function' && capePending());
@@ -840,11 +944,16 @@
       btn.disabled = true; btn.textContent = "Applying…";
       try {
         if (skinPending()) {
-          await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
-          activePixelHash = pendingSelection.pixelHash;
-          // Remember which library skin is now applied so it highlights even if
-          // Mojang re-encodes it (which changes the pixel hash).
-          if (pendingSelection.id != null) localStorage.setItem('appliedSkin_' + currentUuid, String(pendingSelection.id));
+          if (pendingSelection.reset) {
+            await ipcRenderer.invoke("mc:resetSkin");
+            if (currentUuid) localStorage.removeItem('appliedSkin_' + currentUuid);
+          } else {
+            await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
+            activePixelHash = pendingSelection.pixelHash;
+            // Remember which library skin is now applied so it highlights even if
+            // Mojang re-encodes it (which changes the pixel hash).
+            if (pendingSelection.id != null) localStorage.setItem('appliedSkin_' + currentUuid, String(pendingSelection.id));
+          }
           pendingSelection = null;
           bustPlayerHead();
         }
@@ -862,14 +971,19 @@
       }
     };
 
-    async function resetSkin() {
-      try {
-        await ipcRenderer.invoke("mc:resetSkin");
-        if (currentUuid) localStorage.removeItem('appliedSkin_' + currentUuid);
-        pendingSelection = null;
-        bustPlayerHead();
-        await updateSKin();
-      } catch (err) { alert("Reset failed: " + (err.message || err)); }
+    // Reset is now a pending action: it only takes effect when Apply is pressed,
+    // like selecting a skin. Previews the Mojang default skin meanwhile.
+    async function selectReset() {
+      pendingSelection = { reset: true };
+      if (!defaultSkinsCache.length) { try { defaultSkinsCache = (await ipcRenderer.invoke("mc:getDefaultSkins")) || []; } catch { } }
+      const def = defaultSkinsCache.find(d => d.model !== 'slim') || defaultSkinsCache[0];
+      if (window.skinViewer) {
+        try {
+          if (def) window.skinViewer.loadSkin("data:image/png;base64," + def.base64, { model: def.model === 'slim' ? 'slim' : 'default' });
+          else window.skinViewer.loadSkin("https://mc-heads.net/skin/MHF_Steve");
+        } catch { }
+      }
+      refreshSelectionUI();
     }
 
     // Force the sidebar player head to re-fetch after a skin change (the URL is
@@ -985,8 +1099,12 @@
     document.getElementById('addBrowseBtn').onclick = () => { closeAddSkinMenu(); openBrowseModal(); };
 
     // ---- Create-new sub-modal (Create skin / Convert image / Template) ----
-    const CN_CREATE_SKIN = { pathSeg: 'male/tan/wide', query: { eyes_texture: 'square', mouth_texture: 'basic', mouth_alignment: 'low', hair_style_texture: 'memo', top_texture: 'medium_striped_shirt', outerwear_texture: 'jacket', bottom_texture: 'high_jeans', footwear_texture: 'boots' } };
+    // The showcased "Create a skin" skin, as a Starlight skin code (also preloaded
+    // into the simple creator when the tile is clicked).
+    const CN_CREATE_CODE = 'WzgsInRhbiIsMSwibWlkZGxlIiwzLCJncmF5Iiwid2hpdGUiLDEyLCJicm93biIsMCwiYmxhY2siLDIwLCJsaWdodF9ibHVlIiwwLCJwdXJwbGUiLDksImxpZ2h0X2JsdWUiLDEsImJyb3duIiw0LCJncmF5IiwwLCJicm93biIsMCwieWVsbG93IiwibG93IiwxLCJ0YW4iLDAsImJyb3duIiwwLCJibGFjayIsMCwiYnJvd24iLCJ3aGl0ZSIsImdyYXkiLCJibGFjayIsInB1cnBsZSIsInJlZCIsIndoaXRlIiwwLCJncmF5Iiwid2hpdGUiLCJsaWdodF9ncmF5IiwwLCJncmF5IiwiZ3JheSIsInB1cnBsZSIsImJsYWNrIiwwLDAsMSwwLCJ3aGl0ZSIsMCwicmVkIiwiZ3JheSJd';
     let cnViewers = [];
+    // A skinview3d preview that faces forward by default and only spins while
+    // hovered (mirrors the skins page), easing back to front on leave.
     function miniViewer(el, skinDataUrl, model) {
       try {
         el.innerHTML = '';
@@ -994,8 +1112,15 @@
         el.appendChild(c);
         const v = new skinview3d.SkinViewer({ canvas: c, width: 150, height: 150 });
         v.loadSkin(skinDataUrl, { model: model === 'slim' ? 'slim' : 'default' });
-        v.zoom = 0.9; try { v.autoRotate = true; v.autoRotateSpeed = 0.6; } catch { }
+        v.zoom = 0.9; try { v.autoRotate = false; v.playerObject.rotation.y = 0; } catch { }
         cnViewers.push(v);
+        let raf = null;
+        el.addEventListener('mouseenter', () => { if (raf) { cancelAnimationFrame(raf); raf = null; } try { v.autoRotate = true; v.autoRotateSpeed = 1.0; } catch { } });
+        el.addEventListener('mouseleave', () => {
+          try { v.autoRotate = false; } catch { }
+          const step = () => { let y = v.playerObject.rotation.y; y = Math.atan2(Math.sin(y), Math.cos(y)); if (Math.abs(y) < 0.05) { v.playerObject.rotation.y = 0; raf = null; return; } v.playerObject.rotation.y = y * 0.72; raf = requestAnimationFrame(step); };
+          raf = requestAnimationFrame(step);
+        });
         return v;
       } catch { el.innerHTML = '<img src="' + skinDataUrl + '">'; }
     }
@@ -1004,10 +1129,10 @@
       cnViewers.forEach(v => { try { v.dispose(); } catch { } }); cnViewers = [];
       // Template preview.
       miniViewer(document.getElementById('cnTemplatePrev'), 'assets/template.png', 'classic');
-      // Create-skin preview: generate the showcased simple skin.
+      // Create-skin preview: render the showcased skin from its skin code.
       try {
-        const r = await ipcRenderer.invoke('starlight:generate', CN_CREATE_SKIN);
-        if (r && r.base64) miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + r.base64, 'classic');
+        const r = await ipcRenderer.invoke('starlight:generateFromCode', { code: CN_CREATE_CODE });
+        if (r && r.base64) miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + r.base64, r.variant);
       } catch { }
       // Convert-image preview: wrap a sample photo the way the tool would.
       try {
@@ -1018,33 +1143,43 @@
     function closeCreateNew() { document.getElementById('createNewModal').style.display = 'none'; cnViewers.forEach(v => { try { v.dispose(); } catch { } }); cnViewers = []; }
     document.getElementById('cnCancel').onclick = closeCreateNew;
     document.getElementById('createNewModal').addEventListener('mousedown', e => { if (e.target.id === 'createNewModal') closeCreateNew(); });
-    document.getElementById('cnCreate').onclick = () => openSkinEditor({ mode: 'new', template: 0 });
+    document.getElementById('cnCreate').onclick = () => openSkinEditor({ mode: 'new', skinCode: CN_CREATE_CODE });
     document.getElementById('cnImage').onclick = () => openSkinEditor({ mode: 'image' });
     document.getElementById('cnTemplate').onclick = () => openSkinEditor({ mode: 'new', template: 1 });
 
-    // A quick front-face wrap of a sample photo → a 64×64 skin data URL, for the
-    // convert-image preview (mirrors what the editor's wrap does, front faces).
+    // A quick front-face wrap of a locally-drawn sample image → a 64×64 skin data
+    // URL, for the convert-image preview. Drawn in-process so it never depends on
+    // the network (the old picsum fetch was blocked, so the preview came up empty).
+    function sampleSourceImage() {
+      const s = document.createElement('canvas'); s.width = 256; s.height = 256;
+      const g = s.getContext('2d');
+      const grad = g.createLinearGradient(0, 0, 256, 256);
+      grad.addColorStop(0, '#4f7cff'); grad.addColorStop(0.5, '#8b5cf6'); grad.addColorStop(1, '#ec4899');
+      g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+      // a few translucent shapes so the wrap has visible detail
+      g.globalAlpha = 0.35; g.fillStyle = '#ffffff';
+      g.beginPath(); g.arc(90, 90, 46, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#facc15'; g.fillRect(150, 60, 60, 60);
+      g.fillStyle = '#22d3ee'; g.beginPath(); g.moveTo(60, 200); g.lineTo(120, 130); g.lineTo(180, 200); g.closePath(); g.fill();
+      g.globalAlpha = 1;
+      return s;
+    }
     function sampleWrappedSkin() {
       return new Promise((resolve) => {
-        const im = new Image();
-        im.onload = () => {
-          try {
-            const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
-            const c = cv.getContext('2d'); c.imageSmoothingEnabled = true;
-            const bm = im.height / 12, ox = im.width / 2, oy = im.height / 2;
-            const D = (sx, sy, sw, sh, dx, dy, dw, dh) => c.drawImage(im, sx, sy, Math.max(1, sw), Math.max(1, sh), dx, dy, dw, dh);
-            D(ox - bm, oy - 4 * bm, 2 * bm, 2 * bm, 8, 8, 8, 8);         // head front
-            D(ox - bm, oy - 2 * bm, 2 * bm, 3 * bm, 20, 20, 8, 12);      // torso front
-            D(ox + bm, oy - 2 * bm, bm, 3 * bm, 44, 20, 4, 12);          // right arm
-            D(ox - 2 * bm, oy - 2 * bm, bm, 3 * bm, 36, 52, 4, 12);      // left arm
-            D(ox, oy + bm, bm, 3 * bm, 4, 20, 4, 12);                   // right leg
-            D(ox - bm, oy + bm, bm, 3 * bm, 20, 52, 4, 12);             // left leg
-            resolve(cv.toDataURL());
-          } catch { resolve(null); }
-        };
-        im.onerror = () => resolve(null);
-        im.crossOrigin = 'anonymous';
-        im.src = 'https://picsum.photos/256';
+        try {
+          const im = sampleSourceImage();
+          const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+          const c = cv.getContext('2d'); c.imageSmoothingEnabled = true;
+          const bm = im.height / 12, ox = im.width / 2, oy = im.height / 2;
+          const D = (sx, sy, sw, sh, dx, dy, dw, dh) => c.drawImage(im, sx, sy, Math.max(1, sw), Math.max(1, sh), dx, dy, dw, dh);
+          D(ox - bm, oy - 4 * bm, 2 * bm, 2 * bm, 8, 8, 8, 8);         // head front
+          D(ox - bm, oy - 2 * bm, 2 * bm, 3 * bm, 20, 20, 8, 12);      // torso front
+          D(ox + bm, oy - 2 * bm, bm, 3 * bm, 44, 20, 4, 12);          // right arm
+          D(ox - 2 * bm, oy - 2 * bm, bm, 3 * bm, 36, 52, 4, 12);      // left arm
+          D(ox, oy + bm, bm, 3 * bm, 4, 20, 4, 12);                   // right leg
+          D(ox - bm, oy + bm, bm, 3 * bm, 20, 52, 4, 12);             // left leg
+          resolve(cv.toDataURL());
+        } catch { resolve(null); }
       });
     }
 
@@ -1073,42 +1208,51 @@
       closeUsernameModal(); updateSKin();
     };
 
-    // ---- Browse skins (MineSkin gallery). 2D avatar previews; 3D detail. ----
-    let browsePage = 1, browseBusy = false, browseDetailViewer = null;
+    // ---- Browse skins (MineSkin library, keyword search + cursor paging). ----
+    let browseAfter = null, browseBusy = false, browseDetailViewer = null;
+    const BROWSE_CHIPS = ['Knight', 'Anime', 'Ninja', 'Girl', 'Boy', 'Robot', 'Dragon', 'Cute', 'Herobrine', 'Steve'];
     function openBrowseModal() {
       document.getElementById('browseModal').style.display = 'flex';
       document.getElementById('browseSearch').value = '';
       document.getElementById('browseResults').innerHTML = '';
       document.getElementById('browseDetail').style.display = 'none';
-      browsePage = 1; runBrowse(true);
+      const chips = document.getElementById('browseChips'); chips.innerHTML = '';
+      BROWSE_CHIPS.forEach(term => {
+        const b = document.createElement('button'); b.className = 'pm-btn'; b.textContent = term; b.style.fontSize = '12px';
+        b.onclick = () => { document.getElementById('browseSearch').value = term; browseAfter = null; runBrowse(true); };
+        chips.appendChild(b);
+      });
+      browseAfter = null; runBrowse(true);
     }
     function closeBrowseModal() { document.getElementById('browseModal').style.display = 'none'; if (browseDetailViewer) { try { browseDetailViewer.dispose(); } catch { } browseDetailViewer = null; } }
     document.getElementById('browseClose').onclick = closeBrowseModal;
-    document.getElementById('browseModal').addEventListener('mousedown', e => { if (e.target.id === 'browseModal') closeBrowseModal(); });
     let browseTimer = null;
-    document.getElementById('browseSearch').addEventListener('input', () => { clearTimeout(browseTimer); browseTimer = setTimeout(() => { browsePage = 1; runBrowse(true); }, 400); });
+    document.getElementById('browseSearch').addEventListener('input', () => { clearTimeout(browseTimer); browseTimer = setTimeout(() => { browseAfter = null; runBrowse(true); }, 400); });
     async function runBrowse(reset) {
       if (browseBusy) return; browseBusy = true;
       const res = document.getElementById('browseResults');
-      if (reset) res.innerHTML = '<div style="opacity:.6;">Loading skins…</div>';
+      if (reset) res.innerHTML = '<div style="opacity:.6; grid-column:1/-1;">Loading skins…</div>';
       const q = document.getElementById('browseSearch').value.trim();
-      const r = await ipcRenderer.invoke('skins:search', { query: q, page: browsePage });
+      const r = await ipcRenderer.invoke('skins:search', { query: q, after: reset ? null : browseAfter });
       if (reset) res.innerHTML = '';
-      // remove any old "load more" button
       const oldMore = document.getElementById('browseMore'); if (oldMore) oldMore.remove();
       const results = (r && r.results) || [];
-      if (reset && !results.length) { res.innerHTML = '<div style="opacity:.6;">' + ((r && r.error) || 'No skins found.') + '</div>'; browseBusy = false; return; }
+      if (reset && !results.length) { res.innerHTML = '<div style="opacity:.6; grid-column:1/-1;">' + ((r && r.error) || 'No skins found.') + '</div>'; browseBusy = false; return; }
       results.forEach(item => {
+        const cell = document.createElement('div'); cell.style.cssText = 'display:flex; flex-direction:column; gap:4px;';
         const card = document.createElement('div'); card.className = 'browse-card';
         const cv = createSkinCanvas({ url: item.skin, variant: item.model === 'slim' ? 'SLIM' : 'CLASSIC' });
         cv.style.width = 'auto'; cv.style.height = '100%';
         card.appendChild(cv);
         card.onclick = () => showBrowseDetail(item, card);
-        res.appendChild(card);
+        const lab = document.createElement('div'); lab.textContent = item.title; lab.style.cssText = 'font-size:11px; text-align:center; opacity:.8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+        cell.append(card, lab);
+        res.appendChild(cell);
       });
+      browseAfter = (r && r.after) || null;
       if (r && r.more) {
         const more = document.createElement('button'); more.id = 'browseMore'; more.className = 'pm-btn'; more.textContent = 'Load more';
-        more.style.cssText = 'grid-column:1/-1;'; more.onclick = () => { browsePage++; runBrowse(false); };
+        more.style.cssText = 'grid-column:1/-1;'; more.onclick = () => runBrowse(false);
         res.appendChild(more);
       }
       browseBusy = false;

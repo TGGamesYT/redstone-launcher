@@ -1183,6 +1183,9 @@ const LIVE_SCOPE = "service::user.auth.xboxlive.com::MBI_SSL";
 // (or Node's default) User-Agent, returning a bare {"path":...} body. A normal
 // launcher-style UA is required for the Minecraft auth/profile calls to work.
 const LAUNCHER_UA = "RedstoneLauncher/1.15.0 (+https://redstone-launcher.com)";
+// Seed term for the skin browser when no search is typed, so the default view
+// shows named, varied skins rather than the unnamed "latest uploads" firehose.
+const DEFAULT_BROWSE_TERM = "cool";
 let qrLoginAbort = null;
 
 async function msDeviceCodeStart() {
@@ -6278,7 +6281,7 @@ ipcMain.handle("skins:allLibrary", () => {
 // canvases, and the (large) option list is cached.
 const STARLIGHT_BASE = "https://starlightskins.lunareclipse.studio";
 let _starlightInfoCache = null;
-ipcMain.handle("starlight:info", async () => {
+async function _starlightInfo() {
   if (_starlightInfoCache) return _starlightInfoCache;
   const cacheFile = path.join(texturesDir, "starlight-info.json");
   try {
@@ -6290,7 +6293,8 @@ ipcMain.handle("starlight:info", async () => {
     if (fs.existsSync(cacheFile)) { try { return (_starlightInfoCache = JSON.parse(fs.readFileSync(cacheFile, "utf8"))); } catch { } }
     return { error: e.message };
   }
-});
+}
+ipcMain.handle("starlight:info", async () => _starlightInfo());
 // path = "<base_texture>/<base_color>/<skinType>", query = { param: value, ... }.
 ipcMain.handle("starlight:generate", async (event, { pathSeg, query }) => {
   try {
@@ -6300,6 +6304,46 @@ ipcMain.handle("starlight:generate", async (event, { pathSeg, query }) => {
     if (!res.ok) return { error: `HTTP ${res.status}` };
     const buf = Buffer.from(await res.arrayBuffer());
     return { base64: buf.toString("base64") };
+  } catch (e) { return { error: e.message }; }
+});
+
+// Decode a Starlight skin code (positional base64 JSON array) and render it.
+// Order matches the site's definedOptions; textures are stored as their id.
+const STARLIGHT_CODE_ORDER = [
+  "base_texture", "base_color", "skin_type", "eyes_alignment", "eyes_texture", "eyes_color", "eyes_color_secondary",
+  "hair_style_texture", "hair_style_color", "face_item_texture", "face_item_color", "top_texture", "top_color",
+  "top_designs_texture", "top_designs_color", "bottom_texture", "bottom_color", "footwear_texture", "footwear_color",
+  "outerwear_texture", "outerwear_color", "eyebrow_texture", "eyebrow_color", "headwear_texture", "headwear_color",
+  "mouth_alignment", "mouth_texture", "mouth_color", "facial_hair_texture", "facial_hair_color", "socks_texture", "socks_color",
+  "gloves_texture", "gloves_color", "top_color_secondary", "outerwear_color_secondary", "bottom_color_secondary",
+  "socks_color_secondary", "gloves_color_secondary", "footwear_color_secondary", "ears_texture", "ears_color",
+  "ears_color_secondary", "base_color_secondary", "makeup_texture", "makeup_color", "makeup_color_secondary",
+  "headwear_color_secondary", "hair_style_color_secondary", "hair_extension_front_texture", "hair_extension_back_texture",
+  "hair_texture", "hair_pattern_texture", "face_item_color_secondary", "middlewear_texture", "middlewear_color", "middlewear_color_secondary",
+];
+ipcMain.handle("starlight:generateFromCode", async (event, { code }) => {
+  try {
+    const info = await _starlightInfo();
+    if (!info || !info.cosmetics) return { error: "No cosmetics info" };
+    let arr; try { arr = JSON.parse(Buffer.from(String(code || ""), "base64").toString("utf8")); } catch { return { error: "Bad code" }; }
+    if (!Array.isArray(arr)) return { error: "Bad code" };
+    const cos = info.cosmetics;
+    const state = {};
+    STARLIGHT_CODE_ORDER.forEach((k, i) => {
+      const v = arr[i]; if (v === undefined) return;
+      if (k === "skin_type") { const st = cos.skin_type || {}; const name = Object.keys(st).find(n => st[n].id === v); state[k] = name || (v === 2 ? "slim" : "wide"); }
+      else if (k.endsWith("_texture")) { const list = cos[k + "s"] || {}; const name = Object.keys(list).find(n => list[n].id === v); state[k] = name || "none"; }
+      else state[k] = v;
+    });
+    const bt = state.base_texture || "male", bc = state.base_color || "tan", st = state.skin_type || "wide";
+    const pathSeg = `${encodeURIComponent(bt)}/${encodeURIComponent(bc)}/${encodeURIComponent(st)}`;
+    const query = {};
+    Object.keys(state).forEach(k => { if (k === "base_texture" || k === "base_color" || k === "skin_type") return; const v = state[k]; if (v != null && v !== "") query[k] = v; });
+    const qs = new URLSearchParams(query).toString();
+    const res = await fetch(`${STARLIGHT_BASE}/create-skin/${pathSeg}/${qs ? "?" + qs : ""}`);
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const buf = Buffer.from(await res.arrayBuffer());
+    return { base64: buf.toString("base64"), variant: st === "slim" ? "slim" : "classic" };
   } catch (e) { return { error: e.message }; }
 });
 
@@ -6338,24 +6382,28 @@ ipcMain.handle("skins:fetchUrl", async (event, { url }) => {
 
 // Browse a public skin library (MineSkin's gallery) — real JSON API. Returns a
 // page of skins with their texture URL (rendered client-side).
-ipcMain.handle("skins:search", async (event, { query, page }) => {
+ipcMain.handle("skins:search", async (event, { query, after }) => {
   try {
-    const p = Math.max(1, parseInt(page, 10) || 1);
-    // MineSkin's gallery has no keyword search, so a query narrows to a name
-    // match on the returned page (best effort); browsing works regardless.
-    const res = await fetch(`https://api.mineskin.org/v2/skins?size=30&page=${p}`, { headers: { "User-Agent": LAUNCHER_UA } });
+    // MineSkin's gallery: `filter` is the real keyword search, and pagination is
+    // cursor-based (pagination.next.after), not page numbers. When there's no
+    // query we seed with a broad popular term so the default view has named,
+    // varied skins instead of the unnamed "latest uploads" firehose.
+    const q = String(query || "").trim();
+    const params = new URLSearchParams({ size: "36" });
+    params.set("filter", q || DEFAULT_BROWSE_TERM);
+    if (after) params.set("after", String(after));
+    const res = await fetch(`https://api.mineskin.org/v2/skins?${params.toString()}`, { headers: { "User-Agent": LAUNCHER_UA } });
     if (!res.ok) return { error: `HTTP ${res.status}`, results: [] };
     const j = await res.json();
-    let skins = Array.isArray(j.skins) ? j.skins : [];
-    const q = String(query || "").trim().toLowerCase();
-    if (q) skins = skins.filter(s => (s.name || "").toLowerCase().includes(q) || (s.shortId || "").toLowerCase().includes(q));
+    const skins = Array.isArray(j.skins) ? j.skins : [];
     const results = skins.map(s => ({
       id: s.uuid || s.shortId,
       title: s.name || ("Skin " + (s.shortId || "")),
       model: s.variant === "slim" ? "slim" : "classic",
       skin: s.texture ? `https://textures.minecraft.net/texture/${s.texture}` : s.url,
     })).filter(s => s.skin);
-    return { results, page: p, more: skins.length >= 30 };
+    const nextAfter = j.pagination && j.pagination.next && j.pagination.next.after;
+    return { results, after: nextAfter || null, more: !!nextAfter };
   } catch (e) { return { error: e.message, results: [] }; }
 });
 

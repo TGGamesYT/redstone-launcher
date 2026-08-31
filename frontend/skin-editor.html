@@ -159,6 +159,11 @@
     .ed-modal-overlay { position: fixed; inset: 44px 0 0 70px; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); display: none; align-items: center; justify-content: center; z-index: 3000; }
     .ed-modal-overlay.active { display: flex; }
     .ed-modal { background: linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black)); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 18px; width: 420px; max-width: 92%; max-height: 88vh; overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+    /* When the image importer is opened as its own mode (from the "Convert an
+       image" tile), it fills the screen instead of floating as a modal. */
+    .ed-modal-overlay.ed-img-fullmode { background: var(--menu-bg); align-items: stretch; justify-content: stretch; backdrop-filter: none; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal { width: 100%; max-width: none; max-height: none; border: none; border-radius: 0; }
+    .ed-modal-overlay.ed-img-fullmode #ed-img-3d { width: 320px !important; height: 460px !important; flex: 0 0 320px !important; }
     .ed-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .ed-modal-controls select { width: auto; flex: 1; }
   </style>
@@ -378,7 +383,9 @@
     const params = new URLSearchParams(location.search);
     const mode = params.get('mode') || 'new';       // new | edit | image
     const editSkinId = params.get('skinId');
+    const startSkinCode = params.get('skinCode') || null;  // preload the simple creator
     let uuid = params.get('uuid') || null;
+    let imgFullMode = false;                          // image importer opened as its own mode
 
     const SIZE = 64;
     const SCALE = 10;                                 // display px per texel
@@ -856,9 +863,10 @@
       const bm = imgBitmap.height / 12;
       const panX = $v('ed-wrap-px') / 100 * imgBitmap.width * 0.5;
       const panY = $v('ed-wrap-py') / 100 * imgBitmap.height * 0.5;
-      const aspect = document.getElementById('ed-wrap-aspect').checked;
+      // Both zoom sliders always take effect; when aspect is locked they are kept
+      // equal (either one moves both) by the slider handlers below.
       const sizeX = $v('ed-wrap-sx') / 100;
-      const sizeY = aspect ? sizeX : $v('ed-wrap-sy') / 100;
+      const sizeY = $v('ed-wrap-sy') / 100;
       const ox = imgBitmap.width / 2 + panX, oy = imgBitmap.height / 2 + panY;
       const back = document.getElementById('ed-img-mirror').checked;
       const sides = document.getElementById('ed-wrap-sides').value;
@@ -932,18 +940,26 @@
       if (imgViewer) { try { imgViewer.loadSkin(url, { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
       if (viewer) { try { viewer.loadSkin(url, { model: variant === 'slim' ? 'slim' : 'default' }); setTimeout(applyPartVisibility, 20); } catch { } }
     }
-    ['ed-img-x', 'ed-img-y', 'ed-img-scale', 'ed-img-rot', 'ed-img-op', 'ed-wrap-px', 'ed-wrap-py', 'ed-wrap-sx', 'ed-wrap-sy'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = drawImagePreview; });
-    ['ed-img-mirror', 'ed-wrap-aspect', 'ed-wrap-sides', 'ed-wrap-drop2nd'].forEach(id => { const el = document.getElementById(id); if (el) el.onchange = () => { document.getElementById('ed-wrap-sy').disabled = document.getElementById('ed-wrap-aspect').checked; drawImagePreview(); }; });
+    ['ed-img-x', 'ed-img-y', 'ed-img-scale', 'ed-img-rot', 'ed-img-op', 'ed-wrap-px', 'ed-wrap-py'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = drawImagePreview; });
+    // Zoom sliders: when "Lock aspect ratio" is on, moving either one moves both
+    // (they stay synced) and both still take effect on the wrap.
+    const wrapSx = document.getElementById('ed-wrap-sx'), wrapSy = document.getElementById('ed-wrap-sy');
+    wrapSx.oninput = () => { if (document.getElementById('ed-wrap-aspect').checked) wrapSy.value = wrapSx.value; drawImagePreview(); };
+    wrapSy.oninput = () => { if (document.getElementById('ed-wrap-aspect').checked) wrapSx.value = wrapSy.value; drawImagePreview(); };
+    ['ed-img-mirror', 'ed-wrap-aspect', 'ed-wrap-sides', 'ed-wrap-drop2nd'].forEach(id => { const el = document.getElementById(id); if (el) el.onchange = () => { if (document.getElementById('ed-wrap-aspect').checked) wrapSy.value = wrapSx.value; drawImagePreview(); }; });
     const closeImgModal = () => { imgBitmap = null; imgModal.classList.remove('active'); update3D(true); /* restore the real skin on the model */ };
-    document.getElementById('ed-img-cancel').onclick = closeImgModal;
-    document.getElementById('ed-img-x2').onclick = closeImgModal;
+    // Cancelling the importer: in its own full mode, go back to the library; as a
+    // modal over the advanced editor, just close it.
+    const cancelImgModal = () => { if (imgFullMode) { window.location.href = 'profile-manager.html'; return; } closeImgModal(); };
+    document.getElementById('ed-img-cancel').onclick = cancelImgModal;
+    document.getElementById('ed-img-x2').onclick = cancelImgModal;
     function bakeImage() {
       if (!imgBitmap) return;
       pushUndo();
       drawWrap(wctx, 4);
       render(); liveUpdate();
     }
-    document.getElementById('ed-img-bake').onclick = () => { bakeImage(); closeImgModal(); };
+    document.getElementById('ed-img-bake').onclick = () => { bakeImage(); closeImgModal(); if (imgFullMode) { imgFullMode = false; imgModal.classList.remove('ed-img-fullmode'); } };
 
     // ── 3D preview ──
     let viewer = null;
@@ -1145,8 +1161,11 @@
         await loadIntoWork('assets/template.png');
         document.getElementById('ed-title').textContent = 'New skin (from template)';
       } else if (mode === 'image') {
-        // start blank; open the image picker immediately (advanced editor + modal)
+        // Opened from the "Convert an image" tile: the importer is its OWN full
+        // mode (not a floating modal), and cancelling returns to the library.
         document.getElementById('ed-title').textContent = 'Image → skin';
+        imgFullMode = true;
+        document.getElementById('ed-img-modal').classList.add('ed-img-fullmode');
         setTimeout(() => document.getElementById('ed-import').click(), 300);
       } else {
         document.getElementById('ed-title').textContent = 'New skin';
@@ -1619,10 +1638,17 @@
         return;
       }
       crInfo = info;
+      // Preload a skin code passed in the URL (e.g. the "Create a skin" tile's
+      // showcased skin), now that the cosmetics id maps are available to decode it.
+      if (startSkinCode && !crCodeLoaded) {
+        crCodeLoaded = true;
+        try { const st = crDecodeCode(startSkinCode); if (st) crState = { ...CR_DEFAULT, ...st }; } catch { }
+      }
       buildCatTabs();
       selectCat(CR_CATS[0]);
       crGenerate();
     }
+    let crCodeLoaded = false;
     function buildCatTabs() {
       const wrap = document.getElementById('cr-cats'); wrap.innerHTML = '';
       CR_GROUPS.forEach(group => {
