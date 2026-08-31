@@ -1191,9 +1191,13 @@ a:hover {
 
 #profiles-list.grid-mode {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* Cap the column width so a single instance stays a normal tile instead of
+     stretching to fill the whole row; pack tiles from the left. */
+  grid-template-columns: repeat(auto-fill, minmax(170px, 210px));
+  justify-content: start;
+  align-content: start;
   gap: 16px;
-  padding: 10px;
+  padding: 10px 0;
   width: 100%;
   box-sizing: border-box;
 }
@@ -1205,7 +1209,7 @@ a:hover {
   width: 100%;
   max-width: unset;
   margin: 0;
-  aspect-ratio: 1 / 1.3;
+  min-height: 200px;
   justify-content: center;
 }
 
@@ -1245,7 +1249,7 @@ a:hover {
   }
   
   #profiles-list.grid-mode {
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(150px, 190px));
   }
 }
 
