@@ -1785,6 +1785,49 @@
           ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
         }
 
+        // A tiny promise-based text prompt (no native prompt in Electron).
+        function promptText(title, message, def) {
+          return new Promise(resolve => {
+            const ov = document.createElement('div'); ov.className = 'modal-overlay active'; ov.style.zIndex = 6000;
+            ov.innerHTML = `<div class="modal-content" style="max-width:380px;">
+              <div class="modal-header"><h2>${title}</h2></div>
+              ${message ? `<div style="opacity:.75;font-size:13px;margin-bottom:10px;">${message}</div>` : ''}
+              <input id="pt-in" type="text" style="width:100%;" value="${def || ''}" />
+              <div class="modal-actions" style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+                <button type="button" id="pt-cancel">Cancel</button><button type="button" id="pt-ok">OK</button></div></div>`;
+            document.body.appendChild(ov);
+            const inp = ov.querySelector('#pt-in');
+            const done = v => { ov.remove(); resolve(v); };
+            ov.querySelector('#pt-ok').onclick = () => done((inp.value || '').trim() || null);
+            ov.querySelector('#pt-cancel').onclick = () => done(null);
+            ov.addEventListener('mousedown', e => { if (e.target === ov) done(null); });
+            inp.addEventListener('keydown', e => { if (e.key === 'Enter') done((inp.value || '').trim() || null); if (e.key === 'Escape') done(null); });
+            setTimeout(() => { inp.focus(); inp.select(); }, 30);
+          });
+        }
+
+        // "Add dev mod": pick a build-output folder and register it right away,
+        // only prompting for the mod id when it can't be auto-detected.
+        async function quickAddDevMod(type, id, onChange) {
+          const pick = await ipcRenderer.invoke('devmod:pickFolder'); if (!pick || pick.canceled) return;
+          let modId = pick.modId;
+          if (!modId) { modId = await promptText('Mod id', "Couldn't auto-detect the mod id from that folder — enter it:"); if (!modId) return; }
+          const r = await ipcRenderer.invoke('devmod:add', { type, id, folder: pick.folder, modId });
+          if (r && r.swap && r.swap.success === false && r.swap.error) {
+            // Not fatal: it's registered and will hot-swap on the next build.
+            if (window.notify) window.notify('Dev mod registered. ' + r.swap.error, 'info');
+          } else if (window.notify) window.notify('Dev mod registered and swapped in.', 'success');
+          onChange && onChange();
+        }
+
+        // Change the build folder for an existing dev mod (keeps the same mod id).
+        async function changeDevModFolder(type, id, mod, onChange) {
+          const pick = await ipcRenderer.invoke('devmod:pickFolder'); if (!pick || pick.canceled) return;
+          await ipcRenderer.invoke('devmod:remove', { type, id, folder: mod.folder });
+          await ipcRenderer.invoke('devmod:add', { type, id, folder: pick.folder, modId: mod.modId });
+          onChange && onChange();
+        }
+
         // ── Minecraft text-component renderer (resource-pack descriptions) ──
         const MC_LEGACY = { '0':'#000000','1':'#0000AA','2':'#00AA00','3':'#00AAAA','4':'#AA0000','5':'#AA00AA','6':'#FFAA00','7':'#AAAAAA','8':'#555555','9':'#5555FF','a':'#55FF55','b':'#55FFFF','c':'#FF5555','d':'#FF55FF','e':'#FFFF55','f':'#FFFFFF' };
         const MC_NAMED = { black:'#000000', dark_blue:'#0000AA', dark_green:'#00AA00', dark_aqua:'#00AAAA', dark_red:'#AA0000', dark_purple:'#AA00AA', gold:'#FFAA00', gray:'#AAAAAA', grey:'#AAAAAA', dark_gray:'#555555', dark_grey:'#555555', blue:'#5555FF', green:'#55FF55', aqua:'#55FFFF', red:'#FF5555', light_purple:'#FF55FF', yellow:'#FFFF55', white:'#FFFFFF' };
@@ -2314,10 +2357,11 @@
                 if (tabName === "mods") {
                   const dm = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id });
                   if (dm && dm.enabled) {
+                    // Opens the build-folder picker straight away and registers it.
                     const devBtn = document.createElement("button");
                     devBtn.className = "tab-install-btn secondary";
-                    devBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Dev mods`;
-                    devBtn.onclick = () => openDevModsModal("instance", profile.id, () => renderContentTab());
+                    devBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Add dev mod`;
+                    devBtn.onclick = () => quickAddDevMod("instance", profile.id, () => renderContentTab());
                     bar.appendChild(devBtn);
                   }
                 }
@@ -2330,6 +2374,23 @@
                 tabContent.appendChild(bar);
                 const ul = document.createElement("ul");
                 ul.className = "profile-list";
+                // Registered dev mods show at the top of the Mods list as normal
+                // rows, with a change-folder and a remove control.
+                if (tabName === "mods") {
+                  const dmState = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id });
+                  (dmState && dmState.mods || []).forEach(m => {
+                    const li = document.createElement("li");
+                    li.className = "profile-item";
+                    li.style.borderColor = "var(--accent)";
+                    li.innerHTML = `<div class="profile-info"><div class="profile-name"><i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> ${m.modId} <span style="font-size:11px;opacity:.7;">(dev)</span></div><div class="profile-details" style="word-break:break-all;">${m.folder}</div></div>`;
+                    const cf = document.createElement("button"); cf.className = "icon-btn"; cf.title = "Change build folder"; cf.innerHTML = `<i class="material-icons">folder_open</i>`;
+                    cf.onclick = (e) => { e.stopPropagation(); changeDevModFolder("instance", profile.id, m, () => renderContentTab()); };
+                    const rm = document.createElement("button"); rm.className = "icon-btn"; rm.title = "Stop hot-swapping this mod"; rm.innerHTML = `<i class="material-icons">delete</i>`;
+                    rm.onclick = async (e) => { e.stopPropagation(); await ipcRenderer.invoke("devmod:remove", { type: "instance", id: profile.id, folder: m.folder }); renderContentTab(); };
+                    li.append(cf, rm);
+                    ul.appendChild(li);
+                  });
+                }
                 for (const p of fileInfos) ul.appendChild(createContentCard(p, tabName, renderContentTab, running));
                 tabContent.appendChild(ul);
               };

@@ -4948,7 +4948,10 @@ function devModTarget(type, id) {
     let info = null; try { info = serverManager.getServerInfo(id); } catch { /* ignore */ }
     return { modsDir: path.join(dataDir, "servers", String(id), "mods"), loader: String((info && info.type) || "").toLowerCase() };
   }
-  const p = loadProfiles().find(x => String(x.id) === String(id));
+  // Read the profiles file directly (synchronously) — loadProfiles() is async
+  // (returns a Promise), so .find on it would throw. Order doesn't matter here.
+  let p = null;
+  try { const arr = JSON.parse(fs.readFileSync(profilesPath, "utf8")); if (Array.isArray(arr)) p = arr.find(x => String(x.id) === String(id)); } catch { /* ignore */ }
   return { modsDir: path.join(dataDir, "client", String(id), "mods"), loader: String((p && p.loader) || "").toLowerCase() };
 }
 
@@ -4989,17 +4992,22 @@ function swapDevMod(type, id, modId, folder) {
     const jar = newestJar(folder);
     if (!jar) return { success: false, error: "No built jar in that folder yet" };
     const info = readJarModInfo(jar);
-    if (!info || info.id !== modId) return { success: false, error: `Newest jar's mod id (${info && info.id}) ≠ ${modId}` };
     const tgt = devModTarget(type, id);
-    if (tgt.loader && info.loaders && !info.loaders.includes(tgt.loader)) return { success: false, error: `Built for ${info.loaders.join("/")}, not ${tgt.loader}` };
+    // Only hard-fail on a clear loader mismatch. A missing manifest or a differing
+    // declared id is fine — we trust the registered mod id (some dev builds have no
+    // manifest yet, or the id was entered manually).
+    if (info && info.loaders && tgt.loader && !info.loaders.includes(tgt.loader)) return { success: false, error: `Built for ${info.loaders.join("/")}, not ${tgt.loader}` };
     fs.mkdirSync(tgt.modsDir, { recursive: true });
+    // Replace any existing jar of the same mod id (matched by the built jar's
+    // detected id OR our own dev filename) — but it's fine if none exists.
+    const destName = `${modId}-dev.jar`;
     for (const f of fs.readdirSync(tgt.modsDir)) {
       if (!/\.jar(\.disabled)?$/i.test(f)) continue;
       const full = path.join(tgt.modsDir, f);
+      if (f === destName || f === destName + ".disabled") { try { fs.unlinkSync(full); } catch { /* ignore */ } continue; }
       const ex = readJarModInfo(full.replace(/\.disabled$/i, ""));
-      if (ex && ex.id === modId) { try { fs.unlinkSync(full); } catch { /* ignore */ } }
+      if (ex && (ex.id === modId || (info && ex.id === info.id))) { try { fs.unlinkSync(full); } catch { /* ignore */ } }
     }
-    const destName = `${modId}-dev.jar`;
     fs.copyFileSync(jar, path.join(tgt.modsDir, destName));
     return { success: true, jar: path.basename(jar), dest: destName };
   } catch (e) { return { success: false, error: e.message }; }
