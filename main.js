@@ -5754,6 +5754,26 @@ ipcMain.handle("frpc:getCreds", async () => {
 // Throttle token refreshes: refreshing on every call was slow and got the
 // account rate-limited by Mojang.
 let lastAuthRefreshAt = 0;
+// Auth headers for a SPECIFIC account (used by cape redemption, which lets the
+// user pick which premium account receives the cape). Falls back to the selected
+// account when no id is given.
+async function authHeadersFor(id) {
+  const players = await loadPlayers();
+  let obj = players.find(item => String(item.id) === String(id));
+  if (!obj) throw new Error("Account not found");
+  try {
+    const refreshed = await refreshPlayer(obj);
+    if (refreshed?.auth?.access_token) {
+      obj = refreshed;
+      const idx = players.findIndex(p => String(p.id) === String(id));
+      if (idx !== -1) { players[idx] = obj; savePlayers(players); }
+    }
+  } catch { /* use existing token */ }
+  const token = obj?.auth?.access_token;
+  if (!token || token === "0") throw new Error("This account has no valid session — please sign in again");
+  return { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
+}
+
 async function authHeaders() {
   const id = storage.get("selectedPlayerId", null);
   const players = await loadPlayers();
@@ -6135,6 +6155,57 @@ ipcMain.handle("mc:applyCape", async (event, capeId) => {
 
   if (!res.ok) throw new Error(await res.text());
   return true;
+});
+
+// ---- Cape redeem codes -------------------------------------------------------
+// List the premium (Microsoft) accounts a cape code could be redeemed to.
+ipcMain.handle("cape:listAccounts", async () => {
+  const players = await loadPlayers();
+  return players
+    .filter(p => p.type === "microsoft" && p.auth && p.auth.access_token && p.auth.access_token !== "0")
+    .map(p => ({ id: p.id, name: (p.auth && p.auth.name) || p.username }));
+});
+
+// Helper: fetch the owned capes for a given account (for ownership checks).
+async function ownedCapesFor(headers) {
+  try {
+    const res = await fetch("https://api.minecraftservices.com/minecraft/profile", { headers });
+    if (!res.ok) return [];
+    const j = await res.json();
+    return Array.isArray(j.capes) ? j.capes : [];
+  } catch { return []; }
+}
+
+// Look up what a code grants WITHOUT redeeming it, and whether the chosen account
+// already owns that cape. Uses Minecraft's product-voucher endpoint.
+ipcMain.handle("cape:redeemPreview", async (event, { code, accountId }) => {
+  try {
+    const c = String(code || "").trim();
+    if (!c) return { error: "Enter a code." };
+    const headers = await authHeadersFor(accountId);
+    const res = await fetch(`https://api.minecraftservices.com/productvoucher/${encodeURIComponent(c)}`, { headers });
+    if (res.status === 404) return { error: "That code isn't valid or has already been used." };
+    if (!res.ok) return { error: await cleanHttpError(res) };
+    const j = await res.json().catch(() => ({}));
+    // Best-effort extraction of the product / cape name the voucher grants.
+    const productName = j.productName || j.name || (j.product && (j.product.name || j.product.productName)) || (j.items && j.items[0] && j.items[0].name) || "a cape";
+    const owned = await ownedCapesFor(headers);
+    const match = owned.find(cp => productName && (cp.alias || "").toLowerCase() === String(productName).toLowerCase());
+    return { ok: true, productName, capeUrl: match ? (match.url || null) : null, alreadyOwned: !!match };
+  } catch (e) { return { error: e.message }; }
+});
+
+// Actually redeem the code onto the chosen account.
+ipcMain.handle("cape:redeem", async (event, { code, accountId }) => {
+  try {
+    const c = String(code || "").trim();
+    if (!c) return { error: "Enter a code." };
+    const headers = await authHeadersFor(accountId);
+    const res = await fetch(`https://api.minecraftservices.com/productvoucher/${encodeURIComponent(c)}`, { method: "PUT", headers });
+    if (!res.ok) return { error: await cleanHttpError(res) };
+    profileCache.clear();
+    return { ok: true };
+  } catch (e) { return { error: e.message }; }
 });
 
 // Turn any thrown value / error response into a clean string message so the

@@ -389,6 +389,23 @@
     </div>
   </div>
 
+  <!-- Redeem cape code modal -->
+  <div id="redeemModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2100; backdrop-filter:blur(5px);">
+    <div class="skin-modal-card" style="width:440px; max-width:92%;">
+      <h3 style="margin-top:0; margin-bottom:14px;">Redeem a cape code</h3>
+      <label style="display:block; margin-bottom:6px; font-size:13px;">Redeem to account</label>
+      <select id="redeemAccount" style="width:100%; padding:8px; margin-bottom:12px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);"></select>
+      <label style="display:block; margin-bottom:6px; font-size:13px;">Code</label>
+      <input id="redeemInput" type="text" placeholder="XXXXX-XXXXX-XXXXX" style="width:100%; padding:9px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);" />
+      <div id="redeemPreview" style="margin:12px 0; min-height:18px; font-size:13px; display:flex; align-items:center; gap:10px;"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="pm-btn" id="redeemCancel">Cancel</button>
+        <button class="pm-btn" id="redeemCheck">Check</button>
+        <button class="pm-btn" id="redeemConfirm" style="background:var(--base-color); display:none;">Redeem</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Upload skin modal (choose model) -->
   <div id="uploadModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2000; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
     <div class="skin-modal-card">
@@ -858,15 +875,104 @@
       capesDiv.appendChild(noneCard);
 
       const seenCapes = new Set();
+      const ownedCapeNames = new Set();
       (profile.capes || []).filter(c => { if (seenCapes.has(c.id)) return false; seenCapes.add(c.id); return true; }).forEach(cape => {
+        ownedCapeNames.add((cape.alias || "").toLowerCase());
         const preview = createCapeCanvas(cape);
         const capeUrl = cape.base64 ? ("data:image/png;base64," + cape.base64) : cape.url;
         const card = createCard(cape.alias || "Cape", () => selectCape({ id: cape.id, url: capeUrl }), preview);
         card.dataset.capeid = String(cape.id);
         capesDiv.appendChild(card);
       });
+
+      // Pending (redeemed but not-yet-granted) capes: shown blocked, with a
+      // "Pending" badge, until Minecraft actually reports the account owns them.
+      let pend = loadPendingCapes(uuid);
+      if (pend.length) {
+        pend = pend.filter(pc => !ownedCapeNames.has((pc.name || "").toLowerCase()));
+        savePendingCapes(uuid, pend);
+      }
+      pend.forEach(pc => {
+        let preview;
+        if (pc.capeUrl) preview = createCapeCanvas({ url: pc.capeUrl });
+        else { preview = document.createElement("canvas"); preview.width = 10; preview.height = 16; preview.className = "card-image"; preview.style.width = "100%"; }
+        const card = createCard(pc.name || "Cape", () => { if (window.notify) window.notify("This cape is still being granted by Minecraft — try again shortly.", "info"); }, preview);
+        card.style.opacity = "0.6"; card.style.cursor = "default";
+        setCardBadge(card, "Pending", "pending");
+        card.dataset.pending = "1";
+        capesDiv.appendChild(card);
+      });
+
+      // "Redeem a code" card at the very end of the capes row.
+      const redeemCard = createCard("Redeem a code", () => openRedeemModal(uuid), iconEl("redeem"));
+      redeemCard.classList.add("action-card");
+      capesDiv.appendChild(redeemCard);
+
       refreshCapeUI();
     }
+    // Pending capes are tracked client-side per account (Mojang can lag granting).
+    function loadPendingCapes(uuid) { try { return JSON.parse(localStorage.getItem("pendingCapes_" + uuid) || "[]"); } catch { return []; } }
+    function savePendingCapes(uuid, arr) { try { localStorage.setItem("pendingCapes_" + uuid, JSON.stringify(arr)); } catch { } }
+
+    // ---- Redeem cape code ----
+    let redeemUuid = null, redeemChecked = null;
+    async function openRedeemModal(uuid) {
+      redeemUuid = uuid; redeemChecked = null;
+      const modal = document.getElementById("redeemModal");
+      const sel = document.getElementById("redeemAccount");
+      document.getElementById("redeemInput").value = "";
+      document.getElementById("redeemPreview").innerHTML = "";
+      document.getElementById("redeemConfirm").style.display = "none";
+      document.getElementById("redeemCheck").style.display = "";
+      sel.innerHTML = "<option>Loading…</option>";
+      modal.style.display = "flex";
+      try {
+        const accounts = (await ipcRenderer.invoke("cape:listAccounts")) || [];
+        sel.innerHTML = "";
+        accounts.forEach(a => { const o = document.createElement("option"); o.value = a.id; o.textContent = a.name; sel.appendChild(o); });
+        // Default to the currently-selected account.
+        if (selectedplayer != null) sel.value = String(selectedplayer);
+      } catch { sel.innerHTML = "<option>Couldn't load accounts</option>"; }
+      setTimeout(() => document.getElementById("redeemInput").focus(), 40);
+    }
+    function closeRedeemModal() { document.getElementById("redeemModal").style.display = "none"; }
+    document.getElementById("redeemCancel").onclick = closeRedeemModal;
+    document.getElementById("redeemModal").addEventListener("mousedown", e => { if (e.target.id === "redeemModal") closeRedeemModal(); });
+    // Re-checking is required whenever the code or account changes.
+    ["redeemInput", "redeemAccount"].forEach(id => document.getElementById(id).addEventListener("input", () => {
+      redeemChecked = null;
+      document.getElementById("redeemConfirm").style.display = "none";
+      document.getElementById("redeemCheck").style.display = "";
+    }));
+    document.getElementById("redeemCheck").onclick = async () => {
+      const code = document.getElementById("redeemInput").value.trim();
+      const accountId = document.getElementById("redeemAccount").value;
+      const prev = document.getElementById("redeemPreview");
+      if (!code) { prev.textContent = "Enter a code first."; return; }
+      prev.textContent = "Checking…";
+      const r = await ipcRenderer.invoke("cape:redeemPreview", { code, accountId });
+      if (!r || r.error) { prev.textContent = (r && r.error) || "Couldn't check that code."; return; }
+      prev.innerHTML = "";
+      if (r.capeUrl) { const c = createCapeCanvas({ url: r.capeUrl }); c.style.width = "26px"; c.style.flex = "0 0 auto"; prev.appendChild(c); }
+      const txt = document.createElement("span");
+      if (r.alreadyOwned) { txt.textContent = `This code grants "${r.productName}", which this account already owns.`; document.getElementById("redeemConfirm").style.display = "none"; }
+      else { txt.textContent = `This code grants "${r.productName}". Ready to redeem.`; redeemChecked = { code, accountId, name: r.productName, capeUrl: r.capeUrl || null }; document.getElementById("redeemConfirm").style.display = ""; document.getElementById("redeemCheck").style.display = "none"; }
+      prev.appendChild(txt);
+    };
+    document.getElementById("redeemConfirm").onclick = async () => {
+      if (!redeemChecked) return;
+      const btn = document.getElementById("redeemConfirm"); btn.disabled = true; btn.textContent = "Redeeming…";
+      const r = await ipcRenderer.invoke("cape:redeem", { code: redeemChecked.code, accountId: redeemChecked.accountId });
+      btn.disabled = false; btn.textContent = "Redeem";
+      if (!r || r.error) { document.getElementById("redeemPreview").textContent = (r && r.error) || "Redeem failed."; return; }
+      // Track as pending until Minecraft reports the cape as owned.
+      const pend = loadPendingCapes(redeemUuid);
+      if (!pend.some(p => (p.name || "").toLowerCase() === (redeemChecked.name || "").toLowerCase())) pend.push({ name: redeemChecked.name, capeUrl: redeemChecked.capeUrl });
+      savePendingCapes(redeemUuid, pend);
+      closeRedeemModal();
+      if (window.notify) window.notify("Code redeemed! The cape will appear once Minecraft grants it.", "success");
+      updateSKin();
+    };
     let pendingCape = null;   // { id, url } chosen but not applied; id null = disable
     let activeCapeId = null;
     function selectCape(cape) {
