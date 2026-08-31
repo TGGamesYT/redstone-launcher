@@ -403,16 +403,15 @@
       <div class="modal-header"><h2>Share over the internet</h2>
         <button class="modal-close" onclick="document.getElementById('instShareModal').classList.remove('active');">✕</button>
       </div>
-      <div style="font-size:12px;opacity:0.75;margin-bottom:10px;">Tunnels your open-to-LAN world through the Redstone Relay (works behind any NAT) and also tries a direct UPnP path when possible.</div>
+      <div style="font-size:13px;opacity:0.85;margin-bottom:12px;">Let friends join your world from anywhere using a simple web address — no IP sharing or port-forwarding. Open your world to LAN in-game first, then share.</div>
       <div class="modal-section" id="instShareAccountSection"><label>Account</label><select id="instShareAccount"></select></div>
+      <div class="modal-section" id="instSharePortSection" style="display:none;"><label>Port</label><input id="instSharePort" type="number" min="1" max="65535" placeholder="e.g. 25565" /></div>
       <div class="modal-section"><label>Address</label>
         <div style="display:flex;align-items:center;gap:4px;">
           <input id="instShareSub" style="flex:1;" placeholder="name" />
           <span id="instShareDomainSuffix" style="opacity:0.8;white-space:nowrap;">.redstonemc.net</span>
-          <select id="instShareDomain" style="display:none;width:auto;flex:0 0 auto;"></select>
         </div>
         <div style="font-size:12px;opacity:0.7;margin-top:4px;">Friends join at <b><span id="instSharePreview"></span></b></div>
-        <div id="instShareAdminNote" style="font-size:11px;opacity:0.6;margin-top:3px;display:none;"></div>
       </div>
       <div class="modal-actions">
         <button id="instShareGo">Share</button>
@@ -568,40 +567,56 @@
     // subdomain (admins additionally pick a domain), preview the join address,
     // then open the relay. `opts`: { localPort, relayKey, defaultSub, onShared }.
     const _instShare = { accounts: [], baseDomain: 'redstonemc.net', admin: { isAdmin: false, domains: [] }, opts: null };
+    // Cached: is any signed-in account a relay admin? (gates the 3-dot share item)
+    let _relayAdminP = null;
+    function isAnyRelayAdmin() {
+      if (!_relayAdminP) _relayAdminP = (async () => {
+        try {
+          const accs = await ipcRenderer.invoke('relay:accounts');
+          for (const a of (accs || [])) { const info = await ipcRenderer.invoke('relay:adminInfo', { accountId: a.id }); if (info && info.isAdmin) return true; }
+        } catch { /* not admin */ }
+        return false;
+      })();
+      return _relayAdminP;
+    }
+    // A single DNS label (no dots), for regular users' editable part + usernames.
     const _instSubLabel = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    // A multi-label path (dots allowed), for admins who control the whole subdomain.
+    const _instSubPath = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/\.+/g, '.').replace(/(^[.-]+|[.-]+$)/g, '');
     function _instShareAccount() { return _instShare.accounts.find(a => a.id === document.getElementById('instShareAccount').value) || _instShare.accounts[0]; }
-    function _instSelectedDomain() { const d = document.getElementById('instShareDomain'); return (_instShare.admin.isAdmin && d.value) ? d.value : _instShare.baseDomain; }
+    function _instSelectedDomain() { return _instShare.baseDomain; }   // always redstonemc.net
     function _instFullSubdomain() {
       const a = _instShareAccount(); if (!a) return '';
-      const text = _instSubLabel(document.getElementById('instShareSub').value);
-      if (_instShare.admin.isAdmin) return text;                 // admin: label only; domain chosen separately
       const uname = _instSubLabel(a.name);
-      return text ? `${text}.${uname}` : uname;                  // else: <text>.<username> or <username>
+      if (_instShare.admin.isAdmin) return _instSubPath(document.getElementById('instShareSub').value) || uname;   // admin: whole thing before .redstonemc.net
+      const text = _instSubLabel(document.getElementById('instShareSub').value);
+      return text ? `${text}.${uname}` : uname;                  // regular: <text>.<username> (username fixed)
     }
     function _instUpdateSharePreview() {
       const sub = _instFullSubdomain(), dom = _instSelectedDomain();
       document.getElementById('instSharePreview').textContent = sub ? `${sub}.${dom}` : dom;
     }
+    // Prefill the editable part + suffix based on whether this account is a relay
+    // admin. Default address is always <name>.<username>.redstonemc.net; regular
+    // users edit only <name> (username fixed), admins edit everything before
+    // .redstonemc.net (so the default text includes the username part).
     function _instApplyShareMode() {
       const a = _instShareAccount(); if (!a) return;
       const uname = _instSubLabel(a.name);
-      const dom = document.getElementById('instShareDomain');
       const suffix = document.getElementById('instShareDomainSuffix');
-      const note = document.getElementById('instShareAdminNote');
-      if (_instShare.admin.isAdmin && _instShare.admin.domains.length) {
-        dom.style.display = ''; dom.innerHTML = _instShare.admin.domains.map(d => `<option value="${d}">.${d}</option>`).join('');
-        suffix.style.display = 'none';
-        note.style.display = ''; note.textContent = 'Admin: any subdomain. Domains other than ' + _instShare.baseDomain + ' need a working UPnP (direct) path.';
+      const subInput = document.getElementById('instShareSub');
+      const baseSub = _instSubLabel((_instShare.opts && _instShare.opts.defaultSub) || '');
+      if (_instShare.admin.isAdmin) {
+        suffix.textContent = `.${_instShare.baseDomain}`;
+        subInput.value = baseSub ? `${baseSub}.${uname}` : uname;
       } else {
-        dom.style.display = 'none'; suffix.style.display = ''; suffix.textContent = `.${uname}.${_instShare.baseDomain}`;
-        note.style.display = 'none';
+        suffix.textContent = `.${uname}.${_instShare.baseDomain}`;
+        subInput.value = baseSub;
       }
       _instUpdateSharePreview();
     }
     async function _instRefreshAdminInfo() {
       _instShare.admin = { isAdmin: false, domains: [] };
-      const note = document.getElementById('instShareAdminNote');
-      note.style.display = ''; note.textContent = 'Checking account…';
       const a = _instShareAccount();
       try { _instShare.admin = await ipcRenderer.invoke('relay:adminInfo', { accountId: a.id }); } catch { /* stays non-admin */ }
       _instApplyShareMode();
@@ -614,9 +629,12 @@
       const sel = document.getElementById('instShareAccount');
       sel.innerHTML = _instShare.accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
       document.getElementById('instShareAccountSection').style.display = _instShare.accounts.length > 1 ? '' : 'none';
-      document.getElementById('instShareSub').value = _instSubLabel(opts.defaultSub);
+      // Port field: only shown when we don't already have a running/open port.
+      const portSec = document.getElementById('instSharePortSection');
+      const portInput = document.getElementById('instSharePort');
+      portSec.style.display = opts.localPort ? 'none' : '';
+      portInput.value = opts.localPort || '';
       document.getElementById('instShareSub').oninput = _instUpdateSharePreview;
-      document.getElementById('instShareDomain').onchange = _instUpdateSharePreview;
       sel.onchange = _instRefreshAdminInfo;
       document.getElementById('instShareModal').classList.add('active');
       setTimeout(() => document.getElementById('instShareSub').focus(), 60);
@@ -625,10 +643,12 @@
     document.getElementById('instShareGo').onclick = async () => {
       const btn = document.getElementById('instShareGo');
       const o = _instShare.opts; if (!o) return;
+      const localPort = o.localPort || parseInt(document.getElementById('instSharePort').value, 10);
+      if (!localPort || localPort < 1 || localPort > 65535) { alert('Enter the port your world/server is open on (e.g. 25565).'); return; }
       btn.disabled = true; btn.textContent = 'Connecting…';
       try {
         const res = await ipcRenderer.invoke('relay:open', {
-          key: o.relayKey, localPort: o.localPort,
+          key: o.relayKey, localPort,
           subdomain: _instFullSubdomain(), domain: _instSelectedDomain(),
           accountId: document.getElementById('instShareAccount').value,
         });
@@ -1519,6 +1539,7 @@
         menu.innerHTML = `
     <div class="menu-item" data-action="open">Open Folder</div>
     <div class="menu-item" data-action="shortcut">Desktop shortcut</div>
+    <div class="menu-item" data-action="share" style="display:none;">Share over internet</div>
     <div class="menu-item export-item" data-action="export">Export ▸
         <div class="submenu hidden">
             <div class="menu-item" data-export="modrinth">Modrinth Pack</div>
@@ -1527,6 +1548,9 @@
     <div class="menu-item" data-action="delete">Delete</div>
 `;
         document.body.appendChild(menu);
+        // The share-over-internet entry is only for relay admins (they can share a
+        // not-yet-running instance and type in the port).
+        isAnyRelayAdmin().then(ok => { if (ok) { const si = menu.querySelector('[data-action="share"]'); if (si) si.style.display = ''; } });
 
         let menuVisible = false;
         let ignoreNextClick = false;
@@ -1618,6 +1642,7 @@
               if (item.dataset.action === "open") ipcRenderer.send("open-folder", { id: profile.id, isClient: true });
               if (item.dataset.action === "delete" && confirm(`Delete "${profile.name}"?`)) ipcRenderer.send("delete-profile", profile.id);
               if (item.dataset.action === "shortcut") openShortcutModal(profile);
+              if (item.dataset.action === "share") openInstanceShareModal({ localPort: 0, relayKey: `instance-${profile.id}`, defaultSub: (profile.name || "instance"), onShared: (address) => { if (window.notify) window.notify("Shared at " + address, "success"); } });
 
               menu.style.display = "none";
               menuVisible = false;
