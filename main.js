@@ -1181,9 +1181,12 @@ const LIVE_SCOPE = "service::user.auth.xboxlive.com::MBI_SSL";
 // (or Node's default) User-Agent, returning a bare {"path":...} body. A normal
 // launcher-style UA is required for the Minecraft auth/profile calls to work.
 const LAUNCHER_UA = "RedstoneLauncher/1.15.0 (+https://redstone-launcher.com)";
-// Seed term for the skin browser when no search is typed, so the default view
-// shows named, varied skins rather than the unnamed "latest uploads" firehose.
-const DEFAULT_BROWSE_TERM = "cool";
+// Seed terms for the skin browser when no search is typed. MineSkin has no
+// popularity sort and its unfiltered feed is unnamed junk, so we seed with a
+// popular term — rotated per request so the default view isn't always the same
+// handful of skins.
+const DEFAULT_BROWSE_TERMS = ["popular", "aesthetic", "boy", "girl", "anime", "knight", "ninja", "cute", "cool", "dark", "hoodie", "gamer"];
+const pickBrowseTerm = () => DEFAULT_BROWSE_TERMS[Math.floor(Math.random() * DEFAULT_BROWSE_TERMS.length)];
 let qrLoginAbort = null;
 
 async function msDeviceCodeStart() {
@@ -6498,7 +6501,7 @@ ipcMain.handle("skins:fetchUrl", async (event, { url }) => {
 
 // Browse a public skin library (MineSkin's gallery) — real JSON API. Returns a
 // page of skins with their texture URL (rendered client-side).
-ipcMain.handle("skins:search", async (event, { query, after }) => {
+ipcMain.handle("skins:search", async (event, { query, after, seed }) => {
   try {
     // MineSkin's gallery: `filter` is the real keyword search, and pagination is
     // cursor-based (pagination.next.after), not page numbers. When there's no
@@ -6506,7 +6509,8 @@ ipcMain.handle("skins:search", async (event, { query, after }) => {
     // varied skins instead of the unnamed "latest uploads" firehose.
     const q = String(query || "").trim();
     const params = new URLSearchParams({ size: "36" });
-    params.set("filter", q || DEFAULT_BROWSE_TERM);
+    // A seed keeps every page of one browse session on the same term.
+    params.set("filter", q || seed || pickBrowseTerm());
     if (after) params.set("after", String(after));
     const res = await fetch(`https://api.mineskin.org/v2/skins?${params.toString()}`, { headers: { "User-Agent": LAUNCHER_UA } });
     if (!res.ok) return { error: `HTTP ${res.status}`, results: [] };
