@@ -2329,6 +2329,8 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
 
   launchingProfiles.set(profileId, now);
   instanceLogs.delete(profileId); // fresh console for this launch (previous session was kept until now)
+  // Pick up any dev-mod builds produced while the launcher wasn't watching.
+  try { syncDevMods("instance", profileId); } catch { /* non-fatal */ }
 
   try {
     broadcastLog(profileId, "Launching, please wait.");
@@ -5049,9 +5051,27 @@ function startDevWatch(type, id) {
   });
   devWatchers.set(devModKey(type, id), ws);
 }
+// Bring every registered dev mod up to the newest build in its folder. The file
+// watcher only sees changes while the launcher is RUNNING, so a mod rebuilt while
+// it was closed would otherwise stay stale — this catches up at startup and again
+// right before each launch.
+function syncDevMods(type, id) {
+  const entry = loadDevModsStore()[devModKey(type, id)];
+  if (!entry || !entry.enabled || !Array.isArray(entry.mods)) return;
+  for (const m of entry.mods) {
+    if (!m.folder || !m.modId) continue;
+    try {
+      const r = swapDevMod(type, id, m.modId, m.folder);
+      if (r && r.success) devtoolsLog(`[dev-mod] ${type} ${id}: caught up ${m.modId} → ${r.jar}`);
+    } catch (e) { devtoolsLog("[dev-mod] catch-up failed:", e.message); }
+  }
+}
 function startAllDevWatchers() {
   const store = loadDevModsStore();
-  Object.keys(store).forEach(k => { const [type, ...rest] = k.split(":"); const id = rest.join(":"); if (store[k] && store[k].enabled) startDevWatch(type, id); });
+  Object.keys(store).forEach(k => {
+    const [type, ...rest] = k.split(":"); const id = rest.join(":");
+    if (store[k] && store[k].enabled) { syncDevMods(type, id); startDevWatch(type, id); }
+  });
 }
 
 ipcMain.handle("devmod:get", (event, { type, id }) => loadDevModsStore()[devModKey(type, id)] || { enabled: false, mods: [] });

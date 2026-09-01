@@ -74,7 +74,9 @@
     .ed-hint { font-size: 11px; opacity: 0.6; margin-top: 4px; }
     /* ── Edit-faces mode: a full-page texture mapper. Copy individual faces from
        other skins (file / library / playername) onto the working skin. ── */
-    #ed-faces-mode { position: fixed; inset: 44px 0 0 70px; background: var(--menu-bg); z-index: 2600; display: none; flex-direction: column; padding: 14px 22px; overflow: hidden; border-top-left-radius: var(--border-radius); }
+    /* A MODE, not an overlay: it sits in the page flow and replaces the editor
+       content (no fixed pane painted over the app's background/corners). */
+    #ed-faces-mode { display: none; flex-direction: column; padding: 6px 20px 10px 0; height: calc(100vh - 120px); max-width: 100%; box-sizing: border-box; overflow: hidden; }
     #ed-faces-mode.active { display: flex; }
     #ed-faces-mode .efm-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     #ed-faces-mode h2 { margin: 0; font-size: 20px; white-space: nowrap; }
@@ -162,9 +164,14 @@
     .ed-modal { background: linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black)); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 18px; width: 420px; max-width: 92%; max-height: 88vh; overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
     /* When the image importer is opened as its own mode (from the "Convert an
        image" tile), it fills the screen instead of floating as a modal. */
-    .ed-modal-overlay.ed-img-fullmode { background: var(--menu-bg); align-items: stretch; justify-content: stretch; backdrop-filter: none; border-top-left-radius: var(--border-radius); }
-    .ed-modal-overlay.ed-img-fullmode .ed-modal { width: 100%; max-width: none; max-height: none; border: none; border-radius: 0; background: transparent; }
-    .ed-modal-overlay.ed-img-fullmode #ed-img-3d { width: 320px !important; height: 460px !important; flex: 0 0 320px !important; }
+    /* As a MODE the importer sits in the page flow and replaces the editor content
+       — no fixed overlay, no background pane painted over the app. */
+    .ed-modal-overlay.ed-img-fullmode { position: static; display: block; inset: auto; z-index: auto; background: transparent; backdrop-filter: none; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal { width: 100%; max-width: none; max-height: none; border: none; border-radius: 0; background: transparent; box-shadow: none; padding: 0 20px 10px 0; overflow: visible; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-body { gap: 26px !important; align-items: flex-start; }
+    .ed-modal-overlay.ed-img-fullmode #ed-img-3d { width: 360px !important; height: 520px !important; flex: 0 0 360px !important; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-controls { max-width: 520px; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-head h3 { font-size: 20px; }
     .ed-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .ed-modal-controls select { width: auto; flex: 1; }
   </style>
@@ -335,7 +342,8 @@
           <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror" checked> Mirror onto the back</label></div>
           <div class="ed-row"><label><input type="checkbox" id="ed-wrap-drop2nd" checked> Clear the skin's 2nd layer</label></div>
           <div class="ed-btn-row" style="margin-top:10px;">
-            <button class="ed-btn primary" id="ed-img-bake">Bake in</button>
+            <button class="ed-btn primary" id="ed-img-save" style="display:none;"><i class="material-icons">save</i> Save to library</button>
+            <button class="ed-btn" id="ed-img-bake">Bake in</button>
             <button class="ed-btn" id="ed-img-cancel">Cancel</button>
           </div>
           <button class="ed-btn" id="ed-img-pick" style="margin-top:6px;">Choose a different image…</button>
@@ -991,7 +999,33 @@
       wctx.clearRect(0, 0, SIZE, SIZE); wctx.drawImage(composed, 0, 0);
       render(); liveUpdate();
     }
-    document.getElementById('ed-img-bake').onclick = () => { bakeImage(); closeImgModal(); if (imgFullMode) { imgFullMode = false; imgModal.classList.remove('ed-img-fullmode'); } };
+    // Leaving image-mode: drop the mode styling and bring the editor content back.
+    function exitImgMode() {
+      if (!imgFullMode) return;
+      imgFullMode = false;
+      imgModal.classList.remove('ed-img-fullmode');
+      document.getElementById('ed-img-save').style.display = 'none';
+      document.getElementById('ed-img-x2').style.display = '';
+      document.getElementById('mode-toggle').style.display = '';
+      setMainContentVisible(true);
+      document.getElementById('ed-title').textContent = 'New skin';
+    }
+    // "Bake in" keeps you in the editor to keep working on the result.
+    document.getElementById('ed-img-bake').onclick = () => { bakeImage(); closeImgModal(); exitImgMode(); };
+    // "Save to library" (image mode only): bake, then save straight away.
+    document.getElementById('ed-img-save').onclick = async () => {
+      const btn = document.getElementById('ed-img-save');
+      bakeImage(); closeImgModal();
+      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
+      try {
+        const nm = (document.getElementById('ed-name').value || 'My skin').trim();
+        if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: work.toDataURL('image/png'), variant, name: nm, editorType: 'advanced' });
+        window.location.href = 'profile-manager.html';
+      } catch (e) {
+        alert('Save failed: ' + (e.message || e));
+        btn.disabled = false; btn.innerHTML = '<i class="material-icons">save</i> Save to library';
+      }
+    };
 
     // ── 3D preview ──
     let viewer = null;
@@ -1193,11 +1227,14 @@
         await loadIntoWork('assets/template.png');
         document.getElementById('ed-title').textContent = 'New skin (from template)';
       } else if (mode === 'image') {
-        // Opened from the "Convert an image" tile: the importer is its OWN full
-        // mode (not a floating modal), and cancelling returns to the library.
+        // Opened from the "Convert an image" tile: the importer IS the page's main
+        // content (it replaces the editor), with its own Save button. Cancelling
+        // returns to the library.
         document.getElementById('ed-title').textContent = 'Image → skin';
         imgFullMode = true;
         document.getElementById('ed-img-modal').classList.add('ed-img-fullmode');
+        document.getElementById('ed-img-save').style.display = '';
+        document.getElementById('ed-img-x2').style.display = 'none';
         setTimeout(() => document.getElementById('ed-import').click(), 300);
       } else {
         document.getElementById('ed-title').textContent = 'New skin';
@@ -1215,6 +1252,8 @@
       const plainNew = mode !== 'edit' && mode !== 'image' && params.get('template') !== '1';
       const startCreator = plainNew || editedType === 'simple';
       setEditorMode(startCreator ? 'creator' : 'advanced', { initial: true });
+      // In image mode the importer replaces the editor entirely.
+      if (imgFullMode) { setMainContentVisible(false); document.getElementById('mode-toggle').style.display = 'none'; }
       const ov = document.getElementById('loading-overlay'); if (ov) { ov.classList.add('fade-out'); setTimeout(() => ov.style.display = 'none', 400); }
     }
 
@@ -1441,8 +1480,20 @@
         im.src = dataUrlOrSrc;
       });
     }
+    // Show/hide the page's main content so a mode REPLACES it (rather than
+    // floating over it as an overlay).
+    function setMainContentVisible(on) {
+      const ew = document.getElementById('editor-wrap'), cw = document.getElementById('creator-wrap');
+      if (ew) ew.style.display = on ? '' : 'none';
+      if (cw) cw.style.display = on ? '' : 'none';
+      if (on) { // restore whichever editor was active
+        if (ew) ew.style.display = curEditorMode === 'creator' ? 'none' : '';
+        if (cw) cw.style.display = curEditorMode === 'creator' ? '' : 'none';
+      }
+    }
     function openFacesMode() {
       efm.el.classList.add('active');
+      setMainContentVisible(false);
       const oc = document.createElement('canvas'); oc.width = SIZE; oc.height = SIZE;
       oc.getContext('2d').drawImage(work, 0, 0);
       efm.sources = [{ name: 'Your skin', canvas: oc, slim: variant === 'slim', pinned: true }];
@@ -1453,7 +1504,7 @@
       }
       efmRefreshViewer();
     }
-    function closeFacesMode() { efm.el.classList.remove('active'); }
+    function closeFacesMode() { efm.el.classList.remove('active'); setMainContentVisible(true); }
     document.getElementById('ed-faces-btn').onclick = openFacesMode;
     document.getElementById('efm-close').onclick = closeFacesMode;
     document.getElementById('efm-fill-btn').onclick = () => {
