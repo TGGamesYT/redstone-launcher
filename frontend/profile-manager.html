@@ -155,14 +155,20 @@
       pointer-events: none;
     }
     .card-badge.pending { background: rgba(180, 120, 20, 0.85); }
+    /* Arm-style badge, top-right of the image so it doesn't collide with the head. */
+    .card-variant-badge { position: absolute; top: 6px; right: 6px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 6px; pointer-events: none; }
 
     /* Add skin · Reset skin take up their own full row above the skins. */
     .skin-actions-row { flex-basis: 100%; width: 100%; display: flex; gap: 12px; margin: 10px; }
     .skin-actions-row .card.action-card { flex: 1; width: auto; margin: 0; }
 
     /* Live 3D spin preview swapped in on hover. */
-    .card-img-wrap .hover-spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-    .card-img-wrap .hover-spin canvas { width: 100% !important; height: 100% !important; }
+    .hover-spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+    .hover-spin canvas { width: 100% !important; height: 100% !important; }
+    /* Browse cards: add-to-library button appears on hover, top-right. */
+    .browse-card { position: relative; }
+    .browse-add { position: absolute; top: 5px; right: 5px; z-index: 3; width: 26px; height: 26px; border-radius: 50%; border: none; background: var(--base-color); color: #fff; cursor: pointer; display: none; align-items: center; justify-content: center; padding: 0; }
+    .browse-card:hover .browse-add { display: flex; }
 
     /* Action cards (Upload / Reset) match the skin cards but read as buttons. */
     .card.action-card {
@@ -376,17 +382,14 @@
 
   <!-- Browse-skins modal -->
   <!-- Browse-skins mode: a full-page panel, not a floating card. -->
-  <div id="browseModal" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:var(--very-dark); display:none; flex-direction:column; z-index:2100; padding:16px 22px;">
+  <div id="browseModal" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:var(--very-dark); display:none; flex-direction:column; z-index:2100; padding:16px 22px; border-top-left-radius:var(--border-radius);">
     <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
       <button class="pm-btn" id="browseClose" style="display:flex; align-items:center; gap:6px;"><i class="material-icons" style="font-size:18px;">arrow_back</i> Back</button>
       <h3 style="margin:0;">Browse skins</h3>
       <input id="browseSearch" type="text" placeholder="Search skins…" style="flex:1; max-width:520px; margin-left:auto; padding:9px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);" />
     </div>
     <div id="browseChips" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;"></div>
-    <div id="browseBody" style="flex:1; min-height:0; display:flex; gap:16px;">
-      <div id="browseResults" style="flex:1; min-width:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:12px; align-content:start;"></div>
-      <div id="browseDetail" style="flex:0 0 300px; display:none; overflow-y:auto; border-left:2px solid var(--border-dark); padding-left:16px;"></div>
-    </div>
+    <div id="browseResults" style="flex:1; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:12px; align-content:start;"></div>
   </div>
 
   <!-- Redeem cape code modal -->
@@ -600,6 +603,13 @@
       return card;
     }
 
+    // Arm-style badge, top-right of the image (kept clear of the head).
+    function setVariantBadge(card, variant) {
+      const wrap = card && card._imgWrap; if (!wrap) return;
+      const b = document.createElement("div"); b.className = "card-variant-badge";
+      b.textContent = variant === "slim" ? "slim" : "wide";
+      wrap.appendChild(b);
+    }
     // Overlay a small badge (Selected / Pending / …) on the bottom of a card's
     // image, without pushing the card taller. Pass a falsy text to clear it.
     function setCardBadge(card, text, cls) {
@@ -623,9 +633,44 @@
         host.appendChild(c);
         const viewer = new skinview3d.SkinViewer({ canvas: c, width: 120, height: 240 });
         viewer.zoom = 0.9;
+        try { viewer.controls.enableZoom = false; } catch { }  // wheel scrolls the page, not zoom
         hoverSpin = { host, viewer, raf: null, easing: false };
       } catch { hoverSpin = null; }
       return hoverSpin;
+    }
+
+    // Cards show an ALWAYS-3D forward render (a still frame rendered off-screen by
+    // one shared viewer), so the page never spins up dozens of WebGL contexts. The
+    // hover-spin viewer above is mounted only while a card is hovered.
+    let _staticViewer;
+    function ensureStaticViewer() {
+      if (_staticViewer !== undefined) return _staticViewer;
+      try {
+        const c = document.createElement("canvas");
+        const v = new skinview3d.SkinViewer({ canvas: c, width: 170, height: 340, preserveDrawingBuffer: true });
+        v.autoRotate = false; v.zoom = 0.9;
+        try { v.renderPaused = true; } catch { }
+        _staticViewer = { v, c };
+      } catch { _staticViewer = null; }
+      return _staticViewer;
+    }
+    function renderStaticSkin(src, model) {
+      return new Promise((res) => {
+        const sv = ensureStaticViewer(); if (!sv) { res(null); return; }
+        try {
+          const capture = () => { try { sv.v.playerObject.rotation.y = 0; sv.v.render(); res(sv.c.toDataURL()); } catch { res(null); } };
+          const p = sv.v.loadSkin(src, { model: model === "slim" ? "slim" : "default" });
+          if (p && p.then) p.then(() => requestAnimationFrame(capture), () => res(null));
+          else requestAnimationFrame(capture);
+        } catch { res(null); }
+      });
+    }
+    // A card image element that is a still 3D render by default and spins on hover.
+    function skin3dPreview(src, model) {
+      const img = document.createElement("img");
+      img.className = "card-image"; img.style.width = "100%"; img.style.imageRendering = "auto";
+      renderStaticSkin(src, model).then((url) => { if (url) img.src = url; else { img.style.imageRendering = "pixelated"; img.src = src; } });
+      return img;
     }
     function attachHoverSpin(card, src, model) {
       const wrap = card && card._imgWrap; if (!wrap || !src) return;
@@ -735,6 +780,7 @@
           height: vh
         });
         try { window.skinViewer.zoom = 0.82; } catch { }
+        try { window.skinViewer.controls.enableZoom = false; } catch { }  // scroll = page scroll, not zoom
 
         if (pendingSelection) {
           window.skinViewer.loadSkin("data:image/png;base64," + pendingSelection.base64, { model: pendingSelection.variant === "slim" ? "slim" : "default" });
@@ -812,8 +858,10 @@
       const libraryHasActive = activePixelHash && library.some(s => s.pixelHash && s.pixelHash === activePixelHash);
       if (activeSkinB64 && !libraryHasActive) {
         const av = activeSkin && activeSkin.variant === "SLIM" ? "slim" : "classic";
-        const preview = createSkinCanvas({ base64: activeSkinB64, variant: av === "slim" ? "SLIM" : "CLASSIC" });
-        const card = createCard(`Current skin (${variantLabel(av)})`, () => selectSkin({ base64: activeSkinB64, variant: av, name: "Current skin", pixelHash: activePixelHash, id: "__active__" }), preview);
+        const preview = skin3dPreview("data:image/png;base64," + activeSkinB64, av);
+        const card = createCard("Current skin", () => selectSkin({ base64: activeSkinB64, variant: av, name: "Current skin", pixelHash: activePixelHash, id: "__active__" }), preview);
+        card.dataset.variant = av;
+        setVariantBadge(card, av);
         card.dataset.pixelhash = activePixelHash || "";
         card.dataset.skinid = "__active__";
         // Not in the library yet — offer a single "+" to save it, rather than the
@@ -834,8 +882,10 @@
       }
 
       library.forEach(skin => {
-        const preview = createSkinCanvas({ base64: skin.base64, variant: skin.variant === "slim" ? "SLIM" : "CLASSIC" });
-        const card = createCard(`${skin.name} (${variantLabel(skin.variant)})`, () => selectSkin(skin), preview);
+        const preview = skin3dPreview("data:image/png;base64," + skin.base64, skin.variant === "slim" ? "slim" : "classic");
+        const card = createCard(skin.name, () => selectSkin(skin), preview);
+        card.dataset.variant = skin.variant || "classic";
+        setVariantBadge(card, skin.variant);
         card.dataset.pixelhash = skin.pixelHash || "";
         card.dataset.skinid = String(skin.id);
 
@@ -1079,10 +1129,29 @@
 
     // Reset is now a pending action: it only takes effect when Apply is pressed,
     // like selecting a skin. Previews the Mojang default skin meanwhile.
+    // Which default skin a player is assigned is derived from their UUID by
+    // Mojang. Mirror that so the reset preview shows THIS player's actual default
+    // (and uses the whole current default-skin list, including any new ones).
+    function defaultSkinForUuid(uuid, list) {
+      if (!list || !list.length) return null;
+      const hex = String(uuid || "").replace(/-/g, "");
+      if (hex.length >= 32) {
+        // Java UUID.hashCode() over the 128-bit value, then floorMod by count.
+        const hi = BigInt("0x" + hex.slice(0, 16));
+        const lo = BigInt("0x" + hex.slice(16, 32));
+        const mask = (1n << 64n) - 1n;
+        const hilo = (hi ^ lo) & mask;
+        const hash = Number(BigInt.asIntN(32, (hilo >> 32n) ^ hilo));
+        const idx = ((hash % list.length) + list.length) % list.length;
+        return list[idx];
+      }
+      let h = 0; for (let i = 0; i < hex.length; i++) h = (h * 31 + hex.charCodeAt(i)) >>> 0;
+      return list[h % list.length];
+    }
     async function selectReset() {
       pendingSelection = { reset: true };
       if (!defaultSkinsCache.length) { try { defaultSkinsCache = (await ipcRenderer.invoke("mc:getDefaultSkins")) || []; } catch { } }
-      const def = defaultSkinsCache.find(d => d.model !== 'slim') || defaultSkinsCache[0];
+      const def = defaultSkinForUuid(currentUuid, defaultSkinsCache);
       if (window.skinViewer) {
         try {
           if (def) window.skinViewer.loadSkin("data:image/png;base64," + def.base64, { model: def.model === 'slim' ? 'slim' : 'default' });
@@ -1218,7 +1287,7 @@
         el.appendChild(c);
         const v = new skinview3d.SkinViewer({ canvas: c, width: 150, height: 150 });
         v.loadSkin(skinDataUrl, { model: model === 'slim' ? 'slim' : 'default' });
-        v.zoom = 0.9; try { v.autoRotate = false; v.playerObject.rotation.y = 0; } catch { }
+        v.zoom = 0.9; try { v.autoRotate = false; v.playerObject.rotation.y = 0; v.controls.enableZoom = false; } catch { }
         cnViewers.push(v);
         let raf = null;
         el.addEventListener('mouseenter', () => { if (raf) { cancelAnimationFrame(raf); raf = null; } try { v.autoRotate = true; v.autoRotateSpeed = 1.0; } catch { } });
@@ -1317,11 +1386,11 @@
     // ---- Browse skins (MineSkin library, keyword search + cursor paging). ----
     let browseAfter = null, browseBusy = false, browseDetailViewer = null;
     const BROWSE_CHIPS = ['Knight', 'Anime', 'Ninja', 'Girl', 'Boy', 'Robot', 'Dragon', 'Cute', 'Herobrine', 'Steve'];
+    let browseSeq = 0, browseQuery = '';
     function openBrowseModal() {
       document.getElementById('browseModal').style.display = 'flex';
       document.getElementById('browseSearch').value = '';
       document.getElementById('browseResults').innerHTML = '';
-      document.getElementById('browseDetail').style.display = 'none';
       const chips = document.getElementById('browseChips'); chips.innerHTML = '';
       BROWSE_CHIPS.forEach(term => {
         const b = document.createElement('button'); b.className = 'pm-btn'; b.textContent = term; b.style.fontSize = '12px';
@@ -1330,59 +1399,54 @@
       });
       browseAfter = null; runBrowse(true);
     }
-    function closeBrowseModal() { document.getElementById('browseModal').style.display = 'none'; if (browseDetailViewer) { try { browseDetailViewer.dispose(); } catch { } browseDetailViewer = null; } }
+    function closeBrowseModal() { document.getElementById('browseModal').style.display = 'none'; }
     document.getElementById('browseClose').onclick = closeBrowseModal;
     let browseTimer = null;
-    document.getElementById('browseSearch').addEventListener('input', () => { clearTimeout(browseTimer); browseTimer = setTimeout(() => { browseAfter = null; runBrowse(true); }, 400); });
-    async function runBrowse(reset) {
-      if (browseBusy) return; browseBusy = true;
-      const res = document.getElementById('browseResults');
-      if (reset) res.innerHTML = '<div style="opacity:.6; grid-column:1/-1;">Loading skins…</div>';
-      const q = document.getElementById('browseSearch').value.trim();
-      const r = await ipcRenderer.invoke('skins:search', { query: q, after: reset ? null : browseAfter });
-      if (reset) res.innerHTML = '';
-      const oldMore = document.getElementById('browseMore'); if (oldMore) oldMore.remove();
-      const results = (r && r.results) || [];
-      if (reset && !results.length) { res.innerHTML = '<div style="opacity:.6; grid-column:1/-1;">' + ((r && r.error) || 'No skins found.') + '</div>'; browseBusy = false; return; }
-      results.forEach(item => {
-        const cell = document.createElement('div'); cell.style.cssText = 'display:flex; flex-direction:column; gap:4px;';
-        const card = document.createElement('div'); card.className = 'browse-card';
-        const cv = createSkinCanvas({ url: item.skin, variant: item.model === 'slim' ? 'SLIM' : 'CLASSIC' });
-        cv.style.width = 'auto'; cv.style.height = '100%';
-        card.appendChild(cv);
-        card.onclick = () => showBrowseDetail(item, card);
-        const lab = document.createElement('div'); lab.textContent = item.title; lab.style.cssText = 'font-size:11px; text-align:center; opacity:.8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
-        cell.append(card, lab);
-        res.appendChild(cell);
-      });
-      browseAfter = (r && r.after) || null;
-      if (r && r.more) {
-        const more = document.createElement('button'); more.id = 'browseMore'; more.className = 'pm-btn'; more.textContent = 'Load more';
-        more.style.cssText = 'grid-column:1/-1;'; more.onclick = () => runBrowse(false);
-        res.appendChild(more);
-      }
-      browseBusy = false;
-    }
-    function showBrowseDetail(item, card) {
-      document.querySelectorAll('#browseResults .browse-card').forEach(c => c.classList.remove('selected'));
-      card.classList.add('selected');
-      const d = document.getElementById('browseDetail'); d.style.display = '';
-      d.innerHTML = `<div id="browseDetail3d" style="width:100%;aspect-ratio:3/4;background:color-mix(in srgb,var(--very-dark) 85%,black);border-radius:var(--border-radius);"></div>
-        <div style="font-weight:bold;margin:8px 0 2px;">${item.title || 'Skin'}</div>
-        <div style="opacity:.65;font-size:12px;margin-bottom:10px;">${item.model === 'slim' ? 'Slim' : 'Classic'} model</div>
-        <button class="pm-btn" id="browseAdd" style="width:100%;background:var(--base-color);">Add to library</button>`;
-      if (browseDetailViewer) { try { browseDetailViewer.dispose(); } catch { } browseDetailViewer = null; }
-      try {
-        const host = document.getElementById('browseDetail3d'); const c = document.createElement('canvas'); host.appendChild(c);
-        browseDetailViewer = new skinview3d.SkinViewer({ canvas: c, width: 236, height: 314 });
-        browseDetailViewer.loadSkin(item.skin, { model: item.model === 'slim' ? 'slim' : 'default' });
-        try { browseDetailViewer.autoRotate = true; browseDetailViewer.autoRotateSpeed = 0.6; } catch { }
-      } catch { }
-      d.querySelector('#browseAdd').onclick = async () => {
+    document.getElementById('browseSearch').addEventListener('input', () => { clearTimeout(browseTimer); browseTimer = setTimeout(() => { browseAfter = null; runBrowse(true); }, 350); });
+    // Auto-load the next page when scrolled near the bottom (no "Load more" button).
+    document.getElementById('browseResults').addEventListener('scroll', () => {
+      const el = document.getElementById('browseResults');
+      if (browseAfter && !browseBusy && el.scrollTop + el.clientHeight >= el.scrollHeight - 340) runBrowse(false);
+    });
+    const browseName = (item) => item.title || (browseQuery ? (browseQuery[0].toUpperCase() + browseQuery.slice(1)) : 'Skin');
+    function browseCard(item) {
+      const cell = document.createElement('div'); cell.style.cssText = 'display:flex; flex-direction:column; gap:4px;';
+      const card = document.createElement('div'); card.className = 'browse-card';
+      const cv = createSkinCanvas({ url: item.skin, variant: item.model === 'slim' ? 'SLIM' : 'CLASSIC' });
+      cv.style.width = 'auto'; cv.style.height = '100%';
+      card.appendChild(cv);
+      // Hover: spin in 3D (same shared viewer as the skins page) + add button.
+      card._imgWrap = card;
+      attachHoverSpin(card, item.skin, item.model);
+      const addBtn = document.createElement('button'); addBtn.className = 'browse-add'; addBtn.title = 'Add to library';
+      addBtn.innerHTML = '<i class="material-icons" style="font-size:16px;">add</i>';
+      addBtn.onclick = async (e) => {
+        e.stopPropagation(); addBtn.disabled = true;
         const r = await ipcRenderer.invoke('skins:fetchUrl', { url: item.skin });
-        if (r && r.base64) { await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + r.base64, variant: item.model === 'slim' ? 'slim' : 'classic', name: item.title || 'Skin' }); closeBrowseModal(); updateSKin(); }
-        else alert('Could not download that skin.' + (r && r.error ? ' ' + r.error : ''));
+        if (r && r.base64) { await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + r.base64, variant: item.model === 'slim' ? 'slim' : 'classic', name: browseName(item) }); if (window.notify) window.notify('Added to your library', 'success'); }
+        else { addBtn.disabled = false; alert('Could not download that skin.' + (r && r.error ? ' ' + r.error : '')); }
       };
+      card.appendChild(addBtn);
+      const lab = document.createElement('div'); lab.textContent = browseName(item); lab.title = browseName(item);
+      lab.style.cssText = 'font-size:11px; text-align:center; opacity:.8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+      cell.append(card, lab);
+      return cell;
+    }
+    async function runBrowse(reset) {
+      const seq = ++browseSeq;                // latest request always wins
+      browseBusy = true;
+      const res = document.getElementById('browseResults');
+      browseQuery = document.getElementById('browseSearch').value.trim();
+      if (reset) res.innerHTML = '<div style="opacity:.6; grid-column:1/-1;">Loading skins…</div>';
+      let r = null;
+      try { r = await ipcRenderer.invoke('skins:search', { query: browseQuery, after: reset ? null : browseAfter }); } catch { }
+      if (seq !== browseSeq) return;          // a newer search superseded this one
+      browseBusy = false;
+      if (reset) res.innerHTML = '';
+      const results = (r && r.results) || [];
+      if (reset && !results.length) { res.innerHTML = '<div style="opacity:.6; grid-column:1/-1;">' + ((r && r.error) || 'No skins found.') + '</div>'; return; }
+      results.forEach(item => res.appendChild(browseCard(item)));
+      browseAfter = (r && r.after) || null;
     }
 
     // ---- Upload flow: saves to the local library only (no Mojang) ----

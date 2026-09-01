@@ -6477,7 +6477,7 @@ ipcMain.handle("skins:search", async (event, { query, after }) => {
     const skins = Array.isArray(j.skins) ? j.skins : [];
     const results = skins.map(s => ({
       id: s.uuid || s.shortId,
-      title: s.name || ("Skin " + (s.shortId || "")),
+      title: s.name || null,          // no ugly "Skin <hex>" fallback; UI fills it in
       model: s.variant === "slim" ? "slim" : "classic",
       skin: s.texture ? `https://textures.minecraft.net/texture/${s.texture}` : s.url,
     })).filter(s => s.skin);
