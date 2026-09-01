@@ -55,7 +55,7 @@
     .ed-ptoggle { flex: 1; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); cursor: pointer; padding: 7px; display: flex; align-items: center; justify-content: center; }
     .ed-ptoggle:hover { border-color: var(--base-color); }
     .ed-ptoggle.active { background: var(--base-color); border-color: var(--text-color); }
-    .ed-ptoggle canvas { width: 26px; height: 26px; image-rendering: pixelated; display: block; }
+    .ed-ptoggle canvas, .ed-ptoggle img { width: 28px; height: 28px; image-rendering: pixelated; display: block; }
     .ed-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
     .ed-row label { flex: 0 0 auto; opacity: 0.85; }
     .ed-row input[type=range] { flex: 1; margin: 0; }
@@ -64,6 +64,7 @@
     .ed-seg button { flex: 1; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 6px 0; font-size: 12px; }
     .ed-seg button.active { background: var(--base-color); border-color: var(--text-color); }
     .ed-btn { background: var(--secondary-color); color: var(--text-color); border: none; border-radius: var(--border-radius); padding: 8px 10px; cursor: pointer; font-family: var(--text-font); font-size: 13px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .ed-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
     .ed-btn:hover { background: var(--third-color); }
     .ed-btn.primary { background: var(--base-color); }
     .ed-btn .material-icons { font-size: 18px; }
@@ -73,7 +74,7 @@
     .ed-hint { font-size: 11px; opacity: 0.6; margin-top: 4px; }
     /* ── Edit-faces mode: a full-page texture mapper. Copy individual faces from
        other skins (file / library / playername) onto the working skin. ── */
-    #ed-faces-mode { position: fixed; inset: 44px 0 0 70px; background: var(--menu-bg); z-index: 2600; display: none; flex-direction: column; padding: 14px 22px; overflow: hidden; }
+    #ed-faces-mode { position: fixed; inset: 44px 0 0 70px; background: var(--menu-bg); z-index: 2600; display: none; flex-direction: column; padding: 14px 22px; overflow: hidden; border-top-left-radius: var(--border-radius); }
     #ed-faces-mode.active { display: flex; }
     #ed-faces-mode .efm-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     #ed-faces-mode h2 { margin: 0; font-size: 20px; white-space: nowrap; }
@@ -161,8 +162,8 @@
     .ed-modal { background: linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black)); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 18px; width: 420px; max-width: 92%; max-height: 88vh; overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
     /* When the image importer is opened as its own mode (from the "Convert an
        image" tile), it fills the screen instead of floating as a modal. */
-    .ed-modal-overlay.ed-img-fullmode { background: var(--menu-bg); align-items: stretch; justify-content: stretch; backdrop-filter: none; }
-    .ed-modal-overlay.ed-img-fullmode .ed-modal { width: 100%; max-width: none; max-height: none; border: none; border-radius: 0; }
+    .ed-modal-overlay.ed-img-fullmode { background: var(--menu-bg); align-items: stretch; justify-content: stretch; backdrop-filter: none; border-top-left-radius: var(--border-radius); }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal { width: 100%; max-width: none; max-height: none; border: none; border-radius: 0; background: transparent; }
     .ed-modal-overlay.ed-img-fullmode #ed-img-3d { width: 320px !important; height: 460px !important; flex: 0 0 320px !important; }
     .ed-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .ed-modal-controls select { width: auto; flex: 1; }
@@ -209,7 +210,7 @@
   </div>
 
   <h1 style="margin-left:0; margin-top:0; padding-top:22px; display:flex; align-items:center; gap:12px;">
-    <button class="ed-btn" style="width:auto; padding:6px 12px;" onclick="window.location.href='profile-manager.html'"><i class="material-icons">arrow_back</i> Skins</button>
+    <button class="ed-btn" style="width:auto; padding:6px 12px;" id="ed-back-skins"><i class="material-icons">arrow_back</i> Skins</button>
     <span id="ed-title">Skin Editor</span>
     <button class="ed-btn" id="mode-toggle" style="width:auto; padding:6px 12px; margin-left:auto; display:none;"><i class="material-icons">tune</i> <span id="mode-toggle-label">Advanced editor</span></button>
   </h1>
@@ -220,12 +221,9 @@
       <canvas id="ed-3d"></canvas>
       <div class="ed-hint" style="margin-top:-2px;">Click a body part to draw on it; drag empty space to rotate.</div>
       <div class="ed-group ed-toggle-row">
-        <button type="button" class="ed-ptoggle" id="ed-t-overlay" title="2nd layer" aria-label="2nd layer"></button>
+        <button type="button" class="ed-ptoggle active" id="ed-t-overlay" title="2nd layer" aria-label="2nd layer"></button>
         <button type="button" class="ed-ptoggle" id="ed-t-mirror" title="Mirror" aria-label="Mirror"></button>
         <button type="button" class="ed-ptoggle" id="ed-t-grid" title="Grid" aria-label="Grid"></button>
-        <input type="checkbox" id="ed-show-overlay" checked hidden>
-        <input type="checkbox" id="ed-mirror" hidden>
-        <input type="checkbox" id="ed-grid" hidden>
       </div>
       <div class="ed-group">
         <h4>Show in 3D</h4>
@@ -331,8 +329,11 @@
             <select id="ed-wrap-sides"><option value="none">None</option><option value="2px" selected>2px edge</option><option value="stretch">Stretch</option></select>
           </div>
           <div class="ed-row"><label>Opacity</label><input type="range" id="ed-img-op" min="1" max="100" value="100"></div>
-          <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror"> Mirror onto the back</label></div>
-          <div class="ed-row"><label><input type="checkbox" id="ed-wrap-drop2nd"> Clear the skin's 2nd layer</label></div>
+          <div class="ed-row"><label>Wrap onto</label>
+            <select id="ed-wrap-layer"><option value="base" selected>1st layer (body)</option><option value="overlay">2nd layer (hat/jacket)</option></select>
+          </div>
+          <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror" checked> Mirror onto the back</label></div>
+          <div class="ed-row"><label><input type="checkbox" id="ed-wrap-drop2nd" checked> Clear the skin's 2nd layer</label></div>
           <div class="ed-btn-row" style="margin-top:10px;">
             <button class="ed-btn primary" id="ed-img-bake">Bake in</button>
             <button class="ed-btn" id="ed-img-cancel">Cancel</button>
@@ -456,6 +457,7 @@
     let layer = 'base';       // kept for legacy refs; 2D now edits all layers
     let mirror = false;
     let gridOn = false;
+    let overlayOn = true;   // 2nd-layer toggle (drives the 3D overlay + the 2D highlight)
     let variant = 'classic';
     buildFaces(); // now that `variant` exists
     let color = { r: 138, g: 90, b: 59 };
@@ -469,8 +471,14 @@
     // ── Undo / redo (edit history only, independent of launcher nav) ──
     let undoStack = [], redoStack = [];
     function snapshot() { return wctx.getImageData(0, 0, SIZE, SIZE); }
-    function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); redoStack = []; workFromCreator = false; }
-    function restore(imgData) { wctx.putImageData(imgData, 0, 0); render(); liveUpdate(); }
+    // Grey out the undo/redo buttons when there's nothing left in that direction.
+    function refreshUndoButtons() {
+      const u = document.getElementById('ed-undo'), r = document.getElementById('ed-redo');
+      if (u) u.disabled = !undoStack.length;
+      if (r) r.disabled = !redoStack.length;
+    }
+    function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); redoStack = []; workFromCreator = false; refreshUndoButtons(); }
+    function restore(imgData) { wctx.putImageData(imgData, 0, 0); render(); liveUpdate(); refreshUndoButtons(); }
     function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
     function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
 
@@ -504,8 +512,7 @@
       }
       // Outline every face; label the front faces. The layer the 2nd-layer toggle
       // targets is highlighted; the other layer is drawn faint.
-      const ovEl = document.getElementById('ed-show-overlay');
-      const hiOverlay = ovEl ? ovEl.checked : false;
+      const hiOverlay = overlayOn;
       const faint = hiOverlay ? FACE_BASE : FACE_OVERLAY;
       const hot = hiOverlay ? FACE_OVERLAY : FACE_BASE;
       faint.forEach(r => outlineRect(r, 'rgba(255,255,255,0.12)', null));
@@ -725,23 +732,21 @@
     // it shows the overlay meshes (so drawing on the model paints the 2nd layer)
     // and hides them (so drawing paints the base). The 2D texture always edits
     // every layer regardless.
-    document.getElementById('ed-show-overlay').onchange = () => {
-      applyPartVisibility(); render(); liveUpdate();
-    };
-    document.getElementById('ed-mirror').onchange = (e) => { mirror = e.target.checked; };
-    document.getElementById('ed-grid').onchange = (e) => { gridOn = e.target.checked; renderOverlay(); liveUpdate(); };
-    // Turn the three checkboxes above into pixel-art toggle buttons with tooltips.
-    function setupPToggle(btnId, cbId, kind) {
-      const btn = document.getElementById(btnId), cb = document.getElementById(cbId);
-      const cv = document.createElement('canvas'); cv.width = 16; cv.height = 16; btn.appendChild(cv);
-      const g = cv.getContext('2d');
-      const redraw = () => { const on = cb.checked; btn.classList.toggle('active', on); (kind === 'face' ? pxFace : kind === 'mirror' ? pxMirror : pxGrid)(g, on); };
-      btn.onclick = () => { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); redraw(); };
+    // Icon toggle buttons (custom art in assets/creator). Each keeps a boolean and
+    // swaps its image + runs its side-effect on click. No hidden checkboxes.
+    function setupPToggle(btnId, offImg, onImg, get, set) {
+      const btn = document.getElementById(btnId);
+      const img = document.createElement('img'); btn.appendChild(img);
+      const redraw = () => { const on = get(); btn.classList.toggle('active', on); img.src = 'assets/creator/' + (on ? onImg : offImg) + '.png'; };
+      btn.onclick = () => { set(!get()); redraw(); };
       redraw();
     }
-    setupPToggle('ed-t-overlay', 'ed-show-overlay', 'face');
-    setupPToggle('ed-t-mirror', 'ed-mirror', 'mirror');
-    setupPToggle('ed-t-grid', 'ed-grid', 'grid');
+    setupPToggle('ed-t-overlay', 'player', 'player_overlay',
+      () => overlayOn, (v) => { overlayOn = v; applyPartVisibility(); render(); liveUpdate(); });
+    setupPToggle('ed-t-mirror', 'mirror', 'mirrored',
+      () => mirror, (v) => { mirror = v; });
+    setupPToggle('ed-t-grid', 'no_grid', 'grid',
+      () => gridOn, (v) => { gridOn = v; renderOverlay(); liveUpdate(); });
 
     document.getElementById('ed-variant-classic').onclick = () => setVariant('classic');
     document.getElementById('ed-variant-slim').onclick = () => setVariant('slim');
@@ -756,6 +761,7 @@
 
     document.getElementById('ed-undo').onclick = undo;
     document.getElementById('ed-redo').onclick = redo;
+    refreshUndoButtons();
     window.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
       else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redo(); }
@@ -927,14 +933,28 @@
       ctx.restore(); ctx.globalAlpha = 1;
     }
 
+    // Wrap onto the chosen layer. For the 2nd layer the photo is drawn on a
+    // transparent canvas at the body-UV coords, then each base face is remapped to
+    // its matching 2nd-layer face and composited over the untouched skin.
+    function composeWrap(baseWork) {
+      const layer = (document.getElementById('ed-wrap-layer') || {}).value || 'base';
+      const out = document.createElement('canvas'); out.width = SIZE; out.height = SIZE;
+      const oc = out.getContext('2d'); oc.imageSmoothingEnabled = false; oc.drawImage(baseWork, 0, 0);
+      if (layer === 'overlay') {
+        const w = document.createElement('canvas'); w.width = SIZE; w.height = SIZE;
+        drawWrap(w.getContext('2d'), 4);
+        FACE_BASE.forEach((bf, i) => { const of = FACE_OVERLAY[i]; if (!of) return; oc.clearRect(of.x, of.y, of.w, of.h); oc.drawImage(w, bf.x, bf.y, bf.w, bf.h, of.x, of.y, of.w, of.h); });
+      } else {
+        drawWrap(oc, 4);
+      }
+      return out;
+    }
     let imgViewer = null;
     function drawImagePreview() {
       if (!imgBitmap) return;
       // Composite the current skin + the wrap onto a temp canvas and preview it on
       // the modal's own 3D model.
-      const tmp = document.createElement('canvas'); tmp.width = SIZE; tmp.height = SIZE;
-      const tc = tmp.getContext('2d'); tc.drawImage(work, 0, 0);
-      drawWrap(tc, 4);
+      const tmp = composeWrap(work);
       const url = tmp.toDataURL();
       if (!imgViewer && typeof skinview3d !== 'undefined') { try { imgViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-img-3d'), width: 240, height: 340 }); } catch { } }
       if (imgViewer) { try { imgViewer.loadSkin(url, { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
@@ -947,6 +967,17 @@
     wrapSx.oninput = () => { if (document.getElementById('ed-wrap-aspect').checked) wrapSy.value = wrapSx.value; drawImagePreview(); };
     wrapSy.oninput = () => { if (document.getElementById('ed-wrap-aspect').checked) wrapSx.value = wrapSy.value; drawImagePreview(); };
     ['ed-img-mirror', 'ed-wrap-aspect', 'ed-wrap-sides', 'ed-wrap-drop2nd'].forEach(id => { const el = document.getElementById(id); if (el) el.onchange = () => { if (document.getElementById('ed-wrap-aspect').checked) wrapSy.value = wrapSx.value; drawImagePreview(); }; });
+    // Wrapping onto the 2nd layer: you can't also clear the 2nd layer, so turn that
+    // toggle off and disable it while "2nd layer" is selected.
+    const wrapLayerSel = document.getElementById('ed-wrap-layer');
+    const wrapDrop2nd = document.getElementById('ed-wrap-drop2nd');
+    if (wrapLayerSel) wrapLayerSel.onchange = () => {
+      const overlay = wrapLayerSel.value === 'overlay';
+      if (overlay) { wrapDrop2nd.checked = false; }
+      wrapDrop2nd.disabled = overlay;
+      wrapDrop2nd.closest('.ed-row').style.opacity = overlay ? '0.4' : '';
+      drawImagePreview();
+    };
     const closeImgModal = () => { imgBitmap = null; imgModal.classList.remove('active'); update3D(true); /* restore the real skin on the model */ };
     // Cancelling the importer: in its own full mode, go back to the library; as a
     // modal over the advanced editor, just close it.
@@ -956,7 +987,8 @@
     function bakeImage() {
       if (!imgBitmap) return;
       pushUndo();
-      drawWrap(wctx, 4);
+      const composed = composeWrap(work);
+      wctx.clearRect(0, 0, SIZE, SIZE); wctx.drawImage(composed, 0, 0);
       render(); liveUpdate();
     }
     document.getElementById('ed-img-bake').onclick = () => { bakeImage(); closeImgModal(); if (imgFullMode) { imgFullMode = false; imgModal.classList.remove('ed-img-fullmode'); } };
@@ -1102,7 +1134,7 @@
     let forceAllVisible = false;
     function applyPartVisibility() {
       if (!viewer || !viewer.playerObject) return;
-      const showOverlay = forceAllVisible || document.getElementById('ed-show-overlay').checked;
+      const showOverlay = forceAllVisible || overlayOn;
       PART_KEYS.forEach(([key]) => {
         const cb = document.querySelector(`#ed-parts input[data-part="${key}"]`);
         const part = viewer.playerObject.skin[key];
@@ -1219,6 +1251,36 @@
         btn.disabled = false; btn.innerHTML = '<i class="material-icons">content_copy</i> Save as a copy';
       }
     };
+
+    // Leaving the editor prompts to save / save-as-copy / discard, depending on
+    // whether we were editing an existing skin or making a new one.
+    async function saveAsCopy() {
+      const base = ((document.getElementById('ed-name') && document.getElementById('ed-name').value) || crName || 'My skin').trim();
+      const nm = base + ' copy';
+      if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: work.toDataURL('image/png'), variant, name: nm, editorType: curEditorMode === 'creator' ? 'simple' : 'advanced', creatorState: curEditorMode === 'creator' ? crState : null });
+      window.location.href = 'profile-manager.html';
+    }
+    function backToSkins() {
+      const isEdit = mode === 'edit' && editSkinId;
+      const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.inset = '44px 0 0 70px'; ov.style.zIndex = 7000;
+      const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '410px';
+      box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">${isEdit ? 'Save your changes?' : 'Save this skin?'}</h3></div>
+        <div style="margin:12px 0 16px;font-size:14px;opacity:.9;">${isEdit ? 'Save your changes to this skin, save them as a new copy, or discard them?' : 'Save this skin to your library, or discard it?'}</div>
+        <div class="ed-btn-row" style="flex-wrap:wrap;gap:8px;">
+          <button class="ed-btn primary" id="btk-save">Save</button>
+          ${isEdit ? '<button class="ed-btn" id="btk-copy">Save as a copy</button>' : ''}
+          <button class="ed-btn" id="btk-discard">Discard</button>
+          <button class="ed-btn" id="btk-cancel">Cancel</button>
+        </div>`;
+      ov.appendChild(box); document.body.appendChild(ov);
+      const close = () => ov.remove();
+      box.querySelector('#btk-cancel').onclick = close;
+      ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
+      box.querySelector('#btk-discard').onclick = () => { window.location.href = 'profile-manager.html'; };
+      box.querySelector('#btk-save').onclick = () => { close(); (curEditorMode === 'creator' ? document.getElementById('cr-save') : document.getElementById('ed-save')).click(); };
+      const cp = box.querySelector('#btk-copy'); if (cp) cp.onclick = () => { close(); saveAsCopy(); };
+    }
+    document.getElementById('ed-back-skins').onclick = backToSkins;
 
     // ── Edit-faces mode: a full-page texture mapper that copies individual faces
     // (or whole skins) from other skins — file / library (all accounts) / player
