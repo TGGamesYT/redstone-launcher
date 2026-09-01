@@ -1853,6 +1853,30 @@
           onChange && onChange();
         }
 
+        // Change which built jar (version) from the mod's build folder is loaded.
+        async function changeDevModVersion(type, id, mod, onChange) {
+          const jars = await ipcRenderer.invoke('devmod:listJars', { folder: mod.folder });
+          if (!jars || !jars.length) { alert('No jars found in that build folder.'); return; }
+          const ov = document.createElement('div'); ov.className = 'modal-overlay active'; ov.style.zIndex = 6000;
+          const rows = jars.map(j => `<div class="menu-item devver-row" data-jar="${j.name}" style="display:flex;justify-content:space-between;gap:12px;padding:8px;border-radius:6px;cursor:pointer;background:var(--menu-bg);margin:4px 0;">
+            <span style="word-break:break-all;">${j.name}</span><span style="opacity:.6;font-size:11px;white-space:nowrap;">${new Date(j.mtime).toLocaleString()}</span></div>`).join('');
+          ov.innerHTML = `<div class="modal-content" style="max-width:520px;">
+            <div class="modal-header"><h2>Pick a build to load — ${mod.modId}</h2></div>
+            <div style="max-height:50vh;overflow:auto;">${rows}</div>
+            <div class="modal-actions" style="margin-top:12px;"><button type="button" id="devver-cancel">Cancel</button></div></div>`;
+          document.body.appendChild(ov);
+          const close = () => ov.remove();
+          ov.querySelector('#devver-cancel').onclick = close;
+          ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
+          ov.querySelectorAll('.devver-row').forEach(row => row.onclick = async () => {
+            const r = await ipcRenderer.invoke('devmod:swapTo', { type, id, modId: mod.modId, folder: mod.folder, jar: row.dataset.jar });
+            close();
+            if (r && r.error) alert('Swap failed: ' + r.error);
+            else if (window.notify) window.notify('Loaded ' + row.dataset.jar, 'success');
+            onChange && onChange();
+          });
+        }
+
         // ── Minecraft text-component renderer (resource-pack descriptions) ──
         const MC_LEGACY = { '0':'#000000','1':'#0000AA','2':'#00AA00','3':'#00AAAA','4':'#AA0000','5':'#AA00AA','6':'#FFAA00','7':'#AAAAAA','8':'#555555','9':'#5555FF','a':'#55FF55','b':'#55FFFF','c':'#FF5555','d':'#FF55FF','e':'#FFFF55','f':'#FFFFFF' };
         const MC_NAMED = { black:'#000000', dark_blue:'#0000AA', dark_green:'#00AA00', dark_aqua:'#00AAAA', dark_red:'#AA0000', dark_purple:'#AA00AA', gold:'#FFAA00', gray:'#AAAAAA', grey:'#AAAAAA', dark_gray:'#555555', dark_grey:'#555555', blue:'#5555FF', green:'#55FF55', aqua:'#55FFFF', red:'#FF5555', light_purple:'#FF55FF', yellow:'#FFFF55', white:'#FFFFFF' };
@@ -1913,10 +1937,13 @@
 
         // Card for an installed mod/resourcepack/shader with enable/disable +
         // update controls. `refresh` re-renders the tab after a change.
-        function createContentCard(p, tabName, refresh, running) {
+        function createContentCard(p, tabName, refresh, running, devMods) {
           const li = document.createElement("li");
           li.className = "profile-item";
           if (p.disabled) li.style.opacity = "0.45";
+          // Is this the hot-swapped jar of a registered dev mod?
+          const devMod = (devMods || []).find(m => p.filename === m.modId + "-dev.jar" || p.filename === m.modId + "-dev.jar.disabled");
+          if (devMod) li.style.borderColor = "var(--accent)";
 
           const img = document.createElement("img");
           img.src = p.icon || DEFAULT_ICON;
@@ -1927,7 +1954,7 @@
           info.className = "profile-info";
           const name = document.createElement("div");
           name.className = "profile-name";
-          name.textContent = p.name + (p.disabled ? "  (disabled)" : "");
+          name.textContent = p.name + (devMod ? "  (devmod)" : "") + (p.disabled ? "  (disabled)" : "");
           const details = document.createElement("div");
           details.className = "profile-details";
           // Resource packs: render the pack.mcmeta description with Minecraft's
@@ -1983,6 +2010,21 @@
             refresh();
           };
           actions.appendChild(toggle);
+
+          // Dev-mod extras: change the build folder, or swap to a different jar
+          // from that folder.
+          if (devMod) {
+            const cf = document.createElement("button");
+            cf.className = "card-action-btn"; cf.title = "Change build folder";
+            cf.innerHTML = `<i class="material-icons">folder_open</i>`;
+            cf.onclick = (e) => { e.stopPropagation(); changeDevModFolder("instance", profile.id, devMod, refresh); };
+            actions.appendChild(cf);
+            const cv = document.createElement("button");
+            cv.className = "card-action-btn"; cv.title = "Change version (pick a jar from the build folder)";
+            cv.innerHTML = `<i class="material-icons">swap_horiz</i>`;
+            cv.onclick = (e) => { e.stopPropagation(); changeDevModVersion("instance", profile.id, devMod, refresh); };
+            actions.appendChild(cv);
+          }
 
           // Change-version: open this project's Versions tab, pre-filtered to the
           // instance's current MC version + loader, to swap to another build.
@@ -2390,33 +2432,15 @@
                     bar.appendChild(devBtn);
                   }
                 }
-                if (running) {
-                  const note = document.createElement("span");
-                  note.style.cssText = "font-size:12px; opacity:0.7; align-self:center;";
-                  note.textContent = "Instance running — changes apply after restart.";
-                  bar.appendChild(note);
-                }
                 tabContent.appendChild(bar);
                 const ul = document.createElement("ul");
                 ul.className = "profile-list";
-                // Registered dev mods show at the top of the Mods list as normal
-                // rows, with a change-folder and a remove control.
-                if (tabName === "mods") {
-                  const dmState = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id });
-                  (dmState && dmState.mods || []).forEach(m => {
-                    const li = document.createElement("li");
-                    li.className = "profile-item";
-                    li.style.borderColor = "var(--accent)";
-                    li.innerHTML = `<div class="profile-info"><div class="profile-name"><i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> ${m.modId} <span style="font-size:11px;opacity:.7;">(dev)</span></div><div class="profile-details" style="word-break:break-all;">${m.folder}</div></div>`;
-                    const cf = document.createElement("button"); cf.className = "icon-btn"; cf.title = "Change build folder"; cf.innerHTML = `<i class="material-icons">folder_open</i>`;
-                    cf.onclick = (e) => { e.stopPropagation(); changeDevModFolder("instance", profile.id, m, () => renderContentTab()); };
-                    const rm = document.createElement("button"); rm.className = "icon-btn"; rm.title = "Stop hot-swapping this mod"; rm.innerHTML = `<i class="material-icons">delete</i>`;
-                    rm.onclick = async (e) => { e.stopPropagation(); await ipcRenderer.invoke("devmod:remove", { type: "instance", id: profile.id, folder: m.folder }); renderContentTab(); };
-                    li.append(cf, rm);
-                    ul.appendChild(li);
-                  });
-                }
-                for (const p of fileInfos) ul.appendChild(createContentCard(p, tabName, renderContentTab, running));
+                // Registered dev mods are surfaced ON their real mod card (not as a
+                // separate row): the card whose file is <modId>-dev.jar is tagged
+                // "(devmod)" and gets the change-folder / change-version controls.
+                let devMods = [];
+                if (tabName === "mods") { const dmState = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id }); devMods = (dmState && dmState.mods) || []; }
+                for (const p of fileInfos) ul.appendChild(createContentCard(p, tabName, renderContentTab, running, devMods));
                 tabContent.appendChild(ul);
               };
               await renderContentTab();

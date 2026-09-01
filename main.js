@@ -5075,6 +5075,35 @@ ipcMain.handle("devmod:add", (event, { type, id, folder, modId }) => {
   startDevWatch(type, id);
   return { success: true, mods: store[k].mods, swap };
 });
+// List the buildable jars in a folder (for the "change version" picker), newest first.
+ipcMain.handle("devmod:listJars", (event, { folder }) => {
+  try {
+    return fs.readdirSync(folder)
+      .filter(f => /\.jar$/i.test(f) && !/-(sources|dev|javadoc|slim)\.jar$/i.test(f))
+      .map(f => ({ name: f, mtime: fs.statSync(path.join(folder, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch { return []; }
+});
+// Swap to a SPECIFIC jar from the folder (rather than the newest).
+ipcMain.handle("devmod:swapTo", (event, { type, id, modId, folder, jar }) => {
+  try {
+    const src = path.join(folder, jar);
+    if (!fs.existsSync(src)) return { error: "That jar no longer exists" };
+    const tgt = devModTarget(type, id);
+    fs.mkdirSync(tgt.modsDir, { recursive: true });
+    const destName = `${modId}-dev.jar`;
+    const info = readJarModInfo(src);
+    for (const f of fs.readdirSync(tgt.modsDir)) {
+      if (!/\.jar(\.disabled)?$/i.test(f)) continue;
+      const full = path.join(tgt.modsDir, f);
+      if (f === destName || f === destName + ".disabled") { try { fs.unlinkSync(full); } catch { } continue; }
+      const ex = readJarModInfo(full.replace(/\.disabled$/i, ""));
+      if (ex && (ex.id === modId || (info && ex.id === info.id))) { try { fs.unlinkSync(full); } catch { } }
+    }
+    fs.copyFileSync(src, path.join(tgt.modsDir, destName));
+    return { success: true, dest: destName };
+  } catch (e) { return { error: e.message }; }
+});
 ipcMain.handle("devmod:remove", (event, { type, id, folder }) => {
   const store = loadDevModsStore(); const k = devModKey(type, id);
   if (store[k]) { store[k].mods = (store[k].mods || []).filter(m => m.folder !== folder); saveDevModsStore(store); startDevWatch(type, id); }
@@ -6184,19 +6213,23 @@ async function ownedCapesFor(headers) {
   } catch { return []; }
 }
 
+// Minecraft's product-voucher endpoint (the one minecraft.net/redeem uses).
+const VOUCHER_URL = (c) => `https://api.minecraftservices.com/entitlements/productvoucher/${encodeURIComponent(c)}`;
+
 // Look up what a code grants WITHOUT redeeming it, and whether the chosen account
-// already owns that cape. Uses Minecraft's product-voucher endpoint.
+// already owns that cape.
 ipcMain.handle("cape:redeemPreview", async (event, { code, accountId }) => {
   try {
     const c = String(code || "").trim();
     if (!c) return { error: "Enter a code." };
     const headers = await authHeadersFor(accountId);
-    const res = await fetch(`https://api.minecraftservices.com/productvoucher/${encodeURIComponent(c)}`, { headers });
+    const res = await fetch(VOUCHER_URL(c), { headers });
     if (res.status === 404) return { error: "That code isn't valid or has already been used." };
     if (!res.ok) return { error: await cleanHttpError(res) };
     const j = await res.json().catch(() => ({}));
     // Best-effort extraction of the product / cape name the voucher grants.
-    const productName = j.productName || j.name || (j.product && (j.product.name || j.product.productName)) || (j.items && j.items[0] && j.items[0].name) || "a cape";
+    const item = (j.items && j.items[0]) || (j.entitlements && j.entitlements[0]) || j.product || {};
+    const productName = j.productName || j.name || item.name || item.productName || item.displayName || "a cape";
     const owned = await ownedCapesFor(headers);
     const match = owned.find(cp => productName && (cp.alias || "").toLowerCase() === String(productName).toLowerCase());
     return { ok: true, productName, capeUrl: match ? (match.url || null) : null, alreadyOwned: !!match };
@@ -6209,7 +6242,7 @@ ipcMain.handle("cape:redeem", async (event, { code, accountId }) => {
     const c = String(code || "").trim();
     if (!c) return { error: "Enter a code." };
     const headers = await authHeadersFor(accountId);
-    const res = await fetch(`https://api.minecraftservices.com/productvoucher/${encodeURIComponent(c)}`, { method: "PUT", headers });
+    const res = await fetch(VOUCHER_URL(c), { method: "PUT", headers });
     if (!res.ok) return { error: await cleanHttpError(res) };
     profileCache.clear();
     return { ok: true };
