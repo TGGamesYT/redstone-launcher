@@ -862,12 +862,33 @@
       const r = new FileReader();
       r.onload = () => {
         const im = new Image();
-        im.onload = () => { imgBitmap = im; imgModal.classList.add('active'); drawImagePreview(); };
+        im.onload = () => { imgBitmap = im; imgModal.classList.add('active'); autoFitWrap(); drawImagePreview(); };
         im.src = r.result;
       };
       r.readAsDataURL(f);
       e.target.value = '';
     };
+
+    // The body's source footprint in `bm` units around the wrap centre, taken from
+    // the face sampling in drawWrap below (x spans -2..+2, y spans -4..+4). Keep
+    // these in step with that mapping.
+    const WRAP_BODY_W = 4, WRAP_BODY_H = 8;
+    // Centre a freshly-loaded image and pick the largest zoom whose sampled area
+    // still fits inside it, so the whole body is covered by real image pixels.
+    // Whichever axis runs out first decides the scale (an object-fit: cover), so a
+    // tall image matches on height and a wide one matches on width — no per-ratio
+    // special cases.
+    function autoFitWrap() {
+      if (!imgBitmap) return;
+      const bm = imgBitmap.height / 12;
+      const fit = Math.min(imgBitmap.width / (WRAP_BODY_W * bm), imgBitmap.height / (WRAP_BODY_H * bm));
+      const sx = document.getElementById('ed-wrap-sx'), sy = document.getElementById('ed-wrap-sy');
+      const lo = +sx.min || 20, hi = +sx.max || 300;
+      const pct = Math.max(lo, Math.min(hi, Math.round(fit * 100)));
+      sx.value = pct; sy.value = pct;
+      document.getElementById('ed-wrap-px').value = 0;   // centred
+      document.getElementById('ed-wrap-py').value = 0;
+    }
 
     // Wrap a photo onto the body's faces (front + sides, optional back), ported
     // from the pngskin2 mapping. Draws over whatever skin is already there, so
@@ -886,8 +907,13 @@
       const sides = document.getElementById('ed-wrap-sides').value;
       const op = $v('ed-img-op') / 100;
       ctx.save(); ctx.globalAlpha = op; ctx.imageSmoothingEnabled = true;
+      // Zoom scales the sampled area about the wrap CENTRE (ox, oy) — scaling the
+      // raw coordinates instead would anchor the zoom at the image's top-left.
       const D = (sx, sy, sw, sh, dx, dy, dw, dh) =>
-        ctx.drawImage(imgBitmap, sx * sizeX, sy * sizeY, Math.max(0.01, sw) * bm * sizeX, Math.max(0.01, sh) * bm * sizeY, dx * M, dy * M, dw * M, dh * M);
+        ctx.drawImage(imgBitmap,
+          ox + (sx - ox) * sizeX, oy + (sy - oy) * sizeY,
+          Math.max(0.01, sw) * bm * sizeX, Math.max(0.01, sh) * bm * sizeY,
+          dx * M, dy * M, dw * M, dh * M);
       const flip = (x, y, w, h, fn) => {
         const dx = x * M, dy = y * M, dw = w * M, dh = h * M, cx = dx + dw / 2, cy = dy + dh / 2;
         ctx.save(); ctx.translate(cx, cy); ctx.scale(-1, 1); ctx.translate(-cx, -cy); fn(); ctx.restore();
