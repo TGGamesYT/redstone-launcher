@@ -337,24 +337,22 @@ function startInstance(id, pid) {
 }
 
 function stopInstance(id, pid = null) {
+  // NOTE: we intentionally KEEP instanceLogs after an instance stops, so the Logs
+  // tab still shows the whole session (including the crash/exit) once it's closed.
+  // The logs are cleared at the START of the next launch (see launchProfileCore).
   if (pid) {
     const key = `${id}-${pid}`;
     if (runningInstances.has(key)) {
       runningInstances.delete(key);
       devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${pid})`);
-      if (!isInstanceRunning(id)) {
-        instanceLogs.delete(id); // Clean up logs when fully stopped
-      }
     }
   } else {
-    // Stop all with same ID
     for (const [key, data] of runningInstances.entries()) {
       if (data.id === id) {
         runningInstances.delete(key);
         devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${data.pid})`);
       }
     }
-    instanceLogs.delete(id);
   }
   persistRunningInstances();
 }
@@ -407,7 +405,7 @@ function restoreRunningInstances() {
     for (const [key, data] of runningInstances.entries()) {
       if (!isPidAlive(data.pid)) {
         runningInstances.delete(key);
-        if (!isInstanceRunning(data.id)) instanceLogs.delete(data.id);
+        // Keep the logs so the Logs tab still shows the finished session.
         changed = true;
         devtoolsLog(`[Tracker] Instance ${data.id} (PID ${data.pid}) is no longer running`);
       }
@@ -2327,6 +2325,7 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
   }
 
   launchingProfiles.set(profileId, now);
+  instanceLogs.delete(profileId); // fresh console for this launch (previous session was kept until now)
 
   try {
     broadcastLog(profileId, "Launching, please wait.");
@@ -4277,7 +4276,12 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
   const results = [];
   const needLookup = []; // { filename, sha1 }
 
+  // Hashing + jar parsing is synchronous and can be heavy for a big modpack, so
+  // yield the event loop every few files — otherwise the whole app freezes while
+  // this runs on the main process.
+  let _since = 0;
   for (const d of files) {
+    if (++_since >= 4) { _since = 0; await new Promise(r => setImmediate(r)); }
     const filename = d.name;
     const fullPath = path.join(basePath, filename);
 

@@ -2326,15 +2326,22 @@
                   .replace(/\bmethod_\d+\b/g, m => deobfMaps.methods[m] || m)
                   .replace(/\bfield_\d+\b/g, m => deobfMaps.fields[m] || m)
                 : l;
-              const appendLine = (line) => {
+              // Coalesce a flood of log lines into ONE DOM write per animation
+              // frame. Appending per-line with `textContent +=` re-writes the whole
+              // buffer each time (O(n²)), which froze the UI while launching.
+              let _pendingLines = [], _rafScheduled = false;
+              const flushLines = () => {
+                _rafScheduled = false;
+                if (!_pendingLines.length) return;
                 const stick = isAtBottom();
-                logsEl.textContent += deobfLine(line) + "\n";
-                // Cap the console size — an unbounded <pre> makes every append a
-                // huge reflow, which is a big source of lag while launching.
-                if (logsEl.textContent.length > 400000) {
-                  logsEl.textContent = logsEl.textContent.slice(-300000);
-                }
+                logsEl.textContent += _pendingLines.join("");
+                _pendingLines = [];
+                if (logsEl.textContent.length > 400000) logsEl.textContent = logsEl.textContent.slice(-300000);
                 if (stick) logsEl.scrollTop = logsEl.scrollHeight;
+              };
+              const appendLine = (line) => {
+                _pendingLines.push(deobfLine(line) + "\n");
+                if (!_rafScheduled) { _rafScheduled = true; requestAnimationFrame(flushLines); }
               };
 
               logsEl.textContent = "Loading history...\n";
