@@ -261,6 +261,10 @@ function sendProgressNow(profileId, progress) {
   if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('launch-progress', { profileId, ...progress });
   }
+  // A shortcut launch has no launcher window, only the little progress card.
+  if (launchSplash && !launchSplash.isDestroyed()) {
+    launchSplash.webContents.send('launch-progress', { profileId, ...progress });
+  }
 }
 function broadcastProgress(profileId, progress) {
   // Terminal frames go through immediately and cancel any pending trailing send.
@@ -821,6 +825,40 @@ function mcVersionAtLeast(version, target) {
   return true;
 }
 
+// ── Shortcut launch progress ──
+// A shortcut launch opens no launcher window, so downloading assets and starting
+// the JVM used to be minutes of nothing happening at all. This small frameless
+// card sits on screen for that time and follows the same launch-progress events
+// the instances page uses.
+let launchSplash = null;
+function openLaunchSplash(info) {
+  try {
+    launchSplash = new BrowserWindow({
+      width: 400, height: 150,
+      frame: false, transparent: true, resizable: false, maximizable: false,
+      minimizable: false, alwaysOnTop: true, skipTaskbar: false, show: false,
+      icon: path.join(iconPath),
+      webPreferences: { nodeIntegration: true, contextIsolation: false },
+    });
+    launchSplash.loadFile("frontend/launch-splash.html");
+    launchSplash.once("ready-to-show", () => {
+      if (!launchSplash || launchSplash.isDestroyed()) return;
+      launchSplash.show();
+      launchSplash.webContents.send("splash-init", { ...info, theme: { ...DEFAULT_SETTINGS, ...settings.store } });
+    });
+    launchSplash.on("closed", () => { launchSplash = null; });
+  } catch (e) {
+    devtoolsLog("launch splash failed: " + e.message);
+    launchSplash = null;
+  }
+}
+function closeLaunchSplash(delay = 0) {
+  const w = launchSplash;
+  launchSplash = null;
+  if (!w || w.isDestroyed()) return;
+  setTimeout(() => { try { if (!w.isDestroyed()) w.close(); } catch { /* ignore */ } }, delay);
+}
+
 // Launch a Minecraft client from an instance deep link WITHOUT opening the
 // launcher window — used when a desktop shortcut is clicked while the app is
 // not already running. Resolves once the game process has spawned (or failed).
@@ -838,6 +876,13 @@ async function launchInstanceFromDeepLink(url) {
       playerId = storage.get("selectedPlayerId", null);
     }
     if (!playerId) return { error: "No account selected" };
+    // Something on screen from here on — everything after this point can take
+    // minutes (downloading the version, assets, the loader, then the JVM start).
+    openLaunchSplash({
+      name: profile.name || "Minecraft",
+      version: [profile.loader && profile.loader !== "vanilla" ? profile.loader : "", profile.version].filter(Boolean).join(" "),
+      icon: profile.icon || null,
+    });
     const args = { profileId: profile.id, playerId };
     const mode = p.get("mode") || "start";
     if (mode === "world" && p.get("world")) {
@@ -898,7 +943,16 @@ if (!gotTheLock) {
     }
     if (headless) {
       const r = await launchInstanceFromDeepLink(initialLink);
+      if (r && r.error) {
+        // Leave the failure on screen long enough to read — with no launcher
+        // window there is nowhere else for it to go.
+        if (launchSplash && !launchSplash.isDestroyed()) launchSplash.webContents.send("splash-error", r.error);
+        closeLaunchSplash(6000);
+        setTimeout(() => { if (!mainWindow || mainWindow.isDestroyed()) app.quit(); }, 6500);
+        return;
+      }
       // Give the detached JVM a moment to fully spawn, then exit the launcher.
+      closeLaunchSplash(r && r.pid ? 3500 : 500);
       setTimeout(() => { if (!mainWindow || mainWindow.isDestroyed()) app.quit(); }, r && r.pid ? 4000 : 500);
       return;
     }
@@ -1678,6 +1732,13 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
       const port = m && m[2] ? m[2] : "25565";
       opts.customLaunchArgs = ["--server", host, "--port", port];
     }
+    // Same as the normal launch path: swap the offline account's skin into the
+    // instance's folder resource pack right before the game starts.
+    if (player.type === "cracked") {
+      const entry = loadCrackedSkins()[String(player.id)];
+      if (entry && entry.base64) applyCrackedSkinToInstance(profileId, profile.version, entry.base64);
+      else removeCrackedSkinFromInstance(profileId);
+    }
     const childProcess = await withRetry(() => launcher.launch(opts), { tries: 2, label: "Launching", profileId });
 
     launchingProfiles.delete(profileId);
@@ -2440,12 +2501,15 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     }
 
     // Offline accounts can't upload a skin to Mojang, so their chosen skin is
-    // applied as a resource pack overriding the vanilla player textures. Refresh
-    // it here: the instance's own client jar gives the right pack_format, and by
-    // now it has been downloaded.
+    // applied as a resource pack overriding the vanilla player textures. This is
+    // the ONLY place the pack is written: an instance gets whatever skin the
+    // account has right now, swapped in just before the game starts. By this point
+    // the instance's client jar is downloaded, so it can say which pack_format and
+    // which texture layout this version wants.
     if (player.type === "cracked") {
       const entry = loadCrackedSkins()[String(player.id)];
       if (entry && entry.base64) {
+        broadcastLog(profileId, "[skin] Applying the offline account skin...");
         const r = applyCrackedSkinToInstance(profileId, profile.version, entry.base64);
         if (!r.success) broadcastLog(profileId, "[WARN] Couldn't apply the offline skin: " + r.error);
       } else {
@@ -6513,15 +6577,22 @@ function readPackInfoFromJar(jarPath) {
   return out;
 }
 
+// The pack is a FOLDER, not a zip. Minecraft holds an open handle on a zipped
+// resource pack for as long as it's loaded, so a zip can't be rewritten while the
+// game is running; the individual PNGs inside a directory pack can be. Directory
+// packs are listed in options.txt exactly like zipped ones, minus the extension.
+const CRACKED_PACK_NAME = "redstone-skin";
+const CRACKED_PACK_ENTRY = "file/" + CRACKED_PACK_NAME;
+const crackedPackDir = (profileId) =>
+  path.join(dataDir, "client", String(profileId), "resourcepacks", CRACKED_PACK_NAME);
+
 // Build (or refresh) the offline-skin resource pack for an instance and enable it.
 // Every default skin name is overridden, in BOTH the wide and slim folders, so the
 // skin shows regardless of which default the game assigns this offline UUID.
 function applyCrackedSkinToInstance(profileId, version, base64) {
   const raw = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
   if (!raw) return { success: false, error: "No skin data" };
-  const packsDir = path.join(dataDir, "client", String(profileId), "resourcepacks");
-  const packName = "redstone-skin.zip";
-  const packPath = path.join(packsDir, packName);
+  const dir = crackedPackDir(profileId);
   try {
     const info = readPackInfoFromJar(instanceClientJar(profileId, version));
     const major = info.major ?? legacyPackFormat(version) ?? 99;
@@ -6540,58 +6611,76 @@ function applyCrackedSkinToInstance(profileId, version, base64) {
       },
     };
 
-    const zip = new AdmZip();
-    zip.addFile("pack.mcmeta", Buffer.from(JSON.stringify(meta, null, 2)));
-
-    // Write whichever layout this version uses. When the jar isn't around to tell
-    // us, write BOTH — the version that doesn't use one just ignores those files.
-    const useModern = !info.legacy;
-    const useLegacy = info.legacy || !info.names;
-    let written = 0;
-    if (useModern) {
+    // Which textures this version's layout needs. When the jar isn't around to
+    // tell us, write BOTH layouts — the version that doesn't use one ignores it.
+    const files = [];
+    if (!info.legacy) {
       const names = info.names && info.names.length ? info.names : DEFAULT_SKIN_NAMES;
-      for (const model of ["wide", "slim"]) {
-        for (const n of names) { zip.addFile(`${PLAYER_TEX_DIR}/${model}/${n}.png`, png); written++; }
-      }
+      for (const model of ["wide", "slim"]) for (const n of names) files.push(`${PLAYER_TEX_DIR}/${model}/${n}.png`);
     }
-    if (useLegacy) {
+    if (info.legacy || !info.names) {
       // Pre-1.19.3: just the two files, wide=steve and slim=alex. Both are replaced
       // regardless of the chosen skin's model.
-      zip.addFile(LEGACY_STEVE, png); zip.addFile(LEGACY_ALEX, png); written += 2;
+      files.push(LEGACY_STEVE, LEGACY_ALEX);
     }
 
-    fs.mkdirSync(packsDir, { recursive: true });
-    zip.writeZip(packPath);
+    // Drop textures a previous version's layout left behind, so switching an
+    // instance's game version doesn't leave stale overrides in the pack.
+    const wanted = new Set(files);
+    for (const stale of listPackTextures(dir)) {
+      if (!wanted.has(stale)) { try { fs.unlinkSync(path.join(dir, stale)); } catch { /* ignore */ } }
+    }
+
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "pack.mcmeta"), JSON.stringify(meta, null, 2));
+    for (const rel of files) {
+      const abs = path.join(dir, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, png);
+    }
+
+    // An older build shipped this as a zip; it would sit alongside the folder and
+    // win or lose at random, so clear it out.
+    try {
+      const oldZip = dir + ".zip";
+      if (fs.existsSync(oldZip)) fs.unlinkSync(oldZip);
+    } catch { /* ignore */ }
 
     // Enable it last so it wins over other packs.
-    const packs = readEnabledResourcePacks(profileId).filter(p => p !== "file/" + packName);
-    packs.push("file/" + packName);
+    const packs = readEnabledResourcePacks(profileId)
+      .filter(p => p !== CRACKED_PACK_ENTRY && p !== CRACKED_PACK_ENTRY + ".zip");
+    packs.push(CRACKED_PACK_ENTRY);
     writeEnabledResourcePacks(profileId, packs);
-    return { success: true, pack: packName, format: major, textures: written };
+    return { success: true, pack: CRACKED_PACK_NAME, format: major, textures: files.length };
   } catch (e) {
     return { success: false, error: e.message };
   }
 }
 
-function removeCrackedSkinFromInstance(profileId) {
-  const packName = "redstone-skin.zip";
-  try {
-    const p = path.join(dataDir, "client", String(profileId), "resourcepacks", packName);
-    if (fs.existsSync(p)) fs.unlinkSync(p);
-    writeEnabledResourcePacks(profileId, readEnabledResourcePacks(profileId).filter(x => x !== "file/" + packName));
-  } catch { /* ignore */ }
+// The .png paths currently in a folder pack, relative to its root.
+function listPackTextures(dir) {
+  const out = [];
+  const walk = (rel) => {
+    let entries = [];
+    try { entries = fs.readdirSync(path.join(dir, rel), { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const r = rel ? rel + "/" + e.name : e.name;
+      if (e.isDirectory()) walk(r);
+      else if (e.name.endsWith(".png")) out.push(r);
+    }
+  };
+  walk("");
+  return out;
 }
 
-// Refresh the pack for every instance (called when an offline account's skin changes).
-async function syncCrackedSkinToAllInstances(playerId) {
-  const store = loadCrackedSkins();
-  const entry = store[String(playerId)];
-  let profiles = [];
-  try { profiles = JSON.parse(fs.readFileSync(profilesPath, "utf8")) || []; } catch { return; }
-  for (const p of profiles) {
-    if (entry && entry.base64) applyCrackedSkinToInstance(p.id, p.version, entry.base64);
-    else removeCrackedSkinFromInstance(p.id);
-  }
+function removeCrackedSkinFromInstance(profileId) {
+  try {
+    fs.rmSync(crackedPackDir(profileId), { recursive: true, force: true });
+    const oldZip = crackedPackDir(profileId) + ".zip";
+    if (fs.existsSync(oldZip)) fs.unlinkSync(oldZip);
+    writeEnabledResourcePacks(profileId, readEnabledResourcePacks(profileId)
+      .filter(x => x !== CRACKED_PACK_ENTRY && x !== CRACKED_PACK_ENTRY + ".zip"));
+  } catch { /* ignore */ }
 }
 
 ipcMain.handle("skins:getCracked", (event, { playerId }) => loadCrackedSkins()[String(playerId)] || null);
@@ -6602,7 +6691,9 @@ ipcMain.handle("skins:setCracked", async (event, { playerId, base64, variant, na
     if (base64) store[String(playerId)] = { base64: String(base64).replace(/^data:image\/\w+;base64,/, ""), variant: variant || "classic", name: name || "Skin", pixelHash: pixelHash || null };
     else delete store[String(playerId)];
     saveCrackedSkins(store);
-    await syncCrackedSkinToAllInstances(playerId);
+    // Nothing is written to any instance here. The pack is refreshed at launch,
+    // from the skin the account has at that moment — rewriting every instance now
+    // would also mean writing into packs a running game is holding.
     return { success: true };
   } catch (e) { return { success: false, error: e.message }; }
 });
