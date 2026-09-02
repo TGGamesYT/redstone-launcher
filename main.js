@@ -472,6 +472,34 @@ function stopByPid(pid) {
 const storage = new Store();
 const settings = new Store();
 export default settings;
+
+// Baseline settings. On a brand-new install the store is empty, and handing the
+// renderer an empty object made applyTheme() blow up on undefined colours (which
+// aborted sidebar.js, so pages half-loaded and theme changes looked unsaved).
+// These are seeded once and always merged into what the renderer receives.
+const DEFAULT_SETTINGS = {
+  ramInstancesMin: 2048,
+  ramInstancesMax: 4096,
+  ramServersMin: 2048,
+  ramServersMax: 4096,
+  baseColor: "#b30c0c",
+  secondaryColor: "#ff4d4d",
+  thirdColor: "#d92d2d",
+  textColor: "#ffffff",
+  font: "Pixel",
+  borderRadius: 0,
+  autoUpdates: true,
+  discordPresence: true,
+  autoThird: true,
+  gridView: false,
+  gradientEnabled: false,
+  gradientColors: ["#ff4d4d", "#b30c0c"],
+  gradientAngle: 180,
+  predefinedThemeSync: false,
+};
+for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
+  if (!settings.has(k)) settings.set(k, v);
+}
 const sortStore = new Store({ name: "instance-sorting" });
 if (!sortStore.has("sortMode")) sortStore.set("sortMode", "created-desc");
 if (!sortStore.has("customOrder")) sortStore.set("customOrder", []);
@@ -967,11 +995,13 @@ function setSelectedPlayer(id) {
 
 
 ipcMain.handle('get-settings', () => {
-  return settings.store;
+  // Always hand back a COMPLETE settings object — a missing colour/font here
+  // used to throw in the renderer's applyTheme() and break the whole page.
+  return { ...DEFAULT_SETTINGS, ...settings.store };
 });
 
 ipcMain.handle('get-setting', (event, key) => {
-  return settings.get(key);
+  return settings.get(key, DEFAULT_SETTINGS[key]);
 });
 
 ipcMain.handle('set-setting', (event, key, value) => {

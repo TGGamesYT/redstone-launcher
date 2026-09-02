@@ -6,6 +6,7 @@
   "author": "Redstone Launcher Team <contact@redstone-launcher.com>",
   "main": "main.js",
   "scripts": {
+    "postinstall": "node scripts/ensure-electron.cjs",
     "app": "electron .",
     "buildWin": "electron-builder --win --publish=never",
     "buildLinux": "electron-builder --linux AppImage deb --publish=never",

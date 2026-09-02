@@ -31,8 +31,18 @@ function error(text, duration = 3000) {
   }, duration);
 }
 
-function hexToRgb(hex) {
-  hex = hex.replace(/^#/, '');
+// Theme fallbacks, mirroring the defaults in main.js. A half-written cache or an
+// older save must never leave a colour undefined here — that used to throw and
+// abort the rest of this file, leaving pages half-rendered.
+const THEME_FALLBACK = {
+  baseColor: '#b30c0c', secondaryColor: '#ff4d4d', thirdColor: '#d92d2d',
+  textColor: '#ffffff', font: 'Pixel', borderRadius: 0, gradientAngle: 180,
+};
+
+function hexToRgb(hex, fallback = '#000000') {
+  hex = String(hex ?? fallback).replace(/^#/, '');
+  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+  if (!/^[0-9a-f]{6}$/i.test(hex)) hex = String(fallback).replace(/^#/, '');
   return [
     parseInt(hex.substring(0, 2), 16),
     parseInt(hex.substring(2, 4), 16),
@@ -52,6 +62,7 @@ function getMiddleColor(hex1, hex2) {
 }
 
 function applyTheme(settings) {
+  settings = { ...THEME_FALLBACK, ...(settings || {}) };
   const textColor = settings.textColor;
   const textFont = settings.font;
   const base = settings.baseColor;
@@ -84,15 +95,16 @@ function applyTheme(settings) {
   }
 }
 
-const cachedTheme = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
-if (Object.keys(cachedTheme).length > 0) {
-  applyTheme(cachedTheme);
-}
+// Theming must never be able to take the page down with it: a corrupt cache or a
+// failed IPC should still leave the rest of the sidebar working.
+let cachedTheme = {};
+try { cachedTheme = JSON.parse(localStorage.getItem('launcherTheme') || '{}') || {}; } catch { cachedTheme = {}; }
+try { applyTheme(cachedTheme); } catch (e) { console.warn('cached theme failed to apply', e); }
 
 ipcRenderer.invoke('get-settings').then(settings => {
-  applyTheme(settings);
-  localStorage.setItem('launcherTheme', JSON.stringify(settings));
-});
+  try { applyTheme(settings); } catch (e) { console.warn('theme failed to apply', e); }
+  try { localStorage.setItem('launcherTheme', JSON.stringify(settings)); } catch { /* ignore */ }
+}).catch(e => console.warn('get-settings failed', e));
 
 
 players = [];
