@@ -611,66 +611,126 @@
     // forward by default, spins while hovered, and eases back to facing forward
     // when the pointer leaves. Rendering is paused while still, so idle cards
     // cost nothing.
-    const _spinViewers = [];
-    // skinview3d's autoRotate spins playerWrapper (NOT playerObject), so the
-    // ease-back must move the same object or the model never returns to front.
+    // A browser only allows ~16 live WebGL contexts. Giving every card its own
+    // SkinViewer blew straight past that (the browse grid alone wants ~36), and
+    // the browser then silently kills the OLDEST contexts — which is why the big
+    // render behind a modal, and half the browse cards, turned blank.
+    //
+    // So: ONE offscreen renderer draws a still frame for each card into an <img>,
+    // and ONE live viewer is moved into whichever card is hovered. Two contexts
+    // total, no matter how many skins are on screen. The behaviour is unchanged:
+    // still and facing forward by default, spins while hovered, eases back on leave.
     const spinTarget = (v) => (v && (v.playerWrapper || v.playerObject)) || null;
-    function createSpinViewer(src, model, w, h) {
-      const canvas = document.createElement("canvas");
-      canvas.className = "card-image";
-      canvas.style.display = "block";
-      canvas.style.width = "100%";
-      canvas.style.height = "auto";
-      let viewer = null;
-      try {
-        viewer = new skinview3d.SkinViewer({ canvas, width: w, height: h });
-        viewer.zoom = 0.9;
-        viewer.autoRotate = false;
-        try { viewer.controls.enableZoom = false; } catch { }   // wheel scrolls the page
-        try { spinTarget(viewer).rotation.y = 0; } catch { }
-        const p = viewer.loadSkin(src, { model: model === "slim" ? "slim" : "default" });
-        // Render one still frame, then pause the loop until hovered.
-        const settle = () => { try { spinTarget(viewer).rotation.y = 0; viewer.render(); viewer.renderPaused = true; } catch { } };
-        if (p && p.then) p.then(() => setTimeout(settle, 60), () => { }); else setTimeout(settle, 120);
-      } catch { return null; }
-      canvas._viewer = viewer;
-      _spinViewers.push(viewer);
-      return canvas;
+    function killViewer(v) {
+      // dispose() alone does NOT release the WebGL context — that leaks a context
+      // per recreation until the browser starts dropping them.
+      try { v.dispose(); } catch { }
+      try { v.renderer.forceContextLoss(); } catch { }
     }
-    // Hover wiring: spin while hovered, ease back to front on leave.
-    function wireSpin(hoverEl, canvas) {
-      const viewer = canvas && canvas._viewer; if (!viewer || !hoverEl) return;
-      let raf = null, easing = false;
+
+    // ── Offscreen still renderer ────────────────────────────────────────────
+    let _still = null;
+    function ensureStill() {
+      if (_still !== null) return _still;
+      try {
+        const canvas = document.createElement("canvas");
+        const v = new skinview3d.SkinViewer({ canvas, width: 150, height: 300, preserveDrawingBuffer: true });
+        v.zoom = 0.9; v.autoRotate = false; v.renderPaused = true;
+        _still = { v, canvas };
+      } catch { _still = false; }
+      return _still;
+    }
+    // Renders are serialised through one viewer, so queue them.
+    let _stillQueue = Promise.resolve();
+    function renderStill(src, model, w, h) {
+      const run = async () => {
+        const s = ensureStill(); if (!s) return null;
+        try {
+          s.v.setSize(w, h);
+          await s.v.loadSkin(src, { model: model === "slim" ? "slim" : "default" });
+          spinTarget(s.v).rotation.y = 0;
+          s.v.render();
+          return s.canvas.toDataURL();
+        } catch { return null; }
+      };
+      _stillQueue = _stillQueue.then(run, run);
+      return _stillQueue;
+    }
+
+    // ── The one live viewer, mounted into the hovered card ───────────────────
+    let _live = null;
+    function ensureLive() {
+      if (_live !== null) return _live;
+      try {
+        const host = document.createElement("div");
+        host.className = "hover-spin";
+        const canvas = document.createElement("canvas");
+        canvas.style.display = "block";
+        host.appendChild(canvas);
+        const v = new skinview3d.SkinViewer({ canvas, width: 150, height: 300 });
+        v.zoom = 0.9; v.autoRotate = false;
+        try { v.controls.enableZoom = false; } catch { }   // wheel scrolls the page
+        _live = { v, host, raf: null, easing: false, owner: null };
+      } catch { _live = false; }
+      return _live;
+    }
+
+    // A card preview: an <img> holding a still 3D frame, with the size baked in.
+    function skin3dPreview(src, model, w, h) {
+      w = w || 150; h = h || 300;
+      const holder = document.createElement("div");
+      holder.className = "skin-still";
+      holder.style.cssText = `position:relative; width:100%; aspect-ratio:${w}/${h};`;
+      const img = document.createElement("img");
+      img.className = "card-image";
+      img.style.cssText = "width:100%; height:100%; display:block; object-fit:contain;";
+      holder.appendChild(img);
+      holder._spin = { src, model, w, h };
+      renderStill(src, model, w, h).then(url => {
+        if (url) img.src = url;
+        else { img.style.imageRendering = "pixelated"; img.src = src; }   // no WebGL → flat image
+      });
+      return holder;
+    }
+
+    // Hover wiring: spin while hovered, ease back to front on leave, then hand the
+    // card back its still image.
+    function wireSpin(hoverEl, holder) {
+      const info = holder && holder._spin; if (!info || !hoverEl) return;
       hoverEl.addEventListener("mouseenter", () => {
-        if (raf) { cancelAnimationFrame(raf); raf = null; }
-        easing = false;
-        try { viewer.renderPaused = false; viewer.autoRotate = true; viewer.autoRotateSpeed = 1.0; } catch { }
+        const L = ensureLive(); if (!L) return;
+        if (L.raf) { cancelAnimationFrame(L.raf); L.raf = null; }
+        L.easing = false;
+        L.owner = holder;
+        try {
+          L.v.setSize(info.w, info.h);
+          L.v.loadSkin(info.src, { model: info.model === "slim" ? "slim" : "default" });
+          spinTarget(L.v).rotation.y = 0;
+          L.v.renderPaused = false;
+          L.v.autoRotate = true; L.v.autoRotateSpeed = 1.0;
+        } catch { }
+        holder.appendChild(L.host);
       });
       hoverEl.addEventListener("mouseleave", () => {
-        try { viewer.autoRotate = false; } catch { }
-        easing = true;
+        const L = _live; if (!L || L.owner !== holder) return;
+        try { L.v.autoRotate = false; } catch { }
+        L.easing = true;
         const step = () => {
-          if (!easing) return;
+          if (!L.easing) return;
           let y = 0;
-          try { y = spinTarget(viewer).rotation.y; } catch { }
+          try { y = spinTarget(L.v).rotation.y; } catch { }
           y = Math.atan2(Math.sin(y), Math.cos(y));   // normalise to [-PI, PI]
           if (Math.abs(y) < 0.04) {
-            try { spinTarget(viewer).rotation.y = 0; viewer.render(); viewer.renderPaused = true; } catch { }
-            easing = false; raf = null; return;
+            try { spinTarget(L.v).rotation.y = 0; L.v.render(); L.v.renderPaused = true; } catch { }
+            if (L.host.parentNode) L.host.parentNode.removeChild(L.host);
+            L.easing = false; L.raf = null; L.owner = null;
+            return;
           }
-          try { spinTarget(viewer).rotation.y = y * 0.75; } catch { }
-          raf = requestAnimationFrame(step);
+          try { spinTarget(L.v).rotation.y = y * 0.75; } catch { }
+          L.raf = requestAnimationFrame(step);
         };
-        raf = requestAnimationFrame(step);
+        L.raf = requestAnimationFrame(step);
       });
-    }
-    // Convenience: a card preview that is a live 3D viewer, hover-controlled.
-    function skin3dPreview(src, model, w, h) {
-      const cv = createSpinViewer(src, model, w || 150, h || 300);
-      if (cv) return cv;
-      const img = document.createElement("img");     // WebGL unavailable → plain image
-      img.className = "card-image"; img.style.width = "100%"; img.style.imageRendering = "pixelated"; img.src = src;
-      return img;
     }
 
     players = [];
@@ -748,17 +808,22 @@
       // Update 3D viewer (only reset to the active skin when nothing is pending,
       // so a locally-selected-but-unapplied skin keeps previewing).
       if (typeof skinview3d !== 'undefined' && skinview3d !== null) {
-        if (window.skinViewer) {
-          window.skinViewer.dispose();
-        }
         // Fill the available column height; keep the canvas narrow enough that the
         // player never clips into the left/right edges (and zoom out a touch).
         const vh = Math.max(520, Math.min(window.innerHeight - 70, 900));
-        window.skinViewer = new skinview3d.SkinViewer({
-          canvas: document.getElementById("skin_container"),
-          width: Math.round(vh * 0.5),
-          height: vh
-        });
+        // REUSE the viewer across refreshes. Recreating it on every render leaked a
+        // WebGL context each time (dispose() doesn't release one), and once the
+        // browser hit its limit it dropped the oldest contexts — which is what
+        // blanked this render whenever a skin was added, removed or a modal opened.
+        if (!window.skinViewer) {
+          window.skinViewer = new skinview3d.SkinViewer({
+            canvas: document.getElementById("skin_container"),
+            width: Math.round(vh * 0.5),
+            height: vh
+          });
+        } else {
+          try { window.skinViewer.setSize(Math.round(vh * 0.5), vh); } catch { }
+        }
         try { window.skinViewer.zoom = 0.82; } catch { }
         try { window.skinViewer.controls.enableZoom = false; } catch { }  // scroll = page scroll, not zoom
 
@@ -1186,35 +1251,42 @@
     // The showcased "Create a skin" skin, as a Starlight skin code (also preloaded
     // into the simple creator when the tile is clicked).
     const CN_CREATE_CODE = 'WzgsInRhbiIsMSwibWlkZGxlIiwzLCJncmF5Iiwid2hpdGUiLDEyLCJicm93biIsMCwiYmxhY2siLDIwLCJsaWdodF9ibHVlIiwwLCJwdXJwbGUiLDksImxpZ2h0X2JsdWUiLDEsImJyb3duIiw0LCJncmF5IiwwLCJicm93biIsMCwieWVsbG93IiwibG93IiwxLCJ0YW4iLDAsImJyb3duIiwwLCJibGFjayIsMCwiYnJvd24iLCJ3aGl0ZSIsImdyYXkiLCJibGFjayIsInB1cnBsZSIsInJlZCIsIndoaXRlIiwwLCJncmF5Iiwid2hpdGUiLCJsaWdodF9ncmF5IiwwLCJncmF5IiwiZ3JheSIsInB1cnBsZSIsImJsYWNrIiwwLDAsMSwwLCJ3aGl0ZSIsMCwicmVkIiwiZ3JheSJd';
-    let cnViewers = [];
-    // A skinview3d preview that faces forward by default and only spins while
-    // hovered (mirrors the skins page), easing back to front on leave.
-    // Same live 3D object + hover behaviour as the skins page.
+    // A still 3D preview that spins while hovered — same helper the skins page
+    // uses, so these cost no extra WebGL context.
     function miniViewer(el, skinDataUrl, model) {
       el.innerHTML = '';
       const cv = skin3dPreview(skinDataUrl, model, 150, 150);
       el.appendChild(cv);
       wireSpin(el, cv);
-      if (cv._viewer) cnViewers.push(cv._viewer);
-      return cv._viewer;
+      return cv;
     }
+    // The showcased skin is generated from a fixed code, so its render never
+    // changes — cache it (and the sample wrap) so reopening is instant instead of
+    // waiting on the network every time.
+    let _cnCreateSkin = null, _cnImageSkin = null;
+    try { _cnCreateSkin = JSON.parse(localStorage.getItem('cnCreatePreview') || 'null'); } catch { }
     async function openCreateNewModal() {
       document.getElementById('createNewModal').style.display = 'flex';
-      cnViewers.forEach(v => { try { v.dispose(); } catch { } }); cnViewers = [];
-      // Template preview.
+      // Template preview is local — always instant.
       miniViewer(document.getElementById('cnTemplatePrev'), 'assets/template.png', 'classic');
-      // Create-skin preview: render the showcased skin from its skin code.
-      try {
-        const r = await ipcRenderer.invoke('starlight:generateFromCode', { code: CN_CREATE_CODE });
-        if (r && r.base64) miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + r.base64, r.variant);
-      } catch { }
-      // Convert-image preview: wrap a sample photo the way the tool would.
-      try {
-        const skin = await sampleWrappedSkin();
-        if (skin) miniViewer(document.getElementById('cnImagePrev'), skin, 'classic');
-      } catch { }
+      // Both of the others render from cache immediately when we have it, and are
+      // fetched in PARALLEL (not one after the other) the first time.
+      if (_cnCreateSkin) miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + _cnCreateSkin.base64, _cnCreateSkin.variant);
+      else ipcRenderer.invoke('starlight:generateFromCode', { code: CN_CREATE_CODE }).then(r => {
+        if (!r || !r.base64) return;
+        _cnCreateSkin = { base64: r.base64, variant: r.variant };
+        try { localStorage.setItem('cnCreatePreview', JSON.stringify(_cnCreateSkin)); } catch { }
+        miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + r.base64, r.variant);
+      }).catch(() => { });
+
+      if (_cnImageSkin) miniViewer(document.getElementById('cnImagePrev'), _cnImageSkin, 'classic');
+      else sampleWrappedSkin().then(skin => {
+        if (!skin) return;
+        _cnImageSkin = skin;
+        miniViewer(document.getElementById('cnImagePrev'), skin, 'classic');
+      }).catch(() => { });
     }
-    function closeCreateNew() { document.getElementById('createNewModal').style.display = 'none'; cnViewers.forEach(v => { try { v.dispose(); } catch { } }); cnViewers = []; }
+    function closeCreateNew() { document.getElementById('createNewModal').style.display = 'none'; }
     document.getElementById('cnCancel').onclick = closeCreateNew;
     document.getElementById('createNewModal').addEventListener('mousedown', e => { if (e.target.id === 'createNewModal') closeCreateNew(); });
     document.getElementById('cnCreate').onclick = () => openSkinEditor({ mode: 'new', skinCode: CN_CREATE_CODE });
@@ -1271,12 +1343,17 @@
     let browseTimer = null;
     document.getElementById('browseSearch').addEventListener('input', () => { clearTimeout(browseTimer); browseTimer = setTimeout(() => { browseAfter = null; runBrowse(true); }, 350); });
     // Auto-load the next page when scrolled near the bottom (no "Load more" button).
+    // A generous trigger distance means the next page is usually already in by the
+    // time you reach the end.
     document.getElementById('browseResults').addEventListener('scroll', () => {
       const el = document.getElementById('browseResults');
-      if (browseAfter && !browseBusy && el.scrollTop + el.clientHeight >= el.scrollHeight - 340) runBrowse(false);
+      if (browseAfter && !browseBusy && el.scrollTop + el.clientHeight >= el.scrollHeight - 900) runBrowse(false);
     });
     const browseName = (item) => item.title || (browseQuery ? (browseQuery[0].toUpperCase() + browseQuery.slice(1)) : 'Skin');
     function browseCard(item) {
+      // Warm the HTTP cache in parallel; the still renders run one at a time, so
+      // without this each one would wait on its own texture download.
+      try { const pre = new Image(); pre.crossOrigin = 'anonymous'; pre.src = item.skin; } catch { }
       const cell = document.createElement('div'); cell.style.cssText = 'display:flex; flex-direction:column; gap:4px;';
       const card = document.createElement('div'); card.className = 'browse-card';
       // Same live 3D object as the skins page: still by default, spins on hover.
@@ -1298,21 +1375,38 @@
       cell.append(card, lab);
       return cell;
     }
+    // Shown while a new search is in flight, so the current results stay on screen
+    // instead of blanking out and popping back in.
+    function browseSetLoading(on) {
+      const res = document.getElementById('browseResults');
+      let bar = document.getElementById('browseLoading');
+      if (!on) { if (bar) bar.remove(); return; }
+      if (!bar) {
+        bar = document.createElement('div'); bar.id = 'browseLoading';
+        bar.style.cssText = 'grid-column:1/-1; opacity:.6; padding:4px 0;';
+        bar.textContent = 'Loading skins…';
+        res.prepend(bar);
+      }
+    }
     async function runBrowse(reset) {
       const seq = ++browseSeq;                // latest request always wins
       browseBusy = true;
       const res = document.getElementById('browseResults');
       browseQuery = document.getElementById('browseSearch').value.trim();
-      if (reset) res.innerHTML = '<div style="opacity:.6; grid-column:1/-1;">Loading skins…</div>';
+      browseSetLoading(true);                 // keep the old cards visible meanwhile
       let r = null;
       try { r = await ipcRenderer.invoke('skins:search', { query: browseQuery, after: reset ? null : browseAfter, seed: browseSeed }); } catch { }
-      if (seq !== browseSeq) return;          // a newer search superseded this one
+      if (seq !== browseSeq) return;          // superseded — the newer run owns the flag
       browseBusy = false;
-      if (reset) res.innerHTML = '';
+      browseSetLoading(false);
       const results = (r && r.results) || [];
+      if (reset) res.innerHTML = '';          // only clear once the replacements are here
       if (reset && !results.length) { res.innerHTML = '<div style="opacity:.6; grid-column:1/-1;">' + ((r && r.error) || 'No skins found.') + '</div>'; return; }
       results.forEach(item => res.appendChild(browseCard(item)));
       browseAfter = (r && r.after) || null;
+      // If the results don't fill the pane yet there's nothing to scroll, so the
+      // scroll handler would never fire — keep pulling pages until it does.
+      if (browseAfter && res.scrollHeight <= res.clientHeight + 40) setTimeout(() => { if (!browseBusy) runBrowse(false); }, 0);
     }
 
     // ---- Upload flow: saves to the local library only (no Mojang) ----
