@@ -408,16 +408,39 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       if (t) return t !== 'release';
       return !/^\d+\.\d+(\.\d+)?$/.test(v); // fallback heuristic
     }
+    // ── Filter persistence ──────────────────────────────────────────────────
+    // The browser only restores <select> values AFTER our first render, so a
+    // filter could sit in the toolbar without being applied. Persist and
+    // re-apply them ourselves instead.
+    const SRV_FILTERS_KEY = 'serverFilters';
+    const SRV_FILTER_IDS = ['srvSearch', 'srvTypeFilter', 'srvSort', 'srvShowSnapshots'];
+    let _wantSrvVersion = null;   // held until its option exists
+    function saveServerFilters() {
+      try {
+        const data = { version: $('srvVersionFilter') ? $('srvVersionFilter').value : '' };
+        SRV_FILTER_IDS.forEach(id => { const el = $(id); if (el) data[id] = el.type === 'checkbox' ? el.checked : el.value; });
+        sessionStorage.setItem(SRV_FILTERS_KEY, JSON.stringify(data));
+      } catch { /* ignore */ }
+    }
+    function restoreServerFilters() {
+      let data = null;
+      try { data = JSON.parse(sessionStorage.getItem(SRV_FILTERS_KEY) || 'null'); } catch { /* ignore */ }
+      if (!data) return;
+      SRV_FILTER_IDS.forEach(id => { const el = $(id); if (!el || !(id in data)) return; if (el.type === 'checkbox') el.checked = !!data[id]; else el.value = data[id]; });
+      _wantSrvVersion = data.version || '';
+    }
+
     function populateServerVersionFilter() {
       const sel = $('srvVersionFilter');
-      const prev = sel.value;
+      const prev = _wantSrvVersion != null ? _wantSrvVersion : sel.value;
       const showSnap = $('srvShowSnapshots').checked;
       let versions = [...new Set(servers.map(s => s.version).filter(Boolean))];
       if (!showSnap) versions = versions.filter(v => !isSnapshotVersion(v));
       // Order by piston-meta index (unknowns last).
       versions.sort((a, b) => (pistonOrder.has(a) ? pistonOrder.get(a) : 1e9) - (pistonOrder.has(b) ? pistonOrder.get(b) : 1e9));
       sel.innerHTML = '<option value="">All versions</option>' + versions.map(v => `<option value="${v}">${v}</option>`).join('');
-      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+      if ([...sel.options].some(o => o.value === prev)) { sel.value = prev; _wantSrvVersion = null; }
+      else if (!prev) _wantSrvVersion = null;
     }
 
     let serverGridView = false;
@@ -425,11 +448,13 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       const list = $('serversList');
       list.classList.toggle('grid-mode', !!serverGridView);
       const empty = $('emptyServerState');
+      // Rebuild the version list FIRST, so a restored filter is applied to the
+      // select before we read it (otherwise it shows but doesn't take effect).
+      populateServerVersionFilter();
       const q = ($('srvSearch').value || '').toLowerCase().trim();
       const typeF = $('srvTypeFilter').value;
       const versionF = $('srvVersionFilter').value;
       const sort = $('srvSort').value;
-      populateServerVersionFilter();
 
       let arr = servers.slice();
       if (q) arr = arr.filter(s => (s.name || '').toLowerCase().includes(q));
@@ -487,9 +512,11 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
     ['srvSearch', 'srvTypeFilter', 'srvVersionFilter', 'srvSort', 'srvShowSnapshots'].forEach(id => {
       const el = $(id);
-      el.addEventListener('input', renderServers);
-      el.addEventListener('change', renderServers);
+      const onFilter = () => { if (id === 'srvVersionFilter') _wantSrvVersion = null; saveServerFilters(); renderServers(); };
+      el.addEventListener('input', onFilter);
+      el.addEventListener('change', onFilter);
     });
+    restoreServerFilters();
 
     // ---------- Detail ----------
     let detailStatusTimer = null;

@@ -513,6 +513,40 @@
     const searchsort = document.getElementById("search-sort");
     let editingOrder = false;
 
+    // ── Filter persistence ──────────────────────────────────────────────────
+    // Opening an instance is a real page navigation, so coming back re-runs this
+    // script from scratch. The browser restores <select> values only AFTER our
+    // first render, which left a filter visible in the toolbar but not actually
+    // applied to the list. Persist and re-apply the filters ourselves so what's
+    // shown is always what's filtered.
+    const FILTERS_KEY = "instanceFilters";
+    // The version list is rebuilt from the loaded profiles, so a saved version is
+    // held here until an option for it actually exists.
+    let _wantVersionFilter = null;
+    function saveFilters() {
+      try {
+        sessionStorage.setItem(FILTERS_KEY, JSON.stringify({
+          q: searchInput ? searchInput.value : "",
+          loader: filterLoader ? filterLoader.value : "",
+          version: filterVersion ? filterVersion.value : "",
+          sort: sortSelect ? sortSelect.value : "",
+          snapshots: !!(document.getElementById("filterVersionAll") || {}).checked,
+        }));
+      } catch { /* ignore */ }
+    }
+    function restoreFilters() {
+      let s = null;
+      try { s = JSON.parse(sessionStorage.getItem(FILTERS_KEY) || "null"); } catch { /* ignore */ }
+      if (!s) return;
+      if (searchInput) searchInput.value = s.q || "";
+      if (filterLoader) filterLoader.value = s.loader || "";
+      if (sortSelect && s.sort) sortSelect.value = s.sort;
+      const all = document.getElementById("filterVersionAll");
+      if (all) all.checked = !!s.snapshots;
+      _wantVersionFilter = s.version || "";
+    }
+    restoreFilters();
+
     const urlParams = new URLSearchParams(window.location.search);
     const instanceId = urlParams.get("i");
 
@@ -674,17 +708,19 @@
       return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
     }
 
-    // Attach listeners (only once)
+    // Attach listeners (only once). Every filter change is also persisted so it
+    // survives navigating into an instance and back.
     function attachFilterListeners() {
-      if (searchInput) searchInput.addEventListener('input', debounce(renderListOrDetail, 120));
-      if (filterLoader) filterLoader.addEventListener('change', renderListOrDetail);
-      if (filterVersion) filterVersion.addEventListener('change', renderListOrDetail);
+      const onFilter = () => { saveFilters(); renderListOrDetail(); };
+      if (searchInput) searchInput.addEventListener('input', debounce(onFilter, 120));
+      if (filterLoader) filterLoader.addEventListener('change', onFilter);
+      if (filterVersion) filterVersion.addEventListener('change', () => { _wantVersionFilter = null; onFilter(); });
       const fva = document.getElementById('filterVersionAll');
-      if (fva) fva.addEventListener('change', renderListOrDetail);
+      if (fva) fva.addEventListener('change', onFilter);
       if (sortSelect) sortSelect.addEventListener('change', async () => {
         // send sort preference to backend if you support it
         try { await ipcRenderer.invoke('sort-instances', sortSelect.value); } catch (e) { }
-        renderListOrDetail();
+        onFilter();
       });
     }
     // call once on load
@@ -1202,7 +1238,8 @@
       const sel = document.getElementById('filterVersion');
       const showSnap = document.getElementById('filterVersionAll')?.checked;
       if (!sel) return;
-      const prev = sel.value;
+      // A version restored from a previous visit wins until its option exists.
+      const prev = _wantVersionFilter != null ? _wantVersionFilter : sel.value;
       // Release detection + ordering come straight from the Mojang manifest
       // (no custom sort). Fall back to a regex when the manifest isn't loaded.
       const manifestVers = versionManifest ? versionManifest.versions : null;
@@ -1215,7 +1252,8 @@
         .sort((a, b) => (order.has(a) ? order.get(a) : 1e9) - (order.has(b) ? order.get(b) : 1e9));
       sel.innerHTML = '<option value="">All versions</option>' +
         versions.map(v => `<option value="${v}">${v}</option>`).join('');
-      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+      if ([...sel.options].some(o => o.value === prev)) { sel.value = prev; _wantVersionFilter = null; }
+      else if (!prev) _wantVersionFilter = null;
     }
 
     async function renderListOrDetail() {

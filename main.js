@@ -885,6 +885,11 @@ if (!gotTheLock) {
     // Re-detect games still running from a previous launcher session.
     restoreRunningInstances();
 
+    // Keep "latest release/snapshot" instances on the newest version while the
+    // launcher is open, instead of only when their page is opened.
+    setTimeout(() => { autoUpdateTrackedInstances().catch(() => {}); }, 8000);
+    setInterval(() => { autoUpdateTrackedInstances().catch(() => {}); }, 15 * 60 * 1000);
+
     // Keep auto-updating shortcut icons (e.g. server icons) fresh.
     refreshShortcutIcons().catch(() => {});
 
@@ -5298,6 +5303,66 @@ async function scanToUpdate(profileId, gameVersion, loader) {
 }
 
 // Change an instance's game version and migrate its mods/plugins.
+// ── Auto-update instances that track "latest release" / "latest snapshot" ─────
+// These have to follow Mojang's newest version as soon as it appears, not only
+// when their detail page happens to be opened (which left them filed under the
+// old version in the list / version filter).
+let _mcManifestCache = null, _mcManifestAt = 0;
+async function getVersionManifest() {
+  if (_mcManifestCache && Date.now() - _mcManifestAt < 5 * 60 * 1000) return _mcManifestCache;
+  try {
+    const j = await (await fetch("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")).json();
+    if (j && j.latest && Array.isArray(j.versions)) { _mcManifestCache = j; _mcManifestAt = Date.now(); }
+  } catch { /* offline — keep whatever we had */ }
+  return _mcManifestCache;
+}
+
+function broadcastProfiles(profiles) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("profiles-updated", profiles); } catch { /* ignore */ }
+  }
+}
+
+let _autoUpdatingVersions = false;
+async function autoUpdateTrackedInstances() {
+  if (_autoUpdatingVersions) return;
+  _autoUpdatingVersions = true;
+  try {
+    const manifest = await getVersionManifest();
+    if (!manifest) return;
+    const byId = new Map(manifest.versions.map(v => [v.id, v]));
+    // Read the raw file (not loadProfiles(), which returns a SORTED copy — saving
+    // that back would rewrite the user's custom order).
+    let raw;
+    try { raw = JSON.parse(fs.readFileSync(profilesPath, "utf8")); } catch { return; }
+    if (!Array.isArray(raw)) return;
+
+    const changed = [];
+    for (const p of raw) {
+      if (!(p.autoUpdateVersion ?? p.alwaysUpdate)) continue;
+      if (isInstanceRunning(p.id)) continue;          // never swap under a running game
+      const cur = byId.get(p.version);
+      // Snapshot-tracking instances follow snapshots; everything else follows releases.
+      const target = (cur && cur.type === "release") ? manifest.latest.release : manifest.latest.snapshot;
+      const tgt = target ? byId.get(target) : null;
+      if (!cur || !tgt || target === p.version) continue;
+      if (new Date(tgt.releaseTime) <= new Date(cur.releaseTime)) continue;  // only ever move forward
+      p.version = target;
+      changed.push({ id: p.id, version: target, loader: p.loader });
+    }
+    if (!changed.length) return;
+
+    saveProfiles(raw);
+    broadcastProfiles(await loadProfiles());   // list + version filter update immediately
+    for (const c of changed) {
+      devtoolsLog(`[auto-update] instance ${c.id} → ${c.version}`);
+      try { await migrateContentToVersion(c.id, c.version, c.loader); }
+      catch (e) { devtoolsLog(`[auto-update] migrating ${c.id} failed: ${e.message}`); }
+    }
+    broadcastProfiles(await loadProfiles());
+  } finally { _autoUpdatingVersions = false; }
+}
+
 ipcMain.handle("change-instance-version", async (event, { profileId, newVersion }) => {
   try {
     const profiles = await loadProfiles();

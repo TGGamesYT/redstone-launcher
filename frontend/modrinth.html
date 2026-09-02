@@ -145,6 +145,8 @@
     let totalPages = 1;
     let currentProjects = [];
     const projectsPerPage = 20;
+    // A saved version filter, held until the version list is built (see below).
+    let _wantMbVersion = null;
 
     const searchInput = document.getElementById("searchInput");
     const prevBtn = document.getElementById("prevPage");
@@ -749,6 +751,37 @@
       }
     }
 
+    // ── Filter persistence ──────────────────────────────────────────────────
+    // Opening a project navigates away, so coming back re-runs this script. The
+    // browser restores <select> values only AFTER the first load, which left a
+    // filter showing in the toolbar without being applied. Persist + re-apply.
+    function saveMbFilters() {
+      if (installMode) return;   // install mode pins its own type/filters
+      try {
+        const g = (id) => { const el = document.getElementById(id); return el ? (el.type === 'checkbox' ? el.checked : el.value) : ''; };
+        const tab = document.querySelector('#typeTabs .tab.active');
+        localStorage.setItem('mb_filters', JSON.stringify({
+          sort: g('sortSelect'), version: g('versionFilter'), loader: g('loaderFilter'),
+          showAll: g('versionShowAll'), type: tab ? tab.dataset.type : '',
+        }));
+      } catch { /* ignore */ }
+    }
+    function restoreMbFilters() {
+      if (installMode) return;
+      let s = null;
+      try { s = JSON.parse(localStorage.getItem('mb_filters') || 'null'); } catch { /* ignore */ }
+      if (!s) return;
+      const set = (id, v) => { const el = document.getElementById(id); if (!el || v == null || v === '') return; if (el.type === 'checkbox') el.checked = !!v; else el.value = v; };
+      set('sortSelect', s.sort); set('loaderFilter', s.loader);
+      const sa = document.getElementById('versionShowAll'); if (sa) sa.checked = !!s.showAll;
+      _wantMbVersion = s.version || '';
+      if (s.type) {
+        const tabs = document.querySelectorAll('#typeTabs .tab');
+        const want = [...tabs].find(t => t.dataset.type === s.type);
+        if (want) { tabs.forEach(t => t.classList.remove('active')); want.classList.add('active'); }
+      }
+    }
+
     // Search handler (persist the query so returning to the browser re-applies it)
     searchInput.oninput = () => {
       currentPage = 1;
@@ -765,7 +798,7 @@
     // their own handlers when built).
     ['sortSelect', 'versionFilter', 'loaderFilter'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.onchange = () => { currentPage = 1; loadProjects(); };
+      if (el) el.onchange = () => { if (id === 'versionFilter') _wantMbVersion = null; currentPage = 1; saveMbFilters(); loadProjects(); };
     });
 
     // Loaders only apply to code-bearing types; hide the filter elsewhere so we
@@ -816,7 +849,8 @@
       const vsel = document.getElementById('versionFilter');
       if (!vsel) return;
       const showAll = document.getElementById('versionShowAll')?.checked;
-      const prev = vsel.value;
+      // A version restored from a previous visit wins until its option exists.
+      const prev = _wantMbVersion != null ? _wantMbVersion : vsel.value;
       vsel.innerHTML = '<option value="">Any</option>';
       allGameVersions
         .filter(v => showAll || v.version_type === 'release')
@@ -825,7 +859,8 @@
           o.value = v.version; o.textContent = v.version;
           vsel.appendChild(o);
         });
-      if ([...vsel.options].some(o => o.value === prev)) vsel.value = prev;
+      if ([...vsel.options].some(o => o.value === prev)) { vsel.value = prev; _wantMbVersion = null; }
+      else if (!prev) _wantMbVersion = null;
     }
 
     // Rebuild the category filters for the active provider + type. Modrinth
@@ -891,8 +926,12 @@
         ]);
         allGameVersions = Array.isArray(versions) ? versions : [];
         categoryTags = Array.isArray(cats) ? cats : [];
+        // A version filter restored from the last visit can only be applied once
+        // the version list exists — reload the results if it just took effect.
+        const hadPendingVersion = !!_wantMbVersion;
         populateVersionFilter();
         buildDynamicFilters();
+        if (hadPendingVersion && _wantMbVersion === null) { currentPage = 1; loadProjects(); }
         // Installing into an instance/server → pre-apply its version + loader so
         // the listed mods are already the compatible ones.
         if (installMode && installInstance) {
@@ -910,7 +949,10 @@
         }
       } catch (err) { console.warn('Failed to load filter tags', err); }
     })();
-    document.getElementById('versionShowAll').onchange = () => { populateVersionFilter(); currentPage = 1; loadProjects(); };
+    document.getElementById('versionShowAll').onchange = () => { populateVersionFilter(); currentPage = 1; saveMbFilters(); loadProjects(); };
+    // Re-apply the filters from the last visit BEFORE the first load, so the
+    // toolbar and the results always agree.
+    restoreMbFilters();
     updateFilterVisibility();
     updateProviderTabs();
 
@@ -1174,6 +1216,7 @@
 
         // optionally reload projects
         currentPage = 1;
+        saveMbFilters();
         loadProjects();
         loadTopProjects();
       });
