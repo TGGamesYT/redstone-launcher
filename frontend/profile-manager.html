@@ -327,7 +327,7 @@
           <div id="skins"></div>
         </div>
 
-        <div>
+        <div id="capes-section">
           <div class="cards-header"><span>Capes</span></div>
           <div id="capes"></div>
         </div>
@@ -698,6 +698,8 @@
 
     // Skin-changer state.
     let currentUuid = null;
+    // Offline accounts apply skins as a resource pack rather than uploading them.
+    let isCrackedAccount = false, crackedPlayerId = null;
     let activePixelHash = null;   // pixel hash of the skin currently applied on Mojang
     let pendingSelection = null;  // { base64, variant, name, pixelHash } chosen but not yet applied
     let libraryCache = [];
@@ -731,19 +733,27 @@
 
       const sections = document.getElementById('pm-sections');
       const unavailable = document.getElementById('pm-unavailable');
-      if (player.type === "cracked") {
-        showLoading(false);
-        sections.style.display = "none";
-        unavailable.style.display = "block";
-        unavailable.textContent = "Skin & cape changing isn't available for offline accounts.";
-        return;
-      }
+      // Offline (cracked) accounts get the same skin library. There's no Mojang
+      // profile to read, so we synthesise one from the skin stored for this
+      // account — it's applied in-game as a resource pack instead of uploaded.
+      isCrackedAccount = player.type === "cracked";
+      crackedPlayerId = isCrackedAccount ? player.id : null;
       unavailable.style.display = "none";
       showLoading(true);
       sections.style.display = "none";
 
       let profile = { skins: [], capes: [] };
-      profile = await ipcRenderer.invoke("mc:getProfile");
+      if (isCrackedAccount) {
+        const cs = await ipcRenderer.invoke("skins:getCracked", { playerId: player.id });
+        if (!stillCurrent()) return;
+        profile = {
+          id: "offline-" + player.id,
+          skins: (cs && cs.base64) ? [{ state: "ACTIVE", base64: cs.base64, variant: cs.variant === "slim" ? "SLIM" : "CLASSIC" }] : [],
+          capes: [],
+        };
+      } else {
+        profile = await ipcRenderer.invoke("mc:getProfile");
+      }
       if (!stillCurrent()) return;
       showLoading(false);
       sections.style.display = "block";
@@ -907,6 +917,10 @@
 
       // ---- Capes: a "None" card to disable, then the owned capes. Clicking a
       // cape TEMP-selects it (preview only); "Apply cape" commits it, like skins.
+      // Offline accounts have no Mojang capes at all, so hide the whole section.
+      const capesSection = document.getElementById('capes-section');
+      if (capesSection) capesSection.style.display = isCrackedAccount ? "none" : "";
+      if (isCrackedAccount) { refreshCapeUI(); return; }
       activeCapeId = activeCape ? activeCape.id : null;
       const noneCard = createCard("None (disable)", () => selectCape({ id: null }), null);
       noneCard.dataset.capeid = "__none__";
@@ -1089,10 +1103,22 @@
       try {
         if (skinPending()) {
           if (pendingSelection.reset) {
-            await ipcRenderer.invoke("mc:resetSkin");
+            // Offline: drop the override pack so the vanilla default comes back.
+            if (isCrackedAccount) await ipcRenderer.invoke("skins:setCracked", { playerId: crackedPlayerId, base64: null });
+            else await ipcRenderer.invoke("mc:resetSkin");
             if (currentUuid) localStorage.removeItem('appliedSkin_' + currentUuid);
           } else {
-            await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
+            // Offline accounts can't upload to Mojang — the skin is written into a
+            // resource pack that overrides the vanilla player textures instead.
+            if (isCrackedAccount) {
+              const r = await ipcRenderer.invoke("skins:setCracked", {
+                playerId: crackedPlayerId, base64: pendingSelection.base64,
+                variant: pendingSelection.variant, name: pendingSelection.name, pixelHash: pendingSelection.pixelHash,
+              });
+              if (r && r.success === false) throw new Error(r.error || "Couldn't apply the skin");
+            } else {
+              await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
+            }
             activePixelHash = pendingSelection.pixelHash;
             // Remember which library skin is now applied so it highlights even if
             // Mojang re-encodes it (which changes the pixel hash).

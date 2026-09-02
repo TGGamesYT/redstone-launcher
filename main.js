@@ -2439,6 +2439,20 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
       customLaunchArgs = ["--server", host, "--port", port];
     }
 
+    // Offline accounts can't upload a skin to Mojang, so their chosen skin is
+    // applied as a resource pack overriding the vanilla player textures. Refresh
+    // it here: the instance's own client jar gives the right pack_format, and by
+    // now it has been downloaded.
+    if (player.type === "cracked") {
+      const entry = loadCrackedSkins()[String(player.id)];
+      if (entry && entry.base64) {
+        const r = applyCrackedSkinToInstance(profileId, profile.version, entry.base64);
+        if (!r.success) broadcastLog(profileId, "[WARN] Couldn't apply the offline skin: " + r.error);
+      } else {
+        removeCrackedSkinFromInstance(profileId);
+      }
+    }
+
     // Do the actual (heavy, CPU-bound) launch in a utility process so the app's
     // main event loop — and therefore the whole UI — stays responsive.
     const { pid } = await launchViaWorker(profileId, {
@@ -6432,6 +6446,124 @@ ipcMain.handle("mc:disableCape", async () => {
 });
 
 // ---- DEFAULT SKINS ----
+// ── Cracked (offline) account skins ──────────────────────────────────────────
+// Offline accounts have no Mojang profile to upload a skin to, and the vanilla
+// player textures are NOT hashed assets (the asset index only holds sounds, lang
+// and icons) — they live inside the client jar at
+//   assets/minecraft/textures/entity/player/<wide|slim>/<name>.png
+// so the only way to change them is a resource pack that overrides those paths.
+const crackedSkinsPath = path.join(dataDir, "crackedskins.json");
+function loadCrackedSkins() { try { return JSON.parse(fs.readFileSync(crackedSkinsPath, "utf8")); } catch { return {}; } }
+function saveCrackedSkins(o) { try { fs.writeFileSync(crackedSkinsPath, JSON.stringify(o, null, 2)); } catch { /* ignore */ } }
+
+// The vanilla default skin names. Read from the instance's own client jar when
+// possible so new defaults are picked up automatically; this is the fallback.
+const DEFAULT_SKIN_NAMES = ["alex", "ari", "efe", "kai", "makena", "noor", "steve", "sunny", "zuri"];
+const PLAYER_TEX_DIR = "assets/minecraft/textures/entity/player";
+
+function instanceClientJar(profileId, version) {
+  return path.join(dataDir, "client", String(profileId), "versions", String(version), `${version}.jar`);
+}
+
+// pack_format straight from the client jar's version.json, so this works on every
+// version (including the new date-style ones) without a hardcoded table.
+// Newer jars use pack_version.resource_major, older ones a plain pack_version.resource.
+function readPackInfoFromJar(jarPath) {
+  const out = { format: null, names: null };
+  try {
+    if (!fs.existsSync(jarPath)) return out;
+    const zip = new AdmZip(jarPath);
+    const vEntry = zip.getEntry("version.json");
+    if (vEntry) {
+      const pv = (JSON.parse(vEntry.getData().toString("utf8")) || {}).pack_version;
+      if (typeof pv === "number") out.format = pv;
+      else if (pv && typeof pv === "object") out.format = pv.resource_major ?? pv.resource ?? null;
+    }
+    const names = new Set();
+    for (const e of zip.getEntries()) {
+      const p = e.entryName;
+      if (!p.startsWith(PLAYER_TEX_DIR + "/") || !p.endsWith(".png")) continue;
+      const parts = p.split("/");
+      const model = parts[parts.length - 2];
+      if (model !== "wide" && model !== "slim") continue;
+      names.add(parts[parts.length - 1].replace(/\.png$/, ""));
+    }
+    if (names.size) out.names = [...names];
+  } catch { /* fall back below */ }
+  return out;
+}
+
+// Build (or refresh) the offline-skin resource pack for an instance and enable it.
+// Every default skin name is overridden, in BOTH the wide and slim folders, so the
+// skin shows regardless of which default the game assigns this offline UUID.
+function applyCrackedSkinToInstance(profileId, version, base64) {
+  const raw = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
+  if (!raw) return { success: false, error: "No skin data" };
+  const packsDir = path.join(dataDir, "client", String(profileId), "resourcepacks");
+  const packName = "redstone-skin.zip";
+  const packPath = path.join(packsDir, packName);
+  try {
+    const info = readPackInfoFromJar(instanceClientJar(profileId, version));
+    const names = info.names && info.names.length ? info.names : DEFAULT_SKIN_NAMES;
+    // Unknown format (jar not downloaded yet): a very high number keeps the pack
+    // enabled on current versions rather than being rejected as too old.
+    const format = info.format ?? 99;
+    const png = Buffer.from(raw, "base64");
+
+    const zip = new AdmZip();
+    zip.addFile("pack.mcmeta", Buffer.from(JSON.stringify({
+      pack: { pack_format: format, description: "Redstone Launcher — offline account skin" }
+    }, null, 2)));
+    for (const model of ["wide", "slim"]) {
+      for (const n of names) zip.addFile(`${PLAYER_TEX_DIR}/${model}/${n}.png`, png);
+    }
+    fs.mkdirSync(packsDir, { recursive: true });
+    zip.writeZip(packPath);
+
+    // Enable it last so it wins over other packs.
+    const packs = readEnabledResourcePacks(profileId).filter(p => p !== "file/" + packName);
+    packs.push("file/" + packName);
+    writeEnabledResourcePacks(profileId, packs);
+    return { success: true, pack: packName, format, names: names.length };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+function removeCrackedSkinFromInstance(profileId) {
+  const packName = "redstone-skin.zip";
+  try {
+    const p = path.join(dataDir, "client", String(profileId), "resourcepacks", packName);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+    writeEnabledResourcePacks(profileId, readEnabledResourcePacks(profileId).filter(x => x !== "file/" + packName));
+  } catch { /* ignore */ }
+}
+
+// Refresh the pack for every instance (called when an offline account's skin changes).
+async function syncCrackedSkinToAllInstances(playerId) {
+  const store = loadCrackedSkins();
+  const entry = store[String(playerId)];
+  let profiles = [];
+  try { profiles = JSON.parse(fs.readFileSync(profilesPath, "utf8")) || []; } catch { return; }
+  for (const p of profiles) {
+    if (entry && entry.base64) applyCrackedSkinToInstance(p.id, p.version, entry.base64);
+    else removeCrackedSkinFromInstance(p.id);
+  }
+}
+
+ipcMain.handle("skins:getCracked", (event, { playerId }) => loadCrackedSkins()[String(playerId)] || null);
+
+ipcMain.handle("skins:setCracked", async (event, { playerId, base64, variant, name, pixelHash }) => {
+  try {
+    const store = loadCrackedSkins();
+    if (base64) store[String(playerId)] = { base64: String(base64).replace(/^data:image\/\w+;base64,/, ""), variant: variant || "classic", name: name || "Skin", pixelHash: pixelHash || null };
+    else delete store[String(playerId)];
+    saveCrackedSkins(store);
+    await syncCrackedSkinToAllInstances(playerId);
+    return { success: true };
+  } catch (e) { return { success: false, error: e.message }; }
+});
+
 // Extract the vanilla default player skins straight from the latest client jar
 // (the resources.download.minecraft.net URLs derived from file hashes don't
 // serve jar contents). Returns [{ name, model, base64 }]; cached per version.
