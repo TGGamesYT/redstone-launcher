@@ -186,7 +186,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
             <option value="neoforge">NeoForge</option>
           </select>
           <select id="srvVersionFilter" style="flex:0 0 auto; min-width:120px;"><option value="">All versions</option></select>
-          <label class="inline-check" style="white-space:nowrap;"><input type="checkbox" id="srvShowSnapshots" /> Snapshots</label>
+          <label class="rl-toggle" title="Include snapshot versions in the list"><input type="checkbox" id="srvShowSnapshots" /> Snapshots</label>
           <select id="srvSort" style="flex:1; min-width:150px;">
             <option value="name-asc">Sort: Name (A→Z)</option>
             <option value="name-desc">Sort: Name (Z→A)</option>
@@ -290,10 +290,9 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <div class="tab-action-bar" style="display:flex; gap:8px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
           <button id="srvAddPack"><i class="material-icons" style="font-size:16px;vertical-align:middle;">travel_explore</i> Browse packs</button>
           <button id="srvAddPackFile"><i class="material-icons" style="font-size:16px;vertical-align:middle;">upload_file</i> From file</button>
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="srvPackRequired"> Required (kick players who decline)</label>
+          <label class="rl-toggle" title="Kick players who decline the pack"><input type="checkbox" id="srvPackRequired"> Required</label>
           <span id="srvPackState" style="font-size:12px; opacity:0.75; margin-left:auto;"></span>
         </div>
-        <div class="ed-hint" style="font-size:12px; opacity:0.7; margin-bottom:8px;">Packs merge top-to-bottom (top wins) into one pack served to players. When you share the server over the internet it's hosted through the relay; the pack updates on the next server start.</div>
         <ul id="srvPackList" style="list-style:none; margin:0; padding:0; flex:1; min-height:0; overflow-y:auto;"></ul>
       </div>
     </div>

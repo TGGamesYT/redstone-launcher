@@ -469,6 +469,8 @@
 
   <!-- Apply-to-Mojang button, bottom-left. Applies the pending skin and/or cape. -->
   <button id="applySkinBtn" style="display:none; position:fixed; bottom:20px; left:90px; z-index:1500; background:var(--base-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 22px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Apply</button>
+  <!-- Discards the pending skin/cape and goes back to what's actually applied. -->
+  <button id="undoSkinBtn" title="Go back to the skin &amp; cape you had" style="display:none; position:fixed; bottom:20px; left:190px; z-index:1500; background:var(--secondary-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 18px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Undo</button>
   <script src="skinview3d.bundle.js"></script>
   <script>
     function createSkinCanvas(skin) {
@@ -1051,10 +1053,20 @@
 
     const skinPending = () => pendingSelection && (pendingSelection.reset || (pendingSelection.pixelHash && pendingSelection.pixelHash !== activePixelHash));
     function updateApplyButton() {
-      // One button applies the pending skin and/or cape.
+      // One button applies the pending skin and/or cape; Undo throws them away.
       const show = skinPending() || (typeof capePending === 'function' && capePending());
       document.getElementById('applySkinBtn').style.display = show ? "" : "none";
+      const undo = document.getElementById('undoSkinBtn');
+      if (undo) undo.style.display = show ? "" : "none";
     }
+
+    // Undo = drop the pending selection and go back to the skin/cape that is
+    // actually applied. It never touches Mojang — nothing was uploaded yet.
+    document.getElementById('undoSkinBtn').onclick = async () => {
+      pendingSelection = null;
+      pendingCape = null;
+      await updateSKin();   // re-renders from the real active skin/cape
+    };
 
     document.getElementById('applySkinBtn').onclick = async () => {
       if (!skinPending() && !(typeof capePending === 'function' && capePending())) return;

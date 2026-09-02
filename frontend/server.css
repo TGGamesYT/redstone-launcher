@@ -1376,3 +1376,46 @@ body.app-offline [data-needs-net] {
   filter: grayscale(0.6);
   cursor: not-allowed !important;
 }
+
+/* Shared little toggle switch (snapshots filter, "required pack", …) so the
+   instances and servers pages look the same instead of one using a raw checkbox. */
+.rl-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 12px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.rl-toggle input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 18px;
+  min-width: 34px;
+  border-radius: 10px;
+  background: var(--menu-bg);
+  border: 1px solid var(--border-dark);
+  position: relative;
+  cursor: pointer;
+  margin: 0;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.rl-toggle input::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-color);
+  transition: transform 0.2s;
+}
+
+.rl-toggle input:checked { background: var(--base-color); }
+.rl-toggle input:checked::after { transform: translateX(16px); }
