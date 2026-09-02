@@ -123,10 +123,12 @@
     .cr-round.primary { background: var(--base-color); border-color: var(--text-color); }
     .cr-round .material-icons { font-size: 22px; }
     /* Category list (grouped Body / Style), fills height. */
-    #cr-cats { flex: 0 0 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
-    .cr-group-label { font-size: 15px; font-weight: bold; opacity: 0.85; margin: 12px 4px 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    /* The buttons may shrink (min-height floor) so all 13 categories fit the
+       column on a short window instead of the last one hanging off the bottom. */
+    #cr-cats { flex: 0 0 220px; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
+    .cr-group-label { flex: 0 0 auto; font-size: 15px; font-weight: bold; opacity: 0.85; margin: 10px 4px 3px; text-transform: uppercase; letter-spacing: 0.5px; }
     .cr-group-label:first-child { margin-top: 2px; }
-    .cr-cat { background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 9px 12px; text-align: left; font-family: var(--text-font); font-size: 14px; display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+    .cr-cat { flex: 0 1 auto; min-height: 30px; overflow: hidden; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 9px 12px; text-align: left; font-family: var(--text-font); font-size: 14px; display: flex; align-items: center; gap: 10px; justify-content: space-between; }
     .cr-cat img { width: 22px; height: 22px; image-rendering: pixelated; }
     .cr-cat:hover { border-color: var(--base-color); }
     .cr-cat.active { background: var(--base-color); border-color: var(--text-color); }
@@ -157,20 +159,23 @@
     #cr-tooltip { position: fixed; z-index: 7000; pointer-events: none; display: none; background: color-mix(in srgb, var(--very-dark) 92%, black); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 7px 10px; font-size: 12px; max-width: 220px; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
     #cr-tooltip .cr-tt-name { font-weight: bold; margin-bottom: 2px; }
     #cr-tooltip .cr-tt-credit { opacity: 0.75; font-size: 11px; }
-    /* Image import modal */
-    /* Leaves the left 3D panel (≈340px) visible as the live wrap preview. */
-    .ed-modal-overlay { position: fixed; inset: 44px 0 0 70px; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); display: none; align-items: center; justify-content: center; z-index: 3000; }
+    /* Modals. No dim/blur pane behind them: a painted rectangle can't follow the
+       window's rounded top-left corner and always leaves a seam under the title
+       bar. The overlay is invisible and exists only to catch clicks outside the
+       dialog; the dialog reads as floating from its own shadow. */
+    .ed-modal-overlay { position: fixed; inset: 0; background: transparent; display: none; align-items: center; justify-content: center; z-index: 3000; }
     .ed-modal-overlay.active { display: flex; }
-    .ed-modal { background: linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black)); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 18px; width: 420px; max-width: 92%; max-height: 88vh; overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+    .ed-modal { background: linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black)); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 18px; width: 420px; max-width: 92%; max-height: 88vh; overflow: auto; box-shadow: 0 18px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,0,0,0.35); }
     /* When the image importer is opened as its own mode (from the "Convert an
        image" tile), it fills the screen instead of floating as a modal. */
     /* As a MODE the importer sits in the page flow and replaces the editor content
        — no fixed overlay, no background pane painted over the app. */
+    /* As a mode it fills the page: the wrapper's height is measured (fitImgMode)
+       and the body stretches into whatever is left under the head row. */
     .ed-modal-overlay.ed-img-fullmode { position: static; display: block; inset: auto; z-index: auto; background: transparent; backdrop-filter: none; }
-    .ed-modal-overlay.ed-img-fullmode .ed-modal { width: 100%; max-width: none; max-height: none; border: none; border-radius: 0; background: transparent; box-shadow: none; padding: 0 20px 10px 0; overflow: visible; }
-    .ed-modal-overlay.ed-img-fullmode .ed-modal-body { gap: 26px !important; align-items: flex-start; }
-    .ed-modal-overlay.ed-img-fullmode #ed-img-3d { width: 360px !important; height: 520px !important; flex: 0 0 360px !important; }
-    .ed-modal-overlay.ed-img-fullmode .ed-modal-controls { max-width: 520px; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal { width: 100%; height: 100%; max-width: none; max-height: none; border: none; border-radius: 0; background: transparent; box-shadow: none; padding: 0 20px 10px 0; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-body { flex: 1; min-height: 0; gap: 26px !important; align-items: stretch; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-controls { flex: 1; min-width: 0; max-width: 560px; max-height: 100%; overflow-y: auto; align-self: center; }
     .ed-modal-overlay.ed-img-fullmode .ed-modal-head h3 { font-size: 20px; }
     .ed-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .ed-modal-controls select { width: auto; flex: 1; }
@@ -278,21 +283,14 @@
           <button class="ed-btn" id="ed-flip" title="Swap left/right & flip faces (fix a backwards skin)"><i class="material-icons">flip</i> Flip</button>
           <button class="ed-btn" id="ed-mirror-apply" title="Copy the left side onto the right (make symmetric)"><i class="material-icons">compare_arrows</i> Symm</button>
         </div>
-        <button class="ed-btn" id="ed-import" style="margin-top:6px;"><i class="material-icons">image</i> Add image…</button>
-        <button class="ed-btn" id="ed-faces-btn" style="margin-top:6px;"><i class="material-icons">dashboard_customize</i> Copy faces from skin…</button>
-        <button class="ed-btn" id="ed-clear" style="margin-top:6px;"><i class="material-icons">delete_sweep</i> Clear</button>
-      </div>
-
-
-      <div class="ed-group">
-        <h4>Save</h4>
-        <div class="ed-row"><label>Name</label><input type="text" id="ed-name" placeholder="My skin" style="flex:1;"></div>
-        <div class="ed-seg" style="margin-bottom:8px;">
+        <div class="ed-seg" style="margin-top:8px;">
           <button id="ed-variant-classic" class="active">Wide</button>
           <button id="ed-variant-slim">Slim</button>
         </div>
-        <button class="ed-btn primary" id="ed-save"><i class="material-icons">save</i> Save to library</button>
-        <button class="ed-btn" id="ed-save-copy" style="margin-top:6px; display:none;"><i class="material-icons">content_copy</i> Save as a copy</button>
+        <button class="ed-btn" id="ed-import" style="margin-top:6px;"><i class="material-icons">image</i> Add image…</button>
+        <button class="ed-btn" id="ed-faces-btn" style="margin-top:6px;"><i class="material-icons">dashboard_customize</i> Copy faces from skin…</button>
+        <button class="ed-btn" id="ed-clear" style="margin-top:6px;"><i class="material-icons">delete_sweep</i> Clear</button>
+        <button class="ed-btn primary" id="ed-save" style="margin-top:12px;"><i class="material-icons">save</i> Save…</button>
       </div>
     </div>
   </div>
@@ -322,7 +320,13 @@
        live preview, so the modal only covers the area to its right. -->
   <div id="ed-img-modal" class="ed-modal-overlay">
     <div class="ed-modal" style="width:640px;">
-      <div class="ed-modal-head"><h3 style="margin:0;">Wrap an image onto the skin</h3><button class="ed-btn" style="width:auto;padding:4px 10px;" id="ed-img-x2">✕</button></div>
+      <div class="ed-modal-head">
+        <h3 style="margin:0;">Wrap an image onto the skin</h3>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="ed-btn" style="width:auto; padding:5px 11px;" id="ed-img-pick"><i class="material-icons" style="font-size:16px; vertical-align:middle;">image</i> Choose a different image</button>
+          <button class="ed-btn" style="width:auto;padding:4px 10px;" id="ed-img-x2">✕</button>
+        </div>
+      </div>
       <div class="ed-modal-body" style="display:flex; gap:16px;">
         <canvas id="ed-img-3d" style="width:240px; height:340px; flex:0 0 240px; background:color-mix(in srgb, var(--very-dark) 85%, black); border-radius:var(--border-radius);"></canvas>
         <div class="ed-modal-controls" style="flex:1; min-width:0;">
@@ -341,12 +345,13 @@
           </div>
           <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror" checked> Mirror onto the back</label></div>
           <div class="ed-row"><label><input type="checkbox" id="ed-wrap-drop2nd" checked> Clear the skin's 2nd layer</label></div>
-          <div class="ed-btn-row" style="margin-top:10px;">
+          <div class="ed-btn-row" style="margin-top:14px;">
+            <!-- As its own mode the wrap saves a skin; opened over the advanced
+                 editor it applies the wrap to the skin you're editing. -->
             <button class="ed-btn primary" id="ed-img-save" style="display:none;"><i class="material-icons">save</i> Save to library</button>
-            <button class="ed-btn" id="ed-img-bake">Bake in</button>
+            <button class="ed-btn primary" id="ed-img-bake"><i class="material-icons">check</i> Apply to skin</button>
             <button class="ed-btn" id="ed-img-cancel">Cancel</button>
           </div>
-          <button class="ed-btn" id="ed-img-pick" style="margin-top:6px;">Choose a different image…</button>
         </div>
       </div>
     </div>
@@ -395,6 +400,7 @@
     const startSkinCode = params.get('skinCode') || null;  // preload the simple creator
     let uuid = params.get('uuid') || null;
     let imgFullMode = false;                          // image importer opened as its own mode
+    let imgModePending = false;                       // ...and waiting on the first file pick
 
     const SIZE = 64;
     const SCALE = 10;                                 // display px per texel
@@ -862,12 +868,47 @@
       const r = new FileReader();
       r.onload = () => {
         const im = new Image();
-        im.onload = () => { imgBitmap = im; imgModal.classList.add('active'); autoFitWrap(); drawImagePreview(); };
+        im.onload = () => {
+          imgBitmap = im;
+          // Entered from the "Convert an image" tile: now that there IS an image,
+          // turn the wrap into the page's content.
+          if (imgModePending) { imgModePending = false; enterImgMode(); }
+          imgModal.classList.add('active');
+          autoFitWrap(); drawImagePreview(); fitImgMode();
+        };
         im.src = r.result;
       };
       r.readAsDataURL(f);
       e.target.value = '';
     };
+    // Backing out of the very first file dialog means backing out of the mode.
+    document.getElementById('ed-file').addEventListener('cancel', () => {
+      if (imgModePending) { imgModePending = false; window.location.href = 'profile-manager.html'; }
+    });
+
+    // The wrap as its own full-page mode: it replaces the editor, saves a skin
+    // instead of applying one, and fills the height available under the heading.
+    function enterImgMode() {
+      imgFullMode = true;
+      imgModal.classList.add('ed-img-fullmode');
+      document.getElementById('ed-img-save').style.display = '';
+      document.getElementById('ed-img-bake').style.display = 'none';
+      document.getElementById('ed-img-x2').style.display = 'none';
+      document.getElementById('ed-title').textContent = 'Wrap an image';
+      setMainContentVisible(false);
+      document.getElementById('mode-toggle').style.display = 'none';
+    }
+    function fitImgMode() {
+      if (!imgFullMode) return;
+      const el = document.getElementById('ed-img-modal');
+      const h = Math.max(340, Math.floor(window.innerHeight - el.getBoundingClientRect().top - 10));
+      el.style.height = h + 'px';
+      // The preview keeps a player's 3:4-ish proportions and takes the height.
+      const cvh = Math.max(300, h - 80), cvw = Math.round(cvh * 0.72);
+      const cv = document.getElementById('ed-img-3d');
+      cv.style.height = cvh + 'px'; cv.style.width = cvw + 'px'; cv.style.flex = '0 0 ' + cvw + 'px';
+      if (imgViewer) { try { imgViewer.setSize(cvw, cvh); } catch { } }
+    }
 
     // The body's source footprint in `bm` units around the wrap centre, taken from
     // the face sampling in drawWrap below (x spans -2..+2, y spans -4..+4). Keep
@@ -1030,28 +1071,26 @@
       if (!imgFullMode) return;
       imgFullMode = false;
       imgModal.classList.remove('ed-img-fullmode');
+      imgModal.style.height = '';
       document.getElementById('ed-img-save').style.display = 'none';
+      document.getElementById('ed-img-bake').style.display = '';
       document.getElementById('ed-img-x2').style.display = '';
       document.getElementById('mode-toggle').style.display = '';
       setMainContentVisible(true);
       document.getElementById('ed-title').textContent = 'New skin';
     }
-    // "Bake in" keeps you in the editor to keep working on the result.
+    // Over the advanced editor: apply the wrap and carry on editing the result.
     document.getElementById('ed-img-bake').onclick = () => { bakeImage(); closeImgModal(); exitImgMode(); };
-    // "Save to library" (image mode only): bake, then save straight away.
-    document.getElementById('ed-img-save').onclick = async () => {
-      const btn = document.getElementById('ed-img-save');
+    // As its own mode: apply the wrap, then name and save the skin.
+    async function imgModeSave(allowDiscard) {
+      const bmp = imgBitmap;
       bakeImage(); closeImgModal();
-      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
-      try {
-        const nm = (document.getElementById('ed-name').value || 'My skin').trim();
-        if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: work.toDataURL('image/png'), variant, name: nm, editorType: 'advanced' });
-        window.location.href = 'profile-manager.html';
-      } catch (e) {
-        alert('Save failed: ' + (e.message || e));
-        btn.disabled = false; btn.innerHTML = '<i class="material-icons">save</i> Save to library';
-      }
-    };
+      if (await edSaveFlow({ allowDiscard })) return;   // navigating away
+      // Cancelled — put the image and the wrap controls back so nothing is lost.
+      undo();
+      imgBitmap = bmp; imgModal.classList.add('active'); drawImagePreview(); fitImgMode();
+    }
+    document.getElementById('ed-img-save').onclick = () => imgModeSave(false);
 
     // ── 3D preview ──
     let viewer = null;
@@ -1243,29 +1282,25 @@
           const s = (lib || []).find(x => String(x.id) === String(editSkinId));
           if (s) {
             await loadIntoWork('data:image/png;base64,' + s.base64); name = s.name || name; variant = s.variant || 'classic'; setVariant(variant);
-            document.getElementById('ed-title').textContent = 'Editing: ' + name; document.getElementById('ed-save-copy').style.display = '';
+            document.getElementById('ed-title').textContent = 'Editing: ' + name;
             editedType = s.editorType || 'advanced';
             // A simple-creator skin re-opens in the creator with its saved options.
-            if (editedType === 'simple' && s.creatorState) { crState = { ...CR_DEFAULT, ...s.creatorState }; crName = name; }
+            if (editedType === 'simple' && s.creatorState) crState = { ...CR_DEFAULT, ...s.creatorState };
           }
         } catch { }
       } else if (mode === 'new' && params.get('template') === '1') {
         await loadIntoWork('assets/template.png');
         document.getElementById('ed-title').textContent = 'New skin (from template)';
       } else if (mode === 'image') {
-        // Opened from the "Convert an image" tile: the importer IS the page's main
-        // content (it replaces the editor), with its own Save button. Cancelling
-        // returns to the library.
-        document.getElementById('ed-title').textContent = 'Image → skin';
-        imgFullMode = true;
-        document.getElementById('ed-img-modal').classList.add('ed-img-fullmode');
-        document.getElementById('ed-img-save').style.display = '';
-        document.getElementById('ed-img-x2').style.display = 'none';
-        setTimeout(() => document.getElementById('ed-import').click(), 300);
+        // Opened from the "Convert an image" tile. Pick the image FIRST — the wrap
+        // mode has nothing to show until there is one — and only then swap the
+        // page over to it. Cancelling the file dialog returns to the library.
+        document.getElementById('ed-title').textContent = 'Wrap an image';
+        imgModePending = true;
       } else {
         document.getElementById('ed-title').textContent = 'New skin';
       }
-      document.getElementById('ed-name').value = name;
+      crName = name;
       syncColorInputs();
       render();
       build3D();
@@ -1278,72 +1313,108 @@
       const plainNew = mode !== 'edit' && mode !== 'image' && params.get('template') !== '1';
       const startCreator = plainNew || editedType === 'simple';
       setEditorMode(startCreator ? 'creator' : 'advanced', { initial: true });
-      // In image mode the importer replaces the editor entirely.
-      if (imgFullMode) { setMainContentVisible(false); document.getElementById('mode-toggle').style.display = 'none'; }
+      // Whatever the editor opened with counts as "unchanged" — the save prompt
+      // only appears once this differs.
+      crBaseline = JSON.stringify(crState);
+      // In image mode nothing but the file dialog should be on screen yet.
+      if (imgModePending) {
+        setMainContentVisible(false);
+        document.getElementById('mode-toggle').style.display = 'none';
+        setTimeout(() => document.getElementById('ed-file').click(), 250);
+      }
       const ov = document.getElementById('loading-overlay'); if (ov) { ov.classList.add('fade-out'); setTimeout(() => ov.style.display = 'none', 400); }
     }
 
     // ── Save ──
-    document.getElementById('ed-save').onclick = async () => {
-      const btn = document.getElementById('ed-save');
-      const nm = (document.getElementById('ed-name').value || 'My skin').trim();
-      const dataUrl = work.toDataURL('image/png');
-      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
-      try {
-        if (mode === 'edit' && editSkinId && uuid) {
-          await ipcRenderer.invoke('skins:update', { uuid, id: editSkinId, base64: dataUrl, variant, name: nm, editorType: 'advanced', creatorState: null });
-        } else if (uuid) {
-          await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm, editorType: 'advanced' });
-        }
-        window.location.href = 'profile-manager.html';
-      } catch (e) {
-        alert('Save failed: ' + (e.message || e));
-        btn.disabled = false; btn.innerHTML = '<i class="material-icons">save</i> Save to library';
-      }
-    };
-    // Save-as-copy (only shown when editing an existing skin): never overrides the
-    // original — always creates a new library entry.
-    document.getElementById('ed-save-copy').onclick = async () => {
-      const btn = document.getElementById('ed-save-copy');
-      const nm = ((document.getElementById('ed-name').value || 'My skin').trim() + ' copy');
-      const dataUrl = work.toDataURL('image/png');
-      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Saving…';
-      try {
-        if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm });
-        window.location.href = 'profile-manager.html';
-      } catch (e) {
-        alert('Save failed: ' + (e.message || e));
-        btn.disabled = false; btn.innerHTML = '<i class="material-icons">content_copy</i> Save as a copy';
-      }
-    };
-
-    // Leaving the editor prompts to save / save-as-copy / discard, depending on
-    // whether we were editing an existing skin or making a new one.
-    async function saveAsCopy() {
-      const base = ((document.getElementById('ed-name') && document.getElementById('ed-name').value) || crName || 'My skin').trim();
-      const nm = base + ' copy';
-      if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: work.toDataURL('image/png'), variant, name: nm, editorType: curEditorMode === 'creator' ? 'simple' : 'advanced', creatorState: curEditorMode === 'creator' ? crState : null });
-      window.location.href = 'profile-manager.html';
+    // One save dialog for every mode (advanced editor, simple creator, image
+    // wrap): name the skin, then save it, save it as a copy, or throw it away.
+    // Resolves { action: 'save' | 'copy' | 'discard', name } or null if cancelled.
+    function edOpenSaveModal(o) {
+      o = o || {};
+      const canCopy = !!o.canCopy, canDiscard = !!o.canDiscard;
+      return new Promise((resolve) => {
+        const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.zIndex = 7000;
+        const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '400px';
+        box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">${o.title || 'Save this skin'}</h3></div>
+          <div class="ed-row" style="margin:14px 0 0;"><label style="width:52px;">Name</label>
+            <input id="ed-sv-name" type="text" placeholder="My skin" style="flex:1; padding:8px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);"></div>
+          <div class="ed-btn-row" style="flex-wrap:wrap; gap:8px; margin-top:16px;">
+            <button class="ed-btn primary" id="ed-sv-save">${canCopy ? 'Save changes' : 'Save'}</button>
+            ${canCopy ? '<button class="ed-btn" id="ed-sv-copy">Save as a copy</button>' : ''}
+            ${canDiscard ? '<button class="ed-btn" id="ed-sv-discard">Discard</button>' : ''}
+            <button class="ed-btn" id="ed-sv-cancel">Cancel</button>
+          </div>`;
+        ov.appendChild(box); document.body.appendChild(ov);
+        const input = box.querySelector('#ed-sv-name');
+        const original = (o.name || 'My skin').trim();
+        input.value = original;
+        const done = (v) => { ov.remove(); resolve(v); };
+        const nameNow = () => (input.value || '').trim() || 'My skin';
+        box.querySelector('#ed-sv-save').onclick = () => done({ action: 'save', name: nameNow() });
+        const cp = box.querySelector('#ed-sv-copy');
+        // A copy under the original's exact name would be indistinguishable in the
+        // library, so tack on " copy" unless the name was already changed.
+        if (cp) cp.onclick = () => { const n = nameNow(); done({ action: 'copy', name: n === original ? n + ' copy' : n }); };
+        const ds = box.querySelector('#ed-sv-discard');
+        if (ds) ds.onclick = () => done({ action: 'discard' });
+        box.querySelector('#ed-sv-cancel').onclick = () => done(null);
+        ov.addEventListener('mousedown', e => { if (e.target === ov) done(null); });
+        input.addEventListener('keydown', e => {
+          if (e.key === 'Enter') done({ action: 'save', name: nameNow() });
+          if (e.key === 'Escape') done(null);
+        });
+        setTimeout(() => { input.focus(); input.select(); }, 30);
+      });
     }
+
+    // Writes the current skin to the library. 'save' updates the skin in place
+    // when one is being edited; 'copy' always creates a new entry.
+    async function edPersist(action, nm) {
+      if (!uuid) return;
+      const dataUrl = work.toDataURL('image/png');
+      const meta = curEditorMode === 'creator'
+        ? { editorType: 'simple', creatorState: crState }
+        : { editorType: 'advanced', creatorState: null };
+      if (action === 'save' && mode === 'edit' && editSkinId) {
+        await ipcRenderer.invoke('skins:update', { uuid, id: editSkinId, base64: dataUrl, variant, name: nm, ...meta });
+      } else {
+        await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm, ...meta });
+      }
+    }
+
+    // Is there anything worth saving? A hand edit pushes an undo step; the simple
+    // creator is compared against the options it opened with. Without this the
+    // save prompt would pop up on the way out even if you only looked around.
+    let crBaseline = null;
+    const edDirty = () => undoStack.length > 0 ||
+      (crBaseline !== null && JSON.stringify(crState) !== crBaseline);
+
+    // Runs the save dialog and acts on the answer. `allowDiscard` adds the
+    // Discard button (used on the way out of the editor). Returns true if we're
+    // navigating away.
+    async function edSaveFlow(o) {
+      o = o || {};
+      const isEdit = mode === 'edit' && !!editSkinId;
+      const r = await edOpenSaveModal({
+        title: isEdit ? 'Save your changes' : 'Save this skin',
+        canCopy: isEdit, canDiscard: !!o.allowDiscard, name: crName,
+      });
+      if (!r) return false;
+      if (r.action === 'discard') { window.location.href = 'profile-manager.html'; return true; }
+      crName = r.name;
+      try { await edPersist(r.action, r.name); }
+      catch (e) { alert('Save failed: ' + (e.message || e)); return false; }
+      window.location.href = 'profile-manager.html';
+      return true;
+    }
+    document.getElementById('ed-save').onclick = () => edSaveFlow();
+
+    // Leaving the editor: only ask when there's actually something unsaved.
     function backToSkins() {
-      const isEdit = mode === 'edit' && editSkinId;
-      const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.inset = '44px 0 0 70px'; ov.style.zIndex = 7000;
-      const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '410px';
-      box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">${isEdit ? 'Save your changes?' : 'Save this skin?'}</h3></div>
-        <div style="margin:12px 0 16px;font-size:14px;opacity:.9;">${isEdit ? 'Save your changes to this skin, save them as a new copy, or discard them?' : 'Save this skin to your library, or discard it?'}</div>
-        <div class="ed-btn-row" style="flex-wrap:wrap;gap:8px;">
-          <button class="ed-btn primary" id="btk-save">Save</button>
-          ${isEdit ? '<button class="ed-btn" id="btk-copy">Save as a copy</button>' : ''}
-          <button class="ed-btn" id="btk-discard">Discard</button>
-          <button class="ed-btn" id="btk-cancel">Cancel</button>
-        </div>`;
-      ov.appendChild(box); document.body.appendChild(ov);
-      const close = () => ov.remove();
-      box.querySelector('#btk-cancel').onclick = close;
-      ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
-      box.querySelector('#btk-discard').onclick = () => { window.location.href = 'profile-manager.html'; };
-      box.querySelector('#btk-save').onclick = () => { close(); (curEditorMode === 'creator' ? document.getElementById('cr-save') : document.getElementById('ed-save')).click(); };
-      const cp = box.querySelector('#btk-copy'); if (cp) cp.onclick = () => { close(); saveAsCopy(); };
+      // In the wrap mode the pending wrap has to be applied before it can be saved.
+      if (imgFullMode && imgBitmap) { imgModeSave(true); return; }
+      if (!edDirty()) { window.location.href = 'profile-manager.html'; return; }
+      edSaveFlow({ allowDiscard: true });
     }
     document.getElementById('ed-back-skins').onclick = backToSkins;
 
@@ -1516,6 +1587,7 @@
         if (ew) ew.style.display = curEditorMode === 'creator' ? 'none' : '';
         if (cw) cw.style.display = curEditorMode === 'creator' ? '' : 'none';
       }
+      scheduleFitMode();
     }
     function openFacesMode() {
       efm.el.classList.add('active');
@@ -1546,7 +1618,7 @@
     // Promise-based text prompt (Electron's window.prompt is unsupported).
     function edAskText(title, placeholder, def) {
       return new Promise((resolve) => {
-        const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.inset = '44px 0 0 70px'; ov.style.zIndex = 6000;
+        const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.zIndex = 6000;
         const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '360px';
         box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">${title}</h3></div>
           <input id="ed-ask-input" type="text" placeholder="${placeholder || ''}" style="width:100%;margin:12px 0;padding:8px;border-radius:var(--border-radius);border:2px solid var(--border-dark);background:var(--menu-bg);color:var(--text-color);" />
@@ -1565,7 +1637,7 @@
     // Promise-based confirm (returns true/false), so no ugly Electron popup.
     function edAskConfirm(title, message) {
       return new Promise((resolve) => {
-        const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.inset = '44px 0 0 70px'; ov.style.zIndex = 6000;
+        const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.zIndex = 6000;
         const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '380px';
         box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">${title}</h3></div>
           <div style="margin:12px 0;font-size:14px;opacity:0.9;">${message}</div>
@@ -1599,7 +1671,7 @@
     };
     // A lightweight modal grid to choose one of many library/default skins.
     function efmOpenPicker(items) {
-      const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.inset = '44px 0 0 70px'; ov.style.zIndex = 4000;
+      const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.zIndex = 4000;
       const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '640px'; box.style.maxHeight = '80vh';
       box.innerHTML = '<div class="ed-modal-head"><h3 style="margin:0;">Pick a skin</h3><button class="ed-btn" style="width:auto;padding:4px 10px;" id="efm-pick-x">✕</button></div>';
       const grid = document.createElement('div'); grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:8px;margin-top:10px;';
@@ -1980,20 +2052,8 @@
       if (crActiveCat) renderCatOptions(crActiveCat);
       crGenerate();
     }
-    async function crSave() {
-      const nm = await edAskText('Save skin', 'My skin', crName || 'My skin');
-      if (!nm) return;
-      crName = nm;
-      const btn = document.getElementById('cr-save'); btn.classList.add('primary');
-      const dataUrl = work.toDataURL('image/png');
-      try {
-        const meta = { editorType: 'simple', creatorState: crState };
-        if (mode === 'edit' && editSkinId && uuid) await ipcRenderer.invoke('skins:update', { uuid, id: editSkinId, base64: dataUrl, variant, name: nm, ...meta });
-        else if (uuid) await ipcRenderer.invoke('skins:add', { uuid, base64: dataUrl, variant, name: nm, ...meta });
-        window.location.href = 'profile-manager.html';
-      } catch (e) { alert('Save failed: ' + (e.message || e)); btn.classList.remove('primary'); }
-    }
-    document.getElementById('cr-save').onclick = crSave;
+    // The creator saves through the same dialog as every other mode.
+    document.getElementById('cr-save').onclick = () => edSaveFlow();
     document.getElementById('cr-random').onclick = crRandomize;
     document.getElementById('cr-reset').onclick = () => { crState = { ...CR_DEFAULT }; if (crActiveCat) renderCatOptions(crActiveCat); crGenerate(); };
     // Save skin code: copy a shareable Starlight link to the clipboard.
@@ -2039,11 +2099,30 @@
         curEditorMode = 'advanced';
         cw.classList.remove('active'); ew.style.display = '';
         tl.textContent = 'Simple creator';
-        try { if (crName && !document.getElementById('ed-name').value) document.getElementById('ed-name').value = crName; } catch { }
         setVariant(variant); render(); update3D(true);
       }
+      scheduleFitMode();
     }
     document.getElementById('mode-toggle').onclick = () => setEditorMode(curEditorMode === 'creator' ? 'advanced' : 'creator');
+
+    // The `calc(100vh - N)` heights on the mode wrappers were guesses at the
+    // height of the title bar + page heading, and ran a little short — enough
+    // that the bottom of the category list was cut off. Measure the real top of
+    // whichever mode is visible instead.
+    function fitModeHeight() {
+      for (const id of ['editor-wrap', 'creator-wrap', 'ed-faces-mode']) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (el.offsetParent === null) { el.style.height = ''; continue; }  // hidden
+        const top = el.getBoundingClientRect().top;
+        el.style.height = Math.max(320, Math.floor(window.innerHeight - top - 10)) + 'px';
+      }
+      fitImgMode();
+    }
+    window.addEventListener('resize', fitModeHeight);
+    // Runs after layout has settled following a mode switch.
+    const scheduleFitMode = () => requestAnimationFrame(() => requestAnimationFrame(fitModeHeight));
+    scheduleFitMode();
 
     function updatePresence(details, state = 'Idle') { ipcRenderer.send('update-discord-presence', { details, state }); }
     updatePresence('Editing a skin');

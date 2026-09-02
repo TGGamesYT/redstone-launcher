@@ -24,6 +24,14 @@
     }
   </script>
   <style>
+    /* Modals float on their own shadow — no dim/blur pane behind them. A painted
+       rectangle can't follow the window's rounded top-left corner and always
+       leaves a seam under the title bar, so there simply isn't one; the overlay
+       is invisible and only catches clicks outside the dialog. */
+    .modal-overlay > * {
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(0, 0, 0, 0.35) !important;
+    }
+
     /* Container around canvas + card panels */
     #content-wrapper {
       display: flex;
@@ -338,7 +346,7 @@
   </div>
 
   <!-- Add-skin menu -->
-  <div id="addSkinModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2000; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+  <div id="addSkinModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2000;">
     <div class="skin-modal-card" style="width:560px; max-width:92%;">
       <h3 style="margin-top:0; margin-bottom:14px;">Add a skin</h3>
       <div class="add-skin-grid">
@@ -355,7 +363,7 @@
   </div>
 
   <!-- Create-new sub-modal: three ways to make a new skin, each with a preview. -->
-  <div id="createNewModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2100; backdrop-filter:blur(5px);">
+  <div id="createNewModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2100;">
     <div class="skin-modal-card" style="width:640px; max-width:94%;">
       <h3 style="margin-top:0; margin-bottom:14px;">Create a new skin</h3>
       <div class="create-new-grid">
@@ -370,7 +378,7 @@
   </div>
 
   <!-- By-username modal -->
-  <div id="usernameModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2100; backdrop-filter:blur(5px);">
+  <div id="usernameModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2100;">
     <div class="skin-modal-card" style="width:420px; max-width:92%;">
       <h3 style="margin-top:0; margin-bottom:14px;">Add a skin by username</h3>
       <input id="usernameInput" type="text" placeholder="Minecraft username" style="width:100%; padding:9px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);" />
@@ -395,7 +403,7 @@
   </div>
 
   <!-- Upload skin modal (choose model) -->
-  <div id="uploadModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2000; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+  <div id="uploadModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2000;">
     <div class="skin-modal-card">
       <h3 style="margin-top:0; margin-bottom:14px;">Save Skin</h3>
       <div style="display:flex; gap:16px;">
@@ -421,10 +429,12 @@
   </div>
 
   <!-- Default skins picker -->
-  <div id="defaultSkinsModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2000; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
-    <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); width:520px; max-height:80vh; overflow:auto;">
+  <div id="defaultSkinsModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2000;">
+    <!-- Sized to hold every default skin at once: no scrolling, just a grid of
+         players that spin when you point at them. -->
+    <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); width:min(1100px, 94vw); max-height:92vh; display:flex; flex-direction:column;">
       <h3 style="margin-top:0;">Pick a default skin</h3>
-      <div id="defaultSkinsGrid" style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center;"></div>
+      <div id="defaultSkinsGrid" style="display:grid; grid-template-columns:repeat(5, 1fr); gap:12px; flex:1; min-height:0;"></div>
       <div style="display:flex; gap:8px; margin-top:12px;">
         <button class="pm-btn" id="defaultSkinsCancelBtn">Cancel</button>
       </div>
@@ -432,7 +442,7 @@
   </div>
 
   <!-- Variant picker (wide / slim) -->
-  <div id="variantModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2001; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+  <div id="variantModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2001;">
     <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); width:300px; text-align:center;">
       <h3 style="margin-top:0;" id="variantModalTitle">Choose arm style</h3>
       <div style="display:flex; gap:8px; justify-content:center;">
@@ -444,7 +454,7 @@
   </div>
 
   <!-- Rename skin modal -->
-  <div id="skinRenameModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2001; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+  <div id="skinRenameModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2001;">
     <div class="skin-modal-card" style="width:320px;">
       <h3 style="margin-top:0;">Rename skin</h3>
       <input type="text" id="skinRenameInput" placeholder="Skin name" style="width:100%; margin-bottom:14px;">
@@ -456,7 +466,7 @@
   </div>
 
   <!-- Delete skin confirm modal -->
-  <div id="skinDeleteModal" class="modal-overlay" style="position:fixed; top:38px; left:70px; right:0; bottom:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:2001; backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);">
+  <div id="skinDeleteModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2001;">
     <div class="skin-modal-card" style="width:320px;">
       <h3 style="margin-top:0;">Delete skin</h3>
       <p id="skinDeleteText" style="opacity:0.85; margin-top:0;">Remove this skin from your library?</p>
@@ -1172,11 +1182,18 @@
       defaultSkinsCache.forEach(d => {
         (byName[d.name] ||= { name: d.name })[d.model] = d.base64;
       });
-      Object.values(byName).forEach(entry => {
+      const entries = Object.values(byName);
+      // Lay the grid out so every skin fits in one view — a scrollbar here just
+      // hides half the choices.
+      const cols = Math.min(5, Math.max(3, Math.ceil(Math.sqrt(entries.length * 1.4))));
+      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      entries.forEach(entry => {
         const b64 = entry.wide || entry.slim;
-        const preview = createSkinCanvas({ base64: b64, variant: entry.wide ? "CLASSIC" : "SLIM" });
+        // Same 3D player as the library: still and facing forward, spins on hover.
+        const preview = skin3dPreview("data:image/png;base64," + b64, entry.wide ? "classic" : "slim", 150, 220);
         const card = createCard(entry.name, () => chooseDefaultVariant(entry), preview);
         grid.appendChild(card);
+        wireSpin(card, preview);
       });
     }
 
