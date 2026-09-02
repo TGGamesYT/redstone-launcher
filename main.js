@@ -2164,9 +2164,9 @@ async function curseforgeImport(zipPath, onProgress) {
 
       // Step 4: Download
       await downloadFile(url, dest);
-      devtoolsLog(`✅ Installed ${fileName} to ${subFolder}`);
+      devtoolsLog(`[ok] Installed ${fileName} to ${subFolder}`);
     } catch (err) {
-      devtoolsLog(`❌ Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
+      devtoolsLog(`[fail] Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
     }
     cfDone++;
     if (typeof onProgress === "function") onProgress(cfDone, cfList.length, `mod ${cfDone}/${cfList.length}`);
@@ -2332,7 +2332,7 @@ async function withRetry(fn, { tries = 3, base = 800, label = "op", profileId = 
       lastErr = err;
       if (attempt >= tries || !isTransientError(err)) throw err;
       const delay = base * Math.pow(2, attempt - 1);
-      if (profileId) broadcastLog(profileId, `[WARN] ${label} failed (${err.message}); retrying in ${Math.round(delay / 1000)}s… (${attempt}/${tries - 1})`);
+      if (profileId) broadcastLog(profileId, `[WARN] ${label} failed (${err.message}); retrying in ${Math.round(delay / 1000)}s... (${attempt}/${tries - 1})`);
       await new Promise(r => setTimeout(r, delay));
     }
   }
@@ -3797,10 +3797,51 @@ let lastActivity = { details: "In launcher", state: "Idle" };
 // What the UI (renderer pages) last asked for — used only when no game is running.
 let lastUiActivity = { details: "In launcher", state: "Idle" };
 
+// Is Discord actually running? discord-rpc talks over an IPC socket/named pipe,
+// and calling login() when Discord is closed just throws "Could not connect".
+// Checking for the endpoint first keeps that error out of the logs entirely.
+function discordIpcAvailable() {
+  const isIpc = (n) => /^discord-ipc-\d+$/.test(n);
+  try {
+    if (process.platform === "win32") {
+      // Named pipes are enumerable through the pipe filesystem.
+      return fs.readdirSync("\\\\.\\pipe\\").some(isIpc);
+    }
+    const base = process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
+    // Flatpak/Snap builds put their socket in a sandboxed subdirectory.
+    const dirs = [
+      base,
+      path.join(base, "app", "com.discordapp.Discord"),
+      path.join(base, "snap.discord"),
+      path.join(base, ".flatpak", "dev.vencord.Vesktop", "xdg-run"),
+    ];
+    for (const d of dirs) {
+      try { if (fs.readdirSync(d).some(isIpc)) return true; } catch { /* try the next one */ }
+    }
+    return false;
+  } catch { return false; }
+}
+
+let discordRetryTimer = null;
+function scheduleDiscordRetry() {
+  if (discordRetryTimer) return;
+  // Discord may be started after the launcher — re-check quietly now and then.
+  discordRetryTimer = setInterval(() => {
+    if (!settings.get('discordPresence', true) || rpc) { clearInterval(discordRetryTimer); discordRetryTimer = null; return; }
+    if (discordIpcAvailable()) { clearInterval(discordRetryTimer); discordRetryTimer = null; startDiscordPresence(); }
+  }, 60 * 1000);
+  if (discordRetryTimer.unref) discordRetryTimer.unref();
+}
+
 function startDiscordPresence() {
   shouldconnect = settings.get('discordPresence', true);
   if (!shouldconnect) return;        // user disabled it
   if (rpc) return;                   // already connecting or connected
+  if (!discordIpcAvailable()) {      // Discord isn't running — don't even try
+    devtoolsLog('[Discord RPC] Discord not running; will retry later.');
+    scheduleDiscordRetry();
+    return;
+  }
 
   const client = new RPC.Client({ transport: 'ipc' });
   rpc = client; // claim the slot immediately so we don't spawn duplicates
@@ -3823,8 +3864,11 @@ function startDiscordPresence() {
   });
 
   client.login({ clientId }).catch(err => {
-    devtoolsLog('[Discord RPC] Login failed:', err);
+    // Discord can quit between the check above and the connect — that's expected,
+    // so log it quietly and try again later rather than surfacing a stack trace.
+    devtoolsLog('[Discord RPC] Not connected:', (err && err.message) || err);
     if (rpc === client) { rpc = null; rpcConnected = false; }
+    scheduleDiscordRetry();
   });
 }
 
@@ -5091,8 +5135,8 @@ function startDevWatch(type, id) {
         clearTimeout(w.timer);
         w.timer = setTimeout(() => {
           const r = swapDevMod(type, id, m.modId, m.folder);
-          if (r.success && type === "instance") broadcastLog(id, `[dev-mod] swapped ${m.modId} → ${r.jar}`);
-          else if (r.success) devtoolsLog(`[dev-mod] ${type} ${id}: swapped ${m.modId} → ${r.jar}`);
+          if (r.success && type === "instance") broadcastLog(id, `[dev-mod] swapped ${m.modId} -> ${r.jar}`);
+          else if (r.success) devtoolsLog(`[dev-mod] ${type} ${id}: swapped ${m.modId} -> ${r.jar}`);
         }, 700); // debounce — a build writes several files
       });
       ws.push(w);
@@ -5111,7 +5155,7 @@ function syncDevMods(type, id) {
     if (!m.folder || !m.modId) continue;
     try {
       const r = swapDevMod(type, id, m.modId, m.folder);
-      if (r && r.success) devtoolsLog(`[dev-mod] ${type} ${id}: caught up ${m.modId} → ${r.jar}`);
+      if (r && r.success) devtoolsLog(`[dev-mod] ${type} ${id}: caught up ${m.modId} -> ${r.jar}`);
     } catch (e) { devtoolsLog("[dev-mod] catch-up failed:", e.message); }
   }
 }
@@ -5399,7 +5443,7 @@ async function autoUpdateTrackedInstances() {
     saveProfiles(raw);
     broadcastProfiles(await loadProfiles());   // list + version filter update immediately
     for (const c of changed) {
-      devtoolsLog(`[auto-update] instance ${c.id} → ${c.version}`);
+      devtoolsLog(`[auto-update] instance ${c.id} -> ${c.version}`);
       try { await migrateContentToVersion(c.id, c.version, c.loader); }
       catch (e) { devtoolsLog(`[auto-update] migrating ${c.id} failed: ${e.message}`); }
     }
@@ -6330,61 +6374,6 @@ ipcMain.handle("mc:applyCape", async (event, capeId) => {
   return true;
 });
 
-// ---- Cape redeem codes -------------------------------------------------------
-// List the premium (Microsoft) accounts a cape code could be redeemed to.
-ipcMain.handle("cape:listAccounts", async () => {
-  const players = await loadPlayers();
-  return players
-    .filter(p => p.type === "microsoft" && p.auth && p.auth.access_token && p.auth.access_token !== "0")
-    .map(p => ({ id: p.id, name: (p.auth && p.auth.name) || p.username }));
-});
-
-// Helper: fetch the owned capes for a given account (for ownership checks).
-async function ownedCapesFor(headers) {
-  try {
-    const res = await fetch("https://api.minecraftservices.com/minecraft/profile", { headers });
-    if (!res.ok) return [];
-    const j = await res.json();
-    return Array.isArray(j.capes) ? j.capes : [];
-  } catch { return []; }
-}
-
-// Minecraft's product-voucher endpoint (the one minecraft.net/redeem uses).
-const VOUCHER_URL = (c) => `https://api.minecraftservices.com/entitlements/productvoucher/${encodeURIComponent(c)}`;
-
-// Look up what a code grants WITHOUT redeeming it, and whether the chosen account
-// already owns that cape.
-ipcMain.handle("cape:redeemPreview", async (event, { code, accountId }) => {
-  try {
-    const c = String(code || "").trim();
-    if (!c) return { error: "Enter a code." };
-    const headers = await authHeadersFor(accountId);
-    const res = await fetch(VOUCHER_URL(c), { headers });
-    if (res.status === 404) return { error: "That code isn't valid or has already been used." };
-    if (!res.ok) return { error: await cleanHttpError(res) };
-    const j = await res.json().catch(() => ({}));
-    // Best-effort extraction of the product / cape name the voucher grants.
-    const item = (j.items && j.items[0]) || (j.entitlements && j.entitlements[0]) || j.product || {};
-    const productName = j.productName || j.name || item.name || item.productName || item.displayName || "a cape";
-    const owned = await ownedCapesFor(headers);
-    const match = owned.find(cp => productName && (cp.alias || "").toLowerCase() === String(productName).toLowerCase());
-    return { ok: true, productName, capeUrl: match ? (match.url || null) : null, alreadyOwned: !!match };
-  } catch (e) { return { error: e.message }; }
-});
-
-// Actually redeem the code onto the chosen account.
-ipcMain.handle("cape:redeem", async (event, { code, accountId }) => {
-  try {
-    const c = String(code || "").trim();
-    if (!c) return { error: "Enter a code." };
-    const headers = await authHeadersFor(accountId);
-    const res = await fetch(VOUCHER_URL(c), { method: "PUT", headers });
-    if (!res.ok) return { error: await cleanHttpError(res) };
-    profileCache.clear();
-    return { ok: true };
-  } catch (e) { return { error: e.message }; }
-});
-
 // Turn any thrown value / error response into a clean string message so the
 // renderer never shows "[object Object]".
 async function cleanHttpError(res) {
@@ -6460,36 +6449,67 @@ function saveCrackedSkins(o) { try { fs.writeFileSync(crackedSkinsPath, JSON.str
 // possible so new defaults are picked up automatically; this is the fallback.
 const DEFAULT_SKIN_NAMES = ["alex", "ari", "efe", "kai", "makena", "noor", "steve", "sunny", "zuri"];
 const PLAYER_TEX_DIR = "assets/minecraft/textures/entity/player";
+// Pre-1.19.3 there were only these two, directly under entity/.
+const LEGACY_STEVE = "assets/minecraft/textures/entity/steve.png";
+const LEGACY_ALEX = "assets/minecraft/textures/entity/alex.png";
 
 function instanceClientJar(profileId, version) {
   return path.join(dataDir, "client", String(profileId), "versions", String(version), `${version}.jar`);
 }
 
-// pack_format straight from the client jar's version.json, so this works on every
-// version (including the new date-style ones) without a hardcoded table.
-// Newer jars use pack_version.resource_major, older ones a plain pack_version.resource.
+// Resource pack_format for versions whose client jar has NO version.json (1.12.2
+// and older don't ship one). Anything from 1.19.3 on is read from the jar itself,
+// so this table only has to cover the old range.
+const LEGACY_PACK_FORMATS = [
+  [/^1\.(6|7|8)(\.|$)/, 1],
+  [/^1\.(9|10)(\.|$)/, 2],
+  [/^1\.(11|12)(\.|$)/, 3],
+  [/^1\.(13|14)(\.|$)/, 4],
+  [/^1\.15(\.|$)/, 5], [/^1\.16\.[01]$/, 5], [/^1\.16$/, 5],
+  [/^1\.16(\.|$)/, 6],
+  [/^1\.17(\.|$)/, 7],
+  [/^1\.18(\.|$)/, 8],
+  [/^1\.19(\.|$)/, 9],
+];
+function legacyPackFormat(version) {
+  for (const [re, fmt] of LEGACY_PACK_FORMATS) if (re.test(String(version || ""))) return fmt;
+  return null;
+}
+
+// What the client jar tells us: the resource pack_format and which player-texture
+// layout this version uses. Two layouts exist:
+//   modern (1.19.3+): assets/minecraft/textures/entity/player/<wide|slim>/<name>.png
+//   legacy:           assets/minecraft/textures/entity/{steve,alex}.png
+// pack_version is {resource_major,resource_minor} on new versions, {resource} on
+// older ones, and absent entirely on 1.12.2 and below.
 function readPackInfoFromJar(jarPath) {
-  const out = { format: null, names: null };
+  const out = { major: null, minor: 0, names: null, legacy: false };
   try {
     if (!fs.existsSync(jarPath)) return out;
     const zip = new AdmZip(jarPath);
     const vEntry = zip.getEntry("version.json");
     if (vEntry) {
       const pv = (JSON.parse(vEntry.getData().toString("utf8")) || {}).pack_version;
-      if (typeof pv === "number") out.format = pv;
-      else if (pv && typeof pv === "object") out.format = pv.resource_major ?? pv.resource ?? null;
+      if (typeof pv === "number") out.major = pv;
+      else if (pv && typeof pv === "object") {
+        out.major = pv.resource_major ?? pv.resource ?? null;
+        out.minor = pv.resource_minor ?? 0;
+      }
     }
     const names = new Set();
+    let sawLegacy = false;
     for (const e of zip.getEntries()) {
       const p = e.entryName;
-      if (!p.startsWith(PLAYER_TEX_DIR + "/") || !p.endsWith(".png")) continue;
-      const parts = p.split("/");
-      const model = parts[parts.length - 2];
-      if (model !== "wide" && model !== "slim") continue;
-      names.add(parts[parts.length - 1].replace(/\.png$/, ""));
+      if (!p.endsWith(".png")) continue;
+      if (p.startsWith(PLAYER_TEX_DIR + "/")) {
+        const parts = p.split("/");
+        const model = parts[parts.length - 2];
+        if (model === "wide" || model === "slim") names.add(parts[parts.length - 1].replace(/\.png$/, ""));
+      } else if (p === LEGACY_STEVE || p === LEGACY_ALEX) sawLegacy = true;
     }
     if (names.size) out.names = [...names];
-  } catch { /* fall back below */ }
+    else if (sawLegacy) out.legacy = true;   // only the old two-file layout
+  } catch { /* fall back to defaults */ }
   return out;
 }
 
@@ -6504,19 +6524,42 @@ function applyCrackedSkinToInstance(profileId, version, base64) {
   const packPath = path.join(packsDir, packName);
   try {
     const info = readPackInfoFromJar(instanceClientJar(profileId, version));
-    const names = info.names && info.names.length ? info.names : DEFAULT_SKIN_NAMES;
-    // Unknown format (jar not downloaded yet): a very high number keeps the pack
-    // enabled on current versions rather than being rejected as too old.
-    const format = info.format ?? 99;
+    const major = info.major ?? legacyPackFormat(version) ?? 99;
+    const minor = info.minor || 0;
     const png = Buffer.from(raw, "base64");
 
+    // Modern clients read min_format/max_format (a [major, minor] pair or a bare
+    // major); older ones only understand pack_format. Write all three so one pack
+    // is accepted everywhere — unknown keys are simply ignored.
+    const meta = {
+      pack: {
+        description: "Redstone Launcher — offline account skin",
+        pack_format: major,
+        min_format: [major, minor],
+        max_format: major,
+      },
+    };
+
     const zip = new AdmZip();
-    zip.addFile("pack.mcmeta", Buffer.from(JSON.stringify({
-      pack: { pack_format: format, description: "Redstone Launcher — offline account skin" }
-    }, null, 2)));
-    for (const model of ["wide", "slim"]) {
-      for (const n of names) zip.addFile(`${PLAYER_TEX_DIR}/${model}/${n}.png`, png);
+    zip.addFile("pack.mcmeta", Buffer.from(JSON.stringify(meta, null, 2)));
+
+    // Write whichever layout this version uses. When the jar isn't around to tell
+    // us, write BOTH — the version that doesn't use one just ignores those files.
+    const useModern = !info.legacy;
+    const useLegacy = info.legacy || !info.names;
+    let written = 0;
+    if (useModern) {
+      const names = info.names && info.names.length ? info.names : DEFAULT_SKIN_NAMES;
+      for (const model of ["wide", "slim"]) {
+        for (const n of names) { zip.addFile(`${PLAYER_TEX_DIR}/${model}/${n}.png`, png); written++; }
+      }
     }
+    if (useLegacy) {
+      // Pre-1.19.3: just the two files, wide=steve and slim=alex. Both are replaced
+      // regardless of the chosen skin's model.
+      zip.addFile(LEGACY_STEVE, png); zip.addFile(LEGACY_ALEX, png); written += 2;
+    }
+
     fs.mkdirSync(packsDir, { recursive: true });
     zip.writeZip(packPath);
 
@@ -6524,7 +6567,7 @@ function applyCrackedSkinToInstance(profileId, version, base64) {
     const packs = readEnabledResourcePacks(profileId).filter(p => p !== "file/" + packName);
     packs.push("file/" + packName);
     writeEnabledResourcePacks(profileId, packs);
-    return { success: true, pack: packName, format, names: names.length };
+    return { success: true, pack: packName, format: major, textures: written };
   } catch (e) {
     return { success: false, error: e.message };
   }
