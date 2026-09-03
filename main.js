@@ -31,6 +31,7 @@ import dns from 'dns';
 import xml2js from "xml2js";
 import unzipper from "unzipper";
 import QRCode from "qrcode";
+import { pathToFileURL } from 'url';
 
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
@@ -4343,6 +4344,20 @@ function jarAuthorsToString(a) {
   return null;
 }
 
+// A mod's own icon, as declared in its metadata. Fabric's "icon" is either a
+// path or a { "<size>": "<path>" } map; Forge/NeoForge call it logoFile.
+function fabricIconPath(icon) {
+  if (typeof icon === "string") return icon;
+  if (icon && typeof icon === "object") {
+    // Biggest declared size wins - it gets scaled into a small cell anyway.
+    const best = Object.keys(icon).map(Number).filter(n => !Number.isNaN(n)).sort((a, b) => b - a)[0];
+    if (best != null) return icon[String(best)];
+    const first = Object.values(icon)[0];
+    if (typeof first === "string") return first;
+  }
+  return null;
+}
+
 function readJarMeta(filePath) {
   try {
     const zip = new AdmZip(filePath);
@@ -4351,9 +4366,9 @@ function readJarMeta(filePath) {
       const j = JSON.parse(zip.readAsText(fabric).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ""));
       if (j.quilt_loader) {
         const q = j.quilt_loader;
-        return { name: q.metadata?.name || q.id || null, version: q.version || null, authors: jarAuthorsToString(q.metadata?.contributors) };
+        return { name: q.metadata?.name || q.id || null, version: q.version || null, authors: jarAuthorsToString(q.metadata?.contributors), icon: fabricIconPath(q.metadata?.icon) };
       }
-      return { name: j.name || j.id || null, version: j.version || null, authors: jarAuthorsToString(j.authors) };
+      return { name: j.name || j.id || null, version: j.version || null, authors: jarAuthorsToString(j.authors), icon: fabricIconPath(j.icon) };
     }
     const toml = zip.getEntry("META-INF/mods.toml") || zip.getEntry("META-INF/neoforge.mods.toml");
     if (toml) {
@@ -4361,6 +4376,7 @@ function readJarMeta(filePath) {
       const name = (t.match(/displayName\s*=\s*["'](.*?)["']/) || [])[1] || null;
       let version = (t.match(/\bversion\s*=\s*["'](.*?)["']/) || [])[1] || null;
       const authors = (t.match(/authors\s*=\s*["'](.*?)["']/) || [])[1] || null;
+      const icon = (t.match(/logoFile\s*=\s*["'](.*?)["']/) || [])[1] || null;
       if (version && version.includes("${")) {
         const mf = zip.getEntry("META-INF/MANIFEST.MF");
         if (mf) {
@@ -4368,7 +4384,7 @@ function readJarMeta(filePath) {
           if (mv) version = mv.trim();
         }
       }
-      return { name, version, authors };
+      return { name, version, authors, icon };
     }
     const yml = zip.getEntry("plugin.yml") || zip.getEntry("paper-plugin.yml");
     if (yml) {
@@ -4382,6 +4398,53 @@ function readJarMeta(filePath) {
   } catch { /* not a readable jar */ }
   return {};
 }
+
+// Pull the icon out of a jar / pack zip and cache it beside the tab's index, so
+// mods that aren't on Modrinth or CurseForge still show their own icon instead of
+// a blank square. Returns the cached file's name, or null.
+// The icon stays on disk rather than being inlined into the list: a big modpack
+// would otherwise push megabytes of base64 through IPC on every refresh.
+const JAR_ICON_FALLBACKS = ["icon.png", "pack.png", "logo.png", "mod_logo.png", "assets/icon.png"];
+function extractJarIcon(jarPath, declared, outDir, key) {
+  if (!key) return null;
+  const outName = key + ".png";
+  const abs = path.join(outDir, outName);
+  try {
+    if (fs.existsSync(abs)) return outName;
+    const zip = new AdmZip(jarPath);
+    const get = (n) => {
+      if (!n || typeof n !== "string") return null;
+      const e = zip.getEntry(String(n).replace(/^[./]+/, ""));
+      return e && !e.isDirectory ? e : null;
+    };
+    let entry = get(declared);
+    if (!entry) for (const n of JAR_ICON_FALLBACKS) { entry = get(n); if (entry) break; }
+    // Fabric mods usually keep it at assets/<modid>/icon.png, and the mod id
+    // isn't known for a jar with no readable metadata at all.
+    if (!entry) entry = zip.getEntries().find(e => !e.isDirectory && /^assets\/[^/]+\/(icon|logo)\.png$/i.test(e.entryName)) || null;
+    if (!entry) return null;
+    const buf = entry.getData();
+    if (!buf || !buf.length || buf.length > 2 * 1024 * 1024) return null;
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(abs, buf);
+    return outName;
+  } catch { return null; }
+}
+
+// Read a local image back as a data: URL. Content lists hand out file paths
+// (cheap); anything that has to EMBED an icon - a server's serverinfo.json, a
+// desktop shortcut - asks for the data URL of the one icon actually chosen.
+ipcMain.handle("icon:dataUrl", async (event, { filePath }) => {
+  try {
+    const p = path.resolve(String(filePath || ""));
+    if (!p.startsWith(dataDir)) return null;   // only ever our own cache / instances
+    const buf = fs.readFileSync(p);
+    if (buf.length > 4 * 1024 * 1024) return null;
+    const ext = path.extname(p).toLowerCase();
+    const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "image/png";
+    return `data:${mime};base64,` + buf.toString("base64");
+  } catch { return null; }
+});
 
 // Read a resource pack's pack.mcmeta "description" (from a folder or a .zip),
 // returning the RAW text component (string / object / array) so the renderer
@@ -4403,6 +4466,44 @@ function readPackDescription(fullPath, isDir) {
   } catch { return null; }
 }
 
+// Names, versions, authors and icons for a server's jars. The server mods tab
+// only had raw filenames; this gives it the same cards the instances tab has,
+// falling back to the icon inside the jar when the mod isn't on Modrinth or
+// CurseForge (which is all this reads - it never goes to the network).
+ipcMain.handle("server-mods:info", async (event, { name, dir }) => {
+  const sub = dir === "plugins" ? "plugins" : "mods";
+  const base = path.join(serverRoot(name), sub);
+  const iconsDir = path.join(metaDir("servers", name), `${sub}.icons`);
+  const out = {};
+  let files = [];
+  try { files = fs.readdirSync(base, { withFileTypes: true }); } catch { return out; }
+  let since = 0;
+  for (const d of files) {
+    if (d.isDirectory() || !/\.jar(\.disabled)?$/i.test(d.name)) continue;
+    // Reading jars is synchronous and adds up over a big pack, so let the event
+    // loop breathe - the whole app shares this process.
+    if (++since >= 4) { since = 0; await new Promise(r => setImmediate(r)); }
+    const full = path.join(base, d.name);
+    try {
+      const meta = readJarMeta(full);
+      const st = fs.statSync(full);
+      const key = crypto.createHash("sha1").update(`${d.name}:${st.size}:${st.mtimeMs}`).digest("hex");
+      const iconFile = extractJarIcon(full, meta.icon, iconsDir, key);
+      out[d.name] = {
+        name: meta.name || null, version: meta.version || null, author: meta.authors || null,
+        icon: iconFile ? pathToFileURL(path.join(iconsDir, iconFile)).href : null,
+        iconPath: iconFile ? path.join(iconsDir, iconFile) : null,
+      };
+    } catch { /* unreadable jar - the filename still shows */ }
+  }
+  // Forget icons for jars that are gone.
+  try {
+    const keep = new Set(Object.values(out).map(v => v.iconPath && path.basename(v.iconPath)).filter(Boolean));
+    for (const f of fs.readdirSync(iconsDir)) if (!keep.has(f)) fs.unlinkSync(path.join(iconsDir, f));
+  } catch { /* no cache dir yet */ }
+  return out;
+});
+
 ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
   const basePath = path.join(dataDir, "client", profileId.toString(), tab);
   if (!fs.existsSync(basePath)) return [];
@@ -4418,8 +4519,10 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
 
   const enabledPacks = tab === "resourcepacks" ? readEnabledResourcePacks(profileId) : null;
 
-  const MOD_INDEX_VERSION = 3; // bump to force a rebuild when the entry shape changes
+  const MOD_INDEX_VERSION = 4; // bump to force a rebuild when the entry shape changes
   const indexFile = tabMetaFile("client", profileId, tab, "modindex.json");
+  // Icons pulled out of jars / pack zips live beside the index.
+  const iconsDir = path.join(path.dirname(indexFile), `${tab}.icons`);
   migrateMeta(path.join(basePath, MOD_INDEX_FILE), indexFile);
   let index = { version: MOD_INDEX_VERSION, entries: {} };
   if (fs.existsSync(indexFile)) {
@@ -4450,7 +4553,10 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     if (d.isDirectory()) {
       const description = tab === "resourcepacks" ? readPackDescription(fullPath, true) : null;
       const enabled = enabledPacks ? enabledPacks.includes("file/" + filename) : true;
-      results.push({ name: filename, filename, icon: null, path: fullPath, details: "(folder)", description, version: null, author: null, disabled: !enabled, enabled, isFolder: true });
+      // A folder pack keeps its icon right there as pack.png.
+      let icon = null;
+      try { const pp = path.join(fullPath, "pack.png"); if (fs.existsSync(pp)) icon = pathToFileURL(pp).href; } catch { /* ignore */ }
+      results.push({ name: filename, filename, icon, iconPath: icon ? path.join(fullPath, "pack.png") : null, path: fullPath, details: "(folder)", description, version: null, author: null, disabled: !enabled, enabled, isFolder: true });
       continue;
     }
 
@@ -4468,6 +4574,10 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
         packDescription: tab === "resourcepacks" ? readPackDescription(fullPath, false) : null,
         modrinth: null
       };
+      // The file's own icon, used when neither Modrinth nor CurseForge knows it.
+      entry.iconFile = /\.(jar|zip)(\.disabled)?$/i.test(filename)
+        ? extractJarIcon(fullPath, entry.jar && entry.jar.icon, iconsDir, entry.sha1)
+        : null;
       index.entries[filename] = entry;
     }
     if (!entry.modrinth) needLookup.push({ filename, sha1: entry.sha1 });
@@ -4479,9 +4589,14 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     results.push({ _filename: filename, path: fullPath, enabled, disabled: !enabled, isFolder: false });
   }
 
-  // Drop index entries for files that have been removed.
+  // Drop index entries for files that have been removed, and the icons cached
+  // for them, so the cache doesn't grow forever as mods come and go.
   const present = new Set(files.map(f => f.name));
   for (const k of Object.keys(index.entries)) if (!present.has(k)) delete index.entries[k];
+  try {
+    const keep = new Set(Object.values(index.entries).map(e => e && e.iconFile).filter(Boolean));
+    for (const f of fs.readdirSync(iconsDir)) if (!keep.has(f)) fs.unlinkSync(path.join(iconsDir, f));
+  } catch { /* no cache dir yet */ }
 
   // One batched Modrinth lookup for every still-unknown hash.
   if (needLookup.length) {
@@ -4615,7 +4730,12 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
 
     r.filename = r._filename;
     r.name = (m && m.title) || (cf && cf.title) || jar.name || cleanName;
-    r.icon = (m && m.icon) || (cf && cf.icon) || null;
+    // Modrinth / CurseForge art first; otherwise the icon inside the file itself.
+    const ownIcon = e?.iconFile ? path.join(iconsDir, e.iconFile) : null;
+    r.icon = (m && m.icon) || (cf && cf.icon) || (ownIcon ? pathToFileURL(ownIcon).href : null);
+    // Absolute path to the icon when it's a local file, for anything that needs
+    // to read the bytes (the icon picker) rather than just display it.
+    r.iconPath = ownIcon;
     r.version = (m && m.versionNumber) || jar.version || null;
     r.author = (m && m.author) || jar.authors || null;
     r.projectId = (m && m.projectId) || null;

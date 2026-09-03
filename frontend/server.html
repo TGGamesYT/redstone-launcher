@@ -1038,13 +1038,28 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         ul.innerHTML = '<li style="opacity:0.6;padding:10px;">No mods installed yet — use “Open mods folder” to drop .jar files in.</li>';
         return;
       }
+      // Real names and the mod's own icon, read out of the jars.
+      let modInfo = {};
+      try { modInfo = await ipcRenderer.invoke('server-mods:info', { name: selectedServer.name, dir: 'mods' }) || {}; } catch { }
       jars.forEach(e => {
         const li = document.createElement('li');
         li.className = 'profile-item';
         const disabled = /\.disabled$/i.test(e.name);
+        const meta = modInfo[e.name] || {};
+        if (meta.icon) {
+          const img = document.createElement('img');
+          img.src = meta.icon;
+          img.style.cssText = 'width:34px; height:34px; border-radius:6px; object-fit:contain; margin-right:10px; flex:0 0 34px;';
+          img.onerror = () => img.remove();
+          li.appendChild(img);
+        }
         const info = document.createElement('div');
         info.className = 'profile-info';
-        info.innerHTML = `<div class="profile-name">${e.name.replace(/\.disabled$/i, '')}</div><div class="profile-details">${disabled ? 'disabled' : 'enabled'} • ${(e.size / 1048576).toFixed(2)} MB</div>`;
+        const title = meta.name || e.name.replace(/\.disabled$/i, '');
+        const details = [meta.version, meta.author, disabled ? 'disabled' : 'enabled', (e.size / 1048576).toFixed(2) + ' MB'].filter(Boolean).join('  •  ');
+        info.innerHTML = `<div class="profile-name"></div><div class="profile-details"></div>`;
+        info.querySelector('.profile-name').textContent = title;
+        info.querySelector('.profile-details').textContent = details;
         li.appendChild(info);
         const del = document.createElement('button');
         del.innerHTML = '<i class="material-icons">delete</i>';

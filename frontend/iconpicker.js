@@ -51,6 +51,8 @@
         <div class="ip-grid" id="ipPresets"></div>
         <div id="ipWorldsWrap" style="display:none;"><div class="ip-section-title">Worlds</div><div class="ip-grid" id="ipWorlds"></div></div>
         <div id="ipServersWrap" style="display:none;"><div class="ip-section-title">Servers</div><div class="ip-grid" id="ipServers"></div></div>
+        <div id="ipModsWrap" style="display:none;"><div class="ip-section-title">Mods</div><div class="ip-grid" id="ipMods"></div></div>
+        <div id="ipPacksWrap" style="display:none;"><div class="ip-section-title">Resource packs</div><div class="ip-grid" id="ipPacks"></div></div>
         <div class="modal-actions"><button id="ipCustom">Custom image…</button><button id="ipCancel">Cancel</button></div>
         <input type="file" id="ipFile" accept="image/*" style="display:none;" />
       </div>`;
@@ -104,6 +106,52 @@
             sc.appendChild(cell);
           });
         }).catch(() => {});
+        // Anything installed in the instance has an icon of its own — a mod's,
+        // a resource pack's — so offer those too, not just worlds and servers.
+        addContentSection('mods', '#ipModsWrap', '#ipMods');
+        addContentSection('resourcepacks', '#ipPacksWrap', '#ipPacks');
+      }
+
+      // Servers browse their own mods through a different handler (their content
+      // isn't indexed against Modrinth), but the cells work the same way.
+      if (opts.serverName) {
+        ipcRenderer.invoke('server-mods:info', { name: opts.serverName, dir: 'mods' }).then(info => {
+          const items = Object.entries(info || {})
+            .filter(([, m]) => m && m.icon)
+            .map(([file, m]) => ({ icon: m.icon, iconPath: m.iconPath, name: m.name || file }));
+          renderContentCells(items, '#ipModsWrap', '#ipMods');
+        }).catch(() => {});
+      }
+
+      function addContentSection(tab, wrapSel, gridSel) {
+        ipcRenderer.invoke('get-instance-mods', { profileId: opts.instanceId, tab })
+          .then(list => renderContentCells((list || []).filter(x => x.icon), wrapSel, gridSel))
+          .catch(() => {});
+      }
+
+      function renderContentCells(items, wrapSel, gridSel) {
+        if (!items.length) return;
+        ov.querySelector(wrapSel).style.display = '';
+        const g = ov.querySelector(gridSel);
+        items.forEach(it => {
+          const cell = document.createElement('div'); cell.className = 'ip-cell'; cell.title = it.name || '';
+          const img = document.createElement('img'); img.src = it.icon;
+          // A cached icon that has since been cleaned up would leave a blank cell.
+          img.onerror = () => cell.remove();
+          cell.appendChild(img);
+          cell.onclick = async () => {
+            // The chosen icon gets embedded (in serverinfo.json, in a shortcut),
+            // so it has to travel as data — a file:// path wouldn't survive.
+            try {
+              if (it.iconPath) {
+                const d = await ipcRenderer.invoke('icon:dataUrl', { filePath: it.iconPath });
+                if (d) return pick(d);
+              }
+              pick(await urlToDataUrl(it.icon));
+            } catch { pick(it.icon); }
+          };
+          g.appendChild(cell);
+        });
       }
     },
   };
