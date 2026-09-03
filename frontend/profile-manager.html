@@ -150,6 +150,29 @@
       outline: 3px solid var(--text-color);
       outline-offset: 2px;
     }
+    /* The default-skin picker lays its own cards out, so the card's stock
+       width:160px and margin:10px have to go -- the flex gap does the spacing,
+       and a content-box basis that ignores the 8px padding is what made a row's
+       worth of cards not fit, wrap early, and spill out of the modal. */
+    #defaultSkinsGrid .card {
+      width: auto;
+      margin: 0;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    #defaultSkinsGrid .card .card-img-wrap {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #defaultSkinsGrid .card .card-label { flex: 0 0 auto; }
+    /* Height-driven so a card can never be taller than its row. */
+    #defaultSkinsGrid .skin-still { width: auto !important; height: 100%; margin: 0 auto; }
+
     /* A drag handle in the top-left corner: only a pointer-down HERE starts a
        reorder drag, so clicking the card still just picks the skin. */
     .card-drag-handle {
@@ -464,7 +487,7 @@
   <div id="defaultSkinsModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2000;">
     <!-- Sized to hold every default skin at once: no scrolling, just a grid of
          players that spin when you point at them. -->
-    <div style="background: var(--third-color); padding:18px 20px 16px; border-radius: var(--border-radius); width:min(1050px, 92%); max-height:92%; display:flex; flex-direction:column;">
+    <div id="defaultSkinsBox" style="background: var(--third-color); padding:18px 20px 16px; border-radius: var(--border-radius); width:min(1050px, 92%); height:min(720px, 92%); display:flex; flex-direction:column; box-sizing:border-box;">
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
         <h3 style="margin:0; flex:1;">Pick a default skin</h3>
         <button class="pm-btn" id="defaultSkinsCloseBtn" title="Close" style="width:34px; height:34px; padding:0; display:flex; align-items:center; justify-content:center; flex:0 0 34px;">✕</button>
@@ -767,7 +790,40 @@
       const v = new skinview3d.SkinViewer({ canvas, width: 150, height: 300 });
       v.zoom = 0.9; v.autoRotate = false;
       try { v.controls.enableZoom = false; } catch { }   // wheel scrolls the page
-      return { v, host, raf: null, easing: false, owner: null, seq: 0 };
+      // Dragging a card orbits the CAMERA (skinview3d uses OrbitControls); only
+      // the auto-spin turns the model. Resetting the model's rotation alone
+      // therefore never put a dragged card back where it started -- the camera
+      // stayed wherever it was left. Remember the real starting pose so it can
+      // be restored exactly.
+      let home = null;
+      try {
+        v.resetCameraPose();
+        const p = v.camera.position;
+        home = { dist: p.length(), ...camSpherical(p), target: v.controls.target.clone() };
+      } catch { }
+      return { v, host, home, raf: null, easing: false, owner: null, seq: 0 };
+    }
+
+    // The camera orbits at a fixed distance, so its pose is two angles. Easing in
+    // spherical coordinates swings it back along its arc; a straight-line lerp
+    // between positions cuts the corner (reads as a zoom) and, at exactly 180°,
+    // passes through the origin and never converges at all.
+    function camSpherical(p) {
+      const r = p.length() || 1;
+      return { theta: Math.atan2(p.x, p.z), phi: Math.acos(Math.max(-1, Math.min(1, p.y / r))) };
+    }
+    function camFromSpherical(p, theta, phi, r) {
+      const sp = Math.sin(phi);
+      p.set(r * sp * Math.sin(theta), r * Math.cos(phi), r * sp * Math.cos(theta));
+    }
+
+    // Put the camera back exactly where makeLive() left it.
+    function snapCameraHome(L) {
+      try {
+        L.v.resetCameraPose();
+        if (L.home) L.v.controls.target.copy(L.home.target);
+        L.v.controls.update();
+      } catch { }
     }
     // The viewer to use for a new hover: a free one, else the one that's already
     // easing out (it's the least missed).
@@ -793,24 +849,53 @@
       L.owner = null;
     }
 
-    // Ease the model back to facing forward on EVERY axis. Dragging a card tilts
-    // it on x (and can roll it on z), so resetting only y left it lying at an
-    // angle when the pointer moved away.
+    // Ease back to the exact pose the card started in: BOTH the model's own
+    // rotation (what the auto-spin turns) and the camera orbit (what dragging
+    // moves). Either one left alone means the card settles somewhere other than
+    // where it began.
     function easeHome(L, holder) {
       const norm = (a) => Math.atan2(Math.sin(a), Math.cos(a));   // to [-PI, PI]
       L.easing = true;
+      const finish = () => {
+        try {
+          const r = spinTarget(L.v).rotation; r.x = 0; r.y = 0; r.z = 0;
+        } catch { }
+        snapCameraHome(L);
+        try { L.v.render(); L.v.renderPaused = true; } catch { }
+        detachLive(L);
+      };
       const step = () => {
         if (!L.easing || L.owner !== holder) return;
+        let settled = true;
+
+        // The spin applied to the model itself.
         let r = null;
         try { r = spinTarget(L.v).rotation; } catch { }
-        if (!r) { detachLive(L); return; }
+        if (!r) { finish(); return; }
         const x = norm(r.x), y = norm(r.y), z = norm(r.z);
-        if (Math.abs(x) < 0.03 && Math.abs(y) < 0.03 && Math.abs(z) < 0.03) {
-          try { r.x = 0; r.y = 0; r.z = 0; L.v.render(); L.v.renderPaused = true; } catch { }
-          detachLive(L);
-          return;
+        if (Math.abs(x) > 0.02 || Math.abs(y) > 0.02 || Math.abs(z) > 0.02) {
+          r.x = x * 0.8; r.y = y * 0.8; r.z = z * 0.8;
+          settled = false;
+        } else { r.x = 0; r.y = 0; r.z = 0; }
+
+        // The camera orbit the pointer dragged, eased as two angles so it swings
+        // back along its arc at a constant distance.
+        if (L.home) {
+          try {
+            const cam = L.v.camera, tgt = L.v.controls.target;
+            const cur = camSpherical(cam.position);
+            let dT = norm(L.home.theta - cur.theta);
+            const dP = L.home.phi - cur.phi;
+            if (Math.abs(dT) > 0.01 || Math.abs(dP) > 0.01) {
+              camFromSpherical(cam.position, cur.theta + dT * 0.25, cur.phi + dP * 0.25, L.home.dist);
+              settled = false;
+            }
+            if (tgt.distanceTo(L.home.target) > 0.01) { tgt.lerp(L.home.target, 0.25); settled = false; }
+            L.v.controls.update();
+          } catch { }
         }
-        try { r.x = x * 0.8; r.y = y * 0.8; r.z = z * 0.8; } catch { }
+
+        if (settled) { finish(); return; }
         L.raf = requestAnimationFrame(step);
       };
       L.raf = requestAnimationFrame(step);
@@ -862,6 +947,7 @@
             if (L.seq !== token || L.owner !== holder) return;   // pointer moved on
             try {
               const r = spinTarget(L.v).rotation; r.x = 0; r.y = 0; r.z = 0;
+              snapCameraHome(L);          // a previous drag must not carry over
               L.v.renderPaused = false;
               L.v.autoRotate = true; L.v.autoRotateSpeed = 1.0;
             } catch { }
@@ -1371,41 +1457,29 @@
         return a.name.localeCompare(b.name);
       });
       // Fit every skin into the box at once — a scrollbar here just hides half
-      // the choices. Of all the row counts that hold them, take the one that
-      // leaves the players biggest; the grid rows then share the height and each
-      // card sizes its own preview, so nothing has to be measured per card.
-      const GAP = 12, CARD_W = 150, CARD_H = 220, LABEL_H = 26;
-      const boxW = grid.clientWidth || 900, boxH = grid.clientHeight || 600;
-      let best = { rows: 1, cols: entries.length, size: -1 };
-      for (let rows = 1; rows <= entries.length; rows++) {
-        const cols = Math.ceil(entries.length / rows);
-        const cw = (boxW - GAP * (cols - 1)) / cols;
-        const ch = (boxH - GAP * (rows - 1)) / rows;
-        const size = Math.min(cw / CARD_W, (ch - LABEL_H) / CARD_H);
-        if (size > best.size) best = { rows, cols, size };
-      }
-      // Every card gets the exact cell size the chosen shape implies; the flex
-      // container then wraps them into `best.rows` rows and centres each one --
-      // including a last row that doesn't fill the width.
-      const cellW = (boxW - GAP * (best.cols - 1)) / best.cols;
-      const cellH = (boxH - GAP * (best.rows - 1)) / best.rows;
+      // the choices. No pixel measuring: the box has a definite height, the
+      // basis is a percentage of the row, and box-sizing:border-box means the
+      // card's padding is inside that basis. So exactly `cols` fit per row and
+      // exactly `rows` fit down the box, whatever the window size.
+      const GAP = 12;
+      const n = entries.length;
+      const cols = n <= 5 ? n : Math.ceil(n / Math.max(1, Math.round(Math.sqrt(n / 2.2))));
+      const rows = Math.ceil(n / cols);
+      // Don't stretch to 720px when there are only a couple of rows to show.
+      const box = document.getElementById('defaultSkinsBox');
+      if (box) box.style.height = `min(${rows * 300 + 90}px, 92%)`;
+      // The 1px slack absorbs sub-pixel rounding, which would otherwise be
+      // enough to wrap the last card of a row onto the next one.
+      const basis = `calc((100% - ${(cols - 1) * GAP + 1}px) / ${cols})`;
+      const rowH = `calc((100% - ${(rows - 1) * GAP + 1}px) / ${rows})`;
 
       entries.forEach(entry => {
         const b64 = entry.wide || entry.slim;
         // Same 3D player as the library: still and facing forward, spins on hover.
-        const preview = skin3dPreview("data:image/png;base64," + b64, entry.wide ? "classic" : "slim", CARD_W, CARD_H);
-        // Height-driven instead of width-driven, so a card can never spill out of
-        // its row.
-        preview.style.width = "auto";
-        preview.style.height = "100%";
-        preview.style.margin = "0 auto";
+        const preview = skin3dPreview("data:image/png;base64," + b64, entry.wide ? "classic" : "slim", 150, 220);
         const card = createCard(titleCase(entry.name), () => chooseDefaultVariant(entry), preview);
-        card.style.flex = `0 0 ${Math.floor(cellW)}px`;
-        card.style.height = `${Math.floor(cellH)}px`;
-        card.style.display = "flex";
-        card.style.flexDirection = "column";
-        card.style.minHeight = "0";
-        if (card._imgWrap) card._imgWrap.style.cssText = "flex:1; min-height:0; display:flex; align-items:center; justify-content:center;";
+        card.style.flex = `0 0 ${basis}`;
+        card.style.height = rowH;
         grid.appendChild(card);
         wireSpin(card, preview);
       });
@@ -1601,7 +1675,15 @@
       browseSeed = BROWSE_CHIPS[Math.floor(Math.random() * BROWSE_CHIPS.length)].toLowerCase();
       browseAfter = null; runBrowse(true);
     }
-    function closeBrowseModal() { document.getElementById('browseModal').style.display = 'none'; }
+    // Whether anything was taken from the browser during this visit. Going back
+    // has to redraw the library or the skins just added aren't there -- but the
+    // redraw re-reads the Mojang profile, so only do it when there IS something
+    // new to show.
+    let browseAddedAny = false;
+    function closeBrowseModal() {
+      document.getElementById('browseModal').style.display = 'none';
+      if (browseAddedAny) { browseAddedAny = false; updateSKin(); }
+    }
     document.getElementById('browseClose').onclick = closeBrowseModal;
     let browseTimer = null;
     document.getElementById('browseSearch').addEventListener('input', () => { clearTimeout(browseTimer); browseTimer = setTimeout(() => { browseAfter = null; runBrowse(true); }, 350); });
@@ -1638,6 +1720,7 @@
           await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + r.base64, variant: item.model === 'slim' ? 'slim' : 'classic', name: browseName(item) });
           // Say so on the button itself — a toast is gone in a second and there
           // was no way to tell which of forty cards you'd already taken.
+          browseAddedAny = true;
           addBtn.classList.add('added');
           addBtn.title = 'Already in your library';
           addBtn.innerHTML = '<i class="material-icons" style="font-size:16px;">check</i>';

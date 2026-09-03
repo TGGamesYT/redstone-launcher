@@ -175,6 +175,7 @@
        — no fixed overlay, no background pane painted over the app. */
     /* As a mode it fills the page: the wrapper's height is measured (fitImgMode)
        and the body stretches into whatever is left under the head row. */
+    .ed-wrap-card { width: 640px; }
     .ed-modal-overlay.ed-img-fullmode { position: static; display: block; inset: auto; z-index: auto; background: transparent; backdrop-filter: none; }
     .ed-modal-overlay.ed-img-fullmode .ed-modal { width: 100%; height: 100%; max-width: none; max-height: none; border: none; border-radius: 0; background: transparent; box-shadow: none; padding: 0 20px 10px 0; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; }
     .ed-modal-overlay.ed-img-fullmode .ed-modal-body { flex: 1; min-height: 0; gap: 26px !important; align-items: stretch; }
@@ -184,10 +185,13 @@
     .ed-modal-overlay.ed-img-fullmode .ed-modal-controls { flex: 1; min-width: 0; max-width: none; max-height: 100%; overflow-y: auto; overflow-x: hidden; align-self: center; padding-right: 6px; }
     /* Controls line up in a column at a readable width rather than stretching
        across the whole panel. */
-    .ed-modal-overlay.ed-img-fullmode .ed-modal-controls > * { max-width: 620px; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-controls > * { max-width: 620px; margin-inline: auto; }
     .ed-modal-overlay.ed-img-fullmode .ed-row > label:first-child { flex: 0 0 92px; }
     .ed-modal-controls select { width: auto; flex: 1; min-width: 0; }
-    .ed-modal-overlay.ed-img-fullmode .ed-modal-head h3 { font-size: 20px; }
+    /* The page heading already says "Wrap an image", so the card's own title is
+       just the same words twice; the head row keeps only the pick button. */
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-head h3 { display: none; }
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-head { justify-content: flex-end; margin-bottom: 10px; }
     .ed-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .ed-modal-controls select { width: auto; flex: 1; }
   </style>
@@ -330,7 +334,7 @@
   <!-- Image → skin modal (body wrap). Leaves the left 3D panel visible as the
        live preview, so the modal only covers the area to its right. -->
   <div id="ed-img-modal" class="ed-modal-overlay">
-    <div class="ed-modal" style="width:640px;">
+    <div class="ed-modal ed-wrap-card">
       <div class="ed-modal-head">
         <h3 style="margin:0;">Wrap an image onto the skin</h3>
         <div style="display:flex; gap:8px; align-items:center;">
@@ -1107,6 +1111,9 @@
       imgFullMode = false;
       imgModal.classList.remove('ed-img-fullmode');
       imgModal.style.height = '';
+      const cv = document.getElementById('ed-img-3d');
+      cv.style.width = '240px'; cv.style.height = '340px'; cv.style.flex = '0 0 240px';
+      if (imgViewer) { try { imgViewer.setSize(240, 340); } catch { } }
       document.getElementById('ed-img-save').style.display = 'none';
       document.getElementById('ed-img-bake').style.display = '';
       document.getElementById('ed-img-x2').style.display = '';
