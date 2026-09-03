@@ -150,6 +150,34 @@
       outline: 3px solid var(--text-color);
       outline-offset: 2px;
     }
+    /* A drag handle in the top-left corner: only a pointer-down HERE starts a
+       reorder drag, so clicking the card still just picks the skin. */
+    .card-drag-handle {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      z-index: 4;
+      width: 22px;
+      height: 22px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.55);
+      color: var(--text-color);
+      cursor: grab;
+      padding: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      line-height: 0.7;
+      font-size: 14px;
+      opacity: 0.85;
+    }
+    .card:hover .card-drag-handle { display: flex; }
+    .card-drag-handle:active { cursor: grabbing; }
+    .card-drag-handle span { pointer-events: none; }
+    /* The card being dragged fades so it's clear WHICH one is moving. */
+    .card.dragging { opacity: 0.35; }
 
     /* Badges (Selected / Pending) overlay the bottom of the image, so they never
        change the card's height. */
@@ -620,6 +648,45 @@
       b.textContent = variant === "slim" ? "slim" : "wide";
       wrap.appendChild(b);
     }
+    // Drag a card to a new spot in its row. HTML5 DnD is only reachable from a
+    // long-press-on-a-drag-handle so it doesn't fight the ordinary click that
+    // picks a skin: an ⋮⋮ handle is added to the card, and only holding down on
+    // THAT starts the drag.
+    function wireCardReorder(card, container, onCommit) {
+      const handle = document.createElement("button");
+      handle.className = "card-drag-handle"; handle.title = "Drag to reorder";
+      // Two rows of dots ≈ the usual grip glyph. No material-icon for it, and
+      // trying to add one made the button itself draggable, which broke DnD.
+      handle.innerHTML = "<span>⋮</span><span>⋮</span>";
+      handle.addEventListener("click", e => e.stopPropagation());
+      handle.addEventListener("mousedown", () => { card.setAttribute("draggable", "true"); });
+      // Only starting the drag from the handle: any other mousedown clears it.
+      card.addEventListener("mousedown", e => { if (!handle.contains(e.target)) card.removeAttribute("draggable"); });
+      card.appendChild(handle);
+
+      card.addEventListener("dragstart", e => {
+        card.classList.add("dragging");
+        try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "reorder"); } catch { }
+      });
+      card.addEventListener("dragend", () => {
+        card.classList.remove("dragging");
+        card.removeAttribute("draggable");
+        [...container.querySelectorAll(".drop-target")].forEach(c => c.classList.remove("drop-target"));
+        if (typeof onCommit === "function") onCommit();
+      });
+      // Insert BEFORE or AFTER whichever card the pointer is over. Pointer past
+      // the horizontal midpoint means after, which matches how people think.
+      card.addEventListener("dragover", e => {
+        e.preventDefault();
+        const dragging = container.querySelector(".dragging");
+        if (!dragging || dragging === card) return;
+        const rect = card.getBoundingClientRect();
+        const after = e.clientX > rect.left + rect.width / 2;
+        card.parentNode.insertBefore(dragging, after ? card.nextSibling : card);
+      });
+      card.addEventListener("drop", e => e.preventDefault());
+    }
+
     // Overlay a small badge (Selected / Pending / …) on the bottom of a card's
     // image, without pushing the card taller. Pass a falsy text to clear it.
     function setCardBadge(card, text, cls) {
@@ -1011,7 +1078,8 @@
         skinsDiv.appendChild(card);
       }
 
-      library.forEach(skin => {
+      library.forEach((skin, i) => {
+        skin._order = i;    // for stable comparisons after a drop
         const preview = skin3dPreview("data:image/png;base64," + skin.base64, skin.variant === "slim" ? "slim" : "classic");
         const card = createCard(skin.name, () => selectSkin(skin), preview);
         card.dataset.variant = skin.variant || "classic";
@@ -1041,6 +1109,13 @@
         acts.append(editBtn, dlBtn, renameBtn, delBtn);
         card.appendChild(acts);
         wireSpin(card, preview);
+        wireCardReorder(card, skinsDiv, () => {
+          // The order the DOM ended up in becomes the new library order.
+          const ids = [...skinsDiv.querySelectorAll('.card[data-skinid]')]
+            .map(c => c.dataset.skinid)
+            .filter(id => id && id !== "__active__");
+          ipcRenderer.invoke("skins:reorder", { uuid, order: ids });
+        });
 
         skinsDiv.appendChild(card);
       });
@@ -1059,12 +1134,28 @@
       capesDiv.appendChild(noneCard);
 
       const seenCapes = new Set();
-      (profile.capes || []).filter(c => { if (seenCapes.has(c.id)) return false; seenCapes.add(c.id); return true; }).forEach(cape => {
+      const capeList = (profile.capes || []).filter(c => { if (seenCapes.has(c.id)) return false; seenCapes.add(c.id); return true; });
+      // Sort by the launcher's remembered order (Mojang's own order isn't stable).
+      let savedCapeOrder = [];
+      try { savedCapeOrder = (await ipcRenderer.invoke("capes:getOrder", { uuid })) || []; } catch { }
+      const capeRank = new Map(savedCapeOrder.map((id, i) => [String(id), i]));
+      capeList.sort((a, b) => {
+        const ra = capeRank.has(String(a.id)) ? capeRank.get(String(a.id)) : 1e9;
+        const rb = capeRank.has(String(b.id)) ? capeRank.get(String(b.id)) : 1e9;
+        return ra - rb;
+      });
+      capeList.forEach(cape => {
         const preview = createCapeCanvas(cape);
         const capeUrl = cape.base64 ? ("data:image/png;base64," + cape.base64) : cape.url;
         const card = createCard(cape.alias || "Cape", () => selectCape({ id: cape.id, url: capeUrl }), preview);
         card.dataset.capeid = String(cape.id);
         capesDiv.appendChild(card);
+        wireCardReorder(card, capesDiv, () => {
+          const ids = [...capesDiv.querySelectorAll('.card[data-capeid]')]
+            .map(c => c.dataset.capeid)
+            .filter(id => id && id !== "__none__");
+          ipcRenderer.invoke("capes:setOrder", { uuid, order: ids });
+        });
       });
 
       refreshCapeUI();

@@ -32,6 +32,7 @@ import xml2js from "xml2js";
 import unzipper from "unzipper";
 import QRCode from "qrcode";
 import { pathToFileURL } from 'url';
+import { screenSkinPixels } from './skinFilter.js';
 
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
@@ -7079,7 +7080,38 @@ function skinTextBlocked(text) {
   return false;
 }
 
-// One page from MineSkin, already filtered.
+// A texture's URL is stable, so the pixel screen never needs to happen twice
+// for the same skin. This keeps the last few hundred verdicts around.
+const _skinScreenCache = new Map();
+const SKIN_SCREEN_CACHE_MAX = 800;
+function rememberScreenVerdict(url, verdict) {
+  _skinScreenCache.delete(url);           // move-to-end for LRU eviction
+  _skinScreenCache.set(url, verdict);
+  if (_skinScreenCache.size > SKIN_SCREEN_CACHE_MAX) {
+    const oldest = _skinScreenCache.keys().next().value;
+    _skinScreenCache.delete(oldest);
+  }
+}
+
+// Fetch a skin PNG and check whether the detector rejects its pixels. Returns
+// null for OK, a reason string for reject, or "fetch" if the texture 404s and
+// so has nothing to check (also worth dropping -- nothing will render either).
+async function screenSkinUrl(url) {
+  if (_skinScreenCache.has(url)) return _skinScreenCache.get(url);
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": LAUNCHER_UA } });
+    if (!res.ok) { rememberScreenVerdict(url, "fetch"); return "fetch"; }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const verdict = screenSkinPixels(data, info.width, info.height);
+    rememberScreenVerdict(url, verdict);
+    return verdict;
+  } catch { rememberScreenVerdict(url, null); return null; }   // can't judge -> pass
+}
+
+// One page from MineSkin, filtered by title AND pixel content. The pixel screen
+// runs against every skin in the page in parallel; each check is ~3ms plus one
+// HTTP fetch.
 async function mineskinPage(filter, after) {
   const params = new URLSearchParams({ size: "36" });
   params.set("filter", filter);
@@ -7088,12 +7120,14 @@ async function mineskinPage(filter, after) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const j = await res.json();
   const skins = Array.isArray(j.skins) ? j.skins : [];
-  const results = skins.map(s => ({
+  const named = skins.map(s => ({
     id: s.uuid || s.shortId,
     title: s.name || null,          // no ugly "Skin <hex>" fallback; UI fills it in
     model: s.variant === "slim" ? "slim" : "classic",
     skin: s.texture ? `https://textures.minecraft.net/texture/${s.texture}` : s.url,
   })).filter(s => s.skin && !skinTextBlocked(s.title));
+  const verdicts = await Promise.all(named.map(s => screenSkinUrl(s.skin).catch(() => null)));
+  const results = named.filter((_, i) => verdicts[i] == null);
   const nextAfter = (j.pagination && j.pagination.next && j.pagination.next.after) || null;
   return { results, after: nextAfter };
 }
@@ -7196,6 +7230,39 @@ ipcMain.handle("skins:remove", (event, { uuid, id }) => {
   lib[uuid] = (lib[uuid] || []).filter(s => String(s.id) !== String(id));
   saveSkinLib(lib);
   return lib[uuid];
+});
+
+// Reorder the library to match the order the renderer just drew. The renderer
+// passes the ids in the new order; anything not named is left where it was
+// (relative to itself) at the end -- so a card added mid-drag doesn't vanish.
+ipcMain.handle("skins:reorder", (event, { uuid, order }) => {
+  const lib = loadSkinLib();
+  const arr = lib[uuid] || [];
+  if (!Array.isArray(order) || !order.length) return arr;
+  const byId = new Map(arr.map(s => [String(s.id), s]));
+  const ordered = [];
+  for (const id of order) {
+    const s = byId.get(String(id));
+    if (s) { ordered.push(s); byId.delete(String(id)); }
+  }
+  for (const s of arr) if (byId.has(String(s.id))) ordered.push(s);   // preserve leftovers
+  lib[uuid] = ordered;
+  saveSkinLib(lib);
+  return ordered;
+});
+
+// Capes are Mojang's, not ours -- they arrive in whatever order the profile
+// endpoint feels like -- so a per-account display order is stored alongside
+// the skin library.
+const capeOrderPath = () => path.join(texturesDir, "capeorder.json");
+function loadCapeOrders() { try { return JSON.parse(fs.readFileSync(capeOrderPath(), "utf8")) || {}; } catch { return {}; } }
+function saveCapeOrders(o) { fs.mkdirSync(texturesDir, { recursive: true }); fs.writeFileSync(capeOrderPath(), JSON.stringify(o)); }
+ipcMain.handle("capes:getOrder", (event, { uuid }) => (loadCapeOrders()[uuid] || []));
+ipcMain.handle("capes:setOrder", (event, { uuid, order }) => {
+  if (!uuid || !Array.isArray(order)) return;
+  const all = loadCapeOrders();
+  all[uuid] = order.map(String);
+  saveCapeOrders(all);
 });
 
 ipcMain.handle("skins:rename", (event, { uuid, id, name }) => {
