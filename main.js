@@ -7037,6 +7037,67 @@ ipcMain.handle("skins:fetchUrl", async (event, { url }) => {
 
 // Browse a public skin library (MineSkin's gallery) — real JSON API. Returns a
 // page of skins with their texture URL (rendered client-side).
+// MineSkin is an upload mirror, not a curated gallery: nothing is moderated, and
+// the results are full of hate symbols and slurs. There is no public skin API with
+// real moderation to switch to, so names and search terms are filtered here.
+// This catches what people NAME things, which is most of it — it cannot see the
+// image, so it is a filter and not moderation. Word-boundary matched so ordinary
+// names ("Assassin", "Scunthorpe") aren't caught by a substring.
+const SKIN_BLOCK_WORDS = [
+  // hate / extremism
+  "nazi", "nazis", "hitler", "adolf", "swastika", "hakenkreuz", "ss officer", "schutzstaffel",
+  "thirdreich", "third reich", "reich", "wehrmacht", "gestapo", "kkk", "klan", "confederate",
+  "holocaust", "auschwitz", "genocide", "fascist", "fascism", "whitepower", "white power",
+  "heilhitler", "heil hitler", "sieg heil", "1488", "aryan", "skinhead",
+  // slurs (matched whole-word; deliberately explicit so they actually get caught)
+  "nigger", "nigga", "niger", "n1gger", "n1gga", "negro", "faggot", "fag", "f4ggot",
+  "tranny", "retard", "retarded", "chink", "spic", "kike", "wetback", "coon", "gypsy",
+  "paki", "raghead", "towelhead", "beaner", "gook",
+  // sexual / nudity
+  "nude", "naked", "nsfw", "porn", "porno", "hentai", "sex", "sexy", "boobs", "tits",
+  "titties", "nipple", "nipples", "penis", "dick", "cock", "vagina", "pussy", "cum",
+  "orgasm", "masturbat", "fetish", "bdsm", "stripper", "hooker", "prostitute", "onlyfans",
+  "rule34", "r34", "loli", "shota", "furry porn", "yiff",
+  // self-harm / gore
+  "suicide", "kill yourself", "kys", "selfharm", "self harm", "gore", "beheading",
+];
+// Substrings that are damning wherever they appear, so no word boundary is needed.
+const SKIN_BLOCK_SUBSTRINGS = ["swastik", "hakenkreuz", "nazi", "hitler", "n1gg", "nigg", "hentai", "rule34"];
+
+function skinTextBlocked(text) {
+  const t = String(text || "").toLowerCase();
+  if (!t) return false;
+  for (const sub of SKIN_BLOCK_SUBSTRINGS) if (t.includes(sub)) return true;
+  // Split on anything that isn't a letter or digit so "Nazi_Skin", "nazi-2" and
+  // "xXnaziXx" all break into words.
+  const words = t.split(/[^a-z0-9]+/).filter(Boolean);
+  const set = new Set(words);
+  for (const w of SKIN_BLOCK_WORDS) {
+    if (w.includes(" ")) { if (t.includes(w)) return true; }
+    else if (set.has(w)) return true;
+  }
+  return false;
+}
+
+// One page from MineSkin, already filtered.
+async function mineskinPage(filter, after) {
+  const params = new URLSearchParams({ size: "36" });
+  params.set("filter", filter);
+  if (after) params.set("after", String(after));
+  const res = await fetch(`https://api.mineskin.org/v2/skins?${params.toString()}`, { headers: { "User-Agent": LAUNCHER_UA } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const j = await res.json();
+  const skins = Array.isArray(j.skins) ? j.skins : [];
+  const results = skins.map(s => ({
+    id: s.uuid || s.shortId,
+    title: s.name || null,          // no ugly "Skin <hex>" fallback; UI fills it in
+    model: s.variant === "slim" ? "slim" : "classic",
+    skin: s.texture ? `https://textures.minecraft.net/texture/${s.texture}` : s.url,
+  })).filter(s => s.skin && !skinTextBlocked(s.title));
+  const nextAfter = (j.pagination && j.pagination.next && j.pagination.next.after) || null;
+  return { results, after: nextAfter };
+}
+
 ipcMain.handle("skins:search", async (event, { query, after, seed }) => {
   try {
     // MineSkin's gallery: `filter` is the real keyword search, and pagination is
@@ -7044,22 +7105,22 @@ ipcMain.handle("skins:search", async (event, { query, after, seed }) => {
     // query we seed with a broad popular term so the default view has named,
     // varied skins instead of the unnamed "latest uploads" firehose.
     const q = String(query || "").trim();
-    const params = new URLSearchParams({ size: "36" });
-    // A seed keeps every page of one browse session on the same term.
-    params.set("filter", q || seed || pickBrowseTerm());
-    if (after) params.set("after", String(after));
-    const res = await fetch(`https://api.mineskin.org/v2/skins?${params.toString()}`, { headers: { "User-Agent": LAUNCHER_UA } });
-    if (!res.ok) return { error: `HTTP ${res.status}`, results: [] };
-    const j = await res.json();
-    const skins = Array.isArray(j.skins) ? j.skins : [];
-    const results = skins.map(s => ({
-      id: s.uuid || s.shortId,
-      title: s.name || null,          // no ugly "Skin <hex>" fallback; UI fills it in
-      model: s.variant === "slim" ? "slim" : "classic",
-      skin: s.texture ? `https://textures.minecraft.net/texture/${s.texture}` : s.url,
-    })).filter(s => s.skin);
-    const nextAfter = j.pagination && j.pagination.next && j.pagination.next.after;
-    return { results, after: nextAfter || null, more: !!nextAfter };
+    // Don't go looking for the things we filter out.
+    if (skinTextBlocked(q)) return { results: [], after: null, more: false, filtered: true };
+    const filter = q || seed || pickBrowseTerm();
+
+    // Filtering leaves holes, so keep pulling pages until there's a screenful.
+    // Without this a page that was mostly blocked would look like "no results".
+    const out = [];
+    let cursor = after || null, pages = 0;
+    do {
+      const page = await mineskinPage(filter, cursor);
+      out.push(...page.results);
+      cursor = page.after;
+      pages++;
+    } while (cursor && out.length < 24 && pages < 5);
+
+    return { results: out, after: cursor, more: !!cursor };
   } catch (e) { return { error: e.message, results: [] }; }
 });
 

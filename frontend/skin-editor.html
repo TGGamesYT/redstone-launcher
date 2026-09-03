@@ -178,7 +178,15 @@
     .ed-modal-overlay.ed-img-fullmode { position: static; display: block; inset: auto; z-index: auto; background: transparent; backdrop-filter: none; }
     .ed-modal-overlay.ed-img-fullmode .ed-modal { width: 100%; height: 100%; max-width: none; max-height: none; border: none; border-radius: 0; background: transparent; box-shadow: none; padding: 0 20px 10px 0; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; }
     .ed-modal-overlay.ed-img-fullmode .ed-modal-body { flex: 1; min-height: 0; gap: 26px !important; align-items: stretch; }
-    .ed-modal-overlay.ed-img-fullmode .ed-modal-controls { flex: 1; min-width: 0; max-width: 560px; max-height: 100%; overflow-y: auto; align-self: center; }
+    /* Takes the rest of the width instead of stopping at a fixed column, and
+       clips sideways so a long select or label can't make the panel scroll
+       left-to-right. */
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-controls { flex: 1; min-width: 0; max-width: none; max-height: 100%; overflow-y: auto; overflow-x: hidden; align-self: center; padding-right: 6px; }
+    /* Controls line up in a column at a readable width rather than stretching
+       across the whole panel. */
+    .ed-modal-overlay.ed-img-fullmode .ed-modal-controls > * { max-width: 620px; }
+    .ed-modal-overlay.ed-img-fullmode .ed-row > label:first-child { flex: 0 0 92px; }
+    .ed-modal-controls select { width: auto; flex: 1; min-width: 0; }
     .ed-modal-overlay.ed-img-fullmode .ed-modal-head h3 { font-size: 20px; }
     .ed-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .ed-modal-controls select { width: auto; flex: 1; }
@@ -338,7 +346,7 @@
           <div class="ed-row"><label>Pan Y</label><input type="range" id="ed-wrap-py" min="-100" max="100" value="0"></div>
           <div class="ed-row"><label>Zoom X</label><input type="range" id="ed-wrap-sx" min="20" max="300" value="100"></div>
           <div class="ed-row"><label>Zoom Y</label><input type="range" id="ed-wrap-sy" min="20" max="300" value="100"></div>
-          <div class="ed-row"><label><input type="checkbox" id="ed-wrap-aspect" checked> Lock aspect ratio</label></div>
+          <div class="ed-row"><label class="rl-toggle"><input type="checkbox" id="ed-wrap-aspect" checked> Lock aspect ratio</label></div>
           <div class="ed-row"><label>Sides</label>
             <select id="ed-wrap-sides"><option value="none">None</option><option value="2px" selected>2px edge</option><option value="stretch">Stretch</option></select>
           </div>
@@ -346,8 +354,8 @@
           <div class="ed-row"><label>Wrap onto</label>
             <select id="ed-wrap-layer"><option value="base" selected>1st layer (body)</option><option value="overlay">2nd layer (hat/jacket)</option></select>
           </div>
-          <div class="ed-row"><label><input type="checkbox" id="ed-img-mirror" checked> Mirror onto the back</label></div>
-          <div class="ed-row"><label><input type="checkbox" id="ed-wrap-drop2nd" checked> Clear the skin's 2nd layer</label></div>
+          <div class="ed-row"><label class="rl-toggle"><input type="checkbox" id="ed-img-mirror" checked> Mirror onto the back</label></div>
+          <div class="ed-row"><label class="rl-toggle"><input type="checkbox" id="ed-wrap-drop2nd" checked> Clear the skin's 2nd layer</label></div>
           <div class="ed-btn-row" style="margin-top:14px;">
             <!-- As its own mode the wrap saves a skin; opened over the advanced
                  editor it applies the wrap to the skin you're editing. -->
@@ -882,11 +890,9 @@
       const im = new Image();
       im.onload = () => {
         imgBitmap = im;
-        // Entered from the "Convert an image" tile: now that there IS an image,
-        // turn the wrap into the page's content.
-        if (imgModePending) { imgModePending = false; enterImgMode(); }
+        imgModePending = false;
         imgModal.classList.add('active');
-        autoFitWrap(); drawImagePreview(); fitImgMode();
+        autoFitWrap(); drawImagePreview(); fitImgMode(); updateWrapEnabled();
       };
       im.onerror = () => {
         alert("That image couldn't be read.");
@@ -906,6 +912,26 @@
       document.getElementById('ed-title').textContent = 'Wrap an image';
       setMainContentVisible(false);
       document.getElementById('mode-toggle').style.display = 'none';
+      updateWrapEnabled();
+    }
+    // With no image picked yet the controls do nothing, so grey them out and show
+    // the plain skin on the preview instead of an empty black panel.
+    function updateWrapEnabled() {
+      const has = !!imgBitmap;
+      const controls = document.querySelector('#ed-img-modal .ed-modal-controls');
+      if (controls) {
+        controls.style.opacity = has ? '' : '0.45';
+        controls.style.pointerEvents = has ? '' : 'none';
+      }
+      const save = document.getElementById('ed-img-save');
+      if (save) save.disabled = !has;
+      if (!has) {
+        // The wrap draws over the current skin, so that's what an empty wrap is.
+        try {
+          if (!imgViewer && typeof skinview3d !== 'undefined') imgViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-img-3d'), width: 240, height: 340 });
+          if (imgViewer) imgViewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' });
+        } catch { }
+      }
     }
     function fitImgMode() {
       if (!imgFullMode) return;
@@ -1305,7 +1331,7 @@
         // mode has nothing to show until there is one — and only then swap the
         // page over to it. Cancelling the file dialog returns to the library.
         document.getElementById('ed-title').textContent = 'Wrap an image';
-        imgModePending = true;
+        imgModePending = true;   // still waiting on the first image
       } else {
         document.getElementById('ed-title').textContent = 'New skin';
       }
@@ -1327,8 +1353,11 @@
       crBaseline = JSON.stringify(crState);
       // In image mode nothing but the file dialog should be on screen yet.
       if (imgModePending) {
-        setMainContentVisible(false);
-        document.getElementById('mode-toggle').style.display = 'none';
+        // Show the mode straight away, with the controls sitting on an empty
+        // preview, and open the file dialog over it -- an entirely blank page
+        // while the dialog is up looks like the app broke.
+        enterImgMode();
+        fitImgMode();
         openImgModal();
       }
       const ov = document.getElementById('loading-overlay'); if (ov) { ov.classList.add('fade-out'); setTimeout(() => ov.style.display = 'none', 400); }

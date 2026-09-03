@@ -180,7 +180,7 @@
     .browse-card:hover .browse-add { display: flex; }
     /* Once a skin has been taken, the button stays visible as a green tick so
        you can see at a glance which cards you already have. */
-    .browse-add.added { display: flex; background: #3ba55d; opacity: 1; cursor: default; }
+    .browse-add.added { display: flex; background: var(--base-color); opacity: 1; cursor: default; }
     .browse-add[disabled] { opacity: 0.75; }
 
     /* Action cards (Upload / Reset) match the skin cards but read as buttons. */
@@ -441,19 +441,28 @@
         <h3 style="margin:0; flex:1;">Pick a default skin</h3>
         <button class="pm-btn" id="defaultSkinsCloseBtn" title="Close" style="width:34px; height:34px; padding:0; display:flex; align-items:center; justify-content:center; flex:0 0 34px;">✕</button>
       </div>
-      <div id="defaultSkinsGrid" style="display:grid; gap:12px; flex:1; min-height:0; align-content:start;"></div>
+      <!-- Flex-wrap rather than a grid so a short last row centres itself. -->
+      <div id="defaultSkinsGrid" style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; align-content:center; flex:1; min-height:0;"></div>
     </div>
   </div>
 
   <!-- Variant picker (wide / slim) -->
   <div id="variantModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2001;">
-    <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); width:300px; text-align:center;">
+    <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); text-align:center;">
       <h3 style="margin-top:0;" id="variantModalTitle">Choose arm style</h3>
-      <div style="display:flex; gap:8px; justify-content:center;">
-        <button class="pm-btn" id="variantWideBtn">Wide</button>
-        <button class="pm-btn" id="variantSlimBtn">Slim</button>
-        <button class="pm-btn" id="variantCancelBtn">Cancel</button>
+      <!-- Each arm style gets the same 3D player as everywhere else, so you can
+           see the difference instead of guessing from two words. -->
+      <div style="display:flex; gap:14px; justify-content:center; align-items:flex-end;">
+        <div id="variantWideCard" style="cursor:pointer;">
+          <div id="variantWidePrev" style="width:150px;"></div>
+          <button class="pm-btn" id="variantWideBtn" style="margin-top:8px; width:100%;">Wide</button>
+        </div>
+        <div id="variantSlimCard" style="cursor:pointer;">
+          <div id="variantSlimPrev" style="width:150px;"></div>
+          <button class="pm-btn" id="variantSlimBtn" style="margin-top:8px; width:100%;">Slim</button>
+        </div>
       </div>
+      <button class="pm-btn" id="variantCancelBtn" style="margin-top:14px;">Cancel</button>
     </div>
   </div>
 
@@ -673,25 +682,77 @@
       return _stillQueue;
     }
 
-    // ── The one live viewer, mounted into the hovered card ───────────────────
-    let _live = null;
-    function ensureLive() {
-      if (_live !== null) return _live;
+    // ── A tiny pool of live viewers, mounted into hovered cards ─────────────
+    // TWO of them, not one: with a single viewer, hovering a second card had to
+    // rip it away from the first, which snapped that card straight back to
+    // forward-facing. A second viewer lets the card you just left finish easing
+    // round while the new one starts spinning. Still only 3 WebGL contexts in
+    // total (these two plus the offscreen still renderer), well under the cap.
+    const LIVE_POOL_SIZE = 2;
+    const _livePool = [];
+    let _liveBroken = false;
+    function makeLive() {
+      const host = document.createElement("div");
+      host.className = "hover-spin";
+      const canvas = document.createElement("canvas");
+      canvas.style.display = "block";
+      host.appendChild(canvas);
+      const v = new skinview3d.SkinViewer({ canvas, width: 150, height: 300 });
+      v.zoom = 0.9; v.autoRotate = false;
+      try { v.controls.enableZoom = false; } catch { }   // wheel scrolls the page
+      return { v, host, raf: null, easing: false, owner: null, seq: 0 };
+    }
+    // The viewer to use for a new hover: a free one, else the one that's already
+    // easing out (it's the least missed).
+    function takeLive() {
+      if (_liveBroken) return null;
       try {
-        const host = document.createElement("div");
-        host.className = "hover-spin";
-        const canvas = document.createElement("canvas");
-        canvas.style.display = "block";
-        host.appendChild(canvas);
-        const v = new skinview3d.SkinViewer({ canvas, width: 150, height: 300 });
-        v.zoom = 0.9; v.autoRotate = false;
-        try { v.controls.enableZoom = false; } catch { }   // wheel scrolls the page
-        _live = { v, host, raf: null, easing: false, owner: null, seq: 0 };
-      } catch { _live = false; }
-      return _live;
+        const free = _livePool.find(L => !L.owner);
+        if (free) return free;
+        if (_livePool.length < LIVE_POOL_SIZE) { const L = makeLive(); _livePool.push(L); return L; }
+        return _livePool.find(L => L.easing) || _livePool[0];
+      } catch { _liveBroken = true; return null; }
+    }
+
+    // Take a viewer out of whichever card has it and give that card its still
+    // frame back. The still is HIDDEN while the live canvas is mounted -- the
+    // canvas is transparent around the model, so leaving the flat image
+    // underneath showed both at once.
+    function detachLive(L) {
+      if (L.raf) { cancelAnimationFrame(L.raf); L.raf = null; }
+      L.easing = false;
+      if (L.host.parentNode) L.host.parentNode.removeChild(L.host);
+      if (L.owner && L.owner._still) L.owner._still.style.visibility = "";
+      L.owner = null;
+    }
+
+    // Ease the model back to facing forward on EVERY axis. Dragging a card tilts
+    // it on x (and can roll it on z), so resetting only y left it lying at an
+    // angle when the pointer moved away.
+    function easeHome(L, holder) {
+      const norm = (a) => Math.atan2(Math.sin(a), Math.cos(a));   // to [-PI, PI]
+      L.easing = true;
+      const step = () => {
+        if (!L.easing || L.owner !== holder) return;
+        let r = null;
+        try { r = spinTarget(L.v).rotation; } catch { }
+        if (!r) { detachLive(L); return; }
+        const x = norm(r.x), y = norm(r.y), z = norm(r.z);
+        if (Math.abs(x) < 0.03 && Math.abs(y) < 0.03 && Math.abs(z) < 0.03) {
+          try { r.x = 0; r.y = 0; r.z = 0; L.v.render(); L.v.renderPaused = true; } catch { }
+          detachLive(L);
+          return;
+        }
+        try { r.x = x * 0.8; r.y = y * 0.8; r.z = z * 0.8; } catch { }
+        L.raf = requestAnimationFrame(step);
+      };
+      L.raf = requestAnimationFrame(step);
     }
 
     // A card preview: an <img> holding a still 3D frame, with the size baked in.
+    // `holder._ready` resolves false when the texture couldn't be rendered at all
+    // (MineSkin hands out plenty of URLs that now 404), so a caller can drop the
+    // card instead of showing a broken-image box.
     function skin3dPreview(src, model, w, h) {
       w = w || 150; h = h || 300;
       const holder = document.createElement("div");
@@ -703,21 +764,15 @@
       holder.appendChild(img);
       holder._spin = { src, model, w, h };
       holder._still = img;
-      renderStill(src, model, w, h).then(url => {
-        if (url) img.src = url;
-        else { img.style.imageRendering = "pixelated"; img.src = src; }   // no WebGL → flat image
+      holder._ready = renderStill(src, model, w, h).then(url => {
+        if (url) { img.src = url; return true; }
+        // No WebGL at all on this machine: fall back to the flat texture rather
+        // than deciding every skin is broken.
+        if (ensureStill() === false) { img.style.imageRendering = "pixelated"; img.src = src; return true; }
+        holder._dead = true;
+        return false;
       });
       return holder;
-    }
-
-    // Take the live viewer out of whichever card has it and give that card its
-    // still frame back. The still is HIDDEN while the live canvas is mounted --
-    // the canvas is transparent around the model, so leaving the flat image
-    // underneath showed both at once.
-    function detachLive(L) {
-      if (L.host.parentNode) L.host.parentNode.removeChild(L.host);
-      if (L.owner && L.owner._still) L.owner._still.style.visibility = "";
-      L.owner = null;
     }
 
     // Hover wiring: spin while hovered, ease back to front on leave, then hand the
@@ -725,12 +780,12 @@
     function wireSpin(hoverEl, holder) {
       const info = holder && holder._spin; if (!info || !hoverEl) return;
       hoverEl.addEventListener("mouseenter", () => {
-        const L = ensureLive(); if (!L) return;
-        if (L.raf) { cancelAnimationFrame(L.raf); L.raf = null; }
-        L.easing = false;
+        if (holder._dead) return;            // nothing rendered for this one
+        if (holder._live) return;            // already ours
+        const L = takeLive(); if (!L) return;
         detachLive(L);
-        L.owner = holder;
-        const token = ++L.seq;   // a later hover invalidates this one
+        L.owner = holder; holder._live = L;
+        const token = ++L.seq;               // a later hover invalidates this one
         try {
           L.v.setSize(info.w, info.h);
           // Mount only once the texture is in. Showing the canvas first meant a
@@ -739,34 +794,20 @@
           Promise.resolve(L.v.loadSkin(info.src, { model: info.model === "slim" ? "slim" : "default" })).then(() => {
             if (L.seq !== token || L.owner !== holder) return;   // pointer moved on
             try {
-              spinTarget(L.v).rotation.y = 0;
+              const r = spinTarget(L.v).rotation; r.x = 0; r.y = 0; r.z = 0;
               L.v.renderPaused = false;
               L.v.autoRotate = true; L.v.autoRotateSpeed = 1.0;
             } catch { }
             holder.appendChild(L.host);
             if (holder._still) holder._still.style.visibility = "hidden";
-          }).catch(() => { });
+          }).catch(() => { if (L.owner === holder) { holder._live = null; detachLive(L); } });
         } catch { }
       });
       hoverEl.addEventListener("mouseleave", () => {
-        const L = _live; if (!L || L.owner !== holder) return;
+        const L = holder._live; if (!L || L.owner !== holder) return;
+        holder._live = null;
         try { L.v.autoRotate = false; } catch { }
-        L.easing = true;
-        const step = () => {
-          if (!L.easing) return;
-          let y = 0;
-          try { y = spinTarget(L.v).rotation.y; } catch { }
-          y = Math.atan2(Math.sin(y), Math.cos(y));   // normalise to [-PI, PI]
-          if (Math.abs(y) < 0.04) {
-            try { spinTarget(L.v).rotation.y = 0; L.v.render(); L.v.renderPaused = true; } catch { }
-            detachLive(L);
-            L.easing = false; L.raf = null;
-            return;
-          }
-          try { spinTarget(L.v).rotation.y = y * 0.75; } catch { }
-          L.raf = requestAnimationFrame(step);
-        };
-        L.raf = requestAnimationFrame(step);
+        easeHome(L, holder);
       });
     }
 
@@ -780,6 +821,7 @@
     // Offline accounts apply skins as a resource pack rather than uploading them.
     let isCrackedAccount = false, crackedPlayerId = null;
     let activePixelHash = null;   // pixel hash of the skin currently applied on Mojang
+    let activeState = null;       // { base64, variant, capeUrl } as last read from Mojang
     let pendingSelection = null;  // { base64, variant, name, pixelHash } chosen but not yet applied
     let libraryCache = [];
     let defaultSkinsCache = [];
@@ -841,6 +883,12 @@
       const activeSkin = profile.skins.find(s => s.state === "ACTIVE") || profile.skins[0] || null;
       const activeSkinB64 = activeSkin && activeSkin.base64 ? activeSkin.base64 : null;
       const activeCape = profile.capes.find(c => c.state === "ACTIVE") || null;
+      // Kept so Undo can put the preview back without re-fetching the profile.
+      activeState = {
+        base64: activeSkinB64,
+        variant: (activeSkin && activeSkin.variant === "SLIM") ? "slim" : "default",
+        capeUrl: activeCape ? activeCape.url : null,
+      };
 
       // Update 3D viewer (only reset to the active skin when nothing is pending,
       // so a locally-selected-but-unapplied skin keeps previewing).
@@ -1035,7 +1083,7 @@
       const wantId = pendingCape ? pendingCape.id : activeCapeId;
       const key = wantId == null ? "__none__" : String(wantId);
       const match = cards.find(c => c.dataset.capeid === key);
-      if (match) { match.classList.add("selected"); setCardBadge(match, "✓ Selected"); }
+      if (match) { match.classList.add("selected"); setCardBadge(match, "Selected"); }
       updateApplyButton();
     }
     const capePending = () => pendingCape && (pendingCape.id || null) !== (activeCapeId || null);
@@ -1082,7 +1130,7 @@
         const appliedId = localStorage.getItem('appliedSkin_' + (currentUuid || ''));
         if (appliedId) match = cards.find(c => c.dataset.skinid === appliedId);
       }
-      if (match) { match.classList.add("selected"); setCardBadge(match, "✓ Selected"); }
+      if (match) { match.classList.add("selected"); setCardBadge(match, "Selected"); }
       updateApplyButton();
     }
 
@@ -1097,10 +1145,20 @@
 
     // Undo = drop the pending selection and go back to the skin/cape that is
     // actually applied. It never touches Mojang — nothing was uploaded yet.
-    document.getElementById('undoSkinBtn').onclick = async () => {
+    document.getElementById('undoSkinBtn').onclick = () => {
       pendingSelection = null;
       pendingCape = null;
-      await updateSKin();   // re-renders from the real active skin/cape
+      // Nothing was uploaded, so nothing needs re-reading from Mojang -- just put
+      // the preview back to what's actually applied. Re-fetching the profile made
+      // the whole page visibly reload for what is only an undo of a preview.
+      if (window.skinViewer && activeState) {
+        try {
+          if (activeState.base64) window.skinViewer.loadSkin("data:image/png;base64," + activeState.base64, { model: activeState.variant });
+          if (window.skinViewer.loadCape) window.skinViewer.loadCape(activeState.capeUrl || null);
+        } catch { }
+      }
+      refreshSelectionUI();
+      refreshCapeUI();
     };
 
     document.getElementById('applySkinBtn').onclick = async () => {
@@ -1171,7 +1229,7 @@
     }
     async function selectReset() {
       pendingSelection = { reset: true };
-      if (!defaultSkinsCache.length) { try { defaultSkinsCache = (await ipcRenderer.invoke("mc:getDefaultSkins")) || []; } catch { } }
+      if (!defaultSkinsCache.length) { try { await defaultSkinsPromise; } catch { } }
       const def = defaultSkinForUuid(currentUuid, defaultSkinsCache);
       if (window.skinViewer) {
         try {
@@ -1190,13 +1248,20 @@
     }
 
     // ---- Default skins modal (pick skin -> pick arm style -> save locally) ----
+    const titleCase = (n) => String(n || '').charAt(0).toUpperCase() + String(n || '').slice(1);
+    // Start fetching as soon as the page loads: the list comes out of a client jar
+    // the first time, which is slow enough to notice if it only starts when the
+    // modal opens.
+    const defaultSkinsPromise = ipcRenderer.invoke("mc:getDefaultSkins")
+      .then(list => (defaultSkinsCache = list || [])).catch(() => (defaultSkinsCache = []));
+
     async function openDefaultSkinsModal() {
       const modal = document.getElementById('defaultSkinsModal');
       const grid = document.getElementById('defaultSkinsGrid');
       modal.style.display = 'flex';
       if (!defaultSkinsCache.length) {
         grid.innerHTML = "<span style='opacity:0.7'>Loading default skins…</span>";
-        defaultSkinsCache = (await ipcRenderer.invoke("mc:getDefaultSkins")) || [];
+        await defaultSkinsPromise;
       }
       grid.innerHTML = "";
       if (!defaultSkinsCache.length) { grid.innerHTML = "<span style='opacity:0.7'>Couldn't load default skins.</span>"; return; }
@@ -1207,7 +1272,13 @@
       defaultSkinsCache.forEach(d => {
         (byName[d.name] ||= { name: d.name })[d.model] = d.base64;
       });
-      const entries = Object.values(byName);
+      // Steve and Alex first — they're the two anyone is actually looking for.
+      const LEAD = ["steve", "alex"];
+      const entries = Object.values(byName).sort((a, b) => {
+        const ia = LEAD.indexOf(a.name.toLowerCase()), ib = LEAD.indexOf(b.name.toLowerCase());
+        if (ia !== ib) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        return a.name.localeCompare(b.name);
+      });
       // Fit every skin into the box at once — a scrollbar here just hides half
       // the choices. Of all the row counts that hold them, take the one that
       // leaves the players biggest; the grid rows then share the height and each
@@ -1222,8 +1293,11 @@
         const size = Math.min(cw / CARD_W, (ch - LABEL_H) / CARD_H);
         if (size > best.size) best = { rows, cols, size };
       }
-      grid.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
-      grid.style.gridTemplateRows = `repeat(${best.rows}, 1fr)`;
+      // Every card gets the exact cell size the chosen shape implies; the flex
+      // container then wraps them into `best.rows` rows and centres each one --
+      // including a last row that doesn't fill the width.
+      const cellW = (boxW - GAP * (best.cols - 1)) / best.cols;
+      const cellH = (boxH - GAP * (best.rows - 1)) / best.rows;
 
       entries.forEach(entry => {
         const b64 = entry.wide || entry.slim;
@@ -1234,8 +1308,9 @@
         preview.style.width = "auto";
         preview.style.height = "100%";
         preview.style.margin = "0 auto";
-        const card = createCard(entry.name, () => chooseDefaultVariant(entry), preview);
-        card.style.height = "100%";
+        const card = createCard(titleCase(entry.name), () => chooseDefaultVariant(entry), preview);
+        card.style.flex = `0 0 ${Math.floor(cellW)}px`;
+        card.style.height = `${Math.floor(cellH)}px`;
         card.style.display = "flex";
         card.style.flexDirection = "column";
         card.style.minHeight = "0";
@@ -1247,13 +1322,25 @@
 
     function chooseDefaultVariant(entry) {
       const vm = document.getElementById('variantModal');
-      document.getElementById('variantModalTitle').textContent = `${entry.name}: choose arm style`;
-      const wideBtn = document.getElementById('variantWideBtn');
-      const slimBtn = document.getElementById('variantSlimBtn');
-      wideBtn.style.display = entry.wide ? "" : "none";
-      slimBtn.style.display = entry.slim ? "" : "none";
-      wideBtn.onclick = () => { vm.style.display = 'none'; addDefault(entry.name, entry.wide, "classic"); };
-      slimBtn.onclick = () => { vm.style.display = 'none'; addDefault(entry.name, entry.slim, "slim"); };
+      document.getElementById('variantModalTitle').textContent = `${titleCase(entry.name)}: choose arm style`;
+      const wideCard = document.getElementById('variantWideCard');
+      const slimCard = document.getElementById('variantSlimCard');
+      wideCard.style.display = entry.wide ? "" : "none";
+      slimCard.style.display = entry.slim ? "" : "none";
+      const show = (prevId, b64, model) => {
+        const el = document.getElementById(prevId);
+        el.innerHTML = '';
+        if (!b64) return;
+        const cv = skin3dPreview("data:image/png;base64," + b64, model, 150, 220);
+        el.appendChild(cv);
+        wireSpin(el, cv);
+      };
+      show('variantWidePrev', entry.wide, 'classic');
+      show('variantSlimPrev', entry.slim, 'slim');
+      const pickWide = () => { vm.style.display = 'none'; addDefault(entry.name, entry.wide, "classic"); };
+      const pickSlim = () => { vm.style.display = 'none'; addDefault(entry.name, entry.slim, "slim"); };
+      // The whole card is clickable, not just the button under it.
+      wideCard.onclick = pickWide; slimCard.onclick = pickSlim;
       vm.style.display = 'flex';
     }
 
@@ -1438,7 +1525,7 @@
     function browseCard(item) {
       // Warm the HTTP cache in parallel; the still renders run one at a time, so
       // without this each one would wait on its own texture download.
-      try { const pre = new Image(); pre.crossOrigin = 'anonymous'; pre.src = item.skin; } catch { }
+      try { const pre = new Image(); pre.crossOrigin = 'anonymous'; pre.onerror = () => { }; pre.src = item.skin; } catch { }
       const cell = document.createElement('div'); cell.style.cssText = 'display:flex; flex-direction:column; gap:4px;';
       const card = document.createElement('div'); card.className = 'browse-card';
       // Same live 3D object as the skins page: still by default, spins on hover.
@@ -1446,6 +1533,10 @@
       const cv = skin3dPreview(item.skin, item.model, 150, 200);
       card.appendChild(cv);
       wireSpin(card, cv);
+      // MineSkin still lists textures that textures.minecraft.net has dropped.
+      // Nothing renders for those, so take the card out rather than leaving a
+      // broken-image box in the grid.
+      cv._ready.then(ok => { if (!ok) cell.remove(); });
       const addBtn = document.createElement('button'); addBtn.className = 'browse-add'; addBtn.title = 'Add to library';
       addBtn.innerHTML = '<i class="material-icons" style="font-size:16px;">add</i>';
       addBtn.onclick = async (e) => {

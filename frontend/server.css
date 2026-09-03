@@ -1041,11 +1041,15 @@ input[type="checkbox"]:checked {
   border-color: var(--base-color);
 }
 
+/* Drawn with borders rather than a ✓ glyph: the pixel font has no checkmark, so
+   the character rendered as a tofu box on every checked box in the app. */
 input[type="checkbox"]:checked::after {
-  content: '✓';
-  color: white;
-  font-size: 12px;
-  font-weight: bold;
+  content: '';
+  width: 4px;
+  height: 8px;
+  border: solid var(--text-color);
+  border-width: 0 2px 2px 0;
+  transform: translateY(-1px) rotate(45deg);
 }
 
 input[type="range"] {
