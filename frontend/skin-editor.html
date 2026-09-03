@@ -163,7 +163,10 @@
        window's rounded top-left corner and always leaves a seam under the title
        bar. The overlay is invisible and exists only to catch clicks outside the
        dialog; the dialog reads as floating from its own shadow. */
-    .ed-modal-overlay { position: fixed; inset: 0; background: transparent; display: none; align-items: center; justify-content: center; z-index: 3000; }
+    /* Inset to the CONTENT area (past the title bar and sidebar) so dialogs are
+       centred on what you're looking at, not on the whole window. Nothing is
+       painted here, so the inset costs no seam. */
+    .ed-modal-overlay { position: fixed; inset: 44px 0 0 70px; background: transparent; display: none; align-items: center; justify-content: center; z-index: 3000; }
     .ed-modal-overlay.active { display: flex; }
     .ed-modal { background: linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black)); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 18px; width: 420px; max-width: 92%; max-height: 88vh; overflow: auto; box-shadow: 0 18px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,0,0,0.35); }
     /* When the image importer is opened as its own mode (from the "Convert an
@@ -380,7 +383,6 @@
     </div>
   </div>
 
-  <input type="file" id="ed-file" accept="image/png,image/*" style="display:none;" />
   <input type="file" id="efm-file" accept="image/png,image/*" style="display:none;" />
   <img id="ed-hidden-img" style="display:none;" />
   <!-- three.js (r163, matching skinview3d) exposed as window.THREE for raycast painting on the 3D model -->
@@ -860,31 +862,38 @@
     const imgModal = document.getElementById('ed-img-modal');
     const $v = (id) => +document.getElementById(id).value;
 
-    function openImgModal() { document.getElementById('ed-file').click(); }
+    // The file dialog runs in the main process. A programmatic click() on an
+    // <input type="file"> needs a user gesture in Chromium, and the wrap mode
+    // opens its dialog right after the page loads -- which silently did nothing
+    // and left the mode empty.
+    async function openImgModal() {
+      const r = await ipcRenderer.invoke('pick-image', { title: 'Choose an image to wrap onto a skin' });
+      if (!r || r.canceled || !r.dataUrl) {
+        // Backing out of the FIRST pick means backing out of the mode entirely.
+        if (imgModePending) { imgModePending = false; window.location.href = 'profile-manager.html'; }
+        if (r && r.error) alert(r.error);
+        return;
+      }
+      loadWrapImage(r.dataUrl);
+    }
     document.getElementById('ed-import').onclick = openImgModal;
     document.getElementById('ed-img-pick').onclick = openImgModal;
-    document.getElementById('ed-file').onchange = (e) => {
-      const f = e.target.files[0]; if (!f) return;
-      const r = new FileReader();
-      r.onload = () => {
-        const im = new Image();
-        im.onload = () => {
-          imgBitmap = im;
-          // Entered from the "Convert an image" tile: now that there IS an image,
-          // turn the wrap into the page's content.
-          if (imgModePending) { imgModePending = false; enterImgMode(); }
-          imgModal.classList.add('active');
-          autoFitWrap(); drawImagePreview(); fitImgMode();
-        };
-        im.src = r.result;
+    function loadWrapImage(dataUrl) {
+      const im = new Image();
+      im.onload = () => {
+        imgBitmap = im;
+        // Entered from the "Convert an image" tile: now that there IS an image,
+        // turn the wrap into the page's content.
+        if (imgModePending) { imgModePending = false; enterImgMode(); }
+        imgModal.classList.add('active');
+        autoFitWrap(); drawImagePreview(); fitImgMode();
       };
-      r.readAsDataURL(f);
-      e.target.value = '';
-    };
-    // Backing out of the very first file dialog means backing out of the mode.
-    document.getElementById('ed-file').addEventListener('cancel', () => {
-      if (imgModePending) { imgModePending = false; window.location.href = 'profile-manager.html'; }
-    });
+      im.onerror = () => {
+        alert("That image couldn't be read.");
+        if (imgModePending) { imgModePending = false; window.location.href = 'profile-manager.html'; }
+      };
+      im.src = dataUrl;
+    }
 
     // The wrap as its own full-page mode: it replaces the editor, saves a skin
     // instead of applying one, and fills the height available under the heading.
@@ -1320,7 +1329,7 @@
       if (imgModePending) {
         setMainContentVisible(false);
         document.getElementById('mode-toggle').style.display = 'none';
-        setTimeout(() => document.getElementById('ed-file').click(), 250);
+        openImgModal();
       }
       const ov = document.getElementById('loading-overlay'); if (ov) { ov.classList.add('fade-out'); setTimeout(() => ov.style.display = 'none', 400); }
     }

@@ -2078,6 +2078,29 @@ async function getDownloadUrl(projectID, fileID) {
   }
 }
 
+// Pick an image and hand back a data: URL. The wrap-an-image mode opens its file
+// dialog straight after the page loads, and Chromium blocks a programmatic
+// click() on an <input type="file"> without a user gesture -- which left the mode
+// sitting there empty. A main-process dialog has no such requirement.
+ipcMain.handle("pick-image", async (event, opts) => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: (opts && opts.title) || "Choose an image",
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] }],
+      properties: ["openFile"],
+    });
+    if (canceled || !filePaths.length) return { canceled: true };
+    const p = filePaths[0];
+    const buf = fs.readFileSync(p);
+    if (buf.length > 32 * 1024 * 1024) return { error: "That image is too big." };
+    const ext = path.extname(p).toLowerCase();
+    const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg"
+      : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif"
+        : ext === ".bmp" ? "image/bmp" : "image/png";
+    return { dataUrl: `data:${mime};base64,` + buf.toString("base64"), name: path.basename(p) };
+  } catch (e) { return { error: e.message }; }
+});
+
 ipcMain.handle("import-curseforge-zip", async () => {
   try {
     const { canceled, filePaths } = await dialog.showOpenDialog({
@@ -6942,6 +6965,16 @@ const STARLIGHT_CODE_ORDER = [
   "hair_texture", "hair_pattern_texture", "face_item_color_secondary", "middlewear_texture", "middlewear_color", "middlewear_color_secondary",
 ];
 ipcMain.handle("starlight:generateFromCode", async (event, { code }) => {
+  // A skin code always renders to the same image, so cache the result on disk
+  // next to the other skin textures. The "Create a skin" tile in the new-skin
+  // modal shows one fixed code; without this it re-fetched it from Starlight on
+  // every fresh profile, and the tile sat empty while it did.
+  const cacheDir = path.join(texturesDir, "skincodes");
+  const cacheFile = path.join(cacheDir, crypto.createHash("sha1").update(String(code || "")).digest("hex") + ".json");
+  try {
+    const hit = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+    if (hit && hit.base64) return hit;
+  } catch { /* not cached yet */ }
   try {
     const info = await _starlightInfo();
     if (!info || !info.cosmetics) return { error: "No cosmetics info" };
@@ -6963,7 +6996,9 @@ ipcMain.handle("starlight:generateFromCode", async (event, { code }) => {
     const res = await fetch(`${STARLIGHT_BASE}/create-skin/${pathSeg}/${qs ? "?" + qs : ""}`);
     if (!res.ok) return { error: `HTTP ${res.status}` };
     const buf = Buffer.from(await res.arrayBuffer());
-    return { base64: buf.toString("base64"), variant: st === "slim" ? "slim" : "classic" };
+    const out = { base64: buf.toString("base64"), variant: st === "slim" ? "slim" : "classic" };
+    try { fs.mkdirSync(cacheDir, { recursive: true }); fs.writeFileSync(cacheFile, JSON.stringify(out)); } catch { /* cache is best-effort */ }
+    return out;
   } catch (e) { return { error: e.message }; }
 });
 

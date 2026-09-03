@@ -178,6 +178,10 @@
     .browse-card { position: relative; }
     .browse-add { position: absolute; top: 5px; right: 5px; z-index: 3; width: 26px; height: 26px; border-radius: 50%; border: none; background: var(--base-color); color: #fff; cursor: pointer; display: none; align-items: center; justify-content: center; padding: 0; }
     .browse-card:hover .browse-add { display: flex; }
+    /* Once a skin has been taken, the button stays visible as a green tick so
+       you can see at a glance which cards you already have. */
+    .browse-add.added { display: flex; background: #3ba55d; opacity: 1; cursor: default; }
+    .browse-add[disabled] { opacity: 0.75; }
 
     /* Action cards (Upload / Reset) match the skin cards but read as buttons. */
     .card.action-card {
@@ -346,7 +350,7 @@
   </div>
 
   <!-- Add-skin menu -->
-  <div id="addSkinModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2000;">
+  <div id="addSkinModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2000;">
     <div class="skin-modal-card" style="width:560px; max-width:92%;">
       <h3 style="margin-top:0; margin-bottom:14px;">Add a skin</h3>
       <div class="add-skin-grid">
@@ -363,7 +367,7 @@
   </div>
 
   <!-- Create-new sub-modal: three ways to make a new skin, each with a preview. -->
-  <div id="createNewModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2100;">
+  <div id="createNewModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2100;">
     <div class="skin-modal-card" style="width:640px; max-width:94%;">
       <h3 style="margin-top:0; margin-bottom:14px;">Create a new skin</h3>
       <div class="create-new-grid">
@@ -378,7 +382,7 @@
   </div>
 
   <!-- By-username modal -->
-  <div id="usernameModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2100;">
+  <div id="usernameModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2100;">
     <div class="skin-modal-card" style="width:420px; max-width:92%;">
       <h3 style="margin-top:0; margin-bottom:14px;">Add a skin by username</h3>
       <input id="usernameInput" type="text" placeholder="Minecraft username" style="width:100%; padding:9px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);" />
@@ -403,7 +407,7 @@
   </div>
 
   <!-- Upload skin modal (choose model) -->
-  <div id="uploadModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2000;">
+  <div id="uploadModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2000;">
     <div class="skin-modal-card">
       <h3 style="margin-top:0; margin-bottom:14px;">Save Skin</h3>
       <div style="display:flex; gap:16px;">
@@ -429,20 +433,20 @@
   </div>
 
   <!-- Default skins picker -->
-  <div id="defaultSkinsModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2000;">
+  <div id="defaultSkinsModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2000;">
     <!-- Sized to hold every default skin at once: no scrolling, just a grid of
          players that spin when you point at them. -->
-    <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); width:min(1100px, 94vw); max-height:92vh; display:flex; flex-direction:column;">
-      <h3 style="margin-top:0;">Pick a default skin</h3>
-      <div id="defaultSkinsGrid" style="display:grid; grid-template-columns:repeat(5, 1fr); gap:12px; flex:1; min-height:0;"></div>
-      <div style="display:flex; gap:8px; margin-top:12px;">
-        <button class="pm-btn" id="defaultSkinsCancelBtn">Cancel</button>
+    <div style="background: var(--third-color); padding:18px 20px 16px; border-radius: var(--border-radius); width:min(1050px, 92%); max-height:92%; display:flex; flex-direction:column;">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
+        <h3 style="margin:0; flex:1;">Pick a default skin</h3>
+        <button class="pm-btn" id="defaultSkinsCloseBtn" title="Close" style="width:34px; height:34px; padding:0; display:flex; align-items:center; justify-content:center; flex:0 0 34px;">✕</button>
       </div>
+      <div id="defaultSkinsGrid" style="display:grid; gap:12px; flex:1; min-height:0; align-content:start;"></div>
     </div>
   </div>
 
   <!-- Variant picker (wide / slim) -->
-  <div id="variantModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2001;">
+  <div id="variantModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2001;">
     <div style="background: var(--third-color); padding:20px; border-radius: var(--border-radius); width:300px; text-align:center;">
       <h3 style="margin-top:0;" id="variantModalTitle">Choose arm style</h3>
       <div style="display:flex; gap:8px; justify-content:center;">
@@ -454,7 +458,7 @@
   </div>
 
   <!-- Rename skin modal -->
-  <div id="skinRenameModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2001;">
+  <div id="skinRenameModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2001;">
     <div class="skin-modal-card" style="width:320px;">
       <h3 style="margin-top:0;">Rename skin</h3>
       <input type="text" id="skinRenameInput" placeholder="Skin name" style="width:100%; margin-bottom:14px;">
@@ -466,7 +470,7 @@
   </div>
 
   <!-- Delete skin confirm modal -->
-  <div id="skinDeleteModal" class="modal-overlay" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:2001;">
+  <div id="skinDeleteModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2001;">
     <div class="skin-modal-card" style="width:320px;">
       <h3 style="margin-top:0;">Delete skin</h3>
       <p id="skinDeleteText" style="opacity:0.85; margin-top:0;">Remove this skin from your library?</p>
@@ -682,7 +686,7 @@
         const v = new skinview3d.SkinViewer({ canvas, width: 150, height: 300 });
         v.zoom = 0.9; v.autoRotate = false;
         try { v.controls.enableZoom = false; } catch { }   // wheel scrolls the page
-        _live = { v, host, raf: null, easing: false, owner: null };
+        _live = { v, host, raf: null, easing: false, owner: null, seq: 0 };
       } catch { _live = false; }
       return _live;
     }
@@ -698,11 +702,22 @@
       img.style.cssText = "width:100%; height:100%; display:block; object-fit:contain;";
       holder.appendChild(img);
       holder._spin = { src, model, w, h };
+      holder._still = img;
       renderStill(src, model, w, h).then(url => {
         if (url) img.src = url;
         else { img.style.imageRendering = "pixelated"; img.src = src; }   // no WebGL → flat image
       });
       return holder;
+    }
+
+    // Take the live viewer out of whichever card has it and give that card its
+    // still frame back. The still is HIDDEN while the live canvas is mounted --
+    // the canvas is transparent around the model, so leaving the flat image
+    // underneath showed both at once.
+    function detachLive(L) {
+      if (L.host.parentNode) L.host.parentNode.removeChild(L.host);
+      if (L.owner && L.owner._still) L.owner._still.style.visibility = "";
+      L.owner = null;
     }
 
     // Hover wiring: spin while hovered, ease back to front on leave, then hand the
@@ -713,15 +728,25 @@
         const L = ensureLive(); if (!L) return;
         if (L.raf) { cancelAnimationFrame(L.raf); L.raf = null; }
         L.easing = false;
+        detachLive(L);
         L.owner = holder;
+        const token = ++L.seq;   // a later hover invalidates this one
         try {
           L.v.setSize(info.w, info.h);
-          L.v.loadSkin(info.src, { model: info.model === "slim" ? "slim" : "default" });
-          spinTarget(L.v).rotation.y = 0;
-          L.v.renderPaused = false;
-          L.v.autoRotate = true; L.v.autoRotateSpeed = 1.0;
+          // Mount only once the texture is in. Showing the canvas first meant a
+          // frame or two of an empty scene -- the white flash.
+          L.v.renderPaused = true;
+          Promise.resolve(L.v.loadSkin(info.src, { model: info.model === "slim" ? "slim" : "default" })).then(() => {
+            if (L.seq !== token || L.owner !== holder) return;   // pointer moved on
+            try {
+              spinTarget(L.v).rotation.y = 0;
+              L.v.renderPaused = false;
+              L.v.autoRotate = true; L.v.autoRotateSpeed = 1.0;
+            } catch { }
+            holder.appendChild(L.host);
+            if (holder._still) holder._still.style.visibility = "hidden";
+          }).catch(() => { });
         } catch { }
-        holder.appendChild(L.host);
       });
       hoverEl.addEventListener("mouseleave", () => {
         const L = _live; if (!L || L.owner !== holder) return;
@@ -734,8 +759,8 @@
           y = Math.atan2(Math.sin(y), Math.cos(y));   // normalise to [-PI, PI]
           if (Math.abs(y) < 0.04) {
             try { spinTarget(L.v).rotation.y = 0; L.v.render(); L.v.renderPaused = true; } catch { }
-            if (L.host.parentNode) L.host.parentNode.removeChild(L.host);
-            L.easing = false; L.raf = null; L.owner = null;
+            detachLive(L);
+            L.easing = false; L.raf = null;
             return;
           }
           try { spinTarget(L.v).rotation.y = y * 0.75; } catch { }
@@ -1183,15 +1208,38 @@
         (byName[d.name] ||= { name: d.name })[d.model] = d.base64;
       });
       const entries = Object.values(byName);
-      // Lay the grid out so every skin fits in one view — a scrollbar here just
-      // hides half the choices.
-      const cols = Math.min(5, Math.max(3, Math.ceil(Math.sqrt(entries.length * 1.4))));
-      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      // Fit every skin into the box at once — a scrollbar here just hides half
+      // the choices. Of all the row counts that hold them, take the one that
+      // leaves the players biggest; the grid rows then share the height and each
+      // card sizes its own preview, so nothing has to be measured per card.
+      const GAP = 12, CARD_W = 150, CARD_H = 220, LABEL_H = 26;
+      const boxW = grid.clientWidth || 900, boxH = grid.clientHeight || 600;
+      let best = { rows: 1, cols: entries.length, size: -1 };
+      for (let rows = 1; rows <= entries.length; rows++) {
+        const cols = Math.ceil(entries.length / rows);
+        const cw = (boxW - GAP * (cols - 1)) / cols;
+        const ch = (boxH - GAP * (rows - 1)) / rows;
+        const size = Math.min(cw / CARD_W, (ch - LABEL_H) / CARD_H);
+        if (size > best.size) best = { rows, cols, size };
+      }
+      grid.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
+      grid.style.gridTemplateRows = `repeat(${best.rows}, 1fr)`;
+
       entries.forEach(entry => {
         const b64 = entry.wide || entry.slim;
         // Same 3D player as the library: still and facing forward, spins on hover.
-        const preview = skin3dPreview("data:image/png;base64," + b64, entry.wide ? "classic" : "slim", 150, 220);
+        const preview = skin3dPreview("data:image/png;base64," + b64, entry.wide ? "classic" : "slim", CARD_W, CARD_H);
+        // Height-driven instead of width-driven, so a card can never spill out of
+        // its row.
+        preview.style.width = "auto";
+        preview.style.height = "100%";
+        preview.style.margin = "0 auto";
         const card = createCard(entry.name, () => chooseDefaultVariant(entry), preview);
+        card.style.height = "100%";
+        card.style.display = "flex";
+        card.style.flexDirection = "column";
+        card.style.minHeight = "0";
+        if (card._imgWrap) card._imgWrap.style.cssText = "flex:1; min-height:0; display:flex; align-items:center; justify-content:center;";
         grid.appendChild(card);
         wireSpin(card, preview);
       });
@@ -1216,9 +1264,11 @@
       await updateSKin();
     }
 
-    document.getElementById('defaultSkinsCancelBtn').onclick = () => {
-      document.getElementById('defaultSkinsModal').style.display = 'none';
-    };
+    const closeDefaultSkins = () => { document.getElementById('defaultSkinsModal').style.display = 'none'; };
+    document.getElementById('defaultSkinsCloseBtn').onclick = closeDefaultSkins;
+    document.getElementById('defaultSkinsModal').addEventListener('mousedown', e => {
+      if (e.target.id === 'defaultSkinsModal') closeDefaultSkins();
+    });
     document.getElementById('variantCancelBtn').onclick = () => {
       document.getElementById('variantModal').style.display = 'none';
     };
@@ -1294,26 +1344,32 @@
     // waiting on the network every time.
     let _cnCreateSkin = null, _cnImageSkin = null;
     try { _cnCreateSkin = JSON.parse(localStorage.getItem('cnCreatePreview') || 'null'); } catch { }
+
+    // Fetch both showcased skins as soon as the page loads rather than when the
+    // modal opens, so the tiles are already filled by the time anyone clicks +.
+    // (main.js also keeps the rendered skin code on disk, so this is a no-op
+    // after the first ever run.)
+    const cnCreatePromise = _cnCreateSkin
+      ? Promise.resolve(_cnCreateSkin)
+      : ipcRenderer.invoke('starlight:generateFromCode', { code: CN_CREATE_CODE }).then(r => {
+        if (!r || !r.base64) return null;
+        _cnCreateSkin = { base64: r.base64, variant: r.variant };
+        try { localStorage.setItem('cnCreatePreview', JSON.stringify(_cnCreateSkin)); } catch { }
+        return _cnCreateSkin;
+      }).catch(() => null);
+    const cnImagePromise = sampleWrappedSkin().then(skin => (_cnImageSkin = skin)).catch(() => null);
+
     async function openCreateNewModal() {
       document.getElementById('createNewModal').style.display = 'flex';
       // Template preview is local — always instant.
       miniViewer(document.getElementById('cnTemplatePrev'), 'assets/template.png', 'classic');
-      // Both of the others render from cache immediately when we have it, and are
-      // fetched in PARALLEL (not one after the other) the first time.
-      if (_cnCreateSkin) miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + _cnCreateSkin.base64, _cnCreateSkin.variant);
-      else ipcRenderer.invoke('starlight:generateFromCode', { code: CN_CREATE_CODE }).then(r => {
-        if (!r || !r.base64) return;
-        _cnCreateSkin = { base64: r.base64, variant: r.variant };
-        try { localStorage.setItem('cnCreatePreview', JSON.stringify(_cnCreateSkin)); } catch { }
-        miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + r.base64, r.variant);
-      }).catch(() => { });
-
-      if (_cnImageSkin) miniViewer(document.getElementById('cnImagePrev'), _cnImageSkin, 'classic');
-      else sampleWrappedSkin().then(skin => {
-        if (!skin) return;
-        _cnImageSkin = skin;
-        miniViewer(document.getElementById('cnImagePrev'), skin, 'classic');
-      }).catch(() => { });
+      // The other two were started at page load; render each the moment it lands.
+      cnCreatePromise.then(sk => {
+        if (sk) miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + sk.base64, sk.variant);
+      });
+      cnImagePromise.then(skin => {
+        if (skin) miniViewer(document.getElementById('cnImagePrev'), skin, 'classic');
+      });
     }
     function closeCreateNew() { document.getElementById('createNewModal').style.display = 'none'; }
     document.getElementById('cnCancel').onclick = closeCreateNew;
@@ -1394,9 +1450,21 @@
       addBtn.innerHTML = '<i class="material-icons" style="font-size:16px;">add</i>';
       addBtn.onclick = async (e) => {
         e.stopPropagation(); addBtn.disabled = true;
+        addBtn.innerHTML = '<i class="material-icons" style="font-size:16px;">hourglass_top</i>';
         const r = await ipcRenderer.invoke('skins:fetchUrl', { url: item.skin });
-        if (r && r.base64) { await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + r.base64, variant: item.model === 'slim' ? 'slim' : 'classic', name: browseName(item) }); if (window.notify) window.notify('Added to your library', 'success'); }
-        else { addBtn.disabled = false; alert('Could not download that skin.' + (r && r.error ? ' ' + r.error : '')); }
+        if (r && r.base64) {
+          await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + r.base64, variant: item.model === 'slim' ? 'slim' : 'classic', name: browseName(item) });
+          // Say so on the button itself — a toast is gone in a second and there
+          // was no way to tell which of forty cards you'd already taken.
+          addBtn.classList.add('added');
+          addBtn.title = 'Already in your library';
+          addBtn.innerHTML = '<i class="material-icons" style="font-size:16px;">check</i>';
+          if (window.notify) window.notify('Added to your library', 'success');
+        } else {
+          addBtn.disabled = false;
+          addBtn.innerHTML = '<i class="material-icons" style="font-size:16px;">add</i>';
+          alert('Could not download that skin.' + (r && r.error ? ' ' + r.error : ''));
+        }
       };
       card.appendChild(addBtn);
       const lab = document.createElement('div'); lab.textContent = browseName(item); lab.title = browseName(item);
