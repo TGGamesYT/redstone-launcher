@@ -1539,11 +1539,7 @@
     <div class="menu-item" data-action="open">Open Folder</div>
     <div class="menu-item" data-action="shortcut">Desktop shortcut</div>
     <div class="menu-item" data-action="share" style="display:none;">Share over internet</div>
-    <div class="menu-item export-item" data-action="export">Export ▸
-        <div class="submenu hidden">
-            <div class="menu-item" data-export="modrinth">Modrinth Pack</div>
-        </div>
-    </div>
+    <div class="menu-item" data-action="export">Export…</div>
     <div class="menu-item" data-action="delete">Delete</div>
 `;
         document.body.appendChild(menu);
@@ -1600,60 +1596,16 @@
           if (menuVisible) positionMenu(menuBtn);
         });
 
-        // Submenu hover with delay
-        menu.querySelectorAll(".export-item").forEach(item => {
-          const submenu = item.querySelector(".submenu");
-          let hoverTimer, leaveTimer;
-          const HOVER_DELAY = 400;
-          const LEAVE_GRACE = 100;
-
-          const showSubmenu = () => {
-            clearTimeout(leaveTimer);
-            hoverTimer = setTimeout(() => {
-              submenu.classList.remove("hidden");
-
-              const parentRect = item.getBoundingClientRect();
-              const subRect = submenu.getBoundingClientRect();
-
-              if (parentRect.right + subRect.width > window.innerWidth) submenu.style.left = `-${subRect.width}px`;
-              else submenu.style.left = `${item.offsetWidth}px`;
-
-              if (parentRect.top + subRect.height > window.innerHeight) submenu.style.top = `${item.offsetHeight - subRect.height}px`;
-              else submenu.style.top = "0px";
-            }, HOVER_DELAY);
-          };
-          const hideSubmenu = () => {
-            clearTimeout(hoverTimer);
-            leaveTimer = setTimeout(() => submenu.classList.add("hidden"), LEAVE_GRACE);
-          };
-
-          item.addEventListener("pointerenter", showSubmenu);
-          item.addEventListener("pointerleave", hideSubmenu);
-          submenu.addEventListener("pointerenter", showSubmenu);
-          submenu.addEventListener("pointerleave", hideSubmenu);
-        });
-
-        // Main menu item clicks
+        // Menu item clicks. Export used to be a hover flyout, which was fiddly to
+        // hit and had nowhere to put the options; it opens a modal now.
         menu.querySelectorAll(".menu-item").forEach(item => {
-          if (!item.classList.contains("export-item")) {
-            item.addEventListener("click", e => {
-              e.stopPropagation();
-              if (item.dataset.action === "open") ipcRenderer.send("open-folder", { id: profile.id, isClient: true });
-              if (item.dataset.action === "delete" && confirm(`Delete "${profile.name}"?`)) ipcRenderer.send("delete-profile", profile.id);
-              if (item.dataset.action === "shortcut") openShortcutModal(profile);
-              if (item.dataset.action === "share") openInstanceShareModal({ localPort: 0, relayKey: `instance-${profile.id}`, defaultSub: (profile.name || "instance"), onShared: (address) => { if (window.notify) window.notify("Shared at " + address, "success"); } });
-
-              menu.style.display = "none";
-              menuVisible = false;
-            });
-          }
-        });
-
-        // Submenu clicks
-        menu.querySelectorAll(".submenu .menu-item").forEach(sub => {
-          sub.addEventListener("click", async e => {
+          item.addEventListener("click", e => {
             e.stopPropagation();
-            if (sub.dataset.export === "modrinth") await ipcRenderer.invoke("export-mrpack", profile.id);
+            if (item.dataset.action === "open") ipcRenderer.send("open-folder", { id: profile.id, isClient: true });
+            if (item.dataset.action === "delete" && confirm(`Delete "${profile.name}"?`)) ipcRenderer.send("delete-profile", profile.id);
+            if (item.dataset.action === "shortcut") openShortcutModal(profile);
+            if (item.dataset.action === "share") openInstanceShareModal({ localPort: 0, relayKey: `instance-${profile.id}`, defaultSub: (profile.name || "instance"), onShared: (address) => { if (window.notify) window.notify("Shared at " + address, "success"); } });
+            if (item.dataset.action === "export") openExportModal(profile);
 
             menu.style.display = "none";
             menuVisible = false;
@@ -2117,6 +2069,90 @@
         // Desktop-shortcut config modal for an instance. Lets the user choose what
         // clicking the shortcut does (just start / auto-join a world / auto-join a
         // server / launch with extra args) and which icon to use.
+        // Export an instance. Everything the export needs is asked for up front:
+        // which pack format, what to put in it, and where to write it -- the old
+        // flyout just wrote a .mrpack straight into the launcher's data folder.
+        async function openExportModal(profile) {
+          const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+          const parts = await ipcRenderer.invoke("export:parts").catch(() => []);
+          let destDir = await ipcRenderer.invoke("export:defaultDir").catch(() => "");
+          // Everything that defines the pack is on by default; personal things
+          // (your worlds, your screenshots, your settings) are not.
+          const ON_BY_DEFAULT = new Set(["mods", "resourcepacks", "shaderpacks", "config"]);
+
+          const overlay = document.createElement("div");
+          overlay.className = "modal-overlay active";
+          overlay.style.zIndex = 5000;
+          overlay.innerHTML = `
+            <div class="modal-content" style="max-width:520px;">
+              <div class="modal-header"><h2>Export instance</h2><button class="modal-close" id="exClose">✕</button></div>
+              <div class="modal-section">
+                <label>Format</label>
+                <div class="sc-action-row">
+                  <button type="button" class="sc-action-btn active" data-format="modrinth">Modrinth (.mrpack)</button>
+                  <button type="button" class="sc-action-btn" data-format="curseforge">CurseForge (.zip)</button>
+                </div>
+              </div>
+              <div class="modal-section">
+                <label>Include</label>
+                <div id="exParts" style="display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; margin-top:4px;">
+                  ${parts.map(p => `<label class="inline-check"><input type="checkbox" data-part="${esc(p.key)}"${ON_BY_DEFAULT.has(p.key) ? " checked" : ""}> ${esc(p.label)}</label>`).join("")}
+                </div>
+              </div>
+              <div class="modal-section">
+                <label>Save to</label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                  <input type="text" id="exDest" readonly style="flex:1; min-width:0;" value="${esc(destDir)}">
+                  <button type="button" id="exBrowse" style="flex:0 0 auto;">Browse…</button>
+                </div>
+              </div>
+              <div id="exStatus" style="font-size:12px; opacity:0.8; min-height:18px; margin-top:4px;"></div>
+              <div class="modal-actions">
+                <button id="exGo">Export</button>
+                <button id="exCancel">Cancel</button>
+              </div>
+            </div>`;
+          document.body.appendChild(overlay);
+          const $q = (sel) => overlay.querySelector(sel);
+          const close = () => { ipcRenderer.removeListener("export-progress", onProgress); overlay.remove(); };
+          const status = $q("#exStatus");
+
+          let format = "modrinth";
+          overlay.querySelectorAll("[data-format]").forEach(b => b.onclick = () => {
+            format = b.dataset.format;
+            overlay.querySelectorAll("[data-format]").forEach(x => x.classList.toggle("active", x === b));
+          });
+
+          $q("#exBrowse").onclick = async () => {
+            const picked = await ipcRenderer.invoke("export:pickDir").catch(() => null);
+            if (picked) { destDir = picked; $q("#exDest").value = picked; }
+          };
+
+          const onProgress = (_e, p) => { if (p && p.label) status.textContent = p.total ? `${p.label} (${p.done}/${p.total})` : p.label; };
+          ipcRenderer.on("export-progress", onProgress);
+
+          $q("#exClose").onclick = close;
+          $q("#exCancel").onclick = close;
+          overlay.addEventListener("mousedown", e => { if (e.target === overlay) close(); });
+
+          $q("#exGo").onclick = async () => {
+            const include = [...overlay.querySelectorAll("[data-part]")].filter(c => c.checked).map(c => c.dataset.part);
+            if (!include.length) { status.textContent = "Pick at least one thing to include."; return; }
+            const go = $q("#exGo");
+            go.disabled = true; $q("#exCancel").disabled = true;
+            status.textContent = "Starting…";
+            const r = await ipcRenderer.invoke("export-instance", { profileId: profile.id, format, include, destDir })
+              .catch(err => ({ success: false, error: err && err.message }));
+            if (r && r.success) {
+              close();
+              if (window.notify) window.notify(`Exported to ${r.path}`, "success");
+            } else {
+              status.textContent = "Export failed: " + ((r && r.error) || "unknown error");
+              go.disabled = false; $q("#exCancel").disabled = false;
+            }
+          };
+        }
+
         async function openShortcutModal(profile) {
           const worlds = await ipcRenderer.invoke("get-instance-worlds", { profileId: profile.id }).catch(() => []);
           const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id }).catch(() => []);

@@ -3742,139 +3742,243 @@ async function lookupModrinthByHash(sha512hex, sha1hex) {
   return null;
 }
 
-// Collect files from instance dir matching common folders and arbitrary root files
-async function collectInstanceFiles(instanceFolder) {
-  const disallowedDirs = ['logs', 'assets', 'cache', '.fabric', 'downloads', 'libraries', 'natives', 'screenshots', 'versions'];
-  const disallowedFiles = ['usercache.json', 'command_history.txt', 'debug-profile.json', 'realms_presistence.json'];
-  const results = [];
+// What an export can contain. Each entry is a top-level folder (or a set of
+// root files) in the instance, so the picker maps one-to-one onto what actually
+// gets written.
+const EXPORT_PARTS = {
+  mods: { dirs: ["mods"], label: "Mods" },
+  resourcepacks: { dirs: ["resourcepacks"], label: "Resource packs" },
+  shaderpacks: { dirs: ["shaderpacks"], label: "Shader packs" },
+  config: { dirs: ["config", "defaultconfigs"], label: "Config" },
+  saves: { dirs: ["saves"], label: "Worlds" },
+  screenshots: { dirs: ["screenshots"], label: "Screenshots" },
+  options: { files: ["options.txt", "optionsof.txt", "optionsshaders.txt", "servers.dat"], label: "Game options & server list" },
+};
+// Never worth shipping: caches, the game itself, and per-machine state.
+const EXPORT_NEVER_FILES = new Set(["usercache.json", "command_history.txt", "debug-profile.json", "realms_persistence.json", "realms_presistence.json", "launcher_profiles.json"]);
 
-  async function walk(dir) {
-    const entries = await fsp.readdir(dir, { withFileTypes: true });
+ipcMain.handle("export:parts", () =>
+  Object.entries(EXPORT_PARTS).map(([key, v]) => ({ key, label: v.label })));
+
+// Where an export should go by default, and a folder picker for changing it.
+ipcMain.handle("export:defaultDir", () => {
+  try { return app.getPath("downloads"); } catch { return app.getPath("home"); }
+});
+ipcMain.handle("export:pickDir", async () => {
+  try {
+    const r = await dialog.showOpenDialog({ title: "Where should the export be saved?", properties: ["openDirectory", "createDirectory"] });
+    if (r.canceled || !r.filePaths.length) return null;
+    return r.filePaths[0];
+  } catch { return null; }
+});
+
+// Collect the files an export should contain, honouring the include options.
+// Only the selected parts are walked, so nothing has to be excluded afterwards.
+async function collectInstanceFiles(instanceFolder, include) {
+  const results = [];
+  const wanted = Array.isArray(include) && include.length ? include : Object.keys(EXPORT_PARTS);
+
+  async function walk(dir, base) {
+    let entries = [];
+    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       const full = path.join(dir, e.name);
-      const rel = path.relative(instanceFolder, full).replace(/\\/g, '/');
-
-      // Skip directories in disallowedDirs
-      if (e.isDirectory() && disallowedDirs.includes(e.name)) continue;
-
-      // Skip files in disallowedFiles
-      if (e.isFile() && disallowedFiles.some(f => rel.toLowerCase().endsWith(f))) continue;
-
-      if (e.isDirectory()) {
-        await walk(full); // recurse
-      } else if (e.isFile()) {
-        results.push({ full, rel });
-      }
+      const rel = path.relative(base, full).replace(/\\/g, "/");
+      if (e.isDirectory()) { await walk(full, base); continue; }
+      if (!e.isFile()) continue;                                  // skip symlinks/sockets
+      if (EXPORT_NEVER_FILES.has(e.name.toLowerCase())) continue;
+      results.push({ full, rel });
     }
   }
 
-  await walk(instanceFolder);
-  return results;
+  for (const key of wanted) {
+    const part = EXPORT_PARTS[key];
+    if (!part) continue;
+    for (const d of (part.dirs || [])) {
+      const full = path.join(instanceFolder, d);
+      if (fs.existsSync(full) && fs.statSync(full).isDirectory()) await walk(full, instanceFolder);
+    }
+    for (const f of (part.files || [])) {
+      const full = path.join(instanceFolder, f);
+      if (fs.existsSync(full) && fs.statSync(full).isFile()) results.push({ full, rel: f });
+    }
+  }
+  // A folder can appear under two parts (it can't, today, but a future one might).
+  const seen = new Set();
+  return results.filter(r => (seen.has(r.rel) ? false : (seen.add(r.rel), true)));
+}
+
+// Pick a free filename in `dir`, so exporting twice doesn't silently overwrite.
+function freeExportPath(dir, base, ext) {
+  const safe = String(base || "pack")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .replace(/_+/g, "_")          // a run of replaced characters reads better as one
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "")        // Windows rejects a trailing dot or space
+    .slice(0, 80)                 // keep the whole path well inside MAX_PATH
+    .replace(/[. ]+$/, "")        // ...and the slice can leave one behind
+    || "pack";
+  // CON, PRN, AUX, NUL, COM1-9, LPT1-9 are device names on Windows: a file can't
+  // be called one even with an extension.
+  const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(safe) ? safe + "_" : safe;
+  let dest = path.join(dir, reserved + ext), i = 1;
+  while (fs.existsSync(dest)) dest = path.join(dir, `${reserved} (${i++})${ext}`);
+  return dest;
+}
+
+// The loader id CurseForge manifests expect, e.g. "fabric-0.15.11".
+function curseLoaderId(profile) {
+  const v = profile.loaderVersion || "";
+  switch (profile.loader) {
+    case "fabric": return "fabric-" + (v || "0.0.0");
+    case "quilt": return "quilt-" + (v || "0.0.0");
+    case "forge": return "forge-" + (v || "0.0.0");
+    case "neoforge": return "neoforge-" + (v || "0.0.0");
+    default: return null;
+  }
 }
 
 /**
- * Main handler
- * Returns { success: true, mrpackPath, indexJson } or { success: false, error }
+ * Export an instance as a Modrinth .mrpack or a CurseForge .zip.
+ * opts: { profileId, format: "modrinth"|"curseforge", include: string[], destDir }
+ * Returns { success, path } or { success: false, error }.
  */
-ipcMain.handle('export-mrpack', async (event, profileId) => {
-  devtoolsLog("[mrpack] START export for profileId:", profileId);
-
+ipcMain.handle("export-instance", async (event, opts) => {
+  const { profileId, format = "modrinth", include, destDir } = opts || {};
+  const report = (label, done, total) => { try { event.sender.send("export-progress", { label, done, total }); } catch { /* window gone */ } };
   try {
     if (!profileId) throw new Error("Missing profile id");
+    if (format !== "modrinth" && format !== "curseforge") throw new Error("Unknown export format: " + format);
 
-    // Load profiles
-    const profilesPath = path.join(dataDir, 'profiles.json');
-    if (!fs.existsSync(profilesPath)) throw new Error("profiles.json not found");
-    const profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+    const profilesFile = path.join(dataDir, "profiles.json");
+    if (!fs.existsSync(profilesFile)) throw new Error("profiles.json not found");
+    const profiles = JSON.parse(fs.readFileSync(profilesFile, "utf8"));
     // Profile ids can be strings (e.g. "sulfur"), so compare as strings.
     const profile = profiles.find(p => String(p.id) === String(profileId));
     if (!profile) throw new Error("Profile not found");
-    devtoolsLog("[mrpack] Profile found:", profile);
 
-    const instanceFolder = path.join(dataDir, 'client', String(profile.id));
-    if (!fs.existsSync(instanceFolder)) throw new Error("Instance folder not found: " + instanceFolder);
-    devtoolsLog("[mrpack] Instance folder:", instanceFolder);
+    const instanceFolder = path.join(dataDir, "client", String(profile.id));
+    if (!fs.existsSync(instanceFolder)) throw new Error("Instance folder not found");
 
-    // Collect all files
-    devtoolsLog("[mrpack] Collecting files...");
-    const files = await collectInstanceFiles(instanceFolder);
-    devtoolsLog("[mrpack] Found", files.length, "files");
+    // Default to Downloads rather than dropping the file inside the launcher's
+    // own data folder, where nobody would think to look for it.
+    let outDir = destDir && String(destDir).trim();
+    if (!outDir) { try { outDir = app.getPath("downloads"); } catch { outDir = app.getPath("home"); } }
+    try { await fsp.mkdir(outDir, { recursive: true }); }
+    catch (e) { throw new Error(`Can't use that folder: ${e.message}`); }
 
-    // Prepare index files and overrides
-    const indexFiles = [];
-    const overrideFiles = [];
-
-    for (const f of files) {
-      const buffer = await fsp.readFile(f.full);
-      const { sha1, sha512 } = computeHashes(buffer);
-      const relPath = f.rel.replace(/\\/g, '/');
-
-      // Determine environment
-      let env = { client: 'optional', server: 'optional' };
-      const l = relPath.toLowerCase();
-      if (l.startsWith('mods/') || l.includes('/mods/')) env = { client: 'required', server: 'unsupported' };
-      else if (l.startsWith('resourcepacks/') || l.includes('/resourcepacks/')) env = { client: 'required', server: 'optional' };
-      else if (l.startsWith('shaderpacks/') || l.includes('/shaderpacks/')) env = { client: 'required', server: 'unsupported' };
-
-      devtoolsLog("[mrpack] Looking up Modrinth for:", relPath);
-      const lookup = await lookupModrinthByHash(sha512, sha1);
-
-      if (lookup && lookup.url) {
-        devtoolsLog("[mrpack] Found on Modrinth:", relPath);
-        indexFiles.push({
-          path: relPath,
-          hashes: { sha1, sha512 },
-          env,
-          downloads: [lookup.url],
-          fileSize: buffer.length
-        });
-      } else {
-        devtoolsLog("[mrpack] Not on Modrinth, adding to overrides:", relPath);
-        overrideFiles.push({ relPath, buffer });
-      }
-    }
-
-    // Build modrinth.index.json
-    const indexJson = {
-      formatVersion: 1,
-      game: "minecraft",
-      versionId: String(Date.now()),
-      name: profile.name || `Instance ${profile.id}`,
-      files: indexFiles,
-      dependencies: { minecraft: profile.version || "1.20.1" }
-    };
-    if (profile.loader) {
-      if (profile.loader === 'fabric') indexJson.dependencies['fabric-loader'] = "unknown";
-      else if (profile.loader === 'quilt') indexJson.dependencies['quilt-loader'] = "unknown";
-      else if (profile.loader === 'forge') indexJson.dependencies['forge'] = "unknown";
-      else if (profile.loader === 'neoforge') indexJson.dependencies['neoforge'] = "unknown";
-    }
-
-    // Create .mrpack zip
-    const mrpackName = `${profile.name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_') || 'pack'}-${profile.id}.mrpack`;
-    const mrpackPath = path.join(dataDir, mrpackName);
-    devtoolsLog("[mrpack] Creating zip:", mrpackPath);
+    report("Collecting files", 0, 1);
+    const files = await collectInstanceFiles(instanceFolder, include);
+    if (!files.length) throw new Error("Nothing selected to export.");
 
     const zip = new AdmZip();
-    zip.addFile('modrinth.index.json', Buffer.from(JSON.stringify(indexJson, null, 2), 'utf8'));
+    const linked = [];        // resolved to a download the pack format can reference
+    const overrides = [];     // shipped inside the zip
+    let done = 0;
 
-    // Add overrides files
-    devtoolsLog("[mrpack] Adding overrides files:", overrideFiles.length);
-    for (const f of overrideFiles) {
-      const target = path.posix.join('overrides', f.relPath);
-      zip.addFile(target, f.buffer);
+    for (const f of files) {
+      report("Checking " + path.basename(f.rel), done++, files.length);
+      const buffer = await fsp.readFile(f.full);
+      const relPath = f.rel.replace(/\\/g, "/");
+      const isMod = /^mods\//i.test(relPath);
+      let resolved = null;
+
+      // Only mods are worth looking up: a pack index can reference them by
+      // download, and everything else is config the user actually changed.
+      if (isMod && /\.jar$/i.test(relPath)) {
+        if (format === "modrinth") {
+          const { sha1, sha512 } = computeHashes(buffer);
+          const hit = await lookupModrinthByHash(sha512, sha1);
+          if (hit && hit.url) resolved = { kind: "modrinth", url: hit.url, sha1, sha512, size: buffer.length };
+        } else {
+          const hit = await lookupCurseByFile(f.full);
+          if (hit) resolved = { kind: "curseforge", projectID: hit.projectID, fileID: hit.fileID };
+        }
+      }
+
+      if (resolved) linked.push({ relPath, resolved });
+      else overrides.push({ relPath, buffer });
     }
 
-    zip.writeZip(mrpackPath);
-    devtoolsLog("[mrpack] Export complete:", mrpackPath);
+    report("Writing the pack", files.length, files.length);
+    if (format === "modrinth") {
+      const indexJson = {
+        formatVersion: 1,
+        game: "minecraft",
+        versionId: String(profile.version || "1.0.0"),
+        name: profile.name || `Instance ${profile.id}`,
+        files: linked.map(l => ({
+          path: l.relPath,
+          hashes: { sha1: l.resolved.sha1, sha512: l.resolved.sha512 },
+          env: { client: "required", server: "unsupported" },
+          downloads: [l.resolved.url],
+          fileSize: l.resolved.size,
+        })),
+        dependencies: { minecraft: profile.version || "1.20.1" },
+      };
+      const loaderKey = { fabric: "fabric-loader", quilt: "quilt-loader", forge: "forge", neoforge: "neoforge" }[profile.loader];
+      if (loaderKey) indexJson.dependencies[loaderKey] = profile.loaderVersion || "*";
+      zip.addFile("modrinth.index.json", Buffer.from(JSON.stringify(indexJson, null, 2), "utf8"));
+    } else {
+      const loaderId = curseLoaderId(profile);
+      const manifest = {
+        minecraft: {
+          version: profile.version || "1.20.1",
+          modLoaders: loaderId ? [{ id: loaderId, primary: true }] : [],
+        },
+        manifestType: "minecraftModpack",
+        manifestVersion: 1,
+        name: profile.name || `Instance ${profile.id}`,
+        version: "1.0.0",
+        author: "",
+        files: linked.map(l => ({ projectID: l.resolved.projectID, fileID: l.resolved.fileID, required: true })),
+        overrides: "overrides",
+      };
+      zip.addFile("manifest.json", Buffer.from(JSON.stringify(manifest, null, 2), "utf8"));
+      // CurseForge shows this in its importer; harmless if ignored.
+      zip.addFile("modlist.html", Buffer.from(
+        "<ul>" + linked.map(l => `<li>${path.basename(l.relPath)}</li>`).join("") + "</ul>", "utf8"));
+    }
 
-    return { success: true, mrpackPath, indexJson };
+    for (const f of overrides) zip.addFile(path.posix.join("overrides", f.relPath), f.buffer);
 
+    const ext = format === "modrinth" ? ".mrpack" : ".zip";
+    const dest = freeExportPath(outDir, profile.name || `instance-${profile.id}`, ext);
+    // Only the write itself can really tell us whether the folder is usable --
+    // a permission pre-check is racy, and passes outright for a privileged user.
+    try { zip.writeZip(dest); }
+    catch (e) {
+      if (e && (e.code === "EACCES" || e.code === "EPERM")) throw new Error("That folder can't be written to. Pick another one.");
+      if (e && e.code === "ENOSPC") throw new Error("There isn't enough space on that drive.");
+      throw e;
+    }
+    devtoolsLog("[export] wrote", dest, `(${linked.length} linked, ${overrides.length} bundled)`);
+    return { success: true, path: dest, linked: linked.length, bundled: overrides.length };
   } catch (err) {
-    devtoolsLog("[mrpack] Error exporting:", err);
+    devtoolsLog("[export] failed:", err);
     return { success: false, error: err.message || String(err) };
   }
 });
+
+// Resolve a jar to a CurseForge project/file via its fingerprint, so the
+// manifest can reference it instead of bundling the jar.
+async function lookupCurseByFile(fullPath) {
+  try {
+    const fp = await getFingerprint(fullPath);
+    if (!fp) return null;
+    const r = await fetch(`${WORKER_URL}/fingerprints`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fingerprints: [fp] }),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const m = (data.data?.exactMatches || [])[0];
+    if (!m || !m.id || !m.file?.id) return null;
+    return { projectID: m.id, fileID: m.file.id };
+  } catch { return null; }
+}
 
 /* ─────────────── dihhcord ─────────────── */
 // Keep a single launcher-start timestamp so the elapsed timer in the Discord
