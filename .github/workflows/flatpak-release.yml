@@ -3,7 +3,7 @@ name: Flatpak Release
 on:
   push:
     tags:
-      - 'v*'
+      - '*.*.*'
 
 permissions:
   contents: write
