@@ -1,0 +1,44 @@
+name: Flatpak Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: npm run buildLinux
+
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08 org.electronjs.Electron2.BaseApp//23.08
+
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: repo-publish
+
+      - run: mkdir -p repo-publish/repo
+
+      - run: flatpak-builder --user --repo=repo-publish/repo --force-clean build-dir io.github.TGGamesYT.redstone-launcher.yml
+
+      - run: flatpak build-update-repo repo-publish/repo
+
+      - run: cp redstone-launcher.flatpakrepo repo-publish/
+
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./repo-publish
