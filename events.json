@@ -1,0 +1,5 @@
+[
+  { "name": "September Event", "mrpackUrl": "https://tggamesyt.dev/event.mrpack", "serverIp": "hypixel.net", "start": "2025-09-01", "end": "2025-10-01" },
+  { "name": "August Event", "mrpackUrl": "https://tggamesyt.dev/event.mrpack", "serverIp": "hypixel.net", "start": "2025-08-01", "end": "2025-08-31" },
+  { "name": "October Event", "mrpackUrl": "https://tggamesyt.dev/event.mrpack", "serverIp": "hypixel.net", "start": "2025-10-05", "end": "2025-10-20" }
+]
