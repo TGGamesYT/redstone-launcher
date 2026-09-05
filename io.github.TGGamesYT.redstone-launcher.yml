@@ -1,0 +1,26 @@
+id: io.github.TGGamesYT.redstone-launcher
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '23.08'
+command: redstone-launcher
+
+finish-args:
+  - --socket=x11
+  - --socket=wayland
+  - --device=dri
+  - --share=network
+  - --socket=pulseaudio
+
+modules:
+  - name: redstone-launcher
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/bin /app/lib/redstone-launcher
+      - cp -r * /app/lib/redstone-launcher/
+      - ln -s /app/lib/redstone-launcher/redstone-launcher /app/bin/redstone-launcher
+      - chmod +x /app/bin/redstone-launcher
+    sources:
+      - type: dir
+        path: ./dist/linux-unpacked
