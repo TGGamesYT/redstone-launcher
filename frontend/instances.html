@@ -82,7 +82,10 @@
     /* Normalise every control in the toolbar to the same height (native selects
        and text inputs otherwise render a couple of pixels apart) and drop the
        global bottom margin so the rows sit tight. */
-    #search-sort input,
+    /* Checkboxes excluded: this is meant for the text field and the selects, but
+       as an ID selector it also out-specified the .rl-toggle switch and stretched
+       its pill to the full 42px row height. */
+    #search-sort input:not([type="checkbox"]),
     #search-sort select,
     #search-sort .add-instance-btn {
       height: 42px;

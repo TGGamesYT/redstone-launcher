@@ -30,7 +30,10 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     /* Search / filter / sort toolbar (mirrors the instances page). */
     #server-search-sort { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
     #server-search-sort .ss-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    #server-search-sort input, #server-search-sort select, #server-search-sort .add-server-btn {
+    /* Checkboxes excluded -- see the same rule on the instances page: as an ID
+       selector it beat the .rl-toggle switch and gave its pill a 42px height and
+       an auto width. */
+    #server-search-sort input:not([type="checkbox"]), #server-search-sort select, #server-search-sort .add-server-btn {
       /* width:auto so the flex sizing wins over the global `select{width:100%}`
          (which was forcing every control full-width and wrapping to 3 lines). */
       height: 42px; margin-bottom: 0; box-sizing: border-box; width: auto; min-width: 0;

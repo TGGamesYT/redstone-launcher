@@ -755,13 +755,17 @@
       } catch { _still = false; }
       return _still;
     }
+    // The still is drawn into an <img> that a card then scales to its own size,
+    // so rendering at the nominal 150x300 left it soft on any card bigger than
+    // that -- and softer still on a HiDPI screen. Render a multiple of it.
+    const STILL_SCALE = Math.min(4, Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)));
     // Renders are serialised through one viewer, so queue them.
     let _stillQueue = Promise.resolve();
     function renderStill(src, model, w, h) {
       const run = async () => {
         const s = ensureStill(); if (!s) return null;
         try {
-          s.v.setSize(w, h);
+          s.v.setSize(w * STILL_SCALE, h * STILL_SCALE);
           await s.v.loadSkin(src, { model: model === "slim" ? "slim" : "default" });
           spinTarget(s.v).rotation.y = 0;
           s.v.render();
@@ -845,7 +849,12 @@
       if (L.raf) { cancelAnimationFrame(L.raf); L.raf = null; }
       L.easing = false;
       if (L.host.parentNode) L.host.parentNode.removeChild(L.host);
-      if (L.owner && L.owner._still) L.owner._still.style.visibility = "";
+      if (L.owner) {
+        if (L.owner._still) L.owner._still.style.visibility = "";
+        // Without this, a card whose viewer got taken by a third hover kept a
+        // stale _live pointer and could never be hovered again.
+        if (L.owner._live === L) L.owner._live = null;
+      }
       L.owner = null;
     }
 
@@ -931,15 +940,65 @@
     // card back its still image.
     function wireSpin(hoverEl, holder) {
       const info = holder && holder._spin; if (!info || !hoverEl) return;
+
+      // Rotating is a drag, and a drag must not also count as the click that
+      // selects the card. Swallow the click when the pointer actually moved.
+      let downX = 0, downY = 0, dragged = false;
+      hoverEl.addEventListener("pointerdown", (e) => { downX = e.clientX; downY = e.clientY; dragged = false; });
+      hoverEl.addEventListener("pointermove", (e) => {
+        if (!e.buttons) return;
+        if (Math.abs(e.clientX - downX) > 4 || Math.abs(e.clientY - downY) > 4) dragged = true;
+      });
+      // Wrapping rather than listening: a listener added here would run AFTER
+      // the onclick createCard already assigned, which is too late to stop it.
+      const cardClick = hoverEl.onclick;
+      hoverEl.onclick = function (e) {
+        if (dragged) { dragged = false; return; }
+        if (cardClick) return cardClick.call(this, e);
+      };
+
+      // Match the render to how big the card actually is, and to the screen's
+      // pixel density -- a fixed 150x300 buffer stretched over a bigger card is
+      // the blurriness that shows up worst in the add-by-username preview.
+      const liveSize = () => {
+        const r = holder.getBoundingClientRect();
+        const dpr = Math.min(3, window.devicePixelRatio || 1);
+        return {
+          w: Math.max(64, Math.round((r.width || info.w) * dpr)),
+          h: Math.max(64, Math.round((r.height || info.h) * dpr)),
+        };
+      };
+
       hoverEl.addEventListener("mouseenter", () => {
         if (holder._dead) return;            // nothing rendered for this one
+
+        // A viewer may still be easing out of THIS card. Reusing it avoids
+        // pointing two viewers at one card, which used to end with the first
+        // one finishing its ease and un-hiding the still while the second was
+        // still spinning -- the flat image reappearing behind the spin.
+        const easing = _livePool.find(P => P.owner === holder && P.easing);
+        if (easing) {
+          if (easing.raf) { cancelAnimationFrame(easing.raf); easing.raf = null; }
+          easing.easing = false;
+          holder._live = easing;
+          try {
+            easing.v.renderPaused = false;
+            easing.v.autoRotate = true; easing.v.autoRotateSpeed = 1.0;
+          } catch { }
+          if (holder._still) holder._still.style.visibility = "hidden";
+          return;
+        }
         if (holder._live) return;            // already ours
+        // Belt and braces: nothing else may still be pointed at this card.
+        for (const P of _livePool) if (P.owner === holder) detachLive(P);
+
         const L = takeLive(); if (!L) return;
         detachLive(L);
         L.owner = holder; holder._live = L;
         const token = ++L.seq;               // a later hover invalidates this one
         try {
-          L.v.setSize(info.w, info.h);
+          const sz = liveSize();
+          L.v.setSize(sz.w, sz.h);
           // Mount only once the texture is in. Showing the canvas first meant a
           // frame or two of an empty scene -- the white flash.
           L.v.renderPaused = true;
@@ -953,7 +1012,7 @@
             } catch { }
             holder.appendChild(L.host);
             if (holder._still) holder._still.style.visibility = "hidden";
-          }).catch(() => { if (L.owner === holder) { holder._live = null; detachLive(L); } });
+          }).catch(() => { if (L.owner === holder) detachLive(L); });
         } catch { }
       });
       hoverEl.addEventListener("mouseleave", () => {
