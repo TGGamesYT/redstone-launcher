@@ -286,10 +286,22 @@
         <canvas id="ed-canvas" width="640" height="640"></canvas>
         <canvas id="ed-overlay" width="640" height="640"></canvas>
       </div>
+      <!-- Only while something is selected. -->
+      <div id="ed-sel-bar" style="display:none; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap;">
+        <span class="ed-hint" style="margin:0;">Drag inside to move.</span>
+        <button class="ed-btn" id="ed-sel-fliph" style="width:auto; padding:5px 10px;" title="Flip the selection left-to-right"><i class="material-icons" style="font-size:16px;">swap_horiz</i> Flip H</button>
+        <button class="ed-btn" id="ed-sel-flipv" style="width:auto; padding:5px 10px;" title="Flip the selection top-to-bottom"><i class="material-icons" style="font-size:16px;">swap_vert</i> Flip V</button>
+        <button class="ed-btn" id="ed-sel-colour" style="width:auto; padding:5px 10px;" title="Shift the selection's colours"><i class="material-icons" style="font-size:16px;">palette</i> Colour…</button>
+        <button class="ed-btn" id="ed-sel-fill" style="width:auto; padding:5px 10px;" title="Fill the selection with the brush colour"><i class="material-icons" style="font-size:16px;">format_color_fill</i> Fill</button>
+        <button class="ed-btn" id="ed-sel-delete" style="width:auto; padding:5px 10px;" title="Erase what's selected"><i class="material-icons" style="font-size:16px;">delete</i> Erase</button>
+        <button class="ed-btn" id="ed-sel-none" style="width:auto; padding:5px 10px;">Deselect</button>
+      </div>
       <!-- Only while an image is being positioned on the texture. -->
       <div id="ed-place-bar" style="display:none; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap;">
         <span class="ed-hint" style="margin:0;">Drag to move, corners to resize.</span>
         <label class="rl-toggle"><input type="checkbox" id="ed-place-smooth"> Smooth scaling</label>
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px;">Opacity
+          <input type="range" id="ed-place-op" min="5" max="100" value="100" style="width:90px;"></label>
         <button class="ed-btn" id="ed-place-fit" style="width:auto; padding:5px 10px;">Fit to a face…</button>
         <button class="ed-btn primary" id="ed-place-ok" style="width:auto; padding:5px 12px;">Place</button>
         <button class="ed-btn" id="ed-place-cancel" style="width:auto; padding:5px 12px;">Cancel</button>
@@ -341,6 +353,9 @@
       <div class="ed-group">
         <h4>Layers</h4>
         <div class="ed-layer-list" id="ed-layers"></div>
+        <div class="ed-row" style="margin-top:6px;"><label>Opacity</label>
+          <input type="range" id="ed-layer-op" min="0" max="100" value="100"><span id="ed-layer-op-val" style="width:34px; font-size:11px;">100%</span>
+        </div>
         <div class="ed-btn-row" style="margin-top:6px;">
           <button class="ed-btn" id="ed-layer-add" title="New layer"><i class="material-icons">add</i></button>
           <button class="ed-btn" id="ed-layer-dup" title="Duplicate layer"><i class="material-icons">content_copy</i></button>
@@ -556,7 +571,7 @@
       const canvas = document.createElement('canvas'); canvas.width = SIZE; canvas.height = SIZE;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       ctx.imageSmoothingEnabled = false;
-      return { id: layerSeq++, name: name || `Layer ${layerSeq - 1}`, canvas, ctx, visible: true };
+      return { id: layerSeq++, name: name || `Layer ${layerSeq - 1}`, canvas, ctx, visible: true, opacity: 1 };
     }
     // The context tools draw into. Never `wctx` directly any more -- writing to
     // the flattened canvas would be wiped by the next compose().
@@ -569,7 +584,12 @@
     function compose() {
       wctx.clearRect(0, 0, SIZE, SIZE);
       wctx.imageSmoothingEnabled = false;
-      for (const l of layers) if (l.visible) wctx.drawImage(l.canvas, 0, 0);
+      for (const l of layers) {
+        if (!l.visible) continue;
+        wctx.globalAlpha = (l.opacity == null ? 1 : l.opacity);
+        wctx.drawImage(l.canvas, 0, 0);
+      }
+      wctx.globalAlpha = 1;
     }
     // Replace the whole stack with one layer holding this image. Used wherever a
     // skin is loaded wholesale (opening one to edit, the creator's output).
@@ -626,7 +646,7 @@
         };
         row.appendChild(eye);
 
-        row.onclick = () => { activeLayer = i; renderLayerList(); };
+        row.onclick = () => { activeLayer = i; renderLayerList(); syncLayerOpacity(); };
         name.ondblclick = async (e) => {
           e.stopPropagation();
           const nm = await edAskText('Rename layer', 'Layer name', l.name);
@@ -639,7 +659,26 @@
       }
     }
 
-    function layerPanelRefresh() { compose(); renderLayerList(); render(); liveUpdate(); }
+    function syncLayerOpacity() {
+      const l = activeLayerObj(); if (!l) return;
+      const sl = document.getElementById('ed-layer-op'), lab = document.getElementById('ed-layer-op-val');
+      const pct = Math.round((l.opacity == null ? 1 : l.opacity) * 100);
+      if (sl) sl.value = pct;
+      if (lab) lab.textContent = pct + '%';
+    }
+    function layerPanelRefresh() { compose(); renderLayerList(); syncLayerOpacity(); render(); liveUpdate(); }
+
+    // Layer opacity. Dragging is one undo step, taken on the first move rather
+    // than on every frame.
+    let layerOpDragging = false;
+    document.getElementById('ed-layer-op').oninput = (e) => {
+      const l = activeLayerObj(); if (!l) return;
+      if (!layerOpDragging) { layerOpDragging = true; pushUndo(); }
+      l.opacity = (+e.target.value) / 100;
+      document.getElementById('ed-layer-op-val').textContent = e.target.value + '%';
+      compose(); render(); liveUpdate();
+    };
+    document.getElementById('ed-layer-op').onchange = () => { layerOpDragging = false; renderLayerList(); };
 
     document.getElementById('ed-layer-add').onclick = () => {
       pushUndo();
@@ -689,7 +728,10 @@
     function snapshot() {
       return {
         active: activeLayer,
-        layers: layers.map(l => ({ id: l.id, name: l.name, visible: l.visible, data: l.ctx.getImageData(0, 0, SIZE, SIZE) })),
+        // The selection rides along, so undoing a move puts the marching ants
+        // back where they were as well as the pixels.
+        selection: selection ? { mask: new Uint8Array(selection.mask), x: selection.x, y: selection.y, w: selection.w, h: selection.h } : null,
+        layers: layers.map(l => ({ id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, data: l.ctx.getImageData(0, 0, SIZE, SIZE) })),
       };
     }
     // Grey out the undo/redo buttons when there's nothing left in that direction.
@@ -703,12 +745,15 @@
       if (!snap || !Array.isArray(snap.layers)) return;
       layers = snap.layers.map(o => {
         const l = makeLayer(o.name);
-        l.id = o.id; l.visible = o.visible;
+        l.id = o.id; l.visible = o.visible; l.opacity = (o.opacity == null ? 1 : o.opacity);
         l.ctx.putImageData(o.data, 0, 0);
         return l;
       });
       activeLayer = Math.max(0, Math.min(snap.active, layers.length - 1));
-      compose(); renderLayerList(); render(); liveUpdate(); refreshUndoButtons();
+      selFloat = null;                    // a lifted selection is part of the past
+      selection = snap.selection ? { ...snap.selection, mask: new Uint8Array(snap.selection.mask) } : null;
+      refreshSelectionUI();
+      compose(); renderLayerList(); syncLayerOpacity(); render(); liveUpdate(); refreshUndoButtons(); renderOverlay();
     }
     function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
     function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
@@ -730,6 +775,239 @@
       vctx.drawImage(work, 0, 0, SIZE, SIZE, 0, 0, view.width, view.height);
       renderOverlay();
     }
+    // ── Selection ───────────────────────────────────────────────────────────
+    // A per-texel mask, so a dragged rectangle and a drawn-around lasso are the
+    // same thing to everything downstream. `null` means nothing is selected.
+    let selection = null;          // { mask: Uint8Array(SIZE*SIZE), x, y, w, h }
+    let selDraft = null;           // in-progress drag: { mode, x0, y0, x1, y1, pts }
+    let selFloat = null;           // pixels lifted off the layer while being moved
+
+    function makeSelection(mask) {
+      let minX = SIZE, minY = SIZE, maxX = -1, maxY = -1, any = false;
+      for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+        if (!mask[y * SIZE + x]) continue;
+        any = true;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+      if (!any) return null;
+      return { mask, x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+    }
+    const selHas = (x, y) => !!(selection && x >= 0 && y >= 0 && x < SIZE && y < SIZE && selection.mask[y * SIZE + x]);
+
+    function selectRect(x0, y0, x1, y1) {
+      const ax = Math.max(0, Math.min(x0, x1)), ay = Math.max(0, Math.min(y0, y1));
+      const bx = Math.min(SIZE - 1, Math.max(x0, x1)), by = Math.min(SIZE - 1, Math.max(y0, y1));
+      const mask = new Uint8Array(SIZE * SIZE);
+      for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) mask[y * SIZE + x] = 1;
+      return makeSelection(mask);
+    }
+    // Lasso: fill the polygon the pointer drew, by even-odd crossing count at each
+    // texel centre. The path is closed automatically between last and first point.
+    function selectPolygon(pts) {
+      if (!pts || pts.length < 3) return null;
+      const mask = new Uint8Array(SIZE * SIZE);
+      for (let y = 0; y < SIZE; y++) {
+        const cy = y + 0.5;
+        for (let x = 0; x < SIZE; x++) {
+          const cx = x + 0.5;
+          let inside = false;
+          for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+            const yi = pts[i].y, yj = pts[j].y, xi = pts[i].x, xj = pts[j].x;
+            if ((yi > cy) !== (yj > cy) && cx < ((xj - xi) * (cy - yi)) / ((yj - yi) || 1e-9) + xi) inside = !inside;
+          }
+          if (inside) mask[y * SIZE + x] = 1;
+        }
+      }
+      return makeSelection(mask);
+    }
+
+    function clearSelection() {
+      commitFloat();
+      selection = null; selDraft = null;
+      refreshSelectionUI();
+      renderOverlay();
+    }
+    function refreshSelectionUI() {
+      const bar = document.getElementById('ed-sel-bar');
+      if (bar) bar.style.display = selection ? 'flex' : 'none';
+    }
+
+    // Lift the selected pixels off the layer so they can be dragged around.
+    function liftFloat() {
+      if (!selection || selFloat) return;
+      const src = dctx().getImageData(0, 0, SIZE, SIZE);
+      const cv = document.createElement('canvas'); cv.width = SIZE; cv.height = SIZE;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      const out = cx.createImageData(SIZE, SIZE);
+      for (let i = 0; i < SIZE * SIZE; i++) {
+        if (!selection.mask[i]) continue;
+        for (let k = 0; k < 4; k++) out.data[i * 4 + k] = src.data[i * 4 + k];
+        src.data[i * 4 + 3] = 0;              // leave a hole behind
+      }
+      cx.putImageData(out, 0, 0);
+      dctx().putImageData(src, 0, 0);
+      selFloat = { canvas: cv, dx: 0, dy: 0 };
+      compose();
+    }
+    // Stamp the floating pixels back down wherever they ended up.
+    function commitFloat() {
+      if (!selFloat) return;
+      const d = dctx();
+      d.save(); d.globalAlpha = 1; d.imageSmoothingEnabled = false;
+      d.drawImage(selFloat.canvas, selFloat.dx, selFloat.dy);
+      d.restore();
+      // The selection follows the pixels it was holding.
+      if (selection && (selFloat.dx || selFloat.dy)) {
+        const m = new Uint8Array(SIZE * SIZE);
+        for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+          if (!selection.mask[y * SIZE + x]) continue;
+          const nx = x + selFloat.dx, ny = y + selFloat.dy;
+          if (nx >= 0 && ny >= 0 && nx < SIZE && ny < SIZE) m[ny * SIZE + nx] = 1;
+        }
+        selection = makeSelection(m);
+      }
+      selFloat = null;
+      compose(); renderLayerList(); render(); liveUpdate();
+    }
+
+    // ── Operations on the selection ─────────────────────────────────────────
+    // Flip the selected content within its own bounding box. The mask flips with
+    // it, so a lasso shape turns over rather than the pixels sliding under a
+    // fixed outline.
+    function flipSelection(horizontal) {
+      if (!selection) return;
+      commitFloat();
+      pushUndo();
+      const d = dctx();
+      const img = d.getImageData(0, 0, SIZE, SIZE);
+      const before = new Uint8ClampedArray(img.data);
+      const { x, y, w, h } = selection;
+      const oldMask = selection.mask;
+      const newMask = new Uint8Array(SIZE * SIZE);
+      for (let yy = y; yy < y + h; yy++) {
+        for (let xx = x; xx < x + w; xx++) {
+          const sx = horizontal ? (x + (x + w - 1 - xx)) : xx;
+          const sy = horizontal ? yy : (y + (y + h - 1 - yy));
+          const si = sy * SIZE + sx, di = yy * SIZE + xx;
+          if (!oldMask[si]) continue;                  // source wasn't selected
+          newMask[di] = 1;
+          for (let k = 0; k < 4; k++) img.data[di * 4 + k] = before[si * 4 + k];
+        }
+      }
+      // Anything that was selected but is no longer covered has moved away.
+      for (let i = 0; i < SIZE * SIZE; i++) if (oldMask[i] && !newMask[i]) img.data[i * 4 + 3] = 0;
+      d.putImageData(img, 0, 0);
+      selection = makeSelection(newMask) || selection;
+      compose(); renderLayerList(); render(); liveUpdate(); renderOverlay();
+    }
+
+    // RGB <-> HSL, so hue and saturation can be shifted without touching alpha.
+    function rgbToHsl(r, g, b) {
+      r /= 255; g /= 255; b /= 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      let h = 0, sVal = 0; const l = (mx + mn) / 2;
+      const d = mx - mn;
+      if (d) {
+        sVal = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+        if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0));
+        else if (mx === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h /= 6;
+      }
+      return [h * 360, sVal, l];
+    }
+    function hslToRgb(h, sVal, l) {
+      h = ((h % 360) + 360) % 360 / 360;
+      if (!sVal) { const v = Math.round(l * 255); return [v, v, v]; }
+      const q = l < 0.5 ? l * (1 + sVal) : l + sVal - l * sVal;
+      const p = 2 * l - q;
+      const hue = (t) => {
+        t = t < 0 ? t + 1 : (t > 1 ? t - 1 : t);
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+      };
+      return [Math.round(hue(h + 1 / 3) * 255), Math.round(hue(h) * 255), Math.round(hue(h - 1 / 3) * 255)];
+    }
+
+    // opts: { hue, sat, light, tint: '#rrggbb'|null, tintAmount } -- sat/light are
+    // -100..100, hue is -180..180, tintAmount 0..100.
+    function applyColourShift(opts) {
+      if (!selection) return;
+      const d = dctx();
+      const img = d.getImageData(0, 0, SIZE, SIZE);
+      const tint = opts.tint ? hexToRgb(opts.tint) : null;
+      const tA = Math.max(0, Math.min(100, opts.tintAmount || 0)) / 100;
+      for (let i = 0; i < SIZE * SIZE; i++) {
+        if (!selection.mask[i]) continue;
+        const o = i * 4;
+        if (img.data[o + 3] === 0) continue;           // don't colour empty texels
+        let r = img.data[o], g = img.data[o + 1], b = img.data[o + 2];
+        if (opts.hue || opts.sat || opts.light) {
+          let [h, sv, l] = rgbToHsl(r, g, b);
+          h += (opts.hue || 0);
+          sv = Math.max(0, Math.min(1, sv + (opts.sat || 0) / 100));
+          l = Math.max(0, Math.min(1, l + (opts.light || 0) / 100));
+          [r, g, b] = hslToRgb(h, sv, l);
+        }
+        if (tint && tA > 0) {
+          r = Math.round(r + (tint.r - r) * tA);
+          g = Math.round(g + (tint.g - g) * tA);
+          b = Math.round(b + (tint.b - b) * tA);
+        }
+        img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b;
+      }
+      d.putImageData(img, 0, 0);
+    }
+
+    // Marching ants: outline every mask edge, so a lasso shows its real shape.
+    function drawSelection() {
+      if (!selection && !selDraft) return;
+      octx.save();
+      octx.lineWidth = 2;
+      octx.strokeStyle = '#fff';
+      octx.setLineDash([5, 4]);
+      octx.lineDashOffset = -(Date.now() / 90) % 9;
+      if (selection) {
+        // The float is drawn where it currently sits, not where it came from.
+        if (selFloat) {
+          octx.setLineDash([]);
+          octx.imageSmoothingEnabled = false;
+          try { octx.drawImage(selFloat.canvas, selFloat.dx * SCALE, selFloat.dy * SCALE, SIZE * SCALE, SIZE * SCALE); } catch { }
+          octx.setLineDash([5, 4]);
+        }
+        const off = selFloat ? { x: selFloat.dx, y: selFloat.dy } : { x: 0, y: 0 };
+        octx.beginPath();
+        for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+          if (!selection.mask[y * SIZE + x]) continue;
+          const px = (x + off.x) * SCALE, py = (y + off.y) * SCALE;
+          if (!selHas(x, y - 1)) { octx.moveTo(px, py); octx.lineTo(px + SCALE, py); }
+          if (!selHas(x, y + 1)) { octx.moveTo(px, py + SCALE); octx.lineTo(px + SCALE, py + SCALE); }
+          if (!selHas(x - 1, y)) { octx.moveTo(px, py); octx.lineTo(px, py + SCALE); }
+          if (!selHas(x + 1, y)) { octx.moveTo(px + SCALE, py); octx.lineTo(px + SCALE, py + SCALE); }
+        }
+        octx.stroke();
+      }
+      if (selDraft) {
+        octx.beginPath();
+        if (selDraft.mode === 'rect') {
+          const x = Math.min(selDraft.x0, selDraft.x1) * SCALE, y = Math.min(selDraft.y0, selDraft.y1) * SCALE;
+          const w = (Math.abs(selDraft.x1 - selDraft.x0) + 1) * SCALE, h = (Math.abs(selDraft.y1 - selDraft.y0) + 1) * SCALE;
+          octx.rect(x, y, w, h);
+        } else if (selDraft.pts && selDraft.pts.length) {
+          octx.moveTo(selDraft.pts[0].x * SCALE, selDraft.pts[0].y * SCALE);
+          for (const pt of selDraft.pts) octx.lineTo(pt.x * SCALE, pt.y * SCALE);
+          octx.closePath();
+        }
+        octx.stroke();
+      }
+      octx.restore();
+    }
+    // Keep the ants crawling while something is selected.
+    setInterval(() => { if (selection || selDraft) renderOverlay(); }, 120);
+
     // ── Placing an image on the texture ─────────────────────────────────────
     // A floating rectangle you drag and scale by its corners, committed onto the
     // active layer. Separate from the body wrap, which projects an image around
@@ -752,7 +1030,9 @@
       octx.save();
       // Pixel art must stay crisp; a photo is better off smoothed.
       octx.imageSmoothingEnabled = !!place.smooth;
+      octx.globalAlpha = place.opacity == null ? 1 : place.opacity;
       try { octx.drawImage(place.img, x, y, w, h); } catch { }
+      octx.globalAlpha = 1;
       octx.imageSmoothingEnabled = false;
       octx.setLineDash([6, 4]);
       octx.strokeStyle = '#fff'; octx.lineWidth = 2;
@@ -784,7 +1064,8 @@
       const hot = hiOverlay ? FACE_OVERLAY : FACE_BASE;
       faint.forEach(r => outlineRect(r, 'rgba(255,255,255,0.12)', null));
       hot.forEach(r => outlineRect(r, 'var(--base-color)', r.front ? r.name : null));
-      drawPlacement();   // last, so it sits over the grid and the face outlines
+      drawPlacement();   // over the grid and the face outlines
+      drawSelection();   // and the selection over that
     }
     function outlineRect(r, stroke, label) {
       octx.strokeStyle = stroke === 'var(--base-color)'
@@ -816,7 +1097,18 @@
     function jitter(v, amt) { return Math.max(0, Math.min(255, v + Math.round((Math.random() * 2 - 1) * amt))); }
     function setTexel(x, y, mode, force) {
       if (!paintable(x, y, force)) return;
-      if (mode === 'eraser') { dctx().clearRect(x, y, 1, 1); return; }
+      if (mode === 'eraser') {
+        const e = dctx();
+        if (opacity >= 1) { e.clearRect(x, y, 1, 1); return; }
+        // Partial erase: take `opacity` worth of alpha away instead of all of it.
+        e.save();
+        e.globalCompositeOperation = 'destination-out';
+        e.globalAlpha = opacity;
+        e.fillStyle = '#000';
+        e.fillRect(x, y, 1, 1);
+        e.restore();
+        return;
+      }
       let r = color.r, g = color.g, b = color.b;
       if (mode === 'texture') { r = jitter(r, 22); g = jitter(g, 22); b = jitter(b, 22); }
       // Compose with opacity (erase target first so alpha is exact).
@@ -909,11 +1201,33 @@
     // While an image is being placed it owns the canvas: drag inside to move,
     // drag a corner to scale. Drawing tools are suspended until it's committed.
     let placeDrag = null;
+    let selDrag = null;
     function viewPos(e) {
       const r = view.getBoundingClientRect();
       return { x: (e.clientX - r.left) * (view.width / r.width), y: (e.clientY - r.top) * (view.height / r.height) };
     }
+    const isSelectTool = () => tool === 'select-rect' || tool === 'select-free';
     view.addEventListener('pointerdown', (e) => {
+      if (!place && isSelectTool()) {
+        e.preventDefault(); view.setPointerCapture(e.pointerId);
+        const t = texelFromEvent(e);
+        // Pressing INSIDE an existing selection drags it; anywhere else starts a
+        // new one (and drops whatever was floating first).
+        if (selHas(t.x, t.y)) {
+          pushUndo();
+          liftFloat();
+          selDrag = { start: t, base: { dx: selFloat ? selFloat.dx : 0, dy: selFloat ? selFloat.dy : 0 } };
+          return;
+        }
+        commitFloat();
+        selection = null;
+        selDraft = tool === 'select-rect'
+          ? { mode: 'rect', x0: t.x, y0: t.y, x1: t.x, y1: t.y }
+          : { mode: 'free', pts: [{ x: t.x, y: t.y }] };
+        refreshSelectionUI();
+        renderOverlay();
+        return;
+      }
       if (place) {
         e.preventDefault(); view.setPointerCapture(e.pointerId);
         const p = viewPos(e);
@@ -933,6 +1247,25 @@
       render(); liveUpdate();
     });
     view.addEventListener('pointermove', (e) => {
+      if (selDrag) {
+        const t = texelFromEvent(e);
+        if (selFloat) {
+          selFloat.dx = selDrag.base.dx + (t.x - selDrag.start.x);
+          selFloat.dy = selDrag.base.dy + (t.y - selDrag.start.y);
+          renderOverlay();
+        }
+        return;
+      }
+      if (selDraft) {
+        const t = texelFromEvent(e);
+        if (selDraft.mode === 'rect') { selDraft.x1 = t.x; selDraft.y1 = t.y; }
+        else {
+          const last = selDraft.pts[selDraft.pts.length - 1];
+          if (!last || last.x !== t.x || last.y !== t.y) selDraft.pts.push({ x: t.x, y: t.y });
+        }
+        renderOverlay();
+        return;
+      }
       if (placeDrag) {
         const p = viewPos(e);
         const dx = (p.x - placeDrag.start.x) / SCALE, dy = (p.y - placeDrag.start.y) / SCALE;
@@ -962,9 +1295,102 @@
         lastTexel = t; render(); liveUpdate();
       }
     });
-    const endStroke = () => { placeDrag = null; if (drawing) { drawing = false; lastTexel = null; liveUpdate(); } };
+    const endStroke = () => {
+      placeDrag = null;
+      if (selDrag) { selDrag = null; commitFloat(); renderOverlay(); return; }
+      if (selDraft) {
+        selection = selDraft.mode === 'rect'
+          ? selectRect(selDraft.x0, selDraft.y0, selDraft.x1, selDraft.y1)
+          : selectPolygon(selDraft.pts);
+        selDraft = null;
+        refreshSelectionUI();
+        renderOverlay();
+        return;
+      }
+      if (drawing) { drawing = false; lastTexel = null; liveUpdate(); }
+    };
     view.addEventListener('pointerup', endStroke);
     view.addEventListener('pointercancel', endStroke);
+
+    // ── Selection toolbar ───────────────────────────────────────────────────
+    document.getElementById('ed-sel-fliph').onclick = () => flipSelection(true);
+    document.getElementById('ed-sel-flipv').onclick = () => flipSelection(false);
+    document.getElementById('ed-sel-none').onclick = () => clearSelection();
+    document.getElementById('ed-sel-delete').onclick = () => {
+      if (!selection) return;
+      commitFloat();
+      pushUndo();
+      const d = dctx();
+      const img = d.getImageData(0, 0, SIZE, SIZE);
+      for (let i = 0; i < SIZE * SIZE; i++) if (selection.mask[i]) img.data[i * 4 + 3] = 0;
+      d.putImageData(img, 0, 0);
+      compose(); renderLayerList(); render(); liveUpdate();
+    };
+    document.getElementById('ed-sel-fill').onclick = () => {
+      if (!selection) return;
+      commitFloat();
+      pushUndo();
+      const d = dctx();
+      // Straight through the mask rather than per-texel setTexel, so the
+      // selection can be filled regardless of which faces it covers.
+      const img = d.getImageData(0, 0, SIZE, SIZE);
+      for (let i = 0; i < SIZE * SIZE; i++) {
+        if (!selection.mask[i]) continue;
+        const o = i * 4, a = img.data[o + 3] / 255;
+        // Honour the opacity slider, over whatever was already there.
+        const mix = (channel, v) => Math.round(channel * (1 - opacity) + v * opacity);
+        img.data[o] = mix(img.data[o], color.r);
+        img.data[o + 1] = mix(img.data[o + 1], color.g);
+        img.data[o + 2] = mix(img.data[o + 2], color.b);
+        img.data[o + 3] = Math.round(Math.max(a, opacity) * 255);
+      }
+      d.putImageData(img, 0, 0);
+      compose(); renderLayerList(); render(); liveUpdate();
+    };
+
+    // Colour shift dialog: hue/saturation/brightness, and/or a pull toward a
+    // chosen colour. Previews live and only commits on OK.
+    document.getElementById('ed-sel-colour').onclick = () => {
+      if (!selection) return;
+      commitFloat();
+      const before = dctx().getImageData(0, 0, SIZE, SIZE);
+      const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.zIndex = 6500;
+      const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '360px';
+      box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">Shift the selection's colours</h3></div>
+        <div class="ed-row"><label style="width:74px;">Hue</label><input type="range" id="sc-h" min="-180" max="180" value="0"><span id="sc-hv" style="width:38px;font-size:11px;">0°</span></div>
+        <div class="ed-row"><label style="width:74px;">Saturation</label><input type="range" id="sc-s" min="-100" max="100" value="0"><span id="sc-sv" style="width:38px;font-size:11px;">0</span></div>
+        <div class="ed-row"><label style="width:74px;">Brightness</label><input type="range" id="sc-l" min="-100" max="100" value="0"><span id="sc-lv" style="width:38px;font-size:11px;">0</span></div>
+        <div class="ed-row" style="margin-top:10px;"><label style="width:74px;">Tint</label><input type="color" id="sc-t" value="#ff0000"><input type="range" id="sc-ta" min="0" max="100" value="0" style="flex:1;"><span id="sc-tav" style="width:38px;font-size:11px;">0%</span></div>
+        <div class="ed-btn-row" style="margin-top:14px;"><button class="ed-btn primary" id="sc-ok">Apply</button><button class="ed-btn" id="sc-cancel">Cancel</button></div>`;
+      ov.appendChild(box); document.body.appendChild(ov);
+      const q = (id) => box.querySelector(id);
+      const read = () => ({
+        hue: +q('#sc-h').value, sat: +q('#sc-s').value, light: +q('#sc-l').value,
+        tint: q('#sc-t').value, tintAmount: +q('#sc-ta').value,
+      });
+      // Preview by restoring the original pixels and re-applying every time, so
+      // dragging a slider back and forth doesn't compound.
+      const preview = () => {
+        const o = read();
+        q('#sc-hv').textContent = o.hue + '°'; q('#sc-sv').textContent = o.sat;
+        q('#sc-lv').textContent = o.light; q('#sc-tav').textContent = o.tintAmount + '%';
+        dctx().putImageData(before, 0, 0);
+        applyColourShift(o);
+        compose(); render(); liveUpdate();
+      };
+      ['#sc-h', '#sc-s', '#sc-l', '#sc-t', '#sc-ta'].forEach(id => { q(id).oninput = preview; });
+      const close = (commit) => {
+        const o = read();
+        dctx().putImageData(before, 0, 0);      // back to the real pixels
+        ov.remove();
+        if (commit) { pushUndo(); applyColourShift(o); }
+        compose(); renderLayerList(); render(); liveUpdate();
+      };
+      q('#sc-ok').onclick = () => close(true);
+      q('#sc-cancel').onclick = () => close(false);
+      ov.addEventListener('mousedown', e => { if (e.target === ov) close(false); });
+      preview();
+    };
 
     // ── Add image (place onto the texture) ──────────────────────────────────
     function setPlaceBar(on) {
@@ -984,6 +1410,7 @@
       // Nearest-neighbour by default so pixel art keeps its hard edges; the
       // toggle turns on smoothing for photographs.
       d.imageSmoothingEnabled = !!place.smooth;
+      d.globalAlpha = place.opacity == null ? 1 : place.opacity;
       try { d.drawImage(place.img, place.x, place.y, place.w, place.h); } catch { }
       d.restore();
       cancelPlacement();
@@ -993,6 +1420,9 @@
     document.getElementById('ed-place-cancel').onclick = cancelPlacement;
     document.getElementById('ed-place-smooth').onchange = (e) => {
       if (place) { place.smooth = e.target.checked; renderOverlay(); }
+    };
+    document.getElementById('ed-place-op').oninput = (e) => {
+      if (place) { place.opacity = (+e.target.value) / 100; renderOverlay(); }
     };
     // Snap the image onto one of the skin's faces, which is what you usually
     // want an added image to line up with.
@@ -1021,11 +1451,13 @@
         const h = Math.max(1, Math.round(im.height * fit));
         const smooth = Math.max(im.width, im.height) > 128;
         place = {
-          img: im, smooth,
+          img: im, smooth, opacity: 1,
           x: Math.round((SIZE - w) / 2), y: Math.round((SIZE - h) / 2), w, h,
         };
         const sm = document.getElementById('ed-place-smooth');
         if (sm) sm.checked = smooth;
+        const op = document.getElementById('ed-place-op');
+        if (op) op.value = 100;
         setPlaceBar(true);
         renderOverlay();
       };
@@ -1040,6 +1472,8 @@
       { id: 'eraser', px: 'eraser', label: 'Eraser' },
       { id: 'fill', icon: 'format_color_fill', label: 'Fill' },
       { id: 'eyedropper', icon: 'colorize', label: 'Pick' },
+      { id: 'select-rect', icon: 'crop_square', label: 'Select area' },
+      { id: 'select-free', icon: 'gesture', label: 'Free select' },
     ];
     // Small pixel-art icons (drawn on a 16×16 canvas) used where the bundled
     // Material Icons font has no matching glyph, and for the toggle buttons.
@@ -1079,7 +1513,12 @@
       if (tl.px) { const cv = document.createElement('canvas'); cv.width = 16; cv.height = 16; pxEraser(cv.getContext('2d')); b.appendChild(cv); b.appendChild(document.createTextNode(tl.label)); }
       else b.innerHTML = `<i class="material-icons">${tl.icon}</i>${tl.label}`;
       b.onclick = () => {
+        // Picking a drawing tool drops the selection, the way Paint does --
+        // otherwise the ants sit there over everything you draw, and any lifted
+        // pixels would be stranded on the overlay.
+        const leavingSelect = isSelectTool() && tl.id !== 'select-rect' && tl.id !== 'select-free';
         tool = tl.id;
+        if (leavingSelect) clearSelection();
         [...toolGrid.children].forEach(c => c.classList.remove('active')); b.classList.add('active');
         document.getElementById('ed-fillwith-row').style.display = (tool === 'fill') ? '' : 'none';
         document.getElementById('ed-fillregion-row').style.display = (tool === 'fill') ? '' : 'none';
@@ -1651,6 +2090,7 @@
       return Promise.all(saved.map(o => new Promise((res) => {
         const l = makeLayer(o.name || 'Layer');
         l.visible = o.visible !== false;
+        l.opacity = (o.opacity == null ? 1 : o.opacity);
         const im = new Image();
         im.onload = () => { try { l.ctx.drawImage(im, 0, 0); } catch { } res(l); };
         im.onerror = () => res(l);       // a layer that won't load stays empty
@@ -1795,7 +2235,7 @@
     // flattened image. Small: a 64x64 layer is a couple of KB.
     function serialiseLayers() {
       try {
-        return layers.map(l => ({ name: l.name, visible: l.visible, base64: l.canvas.toDataURL('image/png') }));
+        return layers.map(l => ({ name: l.name, visible: l.visible, opacity: l.opacity, base64: l.canvas.toDataURL('image/png') }));
       } catch { return null; }
     }
     async function edPersist(action, nm) {
