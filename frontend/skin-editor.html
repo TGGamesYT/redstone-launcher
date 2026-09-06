@@ -159,6 +159,28 @@
     #cr-tooltip { position: fixed; z-index: 7000; pointer-events: none; display: none; background: color-mix(in srgb, var(--very-dark) 92%, black); border: 2px solid var(--border-dark); border-radius: var(--border-radius); padding: 7px 10px; font-size: 12px; max-width: 220px; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
     #cr-tooltip .cr-tt-name { font-weight: bold; margin-bottom: 2px; }
     #cr-tooltip .cr-tt-credit { opacity: 0.75; font-size: 11px; }
+    /* Layer panel: newest on top, the way every image editor lists them. */
+    .ed-layer-list { display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow-y: auto; }
+    .ed-layer {
+      display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+      border: 2px solid var(--border-dark); border-radius: var(--border-radius);
+      background: var(--menu-bg); cursor: pointer; font-size: 12px;
+    }
+    .ed-layer.active { border-color: var(--base-color); background: color-mix(in srgb, var(--base-color) 25%, var(--menu-bg)); }
+    .ed-layer.hidden-layer .ed-layer-name { opacity: 0.45; text-decoration: line-through; }
+    .ed-layer-thumb {
+      width: 26px; height: 26px; flex: 0 0 26px; image-rendering: pixelated;
+      border-radius: 3px; background:
+        linear-gradient(45deg, #3a3a3a 25%, transparent 25%, transparent 75%, #3a3a3a 75%) 0 0/8px 8px,
+        linear-gradient(45deg, #3a3a3a 25%, #2c2c2c 25%, #2c2c2c 75%, #3a3a3a 75%) 4px 4px/8px 8px;
+    }
+    .ed-layer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ed-layer-eye {
+      flex: 0 0 auto; border: none; background: none; color: var(--text-color);
+      cursor: pointer; padding: 0; display: flex; align-items: center; opacity: 0.85;
+    }
+    .ed-layer-eye .material-icons { font-size: 16px; }
+
     /* Modals. No dim/blur pane behind them: a painted rectangle can't follow the
        window's rounded top-left corner and always leaves a seam under the title
        bar. The overlay is invisible and exists only to catch clicks outside the
@@ -264,6 +286,14 @@
         <canvas id="ed-canvas" width="640" height="640"></canvas>
         <canvas id="ed-overlay" width="640" height="640"></canvas>
       </div>
+      <!-- Only while an image is being positioned on the texture. -->
+      <div id="ed-place-bar" style="display:none; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap;">
+        <span class="ed-hint" style="margin:0;">Drag to move, corners to resize.</span>
+        <label class="rl-toggle"><input type="checkbox" id="ed-place-smooth"> Smooth scaling</label>
+        <button class="ed-btn" id="ed-place-fit" style="width:auto; padding:5px 10px;">Fit to a face…</button>
+        <button class="ed-btn primary" id="ed-place-ok" style="width:auto; padding:5px 12px;">Place</button>
+        <button class="ed-btn" id="ed-place-cancel" style="width:auto; padding:5px 12px;">Cancel</button>
+      </div>
       <div class="ed-hint">Drawing edits the texture; the 3D model on the left updates live.</div>
     </div>
 
@@ -302,10 +332,26 @@
           <button id="ed-variant-classic" class="active">Wide</button>
           <button id="ed-variant-slim">Slim</button>
         </div>
-        <button class="ed-btn" id="ed-import" style="margin-top:6px;"><i class="material-icons">image</i> Add image…</button>
+        <button class="ed-btn" id="ed-place-img" style="margin-top:6px;" title="Drop an image onto the texture and scale it by its corners"><i class="material-icons">add_photo_alternate</i> Add image…</button>
+        <button class="ed-btn" id="ed-import" style="margin-top:6px;" title="Project an image around the body"><i class="material-icons">image</i> Wrap image onto skin…</button>
         <button class="ed-btn" id="ed-faces-btn" style="margin-top:6px;"><i class="material-icons">dashboard_customize</i> Copy faces from skin…</button>
-        <button class="ed-btn" id="ed-clear" style="margin-top:6px;"><i class="material-icons">delete_sweep</i> Clear</button>
-        <button class="ed-btn primary" id="ed-save" style="margin-top:12px;"><i class="material-icons">save</i> Save…</button>
+        <button class="ed-btn" id="ed-clear" style="margin-top:6px;" title="Empty the layer you're working on"><i class="material-icons">delete_sweep</i> Clear layer</button>
+      </div>
+
+      <div class="ed-group">
+        <h4>Layers</h4>
+        <div class="ed-layer-list" id="ed-layers"></div>
+        <div class="ed-btn-row" style="margin-top:6px;">
+          <button class="ed-btn" id="ed-layer-add" title="New layer"><i class="material-icons">add</i></button>
+          <button class="ed-btn" id="ed-layer-dup" title="Duplicate layer"><i class="material-icons">content_copy</i></button>
+          <button class="ed-btn" id="ed-layer-up" title="Move up"><i class="material-icons">arrow_upward</i></button>
+          <button class="ed-btn" id="ed-layer-down" title="Move down"><i class="material-icons">arrow_downward</i></button>
+          <button class="ed-btn" id="ed-layer-del" title="Delete layer"><i class="material-icons">delete</i></button>
+        </div>
+      </div>
+
+      <div class="ed-group">
+        <button class="ed-btn primary" id="ed-save"><i class="material-icons">save</i> Save…</button>
       </div>
     </div>
   </div>
@@ -496,17 +542,174 @@
     let drawing = false;
     let lastTexel = null;
 
+    // ── Layers ──────────────────────────────────────────────────────────────
+    // `work` stays the FLATTENED skin, so everything that reads a skin -- the 2D
+    // view, the 3D model, saving, copy-faces, the wrap preview -- is unchanged.
+    // Tools draw into the ACTIVE layer and then compose() refreshes `work`.
+    // Bottom-first, the way they stack; the panel lists them top-first, the way
+    // every image editor shows them.
+    let layers = [];
+    let activeLayer = 0;
+    let layerSeq = 1;
+
+    function makeLayer(name) {
+      const canvas = document.createElement('canvas'); canvas.width = SIZE; canvas.height = SIZE;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.imageSmoothingEnabled = false;
+      return { id: layerSeq++, name: name || `Layer ${layerSeq - 1}`, canvas, ctx, visible: true };
+    }
+    // The context tools draw into. Never `wctx` directly any more -- writing to
+    // the flattened canvas would be wiped by the next compose().
+    function dctx() {
+      if (!layers.length) layers = [makeLayer('Background')];
+      const l = layers[Math.min(activeLayer, layers.length - 1)];
+      return l.ctx;
+    }
+    function activeLayerObj() { return layers[Math.min(activeLayer, layers.length - 1)] || null; }
+    function compose() {
+      wctx.clearRect(0, 0, SIZE, SIZE);
+      wctx.imageSmoothingEnabled = false;
+      for (const l of layers) if (l.visible) wctx.drawImage(l.canvas, 0, 0);
+    }
+    // Replace the whole stack with one layer holding this image. Used wherever a
+    // skin is loaded wholesale (opening one to edit, the creator's output).
+    function setSingleLayer(source, name) {
+      layers = [makeLayer(name || 'Background')];
+      activeLayer = 0;
+      if (source) layers[0].ctx.drawImage(source, 0, 0);
+      compose();
+      renderLayerList();
+    }
+
+    // Is there anything drawn on this layer? Used to decide whether switching to
+    // the simple creator would actually be throwing work away.
+    function isLayerBlank(l) {
+      try {
+        const d = l.ctx.getImageData(0, 0, SIZE, SIZE).data;
+        for (let i = 3; i < d.length; i += 4) if (d[i] !== 0) return false;
+        return true;
+      } catch { return false; }
+    }
+
+    // ── Layer panel ─────────────────────────────────────────────────────────
+    function renderLayerList() {
+      const wrap = document.getElementById('ed-layers');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+      if (!layers.length) return;
+      // Top of the list is the top of the stack, so iterate backwards.
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const l = layers[i];
+        const row = document.createElement('div');
+        row.className = 'ed-layer' + (i === activeLayer ? ' active' : '') + (l.visible ? '' : ' hidden-layer');
+
+        const thumb = document.createElement('canvas');
+        thumb.className = 'ed-layer-thumb'; thumb.width = SIZE; thumb.height = SIZE;
+        const tc = thumb.getContext('2d'); tc.imageSmoothingEnabled = false;
+        tc.drawImage(l.canvas, 0, 0);
+        row.appendChild(thumb);
+
+        const name = document.createElement('span');
+        name.className = 'ed-layer-name'; name.textContent = l.name;
+        name.title = 'Double-click to rename';
+        row.appendChild(name);
+
+        const eye = document.createElement('button');
+        eye.className = 'ed-layer-eye';
+        eye.title = l.visible ? 'Hide this layer' : 'Show this layer';
+        eye.innerHTML = `<i class="material-icons">${l.visible ? 'visibility' : 'visibility_off'}</i>`;
+        eye.onclick = (e) => {
+          e.stopPropagation();
+          pushUndo();
+          l.visible = !l.visible;
+          compose(); renderLayerList(); render(); liveUpdate();
+        };
+        row.appendChild(eye);
+
+        row.onclick = () => { activeLayer = i; renderLayerList(); };
+        name.ondblclick = async (e) => {
+          e.stopPropagation();
+          const nm = await edAskText('Rename layer', 'Layer name', l.name);
+          if (!nm) return;
+          pushUndo();
+          l.name = nm;
+          renderLayerList();
+        };
+        wrap.appendChild(row);
+      }
+    }
+
+    function layerPanelRefresh() { compose(); renderLayerList(); render(); liveUpdate(); }
+
+    document.getElementById('ed-layer-add').onclick = () => {
+      pushUndo();
+      layers.splice(activeLayer + 1, 0, makeLayer());   // directly above the current one
+      activeLayer = Math.min(activeLayer + 1, layers.length - 1);
+      layerPanelRefresh();
+    };
+    document.getElementById('ed-layer-dup').onclick = () => {
+      const src = activeLayerObj(); if (!src) return;
+      pushUndo();
+      const copy = makeLayer(src.name + ' copy');
+      copy.ctx.drawImage(src.canvas, 0, 0);
+      layers.splice(activeLayer + 1, 0, copy);
+      activeLayer++;
+      layerPanelRefresh();
+    };
+    document.getElementById('ed-layer-del').onclick = async () => {
+      if (layers.length <= 1) { alert("A skin needs at least one layer."); return; }
+      const l = activeLayerObj(); if (!l) return;
+      if (!isLayerBlank(l)) {
+        const ok = await edAskConfirm('Delete this layer?', `"${l.name}" has something drawn on it. Deleting can be undone with Ctrl+Z.`);
+        if (!ok) return;
+      }
+      pushUndo();
+      layers.splice(activeLayer, 1);
+      activeLayer = Math.max(0, Math.min(activeLayer, layers.length - 1));
+      layerPanelRefresh();
+    };
+    const moveLayer = (delta) => {
+      const to = activeLayer + delta;
+      if (to < 0 || to >= layers.length) return;
+      pushUndo();
+      const [l] = layers.splice(activeLayer, 1);
+      layers.splice(to, 0, l);
+      activeLayer = to;
+      layerPanelRefresh();
+    };
+    // "Up" means up the list, which is up the stack.
+    document.getElementById('ed-layer-up').onclick = () => moveLayer(1);
+    document.getElementById('ed-layer-down').onclick = () => moveLayer(-1);
+
     // ── Undo / redo (edit history only, independent of launcher nav) ──
+    // A snapshot is the WHOLE stack, so adding, deleting, hiding and reordering
+    // layers undo exactly like a brush stroke does. 64x64 RGBA is 16KB a layer,
+    // so even a deep stack of these is a few megabytes.
     let undoStack = [], redoStack = [];
-    function snapshot() { return wctx.getImageData(0, 0, SIZE, SIZE); }
+    function snapshot() {
+      return {
+        active: activeLayer,
+        layers: layers.map(l => ({ id: l.id, name: l.name, visible: l.visible, data: l.ctx.getImageData(0, 0, SIZE, SIZE) })),
+      };
+    }
     // Grey out the undo/redo buttons when there's nothing left in that direction.
     function refreshUndoButtons() {
       const u = document.getElementById('ed-undo'), r = document.getElementById('ed-redo');
       if (u) u.disabled = !undoStack.length;
       if (r) r.disabled = !redoStack.length;
     }
-    function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); redoStack = []; workFromCreator = false; refreshUndoButtons(); }
-    function restore(imgData) { wctx.putImageData(imgData, 0, 0); render(); liveUpdate(); refreshUndoButtons(); }
+    function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 40) undoStack.shift(); redoStack = []; workFromCreator = false; refreshUndoButtons(); }
+    function restore(snap) {
+      if (!snap || !Array.isArray(snap.layers)) return;
+      layers = snap.layers.map(o => {
+        const l = makeLayer(o.name);
+        l.id = o.id; l.visible = o.visible;
+        l.ctx.putImageData(o.data, 0, 0);
+        return l;
+      });
+      activeLayer = Math.max(0, Math.min(snap.active, layers.length - 1));
+      compose(); renderLayerList(); render(); liveUpdate(); refreshUndoButtons();
+    }
     function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
     function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
 
@@ -527,6 +730,42 @@
       vctx.drawImage(work, 0, 0, SIZE, SIZE, 0, 0, view.width, view.height);
       renderOverlay();
     }
+    // ── Placing an image on the texture ─────────────────────────────────────
+    // A floating rectangle you drag and scale by its corners, committed onto the
+    // active layer. Separate from the body wrap, which projects an image around
+    // the model rather than pasting one onto the texture.
+    let place = null;   // { img, x, y, w, h, smooth } in TEXELS
+    const PLACE_HANDLE = 5;    // px on the view canvas
+
+    function placeHandles() {
+      if (!place) return [];
+      const x0 = place.x * SCALE, y0 = place.y * SCALE;
+      const x1 = (place.x + place.w) * SCALE, y1 = (place.y + place.h) * SCALE;
+      return [
+        { k: 'nw', x: x0, y: y0 }, { k: 'ne', x: x1, y: y0 },
+        { k: 'sw', x: x0, y: y1 }, { k: 'se', x: x1, y: y1 },
+      ];
+    }
+    function drawPlacement() {
+      if (!place) return;
+      const x = place.x * SCALE, y = place.y * SCALE, w = place.w * SCALE, h = place.h * SCALE;
+      octx.save();
+      // Pixel art must stay crisp; a photo is better off smoothed.
+      octx.imageSmoothingEnabled = !!place.smooth;
+      try { octx.drawImage(place.img, x, y, w, h); } catch { }
+      octx.imageSmoothingEnabled = false;
+      octx.setLineDash([6, 4]);
+      octx.strokeStyle = '#fff'; octx.lineWidth = 2;
+      octx.strokeRect(x, y, w, h);
+      octx.setLineDash([]);
+      octx.fillStyle = '#fff'; octx.strokeStyle = '#000'; octx.lineWidth = 1;
+      for (const p of placeHandles()) {
+        octx.fillRect(p.x - PLACE_HANDLE, p.y - PLACE_HANDLE, PLACE_HANDLE * 2, PLACE_HANDLE * 2);
+        octx.strokeRect(p.x - PLACE_HANDLE, p.y - PLACE_HANDLE, PLACE_HANDLE * 2, PLACE_HANDLE * 2);
+      }
+      octx.restore();
+    }
+
     function renderOverlay() {
       octx.clearRect(0, 0, overlay.width, overlay.height);
       const rects = allFaces();
@@ -545,6 +784,7 @@
       const hot = hiOverlay ? FACE_OVERLAY : FACE_BASE;
       faint.forEach(r => outlineRect(r, 'rgba(255,255,255,0.12)', null));
       hot.forEach(r => outlineRect(r, 'var(--base-color)', r.front ? r.name : null));
+      drawPlacement();   // last, so it sits over the grid and the face outlines
     }
     function outlineRect(r, stroke, label) {
       octx.strokeStyle = stroke === 'var(--base-color)'
@@ -576,13 +816,14 @@
     function jitter(v, amt) { return Math.max(0, Math.min(255, v + Math.round((Math.random() * 2 - 1) * amt))); }
     function setTexel(x, y, mode, force) {
       if (!paintable(x, y, force)) return;
-      if (mode === 'eraser') { wctx.clearRect(x, y, 1, 1); return; }
+      if (mode === 'eraser') { dctx().clearRect(x, y, 1, 1); return; }
       let r = color.r, g = color.g, b = color.b;
       if (mode === 'texture') { r = jitter(r, 22); g = jitter(g, 22); b = jitter(b, 22); }
-      wctx.globalAlpha = 1;
       // Compose with opacity (erase target first so alpha is exact).
-      if (opacity >= 1) { wctx.clearRect(x, y, 1, 1); wctx.fillStyle = `rgb(${r},${g},${b})`; wctx.fillRect(x, y, 1, 1); }
-      else { wctx.fillStyle = `rgba(${r},${g},${b},${opacity})`; wctx.fillRect(x, y, 1, 1); }
+      const d = dctx();
+      d.globalAlpha = 1;
+      if (opacity >= 1) { d.clearRect(x, y, 1, 1); d.fillStyle = `rgb(${r},${g},${b})`; d.fillRect(x, y, 1, 1); }
+      else { d.fillStyle = `rgba(${r},${g},${b},${opacity})`; d.fillRect(x, y, 1, 1); }
     }
     function mirrorTexel(x, y) {
       // Whole-body 3D mirror: map this texel to the same point on the opposite
@@ -665,7 +906,23 @@
 
     // ── Pointer handling ──
     const strokeMode = () => tool === 'texture' ? 'texture' : (tool === 'eraser' ? 'eraser' : 'brush');
+    // While an image is being placed it owns the canvas: drag inside to move,
+    // drag a corner to scale. Drawing tools are suspended until it's committed.
+    let placeDrag = null;
+    function viewPos(e) {
+      const r = view.getBoundingClientRect();
+      return { x: (e.clientX - r.left) * (view.width / r.width), y: (e.clientY - r.top) * (view.height / r.height) };
+    }
     view.addEventListener('pointerdown', (e) => {
+      if (place) {
+        e.preventDefault(); view.setPointerCapture(e.pointerId);
+        const p = viewPos(e);
+        const hit = placeHandles().find(h => Math.abs(p.x - h.x) <= PLACE_HANDLE * 2 && Math.abs(p.y - h.y) <= PLACE_HANDLE * 2);
+        placeDrag = hit
+          ? { mode: 'scale', corner: hit.k, start: p, box: { ...place } }
+          : { mode: 'move', start: p, box: { ...place } };
+        return;
+      }
       e.preventDefault(); view.setPointerCapture(e.pointerId);
       const t = texelFromEvent(e);
       if (tool === 'eyedropper') { pickColor(t.x, t.y); return; }
@@ -676,6 +933,28 @@
       render(); liveUpdate();
     });
     view.addEventListener('pointermove', (e) => {
+      if (placeDrag) {
+        const p = viewPos(e);
+        const dx = (p.x - placeDrag.start.x) / SCALE, dy = (p.y - placeDrag.start.y) / SCALE;
+        const b = placeDrag.box;
+        if (placeDrag.mode === 'move') {
+          place.x = Math.round(b.x + dx);
+          place.y = Math.round(b.y + dy);
+        } else {
+          // Anchor the opposite corner and let the dragged one move.
+          const east = placeDrag.corner.includes('e'), south = placeDrag.corner.includes('s');
+          let nx = b.x, ny = b.y, nw = b.w, nh = b.h;
+          if (east) nw = b.w + dx; else { nx = b.x + dx; nw = b.w - dx; }
+          if (south) nh = b.h + dy; else { ny = b.y + dy; nh = b.h - dy; }
+          // One texel minimum, so it can't be inverted or collapsed.
+          if (nw < 1) { nw = 1; if (!east) nx = b.x + b.w - 1; }
+          if (nh < 1) { nh = 1; if (!south) ny = b.y + b.h - 1; }
+          place.x = Math.round(nx); place.y = Math.round(ny);
+          place.w = Math.max(1, Math.round(nw)); place.h = Math.max(1, Math.round(nh));
+        }
+        renderOverlay();
+        return;
+      }
       if (!drawing) return;
       const t = texelFromEvent(e);
       if (lastTexel && (t.x !== lastTexel.x || t.y !== lastTexel.y)) {
@@ -683,9 +962,76 @@
         lastTexel = t; render(); liveUpdate();
       }
     });
-    const endStroke = () => { if (drawing) { drawing = false; lastTexel = null; liveUpdate(); } };
+    const endStroke = () => { placeDrag = null; if (drawing) { drawing = false; lastTexel = null; liveUpdate(); } };
     view.addEventListener('pointerup', endStroke);
     view.addEventListener('pointercancel', endStroke);
+
+    // ── Add image (place onto the texture) ──────────────────────────────────
+    function setPlaceBar(on) {
+      const bar = document.getElementById('ed-place-bar');
+      if (bar) bar.style.display = on ? 'flex' : 'none';
+    }
+    function cancelPlacement() {
+      place = null; placeDrag = null;
+      setPlaceBar(false);
+      renderOverlay();
+    }
+    function commitPlacement() {
+      if (!place) return;
+      pushUndo();
+      const d = dctx();
+      d.save();
+      // Nearest-neighbour by default so pixel art keeps its hard edges; the
+      // toggle turns on smoothing for photographs.
+      d.imageSmoothingEnabled = !!place.smooth;
+      try { d.drawImage(place.img, place.x, place.y, place.w, place.h); } catch { }
+      d.restore();
+      cancelPlacement();
+      compose(); renderLayerList(); render(); liveUpdate();
+    }
+    document.getElementById('ed-place-ok').onclick = commitPlacement;
+    document.getElementById('ed-place-cancel').onclick = cancelPlacement;
+    document.getElementById('ed-place-smooth').onchange = (e) => {
+      if (place) { place.smooth = e.target.checked; renderOverlay(); }
+    };
+    // Snap the image onto one of the skin's faces, which is what you usually
+    // want an added image to line up with.
+    document.getElementById('ed-place-fit').onclick = async () => {
+      if (!place) return;
+      const faces = [...FACE_BASE, ...FACE_OVERLAY];
+      const pick = await edAskChoice('Fit to which face?', faces.map((f, i) => ({
+        value: String(i), label: `${f.name} — ${f.face}${FACE_OVERLAY.includes(f) ? ' (2nd layer)' : ''}`,
+      })));
+      if (pick == null) return;
+      const f = faces[+pick]; if (!f) return;
+      place.x = f.x; place.y = f.y; place.w = f.w; place.h = f.h;
+      renderOverlay();
+    };
+
+    document.getElementById('ed-place-img').onclick = async () => {
+      const r = await ipcRenderer.invoke('pick-image', { title: 'Choose an image to add to the skin' });
+      if (!r || r.canceled || !r.dataUrl) { if (r && r.error) alert(r.error); return; }
+      const im = new Image();
+      im.onload = () => {
+        // Start it centred, scaled to fit inside the texture while keeping its
+        // aspect. A small source is almost certainly pixel art, so leave it
+        // unsmoothed unless asked.
+        const fit = Math.min(SIZE / im.width, SIZE / im.height, 1);
+        const w = Math.max(1, Math.round(im.width * fit));
+        const h = Math.max(1, Math.round(im.height * fit));
+        const smooth = Math.max(im.width, im.height) > 128;
+        place = {
+          img: im, smooth,
+          x: Math.round((SIZE - w) / 2), y: Math.round((SIZE - h) / 2), w, h,
+        };
+        const sm = document.getElementById('ed-place-smooth');
+        if (sm) sm.checked = smooth;
+        setPlaceBar(true);
+        renderOverlay();
+      };
+      im.onerror = () => alert("That image couldn't be read.");
+      im.src = r.dataUrl;
+    };
 
     // ── Tools UI ──
     const TOOLS = [
@@ -794,13 +1140,17 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
       else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redo(); }
     });
-    document.getElementById('ed-clear').onclick = () => { pushUndo(); wctx.clearRect(0, 0, SIZE, SIZE); render(); liveUpdate(); };
+    // Clears the LAYER you're on, not the whole skin.
+    document.getElementById('ed-clear').onclick = () => { pushUndo(); dctx().clearRect(0, 0, SIZE, SIZE); compose(); render(); liveUpdate(); };
 
     // ── Flip (port of flipSkin.js: swap left/right & flip each face) ──
     document.getElementById('ed-flip').onclick = () => { pushUndo(); flipSkin(); render(); liveUpdate(); };
     function flipSkin() {
       const src = document.createElement('canvas'); src.width = SIZE; src.height = SIZE;
-      src.getContext('2d').drawImage(work, 0, 0);
+      // The active layer, not the composite: transforming what you can see
+      // would flatten every layer below into the one you're working on.
+      const lay = activeLayerObj();
+      src.getContext('2d').drawImage(lay ? lay.canvas : work, 0, 0);
       const res = document.createElement('canvas'); res.width = SIZE; res.height = SIZE;
       const rc = res.getContext('2d');
       const HS = 8, BH = 12, LW = 4, AW = variant === 'slim' ? 3 : 4;
@@ -844,7 +1194,7 @@
       block(52, 52 + AW, LW, BH, 36, 40); block(52, 56 + AW, AW, BH, 36, 44); block(52, 48, LW, BH, 36, 44 + AW); block(52, 52, AW, BH, 36, 48 + AW);
       block(32, 44, AW, LW, 48, 52, true, true); block(32, 44 + AW, AW, LW, 48, 52 + AW, true, true);
       block(36, 40, LW, BH, 52, 52 + AW); block(36, 44, AW, BH, 52, 56 + AW); block(36, 44 + AW, LW, BH, 52, 48); block(36, 48 + AW, AW, BH, 52, 52);
-      wctx.clearRect(0, 0, SIZE, SIZE); wctx.drawImage(res, 0, 0);
+      const d = dctx(); d.clearRect(0, 0, SIZE, SIZE); d.drawImage(res, 0, 0); compose();
     }
 
     // ── Make the whole model symmetric (3D): copy the RIGHT side onto the left,
@@ -852,7 +1202,7 @@
     //    right, using the whole-body mirror map. ──
     document.getElementById('ed-mirror-apply').onclick = () => {
       pushUndo();
-      const img = wctx.getImageData(0, 0, SIZE, SIZE);
+      const img = dctx().getImageData(0, 0, SIZE, SIZE);
       const copy = (sx, sy, dx, dy) => { const s = (sy * SIZE + sx) * 4, d = (dy * SIZE + dx) * 4; for (let k = 0; k < 4; k++) img.data[d + k] = img.data[s + k]; };
       [...FACE_BASE, ...FACE_OVERLAY].forEach(f => {
         const rightSide = /^R /.test(f.name);        // right arm/leg → copy to left
@@ -866,7 +1216,7 @@
           if (m && (m.x !== x || m.y !== y)) copy(x, y, m.x, m.y);
         }
       });
-      wctx.putImageData(img, 0, 0); render(); liveUpdate();
+      dctx().putImageData(img, 0, 0); compose(); render(); liveUpdate();
     };
 
     // ── Image → skin (modal). Wrap a photo onto the body's faces. ──
@@ -1102,7 +1452,7 @@
       if (!imgBitmap) return;
       pushUndo();
       const composed = composeWrap(work);
-      wctx.clearRect(0, 0, SIZE, SIZE); wctx.drawImage(composed, 0, 0);
+      const d = dctx(); d.clearRect(0, 0, SIZE, SIZE); d.drawImage(composed, 0, 0); compose();
       render(); liveUpdate();
     }
     // Leaving image-mode: drop the mode styling and bring the editor content back.
@@ -1295,17 +1645,37 @@
       } catch (e) { /* ignore */ }
     }
 
+    // Rebuild the stack from what was saved with the skin. Each layer is a PNG,
+    // so they load asynchronously and all have to be in before composing.
+    function restoreLayers(saved) {
+      return Promise.all(saved.map(o => new Promise((res) => {
+        const l = makeLayer(o.name || 'Layer');
+        l.visible = o.visible !== false;
+        const im = new Image();
+        im.onload = () => { try { l.ctx.drawImage(im, 0, 0); } catch { } res(l); };
+        im.onerror = () => res(l);       // a layer that won't load stays empty
+        im.src = o.base64;
+      }))).then(list => {
+        layers = list;
+        activeLayer = Math.max(0, layers.length - 1);
+        compose(); renderLayerList();
+      });
+    }
+
     // ── Load initial skin ──
     function loadIntoWork(src) {
       return new Promise((resolve) => {
         const im = new Image();
         im.onload = () => {
-          wctx.clearRect(0, 0, SIZE, SIZE);
+          // A loaded skin becomes the stack's single layer.
+          setSingleLayer(null, 'Skin');
+          const d = dctx();
           if (im.height === 32) { // legacy 64×32 → draw into top, leave rest empty
-            wctx.drawImage(im, 0, 0, 64, 32, 0, 0, 64, 32);
+            d.drawImage(im, 0, 0, 64, 32, 0, 0, 64, 32);
           } else {
-            wctx.drawImage(im, 0, 0, SIZE, SIZE);
+            d.drawImage(im, 0, 0, SIZE, SIZE);
           }
+          compose();
           resolve();
         };
         im.onerror = () => resolve();
@@ -1328,6 +1698,10 @@
             editedType = s.editorType || 'advanced';
             // A simple-creator skin re-opens in the creator with its saved options.
             if (editedType === 'simple' && s.creatorState) crState = { ...CR_DEFAULT, ...s.creatorState };
+            // ...and with its layers, if it was saved with any. loadIntoWork
+            // above already left the flattened image as a single layer, which
+            // stays the fallback for skins saved before layers existed.
+            if (Array.isArray(s.layerState) && s.layerState.length) await restoreLayers(s.layerState);
           }
         } catch { }
       } else if (mode === 'new' && params.get('template') === '1') {
@@ -1343,6 +1717,9 @@
         document.getElementById('ed-title').textContent = 'New skin';
       }
       crName = name;
+      // Every session has at least one layer, even a blank new skin.
+      if (!layers.length) { layers = [makeLayer('Background')]; activeLayer = 0; }
+      compose(); renderLayerList();
       syncColorInputs();
       render();
       build3D();
@@ -1414,12 +1791,20 @@
 
     // Writes the current skin to the library. 'save' updates the skin in place
     // when one is being edited; 'copy' always creates a new entry.
+    // The stack, as PNGs, so re-opening a skin keeps its layers instead of one
+    // flattened image. Small: a 64x64 layer is a couple of KB.
+    function serialiseLayers() {
+      try {
+        return layers.map(l => ({ name: l.name, visible: l.visible, base64: l.canvas.toDataURL('image/png') }));
+      } catch { return null; }
+    }
     async function edPersist(action, nm) {
       if (!uuid) return;
+      compose();                       // never save a stale flattened image
       const dataUrl = work.toDataURL('image/png');
       const meta = curEditorMode === 'creator'
-        ? { editorType: 'simple', creatorState: crState }
-        : { editorType: 'advanced', creatorState: null };
+        ? { editorType: 'simple', creatorState: crState, layerState: serialiseLayers() }
+        : { editorType: 'advanced', creatorState: null, layerState: serialiseLayers() };
       if (action === 'save' && mode === 'edit' && editSkinId) {
         await ipcRenderer.invoke('skins:update', { uuid, id: editSkinId, base64: dataUrl, variant, name: nm, ...meta });
       } else {
@@ -1541,7 +1926,7 @@
           t.drawImage(src.canvas, sx, sy, sw, sh, dx, dy, dw, dh);
         });
       });
-      wctx.clearRect(0, 0, SIZE, SIZE); wctx.drawImage(tmp, 0, 0);
+      const d = dctx(); d.clearRect(0, 0, SIZE, SIZE); d.drawImage(tmp, 0, 0); compose();
       render(); liveUpdate(); efmRefreshViewer();
     }
     function efmSkinOptions(sel) { return efm.sources.map((s, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${s.name}</option>`).join(''); }
@@ -1677,6 +2062,27 @@
         ov.addEventListener('mousedown', e => { if (e.target === ov) done(null); });
         input.addEventListener('keydown', e => { if (e.key === 'Enter') done((input.value || '').trim() || null); if (e.key === 'Escape') done(null); });
         setTimeout(() => { input.focus(); input.select(); }, 30);
+      });
+    }
+    // Promise-based single choice from a list. Resolves the chosen value, or null.
+    function edAskChoice(title, options) {
+      return new Promise((resolve) => {
+        const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.zIndex = 6500;
+        const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '380px';
+        const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">${esc(title)}</h3></div>
+          <select id="ed-choice" size="10" style="width:100%; margin:12px 0; padding:6px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);">
+            ${options.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}
+          </select>
+          <div class="ed-btn-row"><button class="ed-btn primary" id="ed-choice-ok">OK</button><button class="ed-btn" id="ed-choice-cancel">Cancel</button></div>`;
+        ov.appendChild(box); document.body.appendChild(ov);
+        const sel = box.querySelector('#ed-choice');
+        const done = (v) => { ov.remove(); resolve(v); };
+        box.querySelector('#ed-choice-ok').onclick = () => done(sel.value || null);
+        box.querySelector('#ed-choice-cancel').onclick = () => done(null);
+        sel.ondblclick = () => done(sel.value || null);
+        ov.addEventListener('mousedown', e => { if (e.target === ov) done(null); });
+        setTimeout(() => sel.focus(), 30);
       });
     }
     // Promise-based confirm (returns true/false), so no ugly Electron popup.
@@ -2060,8 +2466,29 @@
       });
       return { pathSeg, query };
     }
+    // The creator's output gets its OWN layer, so coming here from the advanced
+    // editor lays the dress-up over the hand-drawn work instead of replacing it.
+    const CREATOR_LAYER = 'Simple creator';
+    function creatorLayer() {
+      let l = layers.find(x => x.name === CREATOR_LAYER);
+      if (!l) { l = makeLayer(CREATOR_LAYER); layers.push(l); renderLayerList(); }   // on top
+      return l;
+    }
     function crLoadIntoWork(src) {
-      return new Promise(res => { const im = new Image(); im.onload = () => { wctx.clearRect(0, 0, SIZE, SIZE); if (im.width === 64 && im.height === 32) wctx.drawImage(im, 0, 0, 64, 32, 0, 0, 64, 32); else wctx.drawImage(im, 0, 0, SIZE, SIZE); render(); if (typeof liveUpdate === 'function') liveUpdate(); res(); }; im.onerror = () => res(); im.src = src; });
+      return new Promise(res => {
+        const im = new Image();
+        im.onload = () => {
+          const c = creatorLayer().ctx;
+          c.clearRect(0, 0, SIZE, SIZE);
+          if (im.width === 64 && im.height === 32) c.drawImage(im, 0, 0, 64, 32, 0, 0, 64, 32);
+          else c.drawImage(im, 0, 0, SIZE, SIZE);
+          compose(); render();
+          if (typeof liveUpdate === 'function') liveUpdate();
+          res();
+        };
+        im.onerror = () => res();
+        im.src = src;
+      });
     }
     function crGenerate() {
       const seq = ++crGenSeq;
@@ -2132,9 +2559,14 @@
       const cw = document.getElementById('creator-wrap'), ew = document.getElementById('editor-wrap');
       const tl = document.getElementById('mode-toggle-label');
       if (m === 'creator') {
-        if (!opts.initial && !workFromCreator) {
-          const ok = await edAskConfirm('Switch to the simple creator?', 'The simple creator rebuilds the skin from options and will replace the current one.');
+        // Coming from hand-drawn work: keep it. The creator's output goes on its
+        // own layer above, and its body base is switched off so what you drew
+        // shows through instead of being painted over.
+        if (!opts.initial && !workFromCreator && layers.some(l => l.name !== CREATOR_LAYER && !isLayerBlank(l))) {
+          const ok = await edAskConfirm('Add the simple creator on top?',
+            'Your drawing is kept as its own layer and the creator\'s clothes and features are layered over it. The creator\'s body base is turned off so your work still shows.');
           if (!ok) return;
+          crState = { ...crState, base_texture: 'none' };
         }
         curEditorMode = 'creator';
         cw.classList.add('active'); ew.style.display = 'none';

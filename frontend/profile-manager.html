@@ -1685,7 +1685,10 @@
     function closeCreateNew() { document.getElementById('createNewModal').style.display = 'none'; }
     document.getElementById('cnCancel').onclick = closeCreateNew;
     document.getElementById('createNewModal').addEventListener('mousedown', e => { if (e.target.id === 'createNewModal') closeCreateNew(); });
-    document.getElementById('cnCreate').onclick = () => openSkinEditor({ mode: 'new', skinCode: CN_CREATE_CODE });
+    // The tile PREVIEWS what the creator can make, but a new skin should start
+    // from a bare base -- opening it preloaded with the showcase skin meant
+    // undoing someone else's choices before making your own.
+    document.getElementById('cnCreate').onclick = () => openSkinEditor({ mode: 'new' });
     document.getElementById('cnImage').onclick = () => openSkinEditor({ mode: 'image' });
     document.getElementById('cnTemplate').onclick = () => openSkinEditor({ mode: 'new', template: 1 });
 
