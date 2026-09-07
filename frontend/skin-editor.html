@@ -325,6 +325,12 @@
         <div class="ed-row" id="ed-fillregion-row" style="display:none;"><label>Fill</label>
           <select id="ed-fillregion"><option value="connected">Connected colours</option><option value="face">Whole face</option><option value="element">Whole element</option></select>
         </div>
+        <div class="ed-row" id="ed-selmode-row" style="display:none;"><label>Shape</label>
+          <div class="ed-seg" style="flex:1; margin:0;">
+            <button id="ed-selmode-rect" class="active" title="Drag out a rectangle">Rectangle</button>
+            <button id="ed-selmode-free" title="Draw around what you want">Freehand</button>
+          </div>
+        </div>
         <div class="ed-row" id="ed-fillwith-row" style="display:none;"><label>With</label>
           <select id="ed-fillwith"><option value="brush">Brush</option><option value="texture">Texture</option><option value="eraser">Eraser</option></select>
         </div>
@@ -659,6 +665,22 @@
       }
     }
 
+    // Repaint just the active row's thumbnail. Rebuilding the whole list on every
+    // brush stamp would be wasteful; this is one drawImage.
+    function refreshActiveThumb() {
+      const wrap = document.getElementById('ed-layers');
+      const l = activeLayerObj();
+      if (!wrap || !l) return;
+      // The list is rendered top-first, so the active row counts from the end.
+      const row = wrap.children[layers.length - 1 - Math.min(activeLayer, layers.length - 1)];
+      const cv = row && row.querySelector('canvas');
+      if (!cv) return;
+      const c = cv.getContext('2d');
+      c.imageSmoothingEnabled = false;
+      c.clearRect(0, 0, SIZE, SIZE);
+      c.drawImage(l.canvas, 0, 0);
+    }
+
     function syncLayerOpacity() {
       const l = activeLayerObj(); if (!l) return;
       const sl = document.getElementById('ed-layer-op'), lab = document.getElementById('ed-layer-op-val');
@@ -667,6 +689,9 @@
       if (lab) lab.textContent = pct + '%';
     }
     function layerPanelRefresh() { compose(); renderLayerList(); syncLayerOpacity(); render(); liveUpdate(); }
+    // What every one-shot operation (fill, flip, colour shift, erase, paste)
+    // finishes with: flatten, repaint, refresh the thumbnail, push to the model.
+    function afterEdit() { compose(); render(); refreshActiveThumb(); liveUpdate(); }
 
     // Layer opacity. Dragging is one undo step, taken on the first move rather
     // than on every frame.
@@ -769,9 +794,14 @@
       }
     }
     function render() {
+      // Flatten first. Tools write into the ACTIVE LAYER, and `work` is only a
+      // cache of the stack -- without this a stroke went into the layer and the
+      // view kept drawing the stale flattened copy, so nothing appeared until
+      // some unrelated action happened to compose. Three drawImage calls on a
+      // 64x64 canvas, so there is no reason to be clever about when to skip it.
+      compose();
       drawChecker();
       vctx.imageSmoothingEnabled = false;
-      // Dim the inactive layer's regions so the active layer stands out.
       vctx.drawImage(work, 0, 0, SIZE, SIZE, 0, 0, view.width, view.height);
       renderOverlay();
     }
@@ -868,7 +898,7 @@
         selection = makeSelection(m);
       }
       selFloat = null;
-      compose(); renderLayerList(); render(); liveUpdate();
+      afterEdit();
     }
 
     // ── Operations on the selection ─────────────────────────────────────────
@@ -1206,7 +1236,7 @@
       const r = view.getBoundingClientRect();
       return { x: (e.clientX - r.left) * (view.width / r.width), y: (e.clientY - r.top) * (view.height / r.height) };
     }
-    const isSelectTool = () => tool === 'select-rect' || tool === 'select-free';
+    const isSelectTool = () => tool === 'select';
     view.addEventListener('pointerdown', (e) => {
       if (!place && isSelectTool()) {
         e.preventDefault(); view.setPointerCapture(e.pointerId);
@@ -1221,7 +1251,7 @@
         }
         commitFloat();
         selection = null;
-        selDraft = tool === 'select-rect'
+        selDraft = selMode === 'rect'
           ? { mode: 'rect', x0: t.x, y0: t.y, x1: t.x, y1: t.y }
           : { mode: 'free', pts: [{ x: t.x, y: t.y }] };
         refreshSelectionUI();
@@ -1296,6 +1326,7 @@
       }
     });
     const endStroke = () => {
+      refreshActiveThumb();
       placeDrag = null;
       if (selDrag) { selDrag = null; commitFloat(); renderOverlay(); return; }
       if (selDraft) {
@@ -1324,7 +1355,7 @@
       const img = d.getImageData(0, 0, SIZE, SIZE);
       for (let i = 0; i < SIZE * SIZE; i++) if (selection.mask[i]) img.data[i * 4 + 3] = 0;
       d.putImageData(img, 0, 0);
-      compose(); renderLayerList(); render(); liveUpdate();
+      afterEdit();
     };
     document.getElementById('ed-sel-fill').onclick = () => {
       if (!selection) return;
@@ -1345,7 +1376,7 @@
         img.data[o + 3] = Math.round(Math.max(a, opacity) * 255);
       }
       d.putImageData(img, 0, 0);
-      compose(); renderLayerList(); render(); liveUpdate();
+      afterEdit();
     };
 
     // Colour shift dialog: hue/saturation/brightness, and/or a pull toward a
@@ -1414,7 +1445,7 @@
       try { d.drawImage(place.img, place.x, place.y, place.w, place.h); } catch { }
       d.restore();
       cancelPlacement();
-      compose(); renderLayerList(); render(); liveUpdate();
+      afterEdit();
     }
     document.getElementById('ed-place-ok').onclick = commitPlacement;
     document.getElementById('ed-place-cancel').onclick = cancelPlacement;
@@ -1472,9 +1503,10 @@
       { id: 'eraser', px: 'eraser', label: 'Eraser' },
       { id: 'fill', icon: 'format_color_fill', label: 'Fill' },
       { id: 'eyedropper', icon: 'colorize', label: 'Pick' },
-      { id: 'select-rect', icon: 'crop_square', label: 'Select area' },
-      { id: 'select-free', icon: 'gesture', label: 'Free select' },
+      { id: 'select', icon: 'highlight_alt', label: 'Select' },
     ];
+    // Rectangle or freehand -- one tool, two shapes, chosen below the tool grid.
+    let selMode = 'rect';
     // Small pixel-art icons (drawn on a 16×16 canvas) used where the bundled
     // Material Icons font has no matching glyph, and for the toggle buttons.
     function pxEraser(g) {
@@ -1516,16 +1548,28 @@
         // Picking a drawing tool drops the selection, the way Paint does --
         // otherwise the ants sit there over everything you draw, and any lifted
         // pixels would be stranded on the overlay.
-        const leavingSelect = isSelectTool() && tl.id !== 'select-rect' && tl.id !== 'select-free';
+        const leavingSelect = isSelectTool() && tl.id !== 'select';
         tool = tl.id;
         if (leavingSelect) clearSelection();
         [...toolGrid.children].forEach(c => c.classList.remove('active')); b.classList.add('active');
         document.getElementById('ed-fillwith-row').style.display = (tool === 'fill') ? '' : 'none';
         document.getElementById('ed-fillregion-row').style.display = (tool === 'fill') ? '' : 'none';
+        document.getElementById('ed-selmode-row').style.display = isSelectTool() ? '' : 'none';
       };
       toolGrid.appendChild(b);
     });
     document.getElementById('ed-fillregion').onchange = (e) => { fillRegion = e.target.value; };
+    {
+      const rectBtn = document.getElementById('ed-selmode-rect');
+      const freeBtn = document.getElementById('ed-selmode-free');
+      const setSelMode = (m) => {
+        selMode = m;
+        rectBtn.classList.toggle('active', m === 'rect');
+        freeBtn.classList.toggle('active', m === 'free');
+      };
+      rectBtn.onclick = () => setSelMode('rect');
+      freeBtn.onclick = () => setSelMode('free');
+    }
 
     // Color + swatches
     const colorInput = document.getElementById('ed-color');
