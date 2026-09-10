@@ -49,11 +49,19 @@ jobs:
           ref: gh-pages
           path: repo-publish
 
+      - id: gpgimport
+        run: |
+          mkdir -p gpg-home
+          chmod 700 gpg-home
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 -d | gpg --homedir gpg-home --batch --import
+          KEYID=$(gpg --homedir gpg-home --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')
+          echo "keyid=$KEYID" >> "$GITHUB_OUTPUT"
+
       - run: mkdir -p repo-publish/repo
 
-      - run: flatpak-builder --user --repo=repo-publish/repo --force-clean build-dir io.github.TGGamesYT.redstone-launcher.yml
+      - run: flatpak-builder --gpg-sign=${{ steps.gpgimport.outputs.keyid }} --gpg-homedir=$(pwd)/gpg-home --user --repo=repo-publish/repo --force-clean build-dir io.github.TGGamesYT.redstone-launcher.yml
 
-      - run: flatpak build-update-repo repo-publish/repo
+      - run: flatpak build-update-repo --gpg-sign=${{ steps.gpgimport.outputs.keyid }} --gpg-homedir=$(pwd)/gpg-home repo-publish/repo
 
       - run: cp redstone-launcher.flatpakrepo repo-publish/
 
