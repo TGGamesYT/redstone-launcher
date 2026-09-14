@@ -575,6 +575,8 @@
   <!-- Discards the pending skin/cape and goes back to what's actually applied. -->
   <button id="undoSkinBtn" title="Go back to the skin &amp; cape you had" style="display:none; position:fixed; bottom:20px; left:190px; z-index:1500; background:var(--secondary-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 18px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Undo</button>
   <script src="skinview3d.bundle.js"></script>
+  <!-- Optional hand-made animations; falls back to skinview3d's own if empty. -->
+  <script src="skin-animations.js"></script>
   <script>
     // A confirm dialog in the launcher's own styling. window.confirm() opens a
     // native Chromium box that looks nothing like the rest of the app and blocks
@@ -1165,32 +1167,48 @@
       // camera shouldn't drift home while the pointer is still on the model.
       let dragging = false, hovering = false;
 
-      const toIdle = () => { try { v.animation = new S.IdleAnimation(); } catch { } };
-      // Small gestures come up more often than the big ones — a wave every so
-      // often reads as alive, a sprint every so often reads as broken.
-      const GESTURES = [
-        () => new S.WaveAnimation("left"),
+      const toIdle = () => {
+        try { v.animation = (window.SkinAnimations && window.SkinAnimations.idle && window.SkinAnimations.idle(v)) || new S.IdleAnimation(); } catch { try { v.animation = new S.IdleAnimation(); } catch { } }
+      };
+
+      // Gestures a character can do while STANDING somewhere. Running and
+      // walking are gone: the model has nowhere to go, so it read as the
+      // character jogging on the spot for no reason. A wave or a look around is
+      // the most that belongs here.
+      //
+      // window.SkinAnimations is the hook for the hand-made Blockbench
+      // animations — drop a module that defines `idle` and `gestures` (each
+      // returning a skinview3d PlayerAnimation) and they are used instead of
+      // these; see skin-animations.js.
+      const BUILT_IN_GESTURES = [
         () => new S.WaveAnimation("left"),
         () => new S.WaveAnimation("right"),
-        () => new S.HitAnimation(),
-        () => new S.HitAnimation(),
-        () => { const a = new S.CrouchAnimation(); a.showProgress = true; return a; },
-        () => new S.WalkingAnimation(),
-        () => new S.RunningAnimation(),
+        () => { const a = new S.CrouchAnimation(); a.showProgress = true; a.speed = 0.35; return a; },
       ];
+      const gestures = () => {
+        const custom = window.SkinAnimations && window.SkinAnimations.gestures;
+        const list = (typeof custom === "function" ? custom(v) : custom) || null;
+        return (Array.isArray(list) && list.length) ? list : BUILT_IN_GESTURES;
+      };
       toIdle();
 
       let gestureTimer = null, backTimer = null;
       const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+      // Rare enough to be a surprise rather than a tic. At the old 9–22s the
+      // character was doing something roughly a third of the time it was on
+      // screen, which is why it read as restless.
       const scheduleGesture = () => {
         clearTimeout(gestureTimer);
-        gestureTimer = setTimeout(playGesture, rand(9000, 22000));
+        gestureTimer = setTimeout(playGesture, rand(35000, 80000));
       };
       const playGesture = () => {
         // Don't interrupt someone who is busy turning the model around, and
         // don't animate a tab nobody is looking at.
         if (dragging || document.hidden) { scheduleGesture(); return; }
-        try { v.animation = GESTURES[Math.floor(Math.random() * GESTURES.length)](); } catch { }
+        try {
+          const list = gestures();
+          v.animation = list[Math.floor(Math.random() * list.length)](v);
+        } catch { }
         clearTimeout(backTimer);
         backTimer = setTimeout(() => { toIdle(); scheduleGesture(); }, rand(2600, 5200));
       };
@@ -1201,43 +1219,101 @@
       // resetCameraPose() puts the camera at (0, 0, d), i.e. theta 0 / phi PI/2,
       // looking at the origin — and orbiting preserves d — so "home" needs no
       // bookkeeping, just the distance the camera is already at.
+      // The camera used to creep back along a fixed fraction per frame, which is
+      // why it read as lifeless: the same lazy drift whether you nudged it ten
+      // degrees or spun it right round, and it stopped dead on arrival.
+      //
+      // Instead it is a spring with a bit of weight. Flicking leaves velocity
+      // behind so the model keeps turning and slows down on its own; the pull
+      // home is proportional to how far out it is (so a big turn comes back
+      // fast) and damped rather than critically damped, so it runs past centre
+      // and settles back with a couple of diminishing swings.
       const canvas = v.canvas;
       let raf = null, idleTimer = null;
+      let velTheta = 0, velPhi = 0;       // radians per frame
+      let lastTheta = null, lastPhi = null;
+      let homing = false;
       const norm = (a) => Math.atan2(Math.sin(a), Math.cos(a));
-      const stopEase = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+      const HOME_PHI = Math.PI / 2;
+      const SPRING = 0.055;               // pull toward home
+      const DAMP = 0.86;                  // <1 leaves overshoot; lower = stiffer
+      const SPIN_DAMP = 0.94;             // free-spin decay after a flick
+      const MAX_VEL = 0.35;
+
+      const stopLoop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+
+      // While dragging, measure how fast the camera is actually moving so the
+      // flick carries over when the pointer is released.
+      const sampleDrag = () => {
+        try {
+          const cur = camSpherical(v.camera.position);
+          if (lastTheta !== null) {
+            velTheta = norm(cur.theta - lastTheta);
+            velPhi = cur.phi - lastPhi;
+          }
+          lastTheta = cur.theta; lastPhi = cur.phi;
+        } catch { }
+      };
+
       const step = () => {
         raf = null;
-        if (dragging || hovering) return;
-        let settled = true;
+        if (dragging) return;
         try {
           const cam = v.camera, tgt = v.controls.target;
           const r = cam.position.length() || 1;
           const cur = camSpherical(cam.position);
-          const dT = norm(0 - cur.theta), dP = (Math.PI / 2) - cur.phi;
-          if (Math.abs(dT) > 0.004 || Math.abs(dP) > 0.004) {
-            // A quarter of the way per frame is right for a card you flicked;
-            // on the big render it looks like a snap. This is a drift.
-            camFromSpherical(cam.position, cur.theta + dT * 0.045, cur.phi + dP * 0.045, r);
-            settled = false;
+
+          if (homing) {
+            // Spring toward the front, phi included so a drag upwards settles too.
+            velTheta += norm(0 - cur.theta) * SPRING;
+            velPhi += (HOME_PHI - cur.phi) * SPRING;
+            velTheta *= DAMP; velPhi *= DAMP;
           } else {
-            camFromSpherical(cam.position, 0, Math.PI / 2, r);
+            // Free spin after a flick: just bleed the speed away.
+            velTheta *= SPIN_DAMP; velPhi *= SPIN_DAMP;
           }
-          if (tgt.lengthSq() > 0.0001) { tgt.multiplyScalar(0.955); settled = false; }
-          else tgt.set(0, 0, 0);
+          velTheta = Math.max(-MAX_VEL, Math.min(MAX_VEL, velTheta));
+          velPhi = Math.max(-MAX_VEL, Math.min(MAX_VEL, velPhi));
+
+          // phi is the polar angle; letting it reach 0 or PI flips the camera.
+          const nextPhi = Math.max(0.15, Math.min(Math.PI - 0.15, cur.phi + velPhi));
+          camFromSpherical(cam.position, cur.theta + velTheta, nextPhi, r);
+
+          if (tgt.lengthSq() > 0.0001) tgt.multiplyScalar(0.9); else tgt.set(0, 0, 0);
           v.controls.update();
+
+          const offT = Math.abs(norm(0 - cur.theta)), offP = Math.abs(HOME_PHI - cur.phi);
+          const speed = Math.abs(velTheta) + Math.abs(velPhi);
+          if (homing && speed < 0.0015 && offT < 0.01 && offP < 0.01) {
+            camFromSpherical(cam.position, 0, HOME_PHI, r);
+            v.controls.update();
+            velTheta = velPhi = 0;
+            return;                        // settled
+          }
+          // A flick that has run out of speed on its own starts heading home.
+          if (!homing && speed < 0.002) homing = true;
         } catch { return; }
-        if (!settled) raf = requestAnimationFrame(step);
+        raf = requestAnimationFrame(step);
       };
+
+      const startLoop = () => { if (!raf) raf = requestAnimationFrame(step); };
       const armReturn = () => {
         clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => { stopEase(); raf = requestAnimationFrame(step); }, 2200);
+        // Let the flick play out first; the wait is before it decides to come
+        // back, not before it is allowed to move.
+        startLoop();
+        idleTimer = setTimeout(() => { homing = true; startLoop(); }, 2200);
       };
-      const cancelReturn = () => { clearTimeout(idleTimer); stopEase(); };
+      const cancelReturn = () => { clearTimeout(idleTimer); homing = false; };
 
       canvas.addEventListener("pointerenter", () => { hovering = true; cancelReturn(); });
       canvas.addEventListener("pointerleave", () => { hovering = false; armReturn(); });
       try {
-        v.controls.addEventListener("start", () => { dragging = true; cancelReturn(); });
+        v.controls.addEventListener("start", () => {
+          dragging = true; cancelReturn(); stopLoop();
+          velTheta = velPhi = 0; lastTheta = lastPhi = null;
+        });
+        v.controls.addEventListener("change", () => { if (dragging) sampleDrag(); });
         v.controls.addEventListener("end", () => { dragging = false; armReturn(); });
       } catch { }
     }
