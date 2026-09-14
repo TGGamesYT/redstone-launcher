@@ -106,15 +106,26 @@
     const { ipcRenderer, shell } = require('electron');
     let selectedPlayerId = null;
 
-    window.addEventListener('load', () => {
-      setTimeout(() => {
+    // The overlay used to wait for window.load, which waits for EVERY subresource
+    // -- including remote icons from the mod-site CDNs. On a cold boot, with DNS
+    // and TLS still warming up, that held the page behind a spinner for seconds
+    // after it was perfectly usable, and then waited a further second on top.
+    // DOMContentLoaded is the point at which the page can actually be used; a
+    // timer caps it either way so a stalled script can't leave it up forever.
+    (function () {
+      let hidden = false;
+      const hideOverlay = () => {
+        if (hidden) return;
+        hidden = true;
         const overlay = document.getElementById('loading-overlay');
-        if (overlay) {
-          overlay.classList.add('fade-out');
-          setTimeout(() => overlay.style.display = 'none', 500);
-        }
-      }, 1000);
-    });
+        if (!overlay) return;
+        overlay.classList.add('fade-out');
+        setTimeout(() => overlay.style.display = 'none', 500);
+      };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hideOverlay);
+      else hideOverlay();
+      setTimeout(hideOverlay, 3000);   // hard cap
+    })();
 
     function renderAccountsSidebar() {
       const container = document.getElementById('accounts-container');

@@ -449,15 +449,26 @@
     const { ipcRenderer } = require('electron');
     let profiles = [];
 
-    window.addEventListener('load', () => {
-      setTimeout(() => {
+    // The overlay used to wait for window.load, which waits for EVERY subresource
+    // -- including remote icons from the mod-site CDNs. On a cold boot, with DNS
+    // and TLS still warming up, that held the page behind a spinner for seconds
+    // after it was perfectly usable, and then waited a further second on top.
+    // DOMContentLoaded is the point at which the page can actually be used; a
+    // timer caps it either way so a stalled script can't leave it up forever.
+    (function () {
+      let hidden = false;
+      const hideOverlay = () => {
+        if (hidden) return;
+        hidden = true;
         const overlay = document.getElementById('loading-overlay');
-        if (overlay) {
-          overlay.classList.add('fade-out');
-          setTimeout(() => overlay.style.display = 'none', 500);
-        }
-      }, 800);
-    });
+        if (!overlay) return;
+        overlay.classList.add('fade-out');
+        setTimeout(() => overlay.style.display = 'none', 500);
+      };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hideOverlay);
+      else hideOverlay();
+      setTimeout(hideOverlay, 3000);   // hard cap
+    })();
 
     const profilesList = document.getElementById("profiles-list");
     const instanceDetail = document.getElementById("instance-detail");
@@ -1262,7 +1273,26 @@
 
       // NEWINSTANCE is the "create" shortcut — it must still render the LIST
       // (with the modal on top), not an empty detail view.
-      if (instanceId && instanceId !== 'NEWINSTANCE') {
+      // Look the instance up in the FULL set, not the filtered/searched list: a
+      // modpack instance that a loader or version filter happened to exclude was
+      // "not found" here, and the not-found path below used to just return --
+      // leaving the page showing nothing at all. The same return is why deleting
+      // an instance left its stale detail view on screen instead of going back to
+      // the list, since the URL still carried its id.
+      const allProfiles = Array.isArray(profiles) ? profiles : [];
+      const detailProfile = (instanceId && instanceId !== 'NEWINSTANCE')
+        ? allProfiles.find(p => String(p.id) === String(instanceId))
+        : null;
+      if (instanceId && instanceId !== 'NEWINSTANCE' && !detailProfile) {
+        // It's gone (just deleted, or the id is stale): drop it from the URL and
+        // fall through to the list rather than rendering an empty detail view.
+        const url = new URL(window.location.href);
+        url.searchParams.delete('i');
+        history.replaceState({}, '', url);
+        return renderListOrDetail();
+      }
+
+      if (detailProfile) {
         searchsort.style.display = "none";
         // Hide the page heading in detail view so the instance panel (which is
         // sized to the viewport) isn't pushed down and clipped/unscrollable.
@@ -1270,8 +1300,7 @@
         const topBr = document.getElementById("instancesTopBr");
         if (heading) heading.style.display = "none";
         if (topBr) topBr.style.display = "none";
-        const profile = list.find(p => String(p.id) === String(instanceId));
-        if (!profile) return;
+        const profile = detailProfile;
 
         const emptyState = document.getElementById('emptyInstanceState');
         emptyState.style.display = "none";

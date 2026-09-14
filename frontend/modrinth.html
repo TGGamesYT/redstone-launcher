@@ -112,6 +112,7 @@
           <option value="follows">Follows</option>
           <option value="newest">Newest</option>
           <option value="updated">Updated</option>
+          <option value="random">Random</option>
         </select>
       </label>
       <label>Version
@@ -147,6 +148,36 @@
     const projectsPerPage = 20;
     // A saved version filter, held until the version list is built (see below).
     let _wantMbVersion = null;
+
+    // --- Random sort ---------------------------------------------------------
+    // Neither API has a "random" index, so we fake one: jump to a random offset
+    // inside the result set and shuffle the page we get back. Knowing how many
+    // results there are takes one cheap probe request, cached per query shape so
+    // paging/re-rolling doesn't repeat it.
+    const randomTotals = new Map();
+
+    function shuffled(arr) {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    // Both APIs refuse to page past 10k results.
+    function randomOffset(total) {
+      const usable = Math.max(0, Math.min(total || 0, 10000) - projectsPerPage);
+      return usable > 0 ? Math.floor(Math.random() * (usable + 1)) : 0;
+    }
+
+    async function randomTotalFor(key, probe) {
+      if (randomTotals.has(key)) return randomTotals.get(key);
+      let total = 0;
+      try { total = await probe(); } catch { total = 0; }
+      randomTotals.set(key, total);
+      return total;
+    }
 
     const searchInput = document.getElementById("searchInput");
     const prevBtn = document.getElementById("prevPage");
@@ -399,11 +430,26 @@
             : f.sort === 'follows' ? 'follows'
             : f.sort === 'newest' ? 'newest'
             : f.sort === 'updated' ? 'updated' : 'relevance';
-          let url = `https://api.modrinth.com/v2/search?facets=${facets}&index=${mrIndex}&limit=${projectsPerPage}&offset=${offset}`;
-          if (search) url += `&query=${encodeURIComponent(search)}`;
-          const res = await fetch(url);
+          const query = search ? `&query=${encodeURIComponent(search)}` : '';
+          const base = `https://api.modrinth.com/v2/search?facets=${facets}&index=${mrIndex}`;
+
+          let useOffset = offset;
+          const isRandom = f.sort === 'random';
+          if (isRandom) {
+            const total = await randomTotalFor(`mr|${facets}|${query}`, async () => {
+              const probe = await fetch(`${base}&limit=1&offset=0${query}`);
+              return (await probe.json()).total_hits || 0;
+            });
+            useOffset = randomOffset(total);
+          }
+
+          const res = await fetch(`${base}&limit=${projectsPerPage}&offset=${useOffset}${query}`);
           const data = await res.json();
           currentProjects = data.hits || [];
+          if (isRandom) {
+            randomTotals.set(`mr|${facets}|${query}`, data.total_hits || 0);
+            currentProjects = shuffled(currentProjects);
+          }
           totalPages = Math.ceil((data.total_hits || 0) / projectsPerPage);
           return currentProjects;
         } else {
@@ -436,13 +482,28 @@
           // On CurseForge the category value is a numeric category id.
           if (f.cfCategory && /^\d+$/.test(f.cfCategory)) searchBody.categoryId = parseInt(f.cfCategory, 10);
 
-          const res = await fetch("https://curseforge.tgdoescode.workers.dev/search", {
+          const cfSearch = (body) => fetch("https://curseforge.tgdoescode.workers.dev/search", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(searchBody)
-          });
-          const data = await res.json();
+            body: JSON.stringify(body)
+          }).then(r => r.json());
+
+          const isRandom = f.sort === 'random';
+          const cfKey = isRandom ? `cf|${JSON.stringify({ ...searchBody, index: 0 })}` : '';
+          if (isRandom) {
+            const total = await randomTotalFor(cfKey, async () => {
+              const probe = await cfSearch({ ...searchBody, pageSize: 1, index: 0 });
+              return probe.pagination?.totalCount || 0;
+            });
+            searchBody.index = randomOffset(total);
+          }
+
+          const data = await cfSearch(searchBody);
           currentProjects = data.data || [];
+          if (isRandom) {
+            if (typeof data.pagination?.totalCount === "number") randomTotals.set(cfKey, data.pagination.totalCount);
+            currentProjects = shuffled(currentProjects);
+          }
           // CurseForge paginates too — derive the page count from its
           // pagination block (capped at the API's 10k index limit), or assume a
           // next page exists whenever we got a full page back.
@@ -783,14 +844,31 @@
       }
     }
 
-    // Search handler (persist the query so returning to the browser re-applies it)
+    // The query is kept so the BACK button returns you to the results you were
+    // looking at -- but opening the browser fresh from the sidebar should start
+    // clean, not with whatever you last typed. Chromium reports how the page was
+    // entered, so restore only on a back/forward navigation.
     searchInput.oninput = () => {
       currentPage = 1;
-      try { localStorage.setItem('mb_search', searchInput.value); } catch { /* ignore */ }
+      try { sessionStorage.setItem('mb_search', searchInput.value); } catch { /* ignore */ }
       loadProjects();
     };
-    // Restore the last query on load.
-    if (!installMode) { try { const s = localStorage.getItem('mb_search'); if (s) searchInput.value = s; } catch { /* ignore */ } }
+    if (!installMode) {
+      let cameBack = false;
+      try {
+        const nav = performance.getEntriesByType('navigation')[0];
+        cameBack = !!nav && nav.type === 'back_forward';
+      } catch { /* treat as a fresh visit */ }
+      try {
+        if (cameBack) {
+          const s = sessionStorage.getItem('mb_search');
+          if (s) searchInput.value = s;
+        } else {
+          sessionStorage.removeItem('mb_search');
+          localStorage.removeItem('mb_search');   // from when this was sticky
+        }
+      } catch { /* ignore */ }
+    }
 
     // Type change & refresh
     apiSelector.onchange = () => { currentPage = 1; loadProjects(); };
