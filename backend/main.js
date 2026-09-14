@@ -5178,6 +5178,24 @@ async function readServersFrom(filePath) {
     return [];
   }
 }
+// Everything that actually gets written, so an unchanged list can be left
+// alone. Rewriting matters more than it looks: the write below is atomic
+// (temp + rename), and a rename REPLACES the file's inode — which severs every
+// hard link pointing at it. Rewriting the shared file unconditionally therefore
+// broke and remade every instance's link on every single sync.
+const serversSignature = (list) => JSON.stringify((list || []).map(s => [
+  String(s.name ?? ""), String(s.ip ?? ""), String(s.icon ?? ""), Number(s.acceptTextures ?? 1) ? 1 : 0,
+]));
+
+async function writeServersIfChanged(filePath, list) {
+  if (fs.existsSync(filePath)) {
+    const current = await readServersFrom(filePath);
+    if (serversSignature(current) === serversSignature(list)) return false;
+  }
+  writeServersTo(filePath, list);
+  return true;
+}
+
 function writeServersTo(filePath, list) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const serverCompounds = list.map(s => {
@@ -5233,7 +5251,7 @@ async function mergeServersFor(profile, sharedList) {
   const isServerInstance = !!(profile.serverProjectId || profile.serverAddress);
   const merged = isServerInstance ? own.concat(rest) : rest.concat(own);
 
-  writeServersTo(file, merged);
+  await writeServersIfChanged(file, merged);
   return { shared: nextShared, own, syncedKeys: rest.map(serverKey) };
 }
 
@@ -5259,11 +5277,14 @@ async function applyConfigSync() {
     const shared = sharedCfgPath("servers.dat");
     let sharedList = await readServersFrom(shared);
 
-    // Minecraft saves servers.dat by renaming a temp file over it, which severs
-    // the hard link — so a linked instance can be sitting on an edit the shared
-    // copy has never seen. Adopt it BEFORE anything rewrites the shared file:
-    // that instance's file WAS the shared file, so its content is the shared
-    // content. Newest wins if two of them were edited.
+    // A writer that saves by renaming a temp file over servers.dat (which is
+    // what NbtIo.safeWrite does) repoints that instance's path at a NEW inode
+    // and leaves the shared one untouched — so a linked instance can be sitting
+    // on an edit the shared copy has never seen. (A writer that truncates the
+    // file in place instead writes straight through the link, and there is
+    // nothing to do; sameFile catches that below.) Adopt a severed copy BEFORE
+    // anything rewrites the shared file: that instance's file WAS the shared
+    // file, so its content is the shared content. Newest wins if two differ.
     let newest = null;
     const sharedAt = fs.existsSync(shared) ? fs.statSync(shared).mtimeMs : 0;
     for (const p of profiles) {
@@ -5284,7 +5305,7 @@ async function applyConfigSync() {
       const ownRecord = res.own.map(s => ({ name: s.name, ip: s.ip }));
       if (JSON.stringify(p.ownServers || null) !== JSON.stringify(ownRecord)) { p.ownServers = ownRecord; dirty = true; }
     }
-    writeServersTo(shared, sharedList);
+    await writeServersIfChanged(shared, sharedList);
 
     for (const p of profiles) {
       if (p.noSyncServers || p.installing || ownsServers(p)) continue;
