@@ -727,7 +727,9 @@ textarea::placeholder {
   flex: 1 1 0;
   min-width: 0;
   padding: 10px;
-  -webkit-app-region: no-drag;
+  /* NOT no-drag: these groups each take half the leftover width so the title
+     stays centred, and marking the whole group no-drag left only the title text
+     itself draggable. The interactive bits opt out individually instead. */
 }
 
 #toolbar .toolbar-buttons button {
@@ -770,6 +772,17 @@ textarea::placeholder {
   flex: 1 1 0;
   min-width: 0;
   padding-left: 10px;
+  /* See .toolbar-buttons above: the group stays draggable, its controls don't. */
+}
+
+/* Everything you can actually click or read in the toolbar opts out of the drag
+   region; the empty space around them stays draggable. */
+#toolbar .toolbar-buttons button,
+#toolbar .toolbar-buttons-left button,
+#toolbar .toolbar-buttons a,
+#toolbar .toolbar-buttons-left a,
+#toolbar .toolbar-progress,
+#toolbar #instance-processes {
   -webkit-app-region: no-drag;
 }
 

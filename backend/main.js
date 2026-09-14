@@ -1804,7 +1804,12 @@ async function mrpackFromUrl(url) {
   return mrpack(tmpFile); // call your existing mrpack() function
 }
 
-async function mrpack(mrpackPath, onProgress) {
+// hooks.onCreated(profile) fires as soon as the instance EXISTS -- before any
+// mod is downloaded -- so a caller can open its page and watch the rest happen
+// instead of staring at nothing for minutes. hooks.onExtract(done, total) covers
+// unpacking the overrides; onProgress(done, total, path) covers the downloads.
+async function mrpack(mrpackPath, onProgress, hooks) {
+  hooks = hooks || {};
   const zip = new AdmZip(mrpackPath);
 
   const indexEntry = zip.getEntry("modrinth.index.json");
@@ -1825,42 +1830,8 @@ async function mrpack(mrpackPath, onProgress) {
   const profileFolder = path.join(profilesDir, `${profileId}`);
   fs.mkdirSync(profileFolder, { recursive: true });
 
-  // Record every file the pack places (path -> sha1) so a later "update
-  // modpack" can diff against it and tell user edits from pack changes.
-  const packFiles = {};
-
-  // Handle overrides inside the .mrpack (everything except modrinth.index.json)
-  zip.getEntries().forEach(entry => {
-    if (!entry.isDirectory) {
-      const relativePath = mrpackRelPath(entry.entryName);
-      if (!relativePath) return;
-
-      const data = entry.getData();
-      const entryPath = path.join(profileFolder, relativePath);
-      const entryDir = path.dirname(entryPath);
-      if (!fs.existsSync(entryDir)) fs.mkdirSync(entryDir, { recursive: true });
-      fs.writeFileSync(entryPath, data);
-      packFiles[relativePath.split(path.sep).join("/")] = sha1OfBuffer(data);
-    }
-  });
-
-  // Download files listed in indexJson.files
-  const dlList = indexJson.files || [];
-  let dlDone = 0;
-  for (const fileObj of dlList) {
-    const rel = fileObj.path.replace(/\\/g, "/");
-    const filePath = path.join(profileFolder, fileObj.path.replace(/\//g, path.sep));
-    const fileDir = path.dirname(filePath);
-    if (!fs.existsSync(fileDir)) fs.mkdirSync(fileDir, { recursive: true });
-
-    const url = fileObj.downloads[0]; // we take the first URL
-    await downloadFile(url, filePath)
-    packFiles[rel] = fileObj.hashes?.sha1 || (fs.existsSync(filePath) ? computeSHA1(filePath) : null);
-    dlDone++;
-    if (typeof onProgress === "function") onProgress(dlDone, dlList.length, rel);
-  }
-
-  // Optional: read icon from pack
+  // The pack icon is in the archive, so the instance can look right from the
+  // moment it appears rather than after every mod has come down.
   let icon = null;
   const iconEntry = zip.getEntry("icon.png");
   if (iconEntry) icon = iconEntry.getData().toString("base64");
@@ -1873,18 +1844,82 @@ async function mrpack(mrpackPath, onProgress) {
     loaderVersion,
     icon,
     modpack: true,
+    installing: true,
     created: Date.now(),
     lastUsed: Date.now()
   };
 
-  writeModpackMeta(profileFolder, { name: newProfile.name, files: packFiles });
+  // Save it FIRST: the instance is now real (and marked as still installing), so
+  // its page can be opened immediately.
+  {
+    const profiles = await loadProfiles();
+    profiles.push(newProfile);
+    saveProfiles(profiles);
+  }
+  if (typeof hooks.onCreated === "function") { try { hooks.onCreated(newProfile); } catch { /* caller's problem */ } }
 
-  const profiles = await loadProfiles();
-  profiles.push(newProfile);
-  saveProfiles(profiles);
-  devtoolsLog(profileId)
+  // Clear the installing flag (or record that it failed) on the STORED copy —
+  // the array has been re-read and rewritten by other handlers in between.
+  const finishProfile = async (patch) => {
+    const profiles = await loadProfiles();
+    const p = profiles.find(x => String(x.id) === String(profileId));
+    if (!p) return;
+    delete p.installing;
+    Object.assign(p, patch || {});
+    saveProfiles(profiles);
+  };
 
-  return { success: true, profile: newProfile };
+  try {
+    // Record every file the pack places (path -> sha1) so a later "update
+    // modpack" can diff against it and tell user edits from pack changes.
+    const packFiles = {};
+
+    // Handle overrides inside the .mrpack (everything except modrinth.index.json)
+    const entries = zip.getEntries().filter(e => !e.isDirectory);
+    let exDone = 0;
+    entries.forEach(entry => {
+      exDone++;
+      const relativePath = mrpackRelPath(entry.entryName);
+      if (relativePath) {
+        const data = entry.getData();
+        const entryPath = path.join(profileFolder, relativePath);
+        const entryDir = path.dirname(entryPath);
+        if (!fs.existsSync(entryDir)) fs.mkdirSync(entryDir, { recursive: true });
+        fs.writeFileSync(entryPath, data);
+        packFiles[relativePath.split(path.sep).join("/")] = sha1OfBuffer(data);
+      }
+      if (typeof hooks.onExtract === "function") hooks.onExtract(exDone, entries.length);
+    });
+
+    // Download files listed in indexJson.files
+    const dlList = indexJson.files || [];
+    let dlDone = 0;
+    if (typeof onProgress === "function") onProgress(0, dlList.length, "");
+    for (const fileObj of dlList) {
+      const rel = fileObj.path.replace(/\\/g, "/");
+      const filePath = path.join(profileFolder, fileObj.path.replace(/\//g, path.sep));
+      const fileDir = path.dirname(filePath);
+      if (!fs.existsSync(fileDir)) fs.mkdirSync(fileDir, { recursive: true });
+
+      const url = fileObj.downloads[0]; // we take the first URL
+      await downloadFile(url, filePath)
+      packFiles[rel] = fileObj.hashes?.sha1 || (fs.existsSync(filePath) ? computeSHA1(filePath) : null);
+      dlDone++;
+      if (typeof onProgress === "function") onProgress(dlDone, dlList.length, rel);
+    }
+
+    writeModpackMeta(profileFolder, { name: newProfile.name, files: packFiles });
+    await finishProfile();
+    devtoolsLog(profileId)
+
+    delete newProfile.installing;
+    return { success: true, profile: newProfile };
+  } catch (err) {
+    // The instance is already in the list, so say so rather than leaving it
+    // sitting there claiming to still be installing.
+    await finishProfile({ installFailed: String(err && err.message || err) });
+    return { success: false, error: String(err && err.message || err), profile: newProfile };
+  }
 }
 
 const MODPACK_META = ".modpackmeta.json";
@@ -3286,6 +3321,64 @@ ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType 
     return { success: false, error: err.message };
   }
 });
+
+// ---------------- Modpack install, watchable while it runs ------------------
+// Installing a pack used to be a single await that returned minutes later with
+// nothing on screen in between. The renderer now hands over a ticket, gets an
+// answer straight away, and follows the install through "modpack-install"
+// events -- which carry the instance id the moment the instance exists, so its
+// page can open and show the rest of the work happening.
+const modpackInstalls = new Map();   // ticket -> latest state
+
+function mpSend(state) {
+  modpackInstalls.set(state.ticket, state);
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("modpack-install", state); } catch { /* window went away */ }
+  }
+}
+
+async function runModpackInstall({ ticket, url, name }) {
+  const st = {
+    ticket, name: name || "Modpack", phase: "download",
+    done: 0, total: 0, detail: "", profileId: null, error: null, finished: false,
+  };
+  const emit = (patch) => mpSend(Object.assign(st, patch || {}, { ticket }));
+  emit({});
+  try {
+    const tmpPath = path.join(app.getPath("temp"), `mp-${Date.now()}.mrpack`);
+    await downloadFile(url, tmpPath);
+    emit({ phase: "extract", done: 0, total: 0, detail: "" });
+
+    const res = await mrpack(
+      tmpPath,
+      (done, total, rel) => emit({ phase: "mods", done, total, detail: rel }),
+      {
+        onCreated: (profile) => emit({ profileId: profile.id, name: profile.name }),
+        onExtract: (done, total) => emit({ phase: "extract", done, total }),
+      }
+    );
+    if (!res || !res.success) throw new Error((res && res.error) || "Install failed");
+    emit({ phase: "done", finished: true, profileId: res.profile.id, name: res.profile.name, detail: "" });
+    return res;
+  } catch (err) {
+    emit({ phase: "error", finished: true, error: String(err && err.message || err) });
+    return { success: false, error: String(err && err.message || err) };
+  } finally {
+    // Keep the final state around briefly so a page that opens late still sees
+    // how it ended, then stop holding on to it.
+    setTimeout(() => modpackInstalls.delete(ticket), 5 * 60 * 1000);
+  }
+}
+
+// Kick off an install and return immediately — the caller follows the events.
+ipcMain.handle("modpack:install", (event, { url, ticket, name }) => {
+  if (!url || !ticket) return { success: false, error: "missing url or ticket" };
+  if (modpackInstalls.has(ticket)) return { success: true, already: true };
+  runModpackInstall({ ticket, url, name });
+  return { success: true };
+});
+// For a page that loads after some progress has already gone by.
+ipcMain.handle("modpack:installState", (event, { ticket }) => modpackInstalls.get(ticket) || null);
 
 // ---------------- install-mrpack-url ----------------
 ipcMain.handle("install-mrpack-url", async (event, url) => {
