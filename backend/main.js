@@ -4925,6 +4925,213 @@ function extractJarIcon(jarPath, declared, outDir, key) {
 // A small thumbnail of an image on disk. The icon picker was putting full-size
 // screenshots (2-8 MB, often 4K) into 56px cells, which made opening it crawl.
 const _iconThumbCache = new Map();
+// ── Importing from other launchers ──────────────────────────────────────────
+// Every one of these keeps its instances in a directory of per-instance folders
+// with a small metadata file naming the Minecraft version and mod loader. The
+// shapes differ; what they have in common is enough to build an instance from.
+function launcherSearchRoots() {
+  const home = app.getPath("home");
+  const appData = process.platform === "win32"
+    ? (process.env.APPDATA || path.join(home, "AppData", "Roaming"))
+    : process.platform === "darwin"
+      ? path.join(home, "Library", "Application Support")
+      : path.join(home, ".local", "share");
+  const cfg = process.platform === "linux" ? path.join(home, ".config") : appData;
+  return { home, appData, cfg };
+}
+
+function knownLauncherPaths() {
+  const { home, appData, cfg } = launcherSearchRoots();
+  const many = (...xs) => xs.filter(Boolean);
+  return {
+    modrinth: many(
+      path.join(appData, "com.modrinth.theseus", "profiles"),
+      path.join(appData, "ModrinthApp", "profiles"),
+      path.join(home, ".local", "share", "ModrinthApp", "profiles"),
+    ),
+    curseforge: many(
+      path.join(home, "curseforge", "minecraft", "Instances"),
+      path.join(home, "Documents", "curseforge", "minecraft", "Instances"),
+      path.join(appData, "CurseForge", "minecraft", "Instances"),
+    ),
+    prism: many(
+      path.join(appData, "PrismLauncher", "instances"),
+      path.join(cfg, "PrismLauncher", "instances"),
+      path.join(home, ".local", "share", "PrismLauncher", "instances"),
+    ),
+    multimc: many(
+      path.join(home, "MultiMC", "instances"),
+      path.join(appData, "MultiMC", "instances"),
+      path.join(home, ".local", "share", "multimc", "instances"),
+    ),
+    vanilla: many(
+      process.platform === "win32" ? path.join(appData, ".minecraft") : null,
+      process.platform === "darwin" ? path.join(home, "Library", "Application Support", "minecraft") : null,
+      process.platform === "linux" ? path.join(home, ".minecraft") : null,
+    ),
+  };
+}
+
+// Prism/MultiMC record the loader as a "component" list in mmc-pack.json.
+function readMmcPack(dir) {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(dir, "mmc-pack.json"), "utf8"));
+    const comps = j.components || [];
+    const find = (uid) => comps.find(c => c.uid === uid);
+    const mc = find("net.minecraft");
+    const map = {
+      "net.minecraftforge": "forge",
+      "net.neoforged": "neoforge",
+      "net.fabricmc.fabric-loader": "fabric",
+      "org.quiltmc.quilt-loader": "quilt",
+    };
+    let loader = "vanilla", loaderVersion = "";
+    for (const [uid, name] of Object.entries(map)) {
+      const c = find(uid);
+      if (c) { loader = name; loaderVersion = c.version || ""; break; }
+    }
+    return { version: mc && mc.version, loader, loaderVersion };
+  } catch { return null; }
+}
+
+function readIniName(file) {
+  try {
+    const txt = fs.readFileSync(file, "utf8");
+    const m = txt.match(/^name=(.*)$/m);
+    return m ? m[1].trim() : null;
+  } catch { return null; }
+}
+
+function scanLauncher(kind, root) {
+  const out = [];
+  if (!fs.existsSync(root)) return out;
+  let dirs = [];
+  try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { return out; }
+
+  for (const d of dirs) {
+    const dir = path.join(root, d.name);
+    try {
+      if (kind === "prism" || kind === "multimc") {
+        const pack = readMmcPack(dir);
+        if (!pack || !pack.version) continue;
+        // The playable files live in .minecraft (Prism) or minecraft (MultiMC).
+        const sub = ["minecraft", ".minecraft"].map(s => path.join(dir, s)).find(p => fs.existsSync(p));
+        out.push({
+          kind, dir, gameDir: sub || dir,
+          name: readIniName(path.join(dir, "instance.cfg")) || d.name,
+          version: pack.version, loader: pack.loader, loaderVersion: pack.loaderVersion,
+        });
+      } else if (kind === "curseforge") {
+        const f = path.join(dir, "minecraftinstance.json");
+        if (!fs.existsSync(f)) continue;
+        const j = JSON.parse(fs.readFileSync(f, "utf8"));
+        const mc = j.baseModLoader || {};
+        const { loader, loaderVersion } = loaderFromCurseId(mc.name, j.gameVersion);
+        out.push({
+          kind, dir, gameDir: dir,
+          name: j.name || d.name,
+          version: j.gameVersion || mc.minecraftVersion,
+          loader: loader || "vanilla", loaderVersion: loaderVersion || "",
+        });
+      } else if (kind === "modrinth") {
+        // Theseus keeps profile.json next to the instance files.
+        const f = ["profile.json", "instance.json"].map(n => path.join(dir, n)).find(p => fs.existsSync(p));
+        if (!f) continue;
+        const j = JSON.parse(fs.readFileSync(f, "utf8"));
+        const meta = j.metadata || j;
+        const lv = meta.loader_version || {};
+        out.push({
+          kind, dir, gameDir: dir,
+          name: meta.name || j.name || d.name,
+          version: meta.game_version || j.game_version,
+          loader: (meta.loader || "vanilla").toLowerCase(),
+          loaderVersion: lv.id || lv.version || "",
+        });
+      }
+    } catch { /* an unreadable instance is skipped, not fatal */ }
+  }
+  return out.filter(i => i.version);
+}
+
+// What's on this machine. Nothing is copied here — this only looks.
+ipcMain.handle("import:scan", async () => {
+  const paths = knownLauncherPaths();
+  const found = {};
+  for (const [kind, roots] of Object.entries(paths)) {
+    if (kind === "vanilla") {
+      const root = roots.find(r => r && fs.existsSync(r));
+      if (!root) continue;
+      // The vanilla launcher has profiles, not instance folders.
+      let profiles = [];
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(root, "launcher_profiles.json"), "utf8"));
+        profiles = Object.entries(j.profiles || {}).map(([id, p]) => ({
+          kind: "vanilla", dir: root, gameDir: p.gameDir || root,
+          name: p.name || id,
+          version: p.lastVersionId,
+          loader: "vanilla", loaderVersion: "",
+        })).filter(p => p.version && !/^latest-/.test(p.version));
+      } catch { /* no profiles file */ }
+      if (profiles.length) found.vanilla = { root, instances: profiles };
+      continue;
+    }
+    for (const root of roots) {
+      const list = scanLauncher(kind, root);
+      if (list.length) { found[kind] = { root, instances: list }; break; }
+    }
+  }
+  return found;
+});
+
+// Copy one of those in as a Redstone instance. The game files are copied, not
+// moved or linked, so the other launcher keeps working exactly as it did.
+ipcMain.handle("import:instance", async (event, { entry }) => {
+  try {
+    if (!entry || !entry.gameDir || !entry.version) return { success: false, error: "incomplete instance" };
+    const profileId = getUniqueFolderName(entry.name || "Imported");
+    const dest = path.join(dataDir, "client", String(profileId));
+    fs.mkdirSync(dest, { recursive: true });
+
+    // Only what belongs to an instance — not the shared caches, which are big
+    // and which this launcher manages itself.
+    const SKIP = new Set(["assets", "libraries", "versions", "logs", "crash-reports", "webcache", "webcache2", ".fabric", "natives"]);
+    const copyDir = (from, to) => {
+      for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+        if (SKIP.has(e.name.toLowerCase())) continue;
+        const src = path.join(from, e.name), dst = path.join(to, e.name);
+        if (e.isDirectory()) { fs.mkdirSync(dst, { recursive: true }); copyDir(src, dst); }
+        else if (e.isFile()) { try { fs.copyFileSync(src, dst); } catch { /* skip locked files */ } }
+      }
+    };
+    copyDir(entry.gameDir, dest);
+
+    // An icon, if the source launcher kept one.
+    let icon = null;
+    for (const n of ["icon.png", "instance.png", "pack.png"]) {
+      const p = path.join(entry.dir, n);
+      if (fs.existsSync(p)) { try { icon = "data:image/png;base64," + fs.readFileSync(p).toString("base64"); } catch { } break; }
+    }
+
+    const profiles = await loadProfiles();
+    profiles.push({
+      id: profileId,
+      name: entry.name || String(profileId),
+      version: entry.version,
+      loader: entry.loader || "vanilla",
+      loaderVersion: entry.loaderVersion || "",
+      icon,
+      importedFrom: entry.kind,
+      created: Date.now(),
+      lastUsed: Date.now(),
+    });
+    saveProfiles(profiles);
+    broadcastProfiles(profiles);
+    return { success: true, profileId };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
 ipcMain.handle("icon:thumb", async (event, { filePath, size }) => {
   try {
     const p = path.resolve(String(filePath || ""));

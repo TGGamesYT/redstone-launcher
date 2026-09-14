@@ -238,6 +238,16 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <label class="setting-toggle"><input type="checkbox" id="sync-options"> Sync game options</label>
         <label class="setting-toggle"><input type="checkbox" id="sync-servers"> Sync multiplayer servers</label>
       </div>
+
+      <h3>Getting started</h3>
+      <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:620px;">
+        The tour that runs the first time you open the launcher, and the importer
+        for instances from other launchers. Both can be run again whenever you like.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:50px;">
+        <button id="runTourBtn">Run the tour again</button>
+        <button id="runImportBtn">Import from another launcher…</button>
+      </div>
     </div>
 
     <style>
@@ -975,6 +985,13 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         wireSync(syncServers, 'servers', 'syncServers');
       }
 
+      // The tour points at the sidebar, which is on this page too, so it can be
+      // replayed right here without navigating anywhere.
+      const tourBtn = document.getElementById('runTourBtn');
+      if (tourBtn) tourBtn.onclick = () => window.Onboarding && window.Onboarding.openTour();
+      const importBtn = document.getElementById('runImportBtn');
+      if (importBtn) importBtn.onclick = () => window.Onboarding && window.Onboarding.openImport();
+
       const devMode = document.getElementById('dev-mode');
       if (devMode) {
         devMode.checked = !!getSetting('devMode');
@@ -1005,6 +1022,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   </script>
   <script src="fitheight.js"></script>
   <script src="sidebar.js"></script>
+  <script src="onboarding.js"></script>
   <script src="notifications.js">
     // Shown from the app's own version rather than a string that has to be
     // remembered on every release.

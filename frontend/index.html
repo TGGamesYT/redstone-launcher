@@ -395,6 +395,11 @@
   </script>
   <script src="fitheight.js"></script>
   <script src="sidebar.js"></script>
+  <script src="onboarding.js"></script>
+  <script>
+    // First ever launch: the tour, then the import modal.
+    if (window.Onboarding) window.Onboarding.maybeRunFirstTime();
+  </script>
   <script src="notifications.js"></script>
   <script>
     const greetings = [
