@@ -571,6 +571,55 @@
     ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); maybeLaunchFromShortcut(); });
     ipcRenderer.on("profiles-updated", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
 
+    // ── Crash report ─────────────────────────────────────────────────────────
+    // A crash used to be silent: the game vanished and the only trace was a
+    // line in the Logs tab. Show what happened, with the crash report if
+    // Minecraft managed to write one and the tail of the log if it didn't.
+    ipcRenderer.on("instance-crashed", (e, info) => {
+      if (!info) return;
+      const ov = document.createElement("div");
+      ov.className = "modal-overlay active";
+      ov.style.zIndex = 7000;
+      const hasReport = !!info.report;
+      ov.innerHTML = `
+        <div class="modal-content" style="max-width:820px; width:92%; display:flex; flex-direction:column; max-height:82vh;">
+          <div class="modal-header">
+            <h2>${info.name} crashed</h2>
+            <button class="modal-close" id="crashX">✕</button>
+          </div>
+          <p style="margin:0 0 10px; opacity:0.85; font-size:13px;">
+            It exited with code ${info.code}.
+            ${hasReport ? "Minecraft wrote a crash report:" : "No crash report was written, so here is the end of the log:"}
+          </p>
+          <pre id="crashText" style="flex:1; min-height:0; overflow:auto; margin:0; padding:10px;
+            background:var(--very-dark); border:1px solid var(--border-dark); border-radius:var(--border-radius);
+            font-size:11px; line-height:1.45; white-space:pre-wrap; word-break:break-word;"></pre>
+          <div class="modal-actions">
+            <button id="crashCopy">Copy</button>
+            ${info.reportPath ? '<button id="crashOpen">Open report folder</button>' : ""}
+            <button id="crashLogs">Show logs</button>
+            <button id="crashClose">Close</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      const text = hasReport ? info.report : (info.tail || []).join("\n");
+      // textContent, not innerHTML: a crash report is full of angle brackets.
+      ov.querySelector("#crashText").textContent = text || "(nothing was captured)";
+      const close = () => ov.remove();
+      ov.querySelector("#crashX").onclick = close;
+      ov.querySelector("#crashClose").onclick = close;
+      ov.addEventListener("mousedown", ev => { if (ev.target === ov) close(); });
+      ov.querySelector("#crashCopy").onclick = () => {
+        try { navigator.clipboard.writeText(text || ""); if (window.notify) window.notify("Copied", "success"); } catch { }
+      };
+      const openBtn = ov.querySelector("#crashOpen");
+      if (openBtn) openBtn.onclick = () => ipcRenderer.send("open-folder-path", { pather: info.reportPath });
+      ov.querySelector("#crashLogs").onclick = () => {
+        close();
+        window.location.href = `instances.html?i=${encodeURIComponent(info.profileId)}&tab=Logs`;
+      };
+    });
+
     // ── Modpack install, watched live ────────────────────────────────────────
     // Arriving with ?installing=<ticket> means a pack install was just started
     // from the browser. The main process reports its progress against that

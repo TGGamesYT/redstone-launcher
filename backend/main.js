@@ -365,6 +365,54 @@ function stopInstance(id, pid = null) {
 
 // Called whenever an instance exits: refresh presence and, if the launcher
 // window is already closed and nothing is left running, quit.
+// A non-zero exit means the game died rather than being closed. Gather what
+// there is to say about it — the exit code, the tail of the session log, and
+// the crash report Minecraft writes if it got far enough — and hand it to the
+// UI, which was previously silent about crashes entirely.
+function reportInstanceCrash(profileId, cfg, code) {
+  // 0 is a clean quit; 143/130 are SIGTERM/SIGINT, i.e. the user stopping it.
+  if (code === 0 || code === null || code === undefined) return;
+  if (code === 143 || code === 130) return;
+  try {
+    const dir = path.join(dataDir, "client", String(profileId));
+    // broadcastLog keys by whatever it was handed, which isn't always a string.
+    const lines = instanceLogs.get(profileId) || instanceLogs.get(String(profileId)) || [];
+    const tail = lines.slice(-400);
+
+    // The newest crash report, if one was written for this session.
+    let report = null, reportPath = null;
+    try {
+      const crashDir = path.join(dir, "crash-reports");
+      if (fs.existsSync(crashDir)) {
+        const newest = fs.readdirSync(crashDir)
+          .filter(f => f.endsWith(".txt"))
+          .map(f => ({ f, t: fs.statSync(path.join(crashDir, f)).mtimeMs }))
+          .sort((a, b) => b.t - a.t)[0];
+        // Only this session's — an old report would be misleading.
+        if (newest && Date.now() - newest.t < 10 * 60 * 1000) {
+          reportPath = path.join(crashDir, newest.f);
+          report = fs.readFileSync(reportPath, "utf8").slice(0, 60000);
+        }
+      }
+    } catch { /* no report is fine */ }
+
+    const payload = {
+      profileId: String(profileId),
+      name: (cfg && cfg.name) || String(profileId),
+      code,
+      tail,
+      report,
+      reportPath,
+      at: Date.now(),
+    };
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.webContents.send("instance-crashed", payload); } catch { /* gone */ }
+    }
+  } catch (err) {
+    devtoolsLog("failed to report crash:", err);
+  }
+}
+
 function onInstanceExited(profileId) {
   // Clear any LAN-share state and close the relay tunnel for this instance.
   lanPorts.delete(String(profileId));
@@ -2707,6 +2755,7 @@ function launchViaWorker(profileId, cfg) {
           onInstanceExited(profileId);
           broadcastProgress(profileId, { done: true });
           broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${m.code}`);
+          reportInstanceCrash(profileId, cfg, m.code);
           try { worker.kill(); } catch { /* ignore */ }
           break;
         case 'error':
