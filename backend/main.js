@@ -1127,38 +1127,77 @@ ipcMain.on('delete-notification', (event, notificationId) => {
 });
 
 /* ─────────────── Player Profiles ─────────────── */
-async function refreshPlayer(player) {
-  try {
-    // QR / device-code accounts use the login.live.com (MBI_SSL, "t=") path,
-    // which msmc can't refresh — handle them with the manual chain.
-    if (player.authKind === "live") {
-      const tok = await refreshLiveToken(player.refresh);
-      player.auth = await completeLiveLogin(tok.access_token, player.auth?.client_token);
-      player.refresh = tok.refresh_token || player.refresh;
-      return player;
-    }
+// Refreshing an account is a three-request chain (Xbox Live, XSTS, then
+// Mojang's login_with_xbox), and Mojang rate-limits the last one hard — HTTP
+// 429 after not very many. Every caller used to throttle this differently, or
+// not at all: authHeaders had a 10-minute gate shared across ALL accounts,
+// getSkinsAndCapes had its own 30-minute per-player one, and authHeadersFor and
+// accountCredsByIdFresh had none. Opening a few pages fired a chain each time
+// and locked the account out. One throttle now lives here, where the work is,
+// so every entry point gets it.
+const REFRESH_MIN_GAP = 15 * 60 * 1000;
+// A chain that failed shouldn't be retried straight away either, and a 429
+// means back off properly.
+const REFRESH_RETRY_GAP = 60 * 1000;
+const REFRESH_RATELIMIT_GAP = 10 * 60 * 1000;
+const _refreshAt = new Map();        // account id -> when a refresh last SUCCEEDED
+const _refreshCooldown = new Map();  // account id -> don't even try before this
+const _refreshInFlight = new Map();  // account id -> the chain currently running
 
-    const authManager = new Auth("login");
+const _refreshKey = (player) => String((player && (player.id ?? player.auth?.uuid)) ?? "default");
 
-    const xboxManager = await authManager.refresh(player.refresh)
+async function refreshPlayer(player, opts = {}) {
+  const key = _refreshKey(player);
+  // The persisted stamp matters too, or restarting the launcher would refresh
+  // every account again immediately.
+  const last = Math.max(_refreshAt.get(key) || 0, Number(player.lastRefresh) || 0);
+  const hasToken = !!(player.auth && player.auth.access_token && player.auth.access_token !== "0");
+  if (!opts.force && hasToken && Date.now() - last < REFRESH_MIN_GAP) return player;
 
-    const token = await xboxManager.getMinecraft()
-
-    const launcherAuth = token.mclc();
-
-    player.auth = launcherAuth;
-
-    if (token.parent && token.parent.msToken) {
-      player.refresh = token.parent.msToken;
-    } else if (player.refresh) {
-      player.refresh = player.refresh;
-    }
-
-    return player;
-  } catch (err) {
-    devtoolsLog("Failed to refresh player:", err);
-    throw err;
+  // A chain that just failed gets a cooldown of its own, tracked separately
+  // from the last success: an account with no usable token yet would otherwise
+  // sail past the check above and retry on every single call — which is exactly
+  // how a 429 turns into a storm of further 429s.
+  if (!opts.force && Date.now() < (_refreshCooldown.get(key) || 0)) {
+    if (hasToken) return player;
+    throw new Error("Sign-in is rate-limited right now — try again shortly");
   }
+
+  // Two pages asking at the same moment must not start two chains.
+  const pending = _refreshInFlight.get(key);
+  if (pending) return pending;
+
+  const run = (async () => {
+    try {
+      // QR / device-code accounts use the login.live.com (MBI_SSL, "t=") path,
+      // which msmc can't refresh — handle them with the manual chain.
+      if (player.authKind === "live") {
+        const tok = await refreshLiveToken(player.refresh);
+        player.auth = await completeLiveLogin(tok.access_token, player.auth?.client_token);
+        player.refresh = tok.refresh_token || player.refresh;
+      } else {
+        const authManager = new Auth("login");
+        const xboxManager = await authManager.refresh(player.refresh);
+        const token = await xboxManager.getMinecraft();
+        player.auth = token.mclc();
+        if (token.parent && token.parent.msToken) player.refresh = token.parent.msToken;
+      }
+      player.lastRefresh = Date.now();
+      _refreshAt.set(key, player.lastRefresh);
+      _refreshCooldown.delete(key);
+      return player;
+    } catch (err) {
+      const rateLimited = err?.response?.status === 429
+        || String(err && (err.message ?? err)).includes("429");
+      _refreshCooldown.set(key, Date.now() + (rateLimited ? REFRESH_RATELIMIT_GAP : REFRESH_RETRY_GAP));
+      devtoolsLog("Failed to refresh player:", err);
+      throw err;
+    } finally {
+      _refreshInFlight.delete(key);
+    }
+  })();
+  _refreshInFlight.set(key, run);
+  return run;
 }
 
 function getUniqueFolderName(baseName) {
@@ -6805,9 +6844,8 @@ ipcMain.handle("frpc:getCreds", async () => {
   return loadCreds(); // returns { username, ... } or null
 });
 
-// Throttle token refreshes: refreshing on every call was slow and got the
-// account rate-limited by Mojang.
-let lastAuthRefreshAt = 0;
+// (The throttle these two used to keep lives in refreshPlayer now — the gate
+// here was shared across every account, so refreshing one blocked the rest.)
 // Auth headers for a SPECIFIC account (used by cape redemption, which lets the
 // user pick which premium account receives the cape). Falls back to the selected
 // account when no id is given.
@@ -6834,18 +6872,15 @@ async function authHeaders() {
   let obj = players.find(item => String(item.id) === String(id));
   if (!obj) throw new Error("No account selected");
 
-  if (Date.now() - lastAuthRefreshAt > 10 * 60 * 1000) {
-    try {
-      const refreshed = await refreshPlayer(obj);
-      if (refreshed?.auth?.access_token) {
-        obj = refreshed;
-        const idx = players.findIndex(p => String(p.id) === String(id));
-        if (idx !== -1) { players[idx] = obj; savePlayers(players); }
-        lastAuthRefreshAt = Date.now();
-      }
-    } catch (e) {
-      devtoolsLog("authHeaders refresh failed, using existing token:", e?.message || e);
+  try {
+    const refreshed = await refreshPlayer(obj);
+    if (refreshed?.auth?.access_token) {
+      obj = refreshed;
+      const idx = players.findIndex(p => String(p.id) === String(id));
+      if (idx !== -1) { players[idx] = obj; savePlayers(players); }
     }
+  } catch (e) {
+    devtoolsLog("authHeaders refresh failed, using existing token:", e?.message || e);
   }
 
   const token = obj?.auth?.access_token;
@@ -7033,15 +7068,12 @@ ipcMain.handle("mc:getProfile", async () => {
   if (!obj1) return { skins: [], capes: [] };
   
   if (obj1.type === "microsoft") {
-    // Only refresh if token is actually close to expiring (check internal msmc logic or assume TTL)
-    // We already have a 5-minute profile cache, but let's be even more careful with the session.
+    // refreshPlayer decides whether a refresh is actually due; persist the
+    // stamp it sets so the throttle survives a restart.
     try {
-      // Check if we need a refresh based on a simple heuristic to avoid 429
-      const lastRefresh = obj1.lastRefresh || 0;
-      if (Date.now() - lastRefresh > 1000 * 60 * 30) { // Only refresh every 30 mins
-        obj1 = await refreshPlayer(obj1);
-        obj1.lastRefresh = Date.now();
-        // Save the updated lastRefresh back to players.json
+      const before = obj1.lastRefresh || 0;
+      obj1 = await refreshPlayer(obj1);
+      if ((obj1.lastRefresh || 0) !== before) {
         const allPlayers = await loadPlayers();
         const pIdx = allPlayers.findIndex(p => p.id === obj1.id);
         if (pIdx !== -1) {
