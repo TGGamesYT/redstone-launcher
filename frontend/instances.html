@@ -1815,13 +1815,27 @@
           const ov = document.createElement('div'); ov.className = 'modal-overlay active'; ov.style.zIndex = 6000;
           const rows = jars.map(j => `<div class="menu-item devver-row" data-jar="${j.name}" style="display:flex;justify-content:space-between;gap:12px;padding:8px;border-radius:6px;cursor:pointer;background:var(--menu-bg);margin:4px 0;">
             <span style="word-break:break-all;">${j.name}</span><span style="opacity:.6;font-size:11px;white-space:nowrap;">${new Date(j.mtime).toLocaleString()}</span></div>`).join('');
+          // Picking a build PINS it: without an explicit way back, the next
+          // rebuild would silently replace it and the choice would look lost.
+          const pinned = mod.pinnedJar ? `<div style="font-size:11px;opacity:.75;margin:4px 0 8px;">Currently pinned to <b>${mod.pinnedJar}</b> — it won't change when you rebuild.</div>` : '';
           ov.innerHTML = `<div class="modal-content" style="max-width:520px;">
             <div class="modal-header"><h2>Pick a build to load — ${mod.modId}</h2></div>
+            ${pinned}
             <div style="max-height:50vh;overflow:auto;">${rows}</div>
-            <div class="modal-actions" style="margin-top:12px;"><button type="button" id="devver-cancel">Cancel</button></div></div>`;
+            <div class="modal-actions" style="margin-top:12px;">
+              <button type="button" id="devver-newest">Always use the newest</button>
+              <button type="button" id="devver-cancel">Cancel</button>
+            </div></div>`;
           document.body.appendChild(ov);
           const close = () => ov.remove();
           ov.querySelector('#devver-cancel').onclick = close;
+          ov.querySelector('#devver-newest').onclick = async () => {
+            const r = await ipcRenderer.invoke('devmod:unpin', { type, id, folder: mod.folder });
+            close();
+            if (r && r.error) alert('Swap failed: ' + r.error);
+            else if (window.notify) window.notify('Tracking the newest build again', 'success');
+            onChange && onChange();
+          };
           ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
           ov.querySelectorAll('.devver-row').forEach(row => row.onclick = async () => {
             const r = await ipcRenderer.invoke('devmod:swapTo', { type, id, modId: mod.modId, folder: mod.folder, jar: row.dataset.jar });
@@ -2444,32 +2458,34 @@
 
             } else if (["resourcepacks", "mods", "shaderpacks"].includes(tabName)) {
               const renderContentTab = async () => {
-                const fileInfos = await ipcRenderer.invoke("get-instance-mods", { profileId: profile.id, tab: tabName });
-                if (!ensureStillActive()) return;
-                // Enabling/disabling while the game is running won't take effect.
+                // Everything that doesn't depend on the file list: the action bar,
+                // whether the game is running, the dev-mod registrations. Fetched
+                // once, then reused by both paint passes.
                 const running = (await ipcRenderer.invoke("get-running-instances") || []).some(r => String(r.id) === String(profile.id));
                 if (!ensureStillActive()) return;
-                tabContent.classList.remove("logs-active");
-                tabContent.innerHTML = "";
-                const bar = document.createElement("div");
-                bar.className = "tab-action-bar";
-                const ib = installBtnFor(tabName);
-                if (ib) bar.appendChild(ib);
-                const openBtn = document.createElement("button");
-                openBtn.className = "tab-install-btn secondary";
-                openBtn.textContent = `Open ${tabName.charAt(0).toUpperCase() + tabName.slice(1)} Folder`;
-                openBtn.onclick = () => ipcRenderer.send("open-instance-folder", { profileId: profile.id, sub: tabName });
-                bar.appendChild(openBtn);
-                const refreshBtn = document.createElement("button");
-                refreshBtn.className = "tab-install-btn secondary";
-                refreshBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">refresh</i> Refresh`;
-                refreshBtn.onclick = () => renderContentTab();
-                bar.appendChild(refreshBtn);
-                // Dev mods (hot-swap a locally-built mod) — shown when THIS instance
-                // has dev mods enabled in its Advanced settings.
-                if (tabName === "mods") {
-                  const dm = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id });
-                  if (dm && dm.enabled) {
+                let devState = null;
+                if (tabName === "mods") devState = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id });
+                if (!ensureStillActive()) return;
+                const devMods = (devState && devState.mods) || [];
+
+                const buildBar = () => {
+                  const bar = document.createElement("div");
+                  bar.className = "tab-action-bar";
+                  const ib = installBtnFor(tabName);
+                  if (ib) bar.appendChild(ib);
+                  const openBtn = document.createElement("button");
+                  openBtn.className = "tab-install-btn secondary";
+                  openBtn.textContent = `Open ${tabName.charAt(0).toUpperCase() + tabName.slice(1)} Folder`;
+                  openBtn.onclick = () => ipcRenderer.send("open-instance-folder", { profileId: profile.id, sub: tabName });
+                  bar.appendChild(openBtn);
+                  const refreshBtn = document.createElement("button");
+                  refreshBtn.className = "tab-install-btn secondary";
+                  refreshBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">refresh</i> Refresh`;
+                  refreshBtn.onclick = () => renderContentTab();
+                  bar.appendChild(refreshBtn);
+                  // Dev mods (hot-swap a locally-built mod) — shown when THIS instance
+                  // has dev mods enabled in its Advanced settings.
+                  if (tabName === "mods" && devState && devState.enabled) {
                     // Opens the build-folder picker straight away and registers it.
                     const devBtn = document.createElement("button");
                     devBtn.className = "tab-install-btn secondary";
@@ -2477,17 +2493,44 @@
                     devBtn.onclick = () => quickAddDevMod("instance", profile.id, () => renderContentTab());
                     bar.appendChild(devBtn);
                   }
+                  return bar;
+                };
+
+                // Redrawing the whole list is cheap next to the lookups it replaces,
+                // and keeps the two passes from having to reconcile card-by-card.
+                const paintList = (items) => {
+                  tabContent.classList.remove("logs-active");
+                  const keepScroll = tabContent.scrollTop;
+                  tabContent.innerHTML = "";
+                  tabContent.appendChild(buildBar());
+                  const ul = document.createElement("ul");
+                  ul.className = "profile-list";
+                  // Registered dev mods are surfaced ON their real mod card (not as a
+                  // separate row): the card whose file is <modId>-dev.jar is tagged
+                  // "(devmod)" and gets the change-folder / change-version controls.
+                  for (const p of items) ul.appendChild(createContentCard(p, tabName, renderContentTab, running, devMods));
+                  tabContent.appendChild(ul);
+                  tabContent.scrollTop = keepScroll;   // a refresh shouldn't jump to the top
+                  if (window.fitHeights) window.fitHeights();
+                };
+
+                // The main process sends what it read off the disk before it starts
+                // looking anything up on Modrinth/CurseForge, so the list appears
+                // straight away instead of after every lookup has finished.
+                const onPartial = (_e, msg) => {
+                  if (!msg || String(msg.profileId) !== String(profile.id) || msg.tab !== tabName) return;
+                  if (!ensureStillActive()) return;
+                  paintList(msg.results || []);
+                };
+                ipcRenderer.on("instance-content-partial", onPartial);
+                let fileInfos = [];
+                try {
+                  fileInfos = await ipcRenderer.invoke("get-instance-mods", { profileId: profile.id, tab: tabName }) || [];
+                } finally {
+                  ipcRenderer.removeListener("instance-content-partial", onPartial);
                 }
-                tabContent.appendChild(bar);
-                const ul = document.createElement("ul");
-                ul.className = "profile-list";
-                // Registered dev mods are surfaced ON their real mod card (not as a
-                // separate row): the card whose file is <modId>-dev.jar is tagged
-                // "(devmod)" and gets the change-folder / change-version controls.
-                let devMods = [];
-                if (tabName === "mods") { const dmState = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id }); devMods = (dmState && dmState.mods) || []; }
-                for (const p of fileInfos) ul.appendChild(createContentCard(p, tabName, renderContentTab, running, devMods));
-                tabContent.appendChild(ul);
+                if (!ensureStillActive()) return;
+                paintList(fileInfos);
               };
               await renderContentTab();
 

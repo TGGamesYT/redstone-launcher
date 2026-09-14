@@ -1767,6 +1767,34 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
   }
 });
 
+// Both pack formats name the loader AND pin the build it needs; only the name
+// was being read. Dropping the build left every imported pack on whatever the
+// launcher defaults to -- the oldest release of that loader -- so a pack whose
+// mods want neoforge 21.1.2xx launched on 21.1.1 and every one of them failed
+// its dependency range.
+//
+// Modrinth puts it in `dependencies`: { "neoforge": "21.1.180", ... }
+function loaderFromMrpackDeps(deps) {
+  deps = deps || {};
+  const order = [["fabric-loader", "fabric"], ["quilt-loader", "quilt"], ["forge", "forge"], ["neoforge", "neoforge"]];
+  for (const [key, name] of order) {
+    if (deps[key]) return { loader: name, loaderVersion: String(deps[key]) };
+  }
+  return { loader: "vanilla", loaderVersion: "" };
+}
+
+// CurseForge writes one id: "neoforge-21.1.180", "fabric-0.16.9", and older
+// forge packs embed the game version too: "forge-1.20.1-47.2.0".
+function loaderFromCurseId(id, mcVersion) {
+  const raw = String(id || "").trim();
+  const dash = raw.indexOf("-");
+  if (dash <= 0) return { loader: raw || "vanilla", loaderVersion: "" };
+  const loader = raw.slice(0, dash);
+  let loaderVersion = raw.slice(dash + 1);
+  if (mcVersion && loaderVersion.startsWith(mcVersion + "-")) loaderVersion = loaderVersion.slice(mcVersion.length + 1);
+  return { loader, loaderVersion };
+}
+
 async function mrpackFromUrl(url) {
   const tmpFile = path.join(os.tmpdir(), `tmp-${Date.now()}.mrpack`);
   const res = await fetch(url);
@@ -1785,11 +1813,7 @@ async function mrpack(mrpackPath, onProgress) {
 
   // Determine loader and Minecraft version
   const deps = indexJson.dependencies || {};
-  let loader = "vanilla";
-  if (deps["fabric-loader"]) loader = "fabric";
-  else if (deps["quilt-loader"]) loader = "quilt";
-  else if (deps["forge"]) loader = "forge";
-  else if (deps["neoforge"]) loader = "neoforge";
+  const { loader, loaderVersion } = loaderFromMrpackDeps(deps);
   const mcVersion = deps["minecraft"] || "1.20.1";
 
   // Unique instance id/folder derived from the pack name.
@@ -1846,6 +1870,7 @@ async function mrpack(mrpackPath, onProgress) {
     name: indexJson.name || "Imported Profile",
     version: mcVersion,
     loader,
+    loaderVersion,
     icon,
     modpack: true,
     created: Date.now(),
@@ -2037,16 +2062,13 @@ ipcMain.handle("apply-modpack-update", async (event, { profileId, decisions }) =
 
     // Bring the profile's version/loader in line with the new pack.
     const deps = newPlan.deps || {};
-    let loader = "vanilla";
-    if (deps["fabric-loader"]) loader = "fabric";
-    else if (deps["quilt-loader"]) loader = "quilt";
-    else if (deps["forge"]) loader = "forge";
-    else if (deps["neoforge"]) loader = "neoforge";
+    const { loader, loaderVersion } = loaderFromMrpackDeps(deps);
     const profiles = await loadProfiles();
     const idx = profiles.findIndex(p => String(p.id) === String(profileId));
     if (idx !== -1) {
       if (deps["minecraft"]) profiles[idx].version = deps["minecraft"];
       profiles[idx].loader = loader;
+      if (loaderVersion) profiles[idx].loaderVersion = loaderVersion;
       profiles[idx].modpack = true;
       saveProfiles(profiles);
       event.reply?.("profiles-updated", profiles);
@@ -2202,8 +2224,9 @@ async function curseforgeImport(zipPath, onProgress) {
 
   // Loader & Minecraft version
   const mcVersion = manifest.minecraft.version;
-  let loaderwithshit = manifest.minecraft.modLoaders.find(l => l.primary)?.id || "vanilla";
-  const loader = loaderwithshit.split("-")[0];
+  const primaryLoader = (manifest.minecraft.modLoaders || []).find(l => l.primary)
+    || (manifest.minecraft.modLoaders || [])[0];
+  const { loader, loaderVersion } = loaderFromCurseId(primaryLoader && primaryLoader.id, mcVersion);
 
   // Create profile folder
   const profileId = getUniqueFolderName(manifest.name);
@@ -2270,6 +2293,7 @@ async function curseforgeImport(zipPath, onProgress) {
     name: manifest.name || "Imported CurseForge Pack",
     version: mcVersion,
     loader,
+    loaderVersion,
     icon,
     created: Date.now(),
     lastUsed: Date.now()
@@ -2451,7 +2475,7 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
   launchingProfiles.set(profileId, now);
   instanceLogs.delete(profileId); // fresh console for this launch (previous session was kept until now)
   // Pick up any dev-mod builds produced while the launcher wasn't watching.
-  try { syncDevMods("instance", profileId); } catch { /* non-fatal */ }
+  try { await syncDevMods("instance", profileId); } catch { /* non-fatal */ }
 
   try {
     broadcastLog(profileId, "Launching, please wait.");
@@ -4683,6 +4707,9 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     const fullPath = path.join(basePath, filename);
 
     if (d.isDirectory()) {
+      // A folder IS a pack for resourcepacks/shaderpacks. In a mods folder it's
+      // a loader's working directory, not something to list.
+      if (tab !== "resourcepacks" && tab !== "shaderpacks") continue;
       const description = tab === "resourcepacks" ? readPackDescription(fullPath, true) : null;
       const enabled = enabledPacks ? enabledPacks.includes("file/" + filename) : true;
       // A folder pack keeps its icon right there as pack.png.
@@ -4720,6 +4747,33 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
 
     results.push({ _filename: filename, path: fullPath, enabled, disabled: !enabled, isFolder: false });
   }
+
+  // Everything above came off the disk: names, versions, authors and the icons
+  // inside the jars. Push that to the renderer now -- the Modrinth/CurseForge
+  // lookups below need the network, and waiting for them meant a big modpack
+  // showed nothing at all for several seconds.
+  try {
+    const early = results.map(r => {
+      if (!r._filename) return { ...r };
+      const e = index.entries[r._filename] || {};
+      const jar = e.jar || {};
+      const cleanName = r._filename.replace(/\.disabled$/i, "");
+      const ownIcon = e.iconFile ? path.join(iconsDir, e.iconFile) : null;
+      return {
+        ...r,
+        filename: r._filename,
+        name: jar.name || cleanName,
+        icon: ownIcon ? pathToFileURL(ownIcon).href : null,
+        iconPath: ownIcon,
+        version: jar.version || null,
+        author: jar.authors || null,
+        details: [jar.version, jar.authors].filter(Boolean).join("  •  ") || cleanName,
+        pending: true,          // still to be matched against the mod sites
+      };
+    });
+    early.forEach(r => delete r._filename);
+    event.sender.send("instance-content-partial", { profileId, tab, results: early });
+  } catch { /* the full result below is what actually matters */ }
 
   // Drop index entries for files that have been removed, and the icons cached
   // for them, so the cache doesn't grow forever as mods come and go.
@@ -5403,12 +5457,45 @@ function newestJar(folder) {
   } catch { return null; }
 }
 
-// Copy the newest matching build into the target's mods folder, replacing any
-// existing jar that declares the same mod id.
-function swapDevMod(type, id, modId, folder) {
+// A build writes the jar in place, so the watcher can fire (and the debounce can
+// elapse) while Gradle is still writing it -- which is how a truncated,
+// unopenable jar ended up in the instance. Wait until the file stops changing
+// AND parses as a zip before touching it.
+function fileSignature(file) {
+  try { const st = fs.statSync(file); return st.size + ":" + st.mtimeMs; } catch { return null; }
+}
+function looksLikeCompleteJar(file) {
   try {
-    const jar = newestJar(folder);
+    // A partial jar has no readable central directory, so this throws.
+    const entries = new AdmZip(file).getEntries();
+    return Array.isArray(entries) && entries.length > 0;
+  } catch { return false; }
+}
+async function waitForStableJar(file, { tries = 40, interval = 150 } = {}) {
+  let last = null;
+  for (let i = 0; i < tries; i++) {
+    const sig = fileSignature(file);
+    if (sig === null) return false;                       // vanished mid-build
+    if (sig === last && !sig.startsWith("0:") && looksLikeCompleteJar(file)) return true;
+    last = sig;
+    await new Promise(r => setTimeout(r, interval));
+  }
+  return false;   // still churning after ~6s: leave the old jar in place
+}
+
+// Copy the newest matching build into the target's mods folder, replacing any
+// existing jar that declares the same mod id. `pinnedJar` (set by "pick a
+// build") wins over the newest, so a deliberate choice survives a refresh.
+async function swapDevMod(type, id, modId, folder, pinnedJar) {
+  try {
+    let jar = null;
+    if (pinnedJar) {
+      const pinned = path.join(folder, pinnedJar);
+      if (fs.existsSync(pinned)) jar = pinned;
+    }
+    if (!jar) jar = newestJar(folder);
     if (!jar) return { success: false, error: "No built jar in that folder yet" };
+    if (!await waitForStableJar(jar)) return { success: false, error: "The jar is still being written" };
     const info = readJarModInfo(jar);
     const tgt = devModTarget(type, id);
     // Only hard-fail on a clear loader mismatch. A missing manifest or a differing
@@ -5449,8 +5536,11 @@ function startDevWatch(type, id) {
       w.watcher = fs.watch(m.folder, { persistent: false }, (ev, fn) => {
         if (fn && !/\.jar$/i.test(fn)) return;
         clearTimeout(w.timer);
-        w.timer = setTimeout(() => {
-          const r = swapDevMod(type, id, m.modId, m.folder);
+        w.timer = setTimeout(async () => {
+          // Re-read the entry: the pinned build may have changed since the
+          // watcher was set up.
+          const cur = ((loadDevModsStore()[devModKey(type, id)] || {}).mods || []).find(x => x.folder === m.folder) || m;
+          const r = await swapDevMod(type, id, m.modId, m.folder, cur.pinnedJar);
           if (r.success && type === "instance") broadcastLog(id, `[dev-mod] swapped ${m.modId} -> ${r.jar}`);
           else if (r.success) devtoolsLog(`[dev-mod] ${type} ${id}: swapped ${m.modId} -> ${r.jar}`);
         }, 700); // debounce — a build writes several files
@@ -5464,13 +5554,13 @@ function startDevWatch(type, id) {
 // watcher only sees changes while the launcher is RUNNING, so a mod rebuilt while
 // it was closed would otherwise stay stale — this catches up at startup and again
 // right before each launch.
-function syncDevMods(type, id) {
+async function syncDevMods(type, id) {
   const entry = loadDevModsStore()[devModKey(type, id)];
   if (!entry || !entry.enabled || !Array.isArray(entry.mods)) return;
   for (const m of entry.mods) {
     if (!m.folder || !m.modId) continue;
     try {
-      const r = swapDevMod(type, id, m.modId, m.folder);
+      const r = await swapDevMod(type, id, m.modId, m.folder, m.pinnedJar);
       if (r && r.success) devtoolsLog(`[dev-mod] ${type} ${id}: caught up ${m.modId} -> ${r.jar}`);
     } catch (e) { devtoolsLog("[dev-mod] catch-up failed:", e.message); }
   }
@@ -5479,7 +5569,7 @@ function startAllDevWatchers() {
   const store = loadDevModsStore();
   Object.keys(store).forEach(k => {
     const [type, ...rest] = k.split(":"); const id = rest.join(":");
-    if (store[k] && store[k].enabled) { syncDevMods(type, id); startDevWatch(type, id); }
+    if (store[k] && store[k].enabled) { syncDevMods(type, id).catch(() => { }); startDevWatch(type, id); }
   });
 }
 
@@ -5537,8 +5627,26 @@ ipcMain.handle("devmod:swapTo", (event, { type, id, modId, folder, jar }) => {
       if (ex && (ex.id === modId || (info && ex.id === info.id))) { try { fs.unlinkSync(full); } catch { } }
     }
     fs.copyFileSync(src, path.join(tgt.modsDir, destName));
-    return { success: true, dest: destName };
+    // Remember the choice, or the next rebuild/refresh/startup would put the
+    // newest jar back and the pick would look like it never happened.
+    const store = loadDevModsStore(); const k = devModKey(type, id);
+    if (store[k] && Array.isArray(store[k].mods)) {
+      const m = store[k].mods.find(x => x.folder === folder);
+      if (m) { m.pinnedJar = jar; saveDevModsStore(store); }
+    }
+    return { success: true, dest: destName, pinnedJar: jar };
   } catch (e) { return { error: e.message }; }
+});
+
+// Go back to tracking whatever the newest build is.
+ipcMain.handle("devmod:unpin", async (event, { type, id, folder }) => {
+  const store = loadDevModsStore(); const k = devModKey(type, id);
+  const m = store[k] && Array.isArray(store[k].mods) ? store[k].mods.find(x => x.folder === folder) : null;
+  if (!m) return { error: "Not registered" };
+  delete m.pinnedJar;
+  saveDevModsStore(store);
+  const r = await swapDevMod(type, id, m.modId, m.folder);
+  return r && r.success ? { success: true, dest: r.dest } : { error: (r && r.error) || "Swap failed" };
 });
 ipcMain.handle("devmod:remove", (event, { type, id, folder }) => {
   const store = loadDevModsStore(); const k = devModKey(type, id);
