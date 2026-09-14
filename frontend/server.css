@@ -696,8 +696,9 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  /* Above the modal overlay so the window controls stay clickable. */
-  z-index: 3001;
+  /* Above the modal overlays (and the sidebar) so the window controls stay
+     clickable whatever is open. */
+  z-index: 8001;
   -webkit-app-region: drag;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
@@ -837,9 +838,12 @@ html:not(.gradient-enabled) .sidebar {
   align-items: center;
   padding-top: 20px;
   gap: 12px;
-  /* Above the modal overlay (2000) so the sidebar AND its hover tooltips stay
-     sharp and clickable while a modal blur is up. */
-  z-index: 3000;
+  /* Above EVERY modal overlay so the sidebar and its hover tooltips stay sharp
+     and clickable while a blur is up. The overlays already stop at left:70px so
+     the bar itself was never covered, but a tooltip reaches past that edge into
+     the content area -- and stacked modals (the icon picker sits at 6000) went
+     over the top of it. Only the loading overlay and error popups outrank this. */
+  z-index: 8000;
 }
 
 .sidebar .menu {

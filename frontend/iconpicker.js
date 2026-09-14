@@ -26,11 +26,35 @@
       const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(b);
     }));
   }
+  // A screenshot is a 16:9 file of a megabyte or two; an icon is a small square
+  // that gets embedded in serverinfo.json and desktop shortcuts. Centre-crop to
+  // a square and downscale, so what the picker previews is exactly what the
+  // icon ends up being.
+  const ICON_PX = 128;
+  function squareIconDataUrl(src) {
+    return new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => {
+        try {
+          const side = Math.min(im.naturalWidth, im.naturalHeight);
+          const sx = (im.naturalWidth - side) / 2, sy = (im.naturalHeight - side) / 2;
+          const cv = document.createElement('canvas');
+          cv.width = ICON_PX; cv.height = ICON_PX;
+          cv.getContext('2d').drawImage(im, sx, sy, side, side, 0, 0, ICON_PX, ICON_PX);
+          res(cv.toDataURL('image/png'));
+        } catch (e) { rej(e); }
+      };
+      im.onerror = rej;
+      im.src = src;
+    });
+  }
   function ensureStyle() {
     if (document.getElementById('iconpicker-style')) return;
     const s = document.createElement('style'); s.id = 'iconpicker-style';
     s.textContent = `
       .ip-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(56px,1fr)); gap:8px; max-height:280px; overflow-y:auto; padding:4px; }
+      /* Screenshots get cropped square on pick, so preview them cropped too. */
+      .ip-cell.ip-shot img { padding:0; object-fit:cover; }
       .ip-cell { width:56px; height:56px; border:2px solid var(--border-dark); border-radius:var(--border-radius); cursor:pointer; display:flex; align-items:center; justify-content:center; background:var(--menu-bg); overflow:hidden; }
       .ip-cell:hover { border-color:var(--accent); }
       .ip-cell img { width:100%; height:100%; object-fit:contain; padding:4px; image-rendering:auto; }
@@ -49,6 +73,7 @@
         <div class="modal-header"><h2>Choose an icon</h2><button class="modal-close" id="ipClose">✕</button></div>
         <div class="ip-section-title">Presets</div>
         <div class="ip-grid" id="ipPresets"></div>
+        <div id="ipShotsWrap" style="display:none;"><div class="ip-section-title">Screenshots</div><div class="ip-grid" id="ipShots"></div></div>
         <div id="ipWorldsWrap" style="display:none;"><div class="ip-section-title">Worlds</div><div class="ip-grid" id="ipWorlds"></div></div>
         <div id="ipServersWrap" style="display:none;"><div class="ip-section-title">Servers</div><div class="ip-grid" id="ipServers"></div></div>
         <div id="ipModsWrap" style="display:none;"><div class="ip-section-title">Mods</div><div class="ip-grid" id="ipMods"></div></div>
@@ -80,6 +105,32 @@
       // World + server icons from the instance (if any).
       if (opts.instanceId) {
         const toUrl = (icon) => icon.startsWith('data:') ? icon : ('data:image/png;base64,' + icon);
+        // The instance's own screenshots, newest first — the handler already
+        // sorts them that way.
+        ipcRenderer.invoke('get-instance-screenshots', { profileId: opts.instanceId }).then(shots => {
+          const list = (shots || []).slice(0, 60);
+          if (!list.length) return;
+          ov.querySelector('#ipShotsWrap').style.display = '';
+          const sc = ov.querySelector('#ipShots');
+          list.forEach(s => {
+            const cell = document.createElement('div');
+            cell.className = 'ip-cell ip-shot'; cell.title = s.name || '';
+            const img = document.createElement('img'); img.loading = 'lazy'; img.src = s.path;
+            img.onerror = () => cell.remove();
+            cell.appendChild(img);
+            cell.onclick = async () => {
+              // Read it through the main process: a canvas that has drawn a
+              // file:// image is tainted, so cropping it here directly would
+              // throw on toDataURL. A data: URL doesn't taint anything.
+              try {
+                const d = await ipcRenderer.invoke('icon:dataUrl', { filePath: s.path });
+                if (!d) return;
+                pick(await squareIconDataUrl(d));
+              } catch { /* unreadable or too large */ }
+            };
+            sc.appendChild(cell);
+          });
+        }).catch(() => {});
         ipcRenderer.invoke('get-instance-worlds', { profileId: opts.instanceId }).then(worlds => {
           const withIcons = (worlds || []).filter(w => w.icon);
           if (!withIcons.length) return;
