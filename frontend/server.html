@@ -283,6 +283,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <div class="tab-action-bar" style="display:flex; gap:8px; margin-bottom:10px;">
           <button id="srvInstallMods"><i class="material-icons" style="font-size:16px;vertical-align:middle;">add</i> Install Mods</button>
           <button id="srvOpenModsFolder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder</i> Open mods folder</button>
+          <!-- Only shown when something can actually be updated. -->
+          <button id="srvModsUpdateAll" style="display:none;"></button>
           <label id="srvDevModsWrap" style="display:none; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="srvDevModsEnable"> Dev mods</label>
           <button id="srvDevMods" style="display:none;"><i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Manage dev mods</button>
         </div>
@@ -1044,6 +1046,31 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       // Real names and the mod's own icon, read out of the jars.
       let modInfo = {};
       try { modInfo = await ipcRenderer.invoke('server-mods:info', { name: selectedServer.name, dir: 'mods' }) || {}; } catch { }
+      // Which of them have a newer build (one bulk Modrinth lookup).
+      let updates = {};
+      try { updates = await ipcRenderer.invoke('server-mods:updates', { name: selectedServer.name, dir: 'mods' }) || {}; } catch { }
+      const updatable = jars.filter(e => updates[e.name] && updates[e.name].url);
+      const bar = document.getElementById('srvModsUpdateAll');
+      if (bar) {
+        bar.style.display = updatable.length ? '' : 'none';
+        bar.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">upgrade</i> Update all (${updatable.length})`;
+        bar.onclick = async () => {
+          bar.disabled = true;
+          let done = 0, failed = 0;
+          for (const e of updatable) {
+            bar.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">hourglass_top</i> Updating ${done + 1}/${updatable.length}`;
+            const u = updates[e.name];
+            try {
+              const r = await ipcRenderer.invoke('server-mods:update', { name: selectedServer.name, dir: 'mods', filename: e.name, url: u.url });
+              if (!r || !r.success) failed++;
+            } catch { failed++; }
+            done++;
+          }
+          bar.disabled = false;
+          if (window.notify) window.notify(failed ? `${failed} of ${updatable.length} could not be updated` : `Updated ${done} mods`, failed ? 'error' : 'success');
+          loadServerMods();
+        };
+      }
       jars.forEach(e => {
         const li = document.createElement('li');
         li.className = 'profile-item';
@@ -1064,6 +1091,20 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         info.querySelector('.profile-name').textContent = title;
         info.querySelector('.profile-details').textContent = details;
         li.appendChild(info);
+        const up = updates[e.name];
+        if (up && up.url) {
+          const upBtn = document.createElement('button');
+          upBtn.innerHTML = '<i class="material-icons">upgrade</i>';
+          upBtn.title = up.latestNumber ? `Update to ${up.latestNumber}` : 'Update available';
+          upBtn.onclick = async (ev) => {
+            ev.stopPropagation();
+            upBtn.disabled = true;
+            const r = await ipcRenderer.invoke('server-mods:update', { name: selectedServer.name, dir: 'mods', filename: e.name, url: up.url });
+            if ((!r || !r.success) && window.notify) window.notify('Update failed: ' + ((r && r.error) || 'unknown'), 'error');
+            loadServerMods();
+          };
+          li.appendChild(upBtn);
+        }
         const del = document.createElement('button');
         del.innerHTML = '<i class="material-icons">delete</i>';
         del.title = 'Delete';

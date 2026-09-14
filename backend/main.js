@@ -4909,6 +4909,82 @@ function readPackDescription(fullPath, isDir) {
 // only had raw filenames; this gives it the same cards the instances tab has,
 // falling back to the icon inside the jar when the mod isn't on Modrinth or
 // CurseForge (which is all this reads - it never goes to the network).
+// Which of a server's mods have a newer build. Instances resolve this through
+// their persisted index; servers have no such index, so ask Modrinth directly —
+// /v2/version_files/update takes every file hash at once and answers with the
+// newest version of each for a given loader and game version, which is one
+// request for the whole folder.
+ipcMain.handle("server-mods:updates", async (event, { name, dir }) => {
+  try {
+    const folder = path.join(serverRoot(name), dir || "mods");
+    if (!fs.existsSync(folder)) return {};
+    const info = serverManager.getServerInfo(name) || {};
+    const gameVersion = info.version;
+    const loader = String(info.type || "").toLowerCase();
+    if (!gameVersion || !["forge", "neoforge", "fabric", "quilt"].includes(loader)) return {};
+
+    const files = fs.readdirSync(folder).filter(f => /\.jar(\.disabled)?$/i.test(f));
+    if (!files.length) return {};
+    const byHash = new Map();
+    for (const f of files) {
+      try { byHash.set(computeSHA1(path.join(folder, f)), f); } catch { /* unreadable */ }
+    }
+    if (!byHash.size) return {};
+
+    const res = await fetch("https://api.modrinth.com/v2/version_files/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": LAUNCHER_UA },
+      body: JSON.stringify({
+        hashes: [...byHash.keys()],
+        algorithm: "sha1",
+        loaders: [loader],
+        game_versions: [gameVersion],
+      }),
+    });
+    if (!res.ok) return {};
+    const out = {};
+    const data = await res.json();
+    for (const [hash, version] of Object.entries(data || {})) {
+      const filename = byHash.get(hash);
+      if (!filename || !version) continue;
+      const file = (version.files || []).find(f => f.primary) || (version.files || [])[0];
+      // The endpoint answers with the newest matching version, which for an
+      // up-to-date mod is the one already installed.
+      if (!file || !file.hashes || file.hashes.sha1 === hash) continue;
+      out[filename] = { available: true, url: file.url, latestNumber: version.version_number || null };
+    }
+    return out;
+  } catch (err) {
+    devtoolsLog("server mod update check failed:", err);
+    return {};
+  }
+});
+
+// Swap one server mod for a newer build: the new jar comes down beside the old
+// one, and the old is only removed once it has actually landed.
+ipcMain.handle("server-mods:update", async (event, { name, dir, filename, url }) => {
+  try {
+    if (!filename || !url) return { success: false, error: "missing filename or url" };
+    const folder = path.join(serverRoot(name), dir || "mods");
+    const target = path.join(folder, path.basename(new URL(url).pathname));
+    if (path.resolve(target) !== path.join(folder, path.basename(target))) {
+      return { success: false, error: "bad target path" };
+    }
+    await downloadFile(url, target);
+    if (!fs.existsSync(target) || fs.statSync(target).size === 0) {
+      return { success: false, error: "download produced no file" };
+    }
+    const old = path.join(folder, filename);
+    // Don't delete the old one if the "new" file IS it.
+    if (path.resolve(old) !== path.resolve(target) && fs.existsSync(old)) {
+      try { fs.unlinkSync(old); } catch { /* leave it; the new one is in place */ }
+    }
+    return { success: true, filename: path.basename(target) };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
 ipcMain.handle("server-mods:info", async (event, { name, dir }) => {
   const sub = dir === "plugins" ? "plugins" : "mods";
   const base = path.join(serverRoot(name), sub);

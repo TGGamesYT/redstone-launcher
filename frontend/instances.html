@@ -2710,6 +2710,7 @@
                 if (!ensureStillActive()) return;
                 const devMods = (devState && devState.mods) || [];
 
+                let lastPainted = [];
                 const buildBar = () => {
                   const bar = document.createElement("div");
                   bar.className = "tab-action-bar";
@@ -2725,6 +2726,31 @@
                   refreshBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">refresh</i> Refresh`;
                   refreshBtn.onclick = () => renderContentTab();
                   bar.appendChild(refreshBtn);
+                  // Update all — one button instead of hunting for the arrow on
+                  // every card. Only appears when something can actually be
+                  // updated, and says how many.
+                  const updatable = (lastPainted || []).filter(p => p.updateAvailable && p.updateUrl);
+                  if (updatable.length) {
+                    const allBtn = document.createElement("button");
+                    allBtn.className = "tab-install-btn secondary";
+                    allBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">upgrade</i> Update all (${updatable.length})`;
+                    allBtn.onclick = async () => {
+                      allBtn.disabled = true;
+                      let done = 0, failed = 0;
+                      for (const p of updatable) {
+                        allBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">hourglass_top</i> Updating ${done + 1}/${updatable.length}`;
+                        try {
+                          const r = await ipcRenderer.invoke("update-instance-mod", { profileId: profile.id, tab: tabName, oldFilename: p.filename, fileUrl: p.updateUrl });
+                          if (r && r.success === false) failed++;
+                        } catch { failed++; }
+                        done++;
+                      }
+                      if (failed && window.notify) window.notify(`${failed} of ${updatable.length} could not be updated`, "error");
+                      else if (window.notify) window.notify(`Updated ${done} ${tabName}`, "success");
+                      renderContentTab();
+                    };
+                    bar.appendChild(allBtn);
+                  }
                   // Dev mods (hot-swap a locally-built mod) — shown when THIS instance
                   // has dev mods enabled in its Advanced settings.
                   if (tabName === "mods" && devState && devState.enabled) {
@@ -2743,6 +2769,10 @@
                 const paintList = (items) => {
                   tabContent.classList.remove("logs-active");
                   const keepScroll = tabContent.scrollTop;
+                  // buildBar needs to know what is on screen to offer Update all;
+                  // the early partial pass has no update info yet, so the button
+                  // appears on the second paint.
+                  lastPainted = items || [];
                   tabContent.innerHTML = "";
                   tabContent.appendChild(buildBar());
                   const ul = document.createElement("ul");
