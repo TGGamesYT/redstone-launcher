@@ -5678,6 +5678,48 @@ ipcMain.handle("sync:disable", async (event, { kind }) => {
 
 ipcMain.handle("sync:apply", () => applyConfigSync());
 
+// Every saved server across every instance, for the merge picker. Entries that
+// appear in more than one instance are flagged so the UI can leave the repeats
+// unticked by default — the usual case is the same server saved in five
+// instances, and ticking all five would just add it five times.
+ipcMain.handle("sync:allServers", async () => {
+  const profiles = await loadProfiles();
+  const seen = new Map();   // key -> entry
+  for (const p of profiles) {
+    let list = [];
+    try { list = await readServersFrom(instanceFile(p.id, "servers.dat")); } catch { continue; }
+    for (const s of list) {
+      const key = serverKey(s);
+      const existing = seen.get(key);
+      if (existing) { existing.count++; existing.from.push(p.name || String(p.id)); continue; }
+      seen.set(key, {
+        key, name: s.name || "", ip: s.ip || "", icon: s.icon || null,
+        acceptTextures: s.acceptTextures ?? 1,
+        count: 1, from: [p.name || String(p.id)],
+      });
+    }
+  }
+  // Duplicates first: they are the ones needing a decision.
+  return [...seen.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+});
+
+// Turn server syncing on from a hand-picked list rather than one instance's file.
+ipcMain.handle("sync:enableMerged", async (event, { servers }) => {
+  try {
+    fs.mkdirSync(sharedCfgDir(), { recursive: true });
+    const list = (servers || []).map(s => ({
+      name: s.name, ip: s.ip, icon: s.icon || undefined,
+      acceptTextures: s.acceptTextures ?? 1,
+    }));
+    writeServersTo(sharedCfgPath("servers.dat"), list);
+    settings.set("syncServers", true);
+    await applyConfigSync();
+    return { success: true, count: list.length };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
 // Per-instance opt-out. Opting back in relinks it; opting out gives it its own
 // copy of whatever it was sharing.
 ipcMain.handle("sync:setInstance", async (event, { profileId, kind, enabled }) => {

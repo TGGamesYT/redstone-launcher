@@ -240,16 +240,36 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       </div>
     </div>
 
+    <style>
+      .sync-mode {
+        padding: 8px 10px; border: 1px solid var(--border-dark); background: var(--menu-bg);
+        color: var(--text-color); border-radius: var(--border-radius); cursor: pointer;
+        font-family: var(--text-font);
+      }
+      .sync-mode.active { background: var(--base-color); border-color: var(--text-color); }
+      #syncSeedList .profile-item { display: flex; align-items: center; }
+    </style>
+
     <!-- Which instance the shared copy starts from. -->
     <div class="modal-overlay" id="syncSeedModal">
       <div class="modal-content" style="max-width:460px;">
         <div class="modal-header"><h2 id="syncSeedTitle">Sync from</h2><button class="modal-close" id="syncSeedClose">✕</button></div>
-        <p style="opacity:0.8;font-size:12px;margin:0 0 10px;">
+        <!-- Servers can also be merged from everywhere rather than taken from
+             one instance; game options have no sensible merge, so this row is
+             only shown for the server list. -->
+        <div id="syncModeRow" style="display:none;gap:8px;margin-bottom:10px;">
+          <button type="button" id="syncModeOne" class="sync-mode active" style="flex:1;">Use one instance</button>
+          <button type="button" id="syncModeMerge" class="sync-mode" style="flex:1;">Merge them all</button>
+        </div>
+        <p style="opacity:0.8;font-size:12px;margin:0 0 10px;" id="syncSeedHelp">
           Pick the instance to take the first copy from. Every other instance is then
           given that copy.
         </p>
         <ul class="profile-list" id="syncSeedList" style="max-height:46vh;overflow-y:auto;"></ul>
-        <div class="modal-actions"><button id="syncSeedCancel">Cancel</button></div>
+        <div class="modal-actions">
+          <button id="syncMergeGo" style="display:none;">Use the ticked servers</button>
+          <button id="syncSeedCancel">Cancel</button>
+        </div>
       </div>
     </div>
 
@@ -834,11 +854,80 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         document.getElementById('syncSeedCancel').onclick = closeSeed;
         modal.addEventListener('mousedown', e => { if (e.target === modal) closeSeed(); });
 
+        const modeRow = document.getElementById('syncModeRow');
+        const mergeGo = document.getElementById('syncMergeGo');
+        const help = document.getElementById('syncSeedHelp');
+        let seedMode = 'one';
+
+        // Merge: every saved server across every instance, ticked individually.
+        // Anything saved in more than one instance starts UNticked, since the
+        // usual reason a server appears five times is that it is the same
+        // server five times.
+        async function paintMerge() {
+          list.innerHTML = '<li style="opacity:0.7;">Loading…</li>';
+          let all = [];
+          try { all = await ipcRenderer.invoke('sync:allServers') || []; } catch { }
+          list.innerHTML = '';
+          if (!all.length) { list.innerHTML = '<li style="opacity:0.7;">No saved servers found in any instance.</li>'; return; }
+          all.forEach(s => {
+            const li = document.createElement('li');
+            li.className = 'profile-item';
+            li.style.cursor = 'pointer';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = s.count === 1;
+            cb.style.cssText = 'width:18px;height:18px;margin-right:10px;flex:0 0 18px;';
+            cb.onclick = (e) => e.stopPropagation();
+            const info = document.createElement('div');
+            info.className = 'profile-info';
+            const sub = s.count > 1
+              ? `${s.ip} — in ${s.count} instances (${s.from.slice(0, 3).join(', ')}${s.from.length > 3 ? '…' : ''})`
+              : `${s.ip} — ${s.from[0]}`;
+            info.innerHTML = `<div class="profile-name"></div><div class="profile-details"></div>`;
+            info.querySelector('.profile-name').textContent = s.name || s.ip;
+            info.querySelector('.profile-details').textContent = sub;
+            li.append(cb, info);
+            li.onclick = () => { cb.checked = !cb.checked; };
+            li._server = s; li._cb = cb;
+            list.appendChild(li);
+          });
+        }
+
+        mergeGo.onclick = async () => {
+          const chosen = [...list.querySelectorAll('li')].filter(li => li._cb && li._cb.checked).map(li => li._server);
+          const t = pending; pending = null;
+          modal.classList.remove('active');
+          const r = await ipcRenderer.invoke('sync:enableMerged', { servers: chosen });
+          if (!r || !r.success) {
+            alert('Could not turn syncing on: ' + ((r && r.error) || 'unknown error'));
+            if (t) t.toggle.checked = false;
+          }
+        };
+
+        const applyMode = () => {
+          const merging = seedMode === 'merge';
+          document.getElementById('syncModeOne').classList.toggle('active', !merging);
+          document.getElementById('syncModeMerge').classList.toggle('active', merging);
+          mergeGo.style.display = merging ? '' : 'none';
+          help.textContent = merging
+            ? 'Tick the servers to keep. Ones saved in several instances are probably the same server, so they start unticked.'
+            : 'Pick the instance to take the first copy from. Every other instance is then given that copy.';
+          if (merging) paintMerge(); else paintSeedList();
+        };
+        document.getElementById('syncModeOne').onclick = () => { seedMode = 'one'; applyMode(); };
+        document.getElementById('syncModeMerge').onclick = () => { seedMode = 'merge'; applyMode(); };
+
+        let paintSeedList = async () => { };
+
         async function openSeed(kind, toggle) {
           pending = { kind, toggle };
+          seedMode = 'one';
           title.textContent = kind === 'servers' ? 'Sync servers from' : 'Sync game options from';
+          modeRow.style.display = kind === 'servers' ? 'flex' : 'none';
+          mergeGo.style.display = 'none';
           list.innerHTML = '<li style="opacity:0.7;">Loading…</li>';
           modal.classList.add('active');
+          paintSeedList = async () => {
           const profiles = await new Promise(res => {
             ipcRenderer.once('profiles-list', (e, p) => res(p || []));
             ipcRenderer.send('get-profiles');
@@ -866,6 +955,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
             };
             list.appendChild(li);
           });
+          };
+          applyMode();
         }
 
         const wireSync = (toggle, kind, key) => {
