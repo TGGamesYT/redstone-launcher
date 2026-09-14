@@ -7180,24 +7180,93 @@ async function cleanHttpError(res) {
   return `Minecraft returned HTTP ${res.status}${body ? ": " + body : ""}`;
 }
 
+// POST a skin to Mojang and hand back the texture URL it came to rest at. The
+// upload response IS the updated profile, so the URL comes straight back — no
+// second lookup, no waiting for it to propagate.
+async function postSkinToMojang(base64, variant) {
+  const headers = await authHeaders();
+  delete headers["Content-Type"]; // let fetch set the multipart boundary
+  const buffer = Buffer.from(String(base64).replace(/^data:image\/\w+;base64,/, ""), "base64");
+  const form = new FormData();
+  form.append("variant", (variant || "classic").toLowerCase());
+  form.append("file", new Blob([buffer], { type: "image/png" }), "skin.png");
+  const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
+    method: "POST", headers, body: form
+  });
+  if (!res.ok) throw new Error(await cleanHttpError(res));
+  profileCache.clear(); // active skin changed
+  let url = null;
+  try {
+    const j = await res.json();
+    const active = (j.skins || []).find(s => s.state === "ACTIVE") || (j.skins || [])[0];
+    if (active && active.url) url = active.url;
+  } catch { /* the upload still worked; we just don't know where it landed */ }
+  return url;
+}
+
 // ---- UPLOAD a local skin file (base64 PNG) -> applies to Mojang ----
 ipcMain.handle("mc:uploadSkin", async (event, { base64, variant }) => {
   try {
-    const headers = await authHeaders();
-    delete headers["Content-Type"]; // let fetch set the multipart boundary
-    const buffer = Buffer.from(String(base64).replace(/^data:image\/\w+;base64,/, ""), "base64");
-    const form = new FormData();
-    form.append("variant", (variant || "classic").toLowerCase());
-    form.append("file", new Blob([buffer], { type: "image/png" }), "skin.png");
-    const res = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
-      method: "POST", headers, body: form
-    });
-    if (!res.ok) throw new Error(await cleanHttpError(res));
-    profileCache.clear(); // active skin changed
-    return true;
+    const url = await postSkinToMojang(base64, variant);
+    return { success: true, url };
   } catch (err) {
     throw new Error(err && err.message ? err.message : String(err));
   }
+});
+
+// ---- Put a skin ON Mojang's servers without keeping it applied ----
+// There is no upload-without-applying endpoint, so this applies it, takes the
+// texture URL out of the response, and then puts the previous skin back. The
+// uploaded texture stays reachable at its URL afterwards — Mojang's texture URLs
+// are content-addressed and permanent — which is the whole point.
+ipcMain.handle("mc:stashSkin", async (event, { uuid, id, base64, variant, restore }) => {
+  try {
+    const url = await postSkinToMojang(base64, variant);
+    if (uuid && id && url) rememberMojangUrl(uuid, id, url);
+    let restored = false;
+    if (restore && restore.base64) {
+      // Back to back uploads get rate-limited, so give Mojang a moment.
+      await new Promise(r => setTimeout(r, 2500));
+      try {
+        const backUrl = await postSkinToMojang(restore.base64, restore.variant);
+        if (restore.uuid && restore.id && backUrl) rememberMojangUrl(restore.uuid, restore.id, backUrl);
+        restored = true;
+      } catch (err) {
+        // The skin IS uploaded; we just couldn't switch back. Say so rather
+        // than reporting the whole thing as a failure.
+        return { success: true, url, restored: false, restoreError: String(err && err.message || err) };
+      }
+    }
+    return { success: true, url, restored };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
+// Record where a library skin lives on Mojang's servers, so the cloud badge and
+// a later player-skin lookup both know about it.
+function rememberMojangUrl(uuid, id, url) {
+  try {
+    const lib = loadSkinLib();
+    const arr = lib[uuid] || [];
+    const s = arr.find(x => String(x.id) === String(id));
+    if (!s) return false;
+    s.mojangUrl = url;
+    s.mojangAt = Date.now();
+    lib[uuid] = arr;
+    saveSkinLib(lib);
+    return true;
+  } catch { return false; }
+}
+ipcMain.handle("skins:setMojangUrl", (event, { uuid, id, url }) => rememberMojangUrl(uuid, id, url));
+
+// Every skin the launcher knows to be on Mojang's servers, for a given account —
+// what a player-skin lookup shows next to the live one.
+ipcMain.handle("skins:mojangKnown", (event, { uuid }) => {
+  const arr = loadSkinLib()[uuid] || [];
+  return arr.filter(s => s.mojangUrl)
+    .map(s => ({ id: s.id, name: s.name, variant: s.variant, url: s.mojangUrl, at: s.mojangAt || 0 }))
+    .sort((a, b) => b.at - a.at);
 });
 
 // ---- RESET skin to the account's default ----
@@ -7608,7 +7677,9 @@ ipcMain.handle("skins:fetchByName", async (event, name) => {
     if (!url) return { error: "This player has no custom skin" };
     const slim = decoded?.textures?.SKIN?.metadata?.model === "slim";
     const buf = Buffer.from(await (await fetch(url)).arrayBuffer());
-    return { base64: buf.toString("base64"), name: pr.name || uname, variant: slim ? "slim" : "classic" };
+    // The uuid comes back too: if this player is one of the launcher's own
+    // accounts, the caller can show what it has saved for them alongside.
+    return { base64: buf.toString("base64"), name: pr.name || uname, variant: slim ? "slim" : "classic", uuid: pr.id };
   } catch (e) { return { error: e.message }; }
 });
 

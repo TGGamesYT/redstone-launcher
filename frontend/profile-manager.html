@@ -213,8 +213,24 @@
       border-radius: 6px; padding: 2px 0; text-align: center;
       pointer-events: none;
     }
-    /* Arm-style badge, top-right of the image so it doesn't collide with the head. */
-    .card-variant-badge { position: absolute; top: 6px; right: 6px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 6px; pointer-events: none; }
+    /* The arm style moved off the image and into the strip between the Selected
+       badge and the skin's name, to free the top corner for the cloud. */
+    .card-variant-line { font-size: 10px; opacity: 0.65; text-align: center; margin-top: 3px; line-height: 1; }
+    /* Whether the skin is on Mojang's servers. Top-LEFT, clear of the head, and
+       clickable — unlike the other badges — so a skin can be put up there. */
+    .card-cloud-badge {
+      position: absolute; top: 6px; left: 6px; z-index: 3;
+      width: 24px; height: 24px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      border: none; border-radius: 50%;
+      background: rgba(0, 0, 0, 0.55); color: #fff;
+      cursor: pointer;
+    }
+    .card-cloud-badge .material-icons { font-size: 16px; }
+    .card-cloud-badge.on { color: #7ee081; cursor: default; }
+    .card-cloud-badge.off { color: #ffffff; opacity: 0.75; }
+    .card-cloud-badge.busy { cursor: progress; }
+    .card-cloud-badge:not(.on):hover { background: var(--base-color); opacity: 1; }
 
     /* Add skin · Reset skin take up their own full row above the skins. */
     /* Full-width row. No `width:100%` — with the 10px margins that overflowed past
@@ -437,7 +453,7 @@
     <div class="skin-modal-card" style="width:420px; max-width:92%;">
       <h3 style="margin-top:0; margin-bottom:14px;">Add a skin by username</h3>
       <input id="usernameInput" type="text" placeholder="Minecraft username" style="width:100%; padding:9px; border-radius:var(--border-radius); border:2px solid var(--border-dark); background:var(--menu-bg); color:var(--text-color);" />
-      <div id="usernamePreview" style="display:flex; justify-content:center; margin:12px 0; min-height:20px;"></div>
+      <div id="usernamePreview" style="display:flex; justify-content:center; margin:12px 0; min-height:20px; max-height:44vh; overflow-y:auto;"></div>
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button class="pm-btn" id="usernameCancel">Cancel</button>
         <button class="pm-btn" id="usernameAdd" style="background:var(--base-color);">Add to library</button>
@@ -697,12 +713,75 @@
       return card;
     }
 
-    // Arm-style badge, top-right of the image (kept clear of the head).
+    // Arm style, in the strip between the Selected badge and the skin's name.
+    // It used to sit on the image's top-right; the top corners belong to the
+    // cloud badge now.
     function setVariantBadge(card, variant) {
       const wrap = card && card._imgWrap; if (!wrap) return;
-      const b = document.createElement("div"); b.className = "card-variant-badge";
-      b.textContent = variant === "slim" ? "slim" : "wide";
-      wrap.appendChild(b);
+      let line = card.querySelector(".card-variant-line");
+      if (!line) {
+        line = document.createElement("div");
+        line.className = "card-variant-line";
+        wrap.insertAdjacentElement("afterend", line);
+      }
+      line.textContent = variant === "slim" ? "slim" : "wide";
+    }
+
+    // ── Is this skin on Mojang's servers? ────────────────────────────────────
+    // Mojang has no "list my skins" API, so what the launcher can honestly say
+    // is whether IT has a texture URL for this skin — recorded whenever the skin
+    // was uploaded, either by applying it or through this badge. The texture
+    // stays reachable at that URL afterwards, so the answer keeps holding.
+    // Clicking a crossed-out cloud puts the skin up there: there is no
+    // upload-without-applying endpoint, so it is applied, its URL noted, and the
+    // skin that was active put back afterwards.
+    function setCloudBadge(card, skin, ctx) {
+      const wrap = card && card._imgWrap; if (!wrap) return;
+      let b = wrap.querySelector(".card-cloud-badge");
+      if (!b) {
+        b = document.createElement("button");
+        b.className = "card-cloud-badge";
+        b.onclick = (e) => { e.stopPropagation(); onCloudClick(b, skin, ctx); };
+        wrap.appendChild(b);
+      }
+      paintCloud(b, !!skin.mojangUrl);
+    }
+    function paintCloud(b, on, busy) {
+      b.className = "card-cloud-badge " + (busy ? "busy" : on ? "on" : "off");
+      b.innerHTML = `<i class="material-icons">${busy ? "cloud_sync" : on ? "cloud_done" : "cloud_off"}</i>`;
+      b.title = busy ? "Uploading…"
+        : on ? "This skin is on Mojang's servers"
+          : "Not on Mojang's servers — click to upload it";
+      b.disabled = !!busy;
+    }
+    async function onCloudClick(b, skin, ctx) {
+      if (skin.mojangUrl) return;
+      if (ctx.cracked) return alert("Offline accounts have no Mojang profile to upload to.");
+      const ok = confirm(
+        `Put "${skin.name || 'this skin'}" on Mojang's servers?\n\n` +
+        "There is no way to upload without applying, so the launcher applies this skin, " +
+        "notes where it ended up, and then switches your current skin back. " +
+        "Your skin may be this one for a few seconds."
+      );
+      if (!ok) return;
+      paintCloud(b, false, true);
+      try {
+        const restore = ctx.activeSkin ? {
+          base64: ctx.activeSkin.base64, variant: ctx.activeSkin.variant,
+          uuid: ctx.uuid, id: ctx.activeSkin.id,
+        } : null;
+        const r = await ipcRenderer.invoke("mc:stashSkin", {
+          uuid: ctx.uuid, id: skin.id, base64: skin.base64, variant: skin.variant, restore,
+        });
+        if (!r || !r.success) throw new Error((r && r.error) || "Upload failed");
+        skin.mojangUrl = r.url || null;
+        paintCloud(b, !!skin.mojangUrl);
+        if (r.restoreError) alert("The skin is uploaded, but switching back failed: " + r.restoreError);
+        await updateSKin();
+      } catch (err) {
+        paintCloud(b, false);
+        alert("Could not upload the skin: " + (err.message || err));
+      }
     }
     // Drag a card to a new spot in its row. HTML5 DnD is only reachable from a
     // long-press-on-a-drag-handle so it doesn't fight the ordinary click that
@@ -1330,6 +1409,11 @@
         const card = createCard("Current skin", () => selectSkin({ base64: activeSkinB64, variant: av, name: "Current skin", pixelHash: activePixelHash, id: "__active__" }), preview);
         card.dataset.variant = av;
         setVariantBadge(card, av);
+        // This one is by definition on Mojang's servers — it's what they are
+        // serving right now.
+        if (!isCrackedAccount) {
+          setCloudBadge(card, { mojangUrl: (activeSkin && activeSkin.url) || "active" }, { uuid, cracked: false });
+        }
         card.dataset.pixelhash = activePixelHash || "";
         card.dataset.skinid = "__active__";
         // Not in the library yet — offer a single "+" to save it, rather than the
@@ -1349,12 +1433,28 @@
         skinsDiv.appendChild(card);
       }
 
+      // What the cloud badge needs: whose library this is, whether uploading is
+      // possible at all, and which skin to put back after an upload.
+      const activeLibSkin = activePixelHash ? library.find(s => s.pixelHash === activePixelHash) : null;
+      const cloudCtx = {
+        uuid,
+        cracked: isCrackedAccount,
+        activeSkin: activeSkinB64
+          ? {
+            base64: "data:image/png;base64," + activeSkinB64,
+            variant: activeSkin && activeSkin.variant === "SLIM" ? "slim" : "classic",
+            id: activeLibSkin ? activeLibSkin.id : null,
+          }
+          : null,
+      };
+
       library.forEach((skin, i) => {
         skin._order = i;    // for stable comparisons after a drop
         const preview = skin3dPreview("data:image/png;base64," + skin.base64, skin.variant === "slim" ? "slim" : "classic");
         const card = createCard(skin.name, () => selectSkin(skin), preview);
         card.dataset.variant = skin.variant || "classic";
         setVariantBadge(card, skin.variant);
+        if (!isCrackedAccount) setCloudBadge(card, skin, cloudCtx);
         card.dataset.pixelhash = skin.pixelHash || "";
         card.dataset.skinid = String(skin.id);
 
@@ -1544,7 +1644,12 @@
               });
               if (r && r.success === false) throw new Error(r.error || "Couldn't apply the skin");
             } else {
-              await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
+              const up = await ipcRenderer.invoke("mc:uploadSkin", { base64: pendingSelection.base64, variant: pendingSelection.variant });
+              // Applying a skin also puts it on Mojang's servers — note where, so
+              // its cloud badge fills in and a later lookup can find it.
+              if (up && up.url && pendingSelection.id != null && currentUuid) {
+                await ipcRenderer.invoke("skins:setMojangUrl", { uuid: currentUuid, id: pendingSelection.id, url: up.url });
+              }
             }
             activePixelHash = pendingSelection.pixelHash;
             // Remember which library skin is now applied so it highlights even if
@@ -1850,10 +1955,61 @@
       usernameTimer = setTimeout(async () => {
         prev.innerHTML = 'Loading…';
         const r = await ipcRenderer.invoke('skins:fetchByName', name);
-        if (r && r.base64) { usernameFetched = { ...r, name }; prev.innerHTML = ''; miniViewer(prev, 'data:image/png;base64,' + r.base64, r.variant); prev.firstChild && (prev.firstChild.style.margin = '0 auto'); }
+        if (r && r.base64) {
+          usernameFetched = { ...r, name };
+          prev.innerHTML = '';
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;gap:14px;align-items:flex-start;justify-content:center;flex-wrap:wrap;';
+          const cur = labelledMini('Current skin', 'data:image/png;base64,' + r.base64, r.variant);
+          row.appendChild(cur);
+          prev.appendChild(row);
+          showKnownSkinsFor(r.uuid, row);
+        }
         else { usernameFetched = null; prev.textContent = (r && r.error) || 'Not found'; }
       }, 450);
     });
+
+    // A captioned mini render, so the looked-up player's current skin and the
+    // ones the launcher knows about can sit side by side and be told apart.
+    function labelledMini(caption, src, variant, sub) {
+      const box = document.createElement('div');
+      box.style.cssText = 'text-align:center;font-size:10px;opacity:0.9;width:110px;';
+      const holder = document.createElement('div');
+      box.appendChild(holder);
+      const cap = document.createElement('div');
+      cap.textContent = caption;
+      cap.style.cssText = 'margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      box.appendChild(cap);
+      if (sub) {
+        const s = document.createElement('div');
+        s.textContent = sub;
+        s.style.cssText = 'font-size:9px;opacity:0.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        box.appendChild(s);
+      }
+      miniViewer(holder, src, variant);
+      return box;
+    }
+
+    // If the looked-up player is one of this launcher's own accounts, show what
+    // it has saved for them next to the live skin: everything in their library,
+    // and which of those the launcher knows are on Mojang's servers.
+    async function showKnownSkinsFor(uuid, row) {
+      if (!uuid) return;
+      let lib = [], known = [];
+      try {
+        [lib, known] = await Promise.all([
+          ipcRenderer.invoke('skins:list', { uuid }),
+          ipcRenderer.invoke('skins:mojangKnown', { uuid }),
+        ]);
+      } catch { return; }
+      if (!Array.isArray(lib) || !lib.length) return;
+      const onMojang = new Set((known || []).map(k => String(k.id)));
+      lib.slice(0, 6).forEach(s => {
+        const where = onMojang.has(String(s.id)) ? 'Launcher · Mojang' : 'Launcher';
+        row.appendChild(labelledMini(s.name || 'Skin',
+          'data:image/png;base64,' + s.base64, s.variant === 'slim' ? 'slim' : 'classic', where));
+      });
+    }
     document.getElementById('usernameAdd').onclick = async () => {
       if (!usernameFetched) return;
       await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + usernameFetched.base64, variant: usernameFetched.variant, name: usernameFetched.name });
