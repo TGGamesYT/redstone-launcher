@@ -547,6 +547,39 @@
   <button id="undoSkinBtn" title="Go back to the skin &amp; cape you had" style="display:none; position:fixed; bottom:20px; left:190px; z-index:1500; background:var(--secondary-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 18px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Undo</button>
   <script src="skinview3d.bundle.js"></script>
   <script>
+    // ---- Mode router ────────────────────────────────────────────────────────
+    // The page's "modes" (the add menu, create-new, by-username, the default
+    // skins gallery, the skin browser) are full-screen panels, not modals you
+    // dismiss -- so the window's Back button should leave one, and Forward
+    // should walk back into it. Each mode is one history entry; popstate is the
+    // only thing that actually changes what's on screen, so back, forward and
+    // the in-page Back buttons can't drift apart.
+    const pmViews = {};
+    let pmMode = null;
+    const pmRegister = (name, show, hide) => { pmViews[name] = { show, hide }; };
+    function pmApply(next) {
+      if (pmMode === next) return;
+      const prev = pmMode;
+      pmMode = next;
+      if (prev && pmViews[prev]) { try { pmViews[prev].hide(); } catch { } }
+      if (next && pmViews[next]) { try { pmViews[next].show(); } catch { } }
+    }
+    function pmEnter(name) {
+      if (pmMode === name) return;
+      try { history.pushState({ pmMode: name }, '', '#' + name); } catch { }
+      pmApply(name);
+    }
+    // Leaving from inside the app goes back through history rather than just
+    // hiding the panel, so Forward still works afterwards.
+    function pmBack() { if (pmMode) history.back(); }
+    window.addEventListener('popstate', (e) => pmApply((e.state && e.state.pmMode) || null));
+    // Coming BACK to this page from the skin editor restores the history entry
+    // we left from, so reopen whatever mode that was once the page is up.
+    window.addEventListener('load', () => {
+      const m = history.state && history.state.pmMode;
+      if (m && pmViews[m]) pmApply(m);
+    });
+
     function createSkinCanvas(skin) {
       const canvas = document.createElement("canvas");
       // Draw at 2x scale for clarity
@@ -1584,7 +1617,9 @@
     const defaultSkinsPromise = ipcRenderer.invoke("mc:getDefaultSkins")
       .then(list => (defaultSkinsCache = list || [])).catch(() => (defaultSkinsCache = []));
 
-    async function openDefaultSkinsModal() {
+    function openDefaultSkinsModal() { pmEnter('defaults'); }
+    pmRegister('defaults', () => showDefaultSkinsModal(), () => { document.getElementById('defaultSkinsModal').style.display = 'none'; });
+    async function showDefaultSkinsModal() {
       const modal = document.getElementById('defaultSkinsModal');
       const grid = document.getElementById('defaultSkinsGrid');
       modal.style.display = 'flex';
@@ -1663,12 +1698,12 @@
 
     async function addDefault(name, base64, variant) {
       if (!base64 || !currentUuid) return;
-      document.getElementById('defaultSkinsModal').style.display = 'none';
+      pmBack();
       await ipcRenderer.invoke("skins:add", { uuid: currentUuid, base64, variant, name });
       await updateSKin();
     }
 
-    const closeDefaultSkins = () => { document.getElementById('defaultSkinsModal').style.display = 'none'; };
+    const closeDefaultSkins = () => pmBack();
     document.getElementById('defaultSkinsCloseBtn').onclick = closeDefaultSkins;
     document.getElementById('defaultSkinsModal').addEventListener('mousedown', e => {
       if (e.target.id === 'defaultSkinsModal') closeDefaultSkins();
@@ -1712,8 +1747,11 @@
     };
 
     // ---- Add-skin menu: upload / create new / convert image ----
-    function openAddSkinMenu() { document.getElementById('addSkinModal').style.display = 'flex'; }
-    function closeAddSkinMenu() { document.getElementById('addSkinModal').style.display = 'none'; }
+    function openAddSkinMenu() { pmEnter('add'); }
+    function closeAddSkinMenu() { pmBack(); }
+    pmRegister('add',
+      () => { document.getElementById('addSkinModal').style.display = 'flex'; },
+      () => { document.getElementById('addSkinModal').style.display = 'none'; });
     // Open the standalone skin editor, carrying the current account uuid so it
     // can save back into the right library.
     function openSkinEditor(opts) {
@@ -1724,11 +1762,15 @@
     }
     document.getElementById('addSkinCancelBtn').onclick = closeAddSkinMenu;
     document.getElementById('addSkinModal').addEventListener('mousedown', (e) => { if (e.target.id === 'addSkinModal') closeAddSkinMenu(); });
+    // Stepping from the add menu into one of the modes is a push, not a
+    // close-then-open: pmApply hides the menu on the way through, and going back
+    // out of the mode lands on the menu again, where you came from. (Closing
+    // first would race the pending popstate against the new pushState.)
     document.getElementById('addUploadBtn').onclick = () => { closeAddSkinMenu(); openUploadModal(); };
-    document.getElementById('addDefaultBtn').onclick = () => { closeAddSkinMenu(); openDefaultSkinsModal(); };
-    document.getElementById('addCreateNewBtn').onclick = () => { closeAddSkinMenu(); openCreateNewModal(); };
-    document.getElementById('addUsernameBtn').onclick = () => { closeAddSkinMenu(); openUsernameModal(); };
-    document.getElementById('addBrowseBtn').onclick = () => { closeAddSkinMenu(); openBrowseModal(); };
+    document.getElementById('addDefaultBtn').onclick = () => openDefaultSkinsModal();
+    document.getElementById('addCreateNewBtn').onclick = () => openCreateNewModal();
+    document.getElementById('addUsernameBtn').onclick = () => openUsernameModal();
+    document.getElementById('addBrowseBtn').onclick = () => openBrowseModal();
 
     // ---- Create-new sub-modal (Create skin / Convert image / Template) ----
     // The showcased "Create a skin" skin, as a Starlight skin code (also preloaded
@@ -1763,7 +1805,9 @@
       }).catch(() => null);
     const cnImagePromise = sampleWrappedSkin().then(skin => (_cnImageSkin = skin)).catch(() => null);
 
-    async function openCreateNewModal() {
+    function openCreateNewModal() { pmEnter('create'); }
+    pmRegister('create', () => showCreateNewModal(), () => { document.getElementById('createNewModal').style.display = 'none'; });
+    async function showCreateNewModal() {
       document.getElementById('createNewModal').style.display = 'flex';
       // Template preview is local — always instant.
       miniViewer(document.getElementById('cnTemplatePrev'), 'assets/template.png', 'classic');
@@ -1775,7 +1819,7 @@
         if (skin) miniViewer(document.getElementById('cnImagePrev'), skin, 'classic');
       });
     }
-    function closeCreateNew() { document.getElementById('createNewModal').style.display = 'none'; }
+    function closeCreateNew() { pmBack(); }
     document.getElementById('cnCancel').onclick = closeCreateNew;
     document.getElementById('createNewModal').addEventListener('mousedown', e => { if (e.target.id === 'createNewModal') closeCreateNew(); });
     // The tile PREVIEWS what the creator can make, but a new skin should start
@@ -1790,8 +1834,11 @@
 
     // ---- By username ----
     let usernameFetched = null;
-    function openUsernameModal() { document.getElementById('usernameModal').style.display = 'flex'; usernameFetched = null; document.getElementById('usernamePreview').innerHTML = ''; document.getElementById('usernameInput').value = ''; setTimeout(() => document.getElementById('usernameInput').focus(), 40); }
-    function closeUsernameModal() { document.getElementById('usernameModal').style.display = 'none'; }
+    function openUsernameModal() { pmEnter('username'); }
+    function closeUsernameModal() { pmBack(); }
+    pmRegister('username',
+      () => { document.getElementById('usernameModal').style.display = 'flex'; usernameFetched = null; document.getElementById('usernamePreview').innerHTML = ''; document.getElementById('usernameInput').value = ''; setTimeout(() => document.getElementById('usernameInput').focus(), 40); },
+      () => { document.getElementById('usernameModal').style.display = 'none'; });
     document.getElementById('usernameCancel').onclick = closeUsernameModal;
     document.getElementById('usernameModal').addEventListener('mousedown', e => { if (e.target.id === 'usernameModal') closeUsernameModal(); });
     let usernameTimer = null;
@@ -1817,7 +1864,9 @@
     let browseAfter = null, browseBusy = false, browseDetailViewer = null;
     const BROWSE_CHIPS = ['Knight', 'Anime', 'Ninja', 'Girl', 'Boy', 'Robot', 'Dragon', 'Cute', 'Herobrine', 'Steve'];
     let browseSeq = 0, browseQuery = '', browseSeed = '';
-    function openBrowseModal() {
+    function openBrowseModal() { pmEnter('browse'); }
+    pmRegister('browse', () => showBrowseModal(), () => hideBrowseModal());
+    function showBrowseModal() {
       document.getElementById('browseModal').style.display = 'flex';
       document.getElementById('browseSearch').value = '';
       document.getElementById('browseResults').innerHTML = '';
@@ -1835,7 +1884,8 @@
     // redraw re-reads the Mojang profile, so only do it when there IS something
     // new to show.
     let browseAddedAny = false;
-    function closeBrowseModal() {
+    function closeBrowseModal() { pmBack(); }
+    function hideBrowseModal() {
       document.getElementById('browseModal').style.display = 'none';
       if (browseAddedAny) { browseAddedAny = false; updateSKin(); }
     }

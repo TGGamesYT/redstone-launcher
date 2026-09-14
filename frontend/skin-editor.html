@@ -2249,6 +2249,9 @@
       const plainNew = mode !== 'edit' && mode !== 'image' && params.get('template') !== '1';
       const startCreator = plainNew || editedType === 'simple';
       setEditorMode(startCreator ? 'creator' : 'advanced', { initial: true });
+      // Whichever one the editor opened in is the base of the mode history, so
+      // that Back from it leaves the editor rather than toggling in place.
+      edHistMode = startCreator ? 'creator' : 'advanced';
       // Whatever the editor opened with counts as "unchanged" — the save prompt
       // only appears once this differs.
       crBaseline = JSON.stringify(crState);
@@ -2536,7 +2539,9 @@
       }
       scheduleFitMode();
     }
-    function openFacesMode() {
+    function openFacesMode() { edEnterMode('faces'); }
+    function closeFacesMode() { edLeaveMode('faces'); }
+    function showFacesMode() {
       efm.el.classList.add('active');
       setMainContentVisible(false);
       const oc = document.createElement('canvas'); oc.width = SIZE; oc.height = SIZE;
@@ -2549,7 +2554,7 @@
       }
       efmRefreshViewer();
     }
-    function closeFacesMode() { efm.el.classList.remove('active'); setMainContentVisible(true); }
+    function hideFacesMode() { efm.el.classList.remove('active'); setMainContentVisible(true); }
     document.getElementById('ed-faces-btn').onclick = openFacesMode;
     document.getElementById('efm-close').onclick = closeFacesMode;
     document.getElementById('efm-fill-btn').onclick = () => {
@@ -3136,6 +3141,48 @@
     // (so switching to the creator would REPLACE it and needs a confirm).
     let curEditorMode = 'advanced';
     let workFromCreator = false;
+
+    // ── Mode history ─────────────────────────────────────────────────────────
+    // The editor's modes -- the simple creator and the copy-faces builder --
+    // replace the page rather than float over it, so the window's Back button
+    // should step out of one and Forward should step back in. Each entered mode
+    // is a history entry; popstate is what actually switches the view, so the
+    // in-page Back buttons and the window's can't disagree.
+    let edHistMode = 'advanced';
+    async function edApplyMode(m) {
+      m = m || 'advanced';
+      if (m === edHistMode) return true;
+      if (edHistMode === 'faces') hideFacesMode();
+      edHistMode = m;
+      if (m === 'faces') { showFacesMode(); return true; }
+      // Entering the creator from history means the question below was already
+      // asked and answered when it was first opened, so don't ask again.
+      return await setEditorMode(m, { initial: true });
+    }
+    async function edEnterMode(m) {
+      if (edHistMode === m) return;
+      const prev = edHistMode;
+      // Apply first: the creator can still be declined at its confirm prompt,
+      // and a history entry for a mode that never opened would strand Back.
+      edHistMode = m;
+      let ok = true;
+      if (m === 'faces') { if (prev === 'faces') return; showFacesMode(); }
+      else ok = await setEditorMode(m);
+      if (!ok) { edHistMode = prev; return; }
+      if (prev === 'faces') hideFacesMode();
+      try { history.pushState({ edMode: m, edDepth: edDepth() + 1 }, '', '#' + m); } catch { }
+    }
+    // How many mode entries this page has pushed underneath the current one.
+    const edDepth = () => (history.state && history.state.edDepth) || 0;
+    function edLeaveMode(m) {
+      if (edHistMode !== m) return;
+      // At depth 0 the mode is where the editor OPENED, so there is no entry to
+      // go back to -- going back would leave the editor entirely.
+      if (edDepth() > 0) history.back();
+      else edApplyMode('advanced');
+    }
+    window.addEventListener('popstate', (e) => { edApplyMode((e.state && e.state.edMode) || 'advanced'); });
+
     async function setEditorMode(m, opts) {
       opts = opts || {};
       const cw = document.getElementById('creator-wrap'), ew = document.getElementById('editor-wrap');
@@ -3147,7 +3194,7 @@
         if (!opts.initial && !workFromCreator && layers.some(l => l.name !== CREATOR_LAYER && !isLayerBlank(l))) {
           const ok = await edAskConfirm('Add the simple creator on top?',
             'Your drawing is kept as its own layer and the creator\'s clothes and features are layered over it. The creator\'s body base is turned off so your work still shows.');
-          if (!ok) return;
+          if (!ok) return false;
           crState = { ...crState, base_texture: 'none' };
         }
         curEditorMode = 'creator';
@@ -3161,8 +3208,14 @@
         setVariant(variant); render(); update3D(true);
       }
       scheduleFitMode();
+      return true;
     }
-    document.getElementById('mode-toggle').onclick = () => setEditorMode(curEditorMode === 'creator' ? 'advanced' : 'creator');
+    document.getElementById('mode-toggle').onclick = () => {
+      // Going back to the advanced editor is a step BACK out of the creator, so
+      // that Forward brings it up again.
+      if (curEditorMode === 'creator') edLeaveMode('creator');
+      else edEnterMode('creator');
+    };
 
     // The `calc(100vh - N)` heights on the mode wrappers were guesses at the
     // height of the title bar + page heading, and ran a little short — enough
