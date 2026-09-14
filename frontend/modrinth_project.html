@@ -396,6 +396,28 @@ async function setupProjectTabs(full) {
     localStorage.removeItem("openProjectTab");
     if (avail.includes(wantTab)) show(wantTab);
   }
+  // Arriving from a modpack's Install button: the versions are on screen to
+  // read, with the picker over them asking which one and instance-or-server.
+  if (localStorage.getItem("openInstallPicker")) {
+    localStorage.removeItem("openInstallPicker");
+    openModpackPicker();
+  }
+}
+
+// The picker needs the full version list (with files and loaders), which the
+// Versions tab may render from a lighter shape.
+async function openModpackPicker() {
+  let proj = null;
+  try { proj = JSON.parse(localStorage.getItem("selectedModrinthProject") || "null"); } catch { /* none */ }
+  if (!window.ModpackInstall || !proj) return;
+  try {
+    const id = proj.project_id || proj.id || proj.slug;
+    const versions = await (await fetch(`https://api.modrinth.com/v2/project/${id}/version`)).json();
+    if (!Array.isArray(versions) || !versions.length) return alert("No versions found for this modpack.");
+    window.ModpackInstall.open(proj, versions);
+  } catch (err) {
+    alert("Could not load this modpack's versions: " + (err.message || err));
+  }
 }
 
 async function openInstallScreen(mod) {
@@ -424,6 +446,13 @@ if (downloadBtn.textContent == "Back") {
   const selectedType = localStorage.getItem("selectedProjectType") || "mod";
 
   // --- Handle modpacks ---
+  // One picker for both routes: the same modal the search results open, so
+  // choosing instance-or-server isn't only offered on one of the two paths.
+  if (projType === "modpack" && window.ModpackInstall) {
+    const back = document.getElementById("downloadProjectBtn");
+    if (back && back.textContent === "Back") { back.textContent = "Install"; loadProjectDetails(); }
+    return openModpackPicker();
+  }
   if (projType === "modpack") {
     let versions = [];
     try {

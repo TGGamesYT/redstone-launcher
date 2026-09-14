@@ -1882,7 +1882,9 @@ async function mrpack(mrpackPath, onProgress, hooks) {
   // moment it appears rather than after every mod has come down.
   let icon = null;
   const iconEntry = zip.getEntry("icon.png");
-  if (iconEntry) icon = iconEntry.getData().toString("base64");
+  // A data: URL, not bare base64 — the icon goes straight into an <img src>,
+  // which is why modpack instances were coming out with the default icon.
+  if (iconEntry) icon = "data:image/png;base64," + iconEntry.getData().toString("base64");
 
   const newProfile = {
     id: profileId,
@@ -2369,7 +2371,7 @@ async function curseforgeImport(zipPath, onProgress) {
   // Optional: read overrides/icon.png if exists
   let icon = null;
   const iconEntry = zip.getEntry("overrides/icon.png");
-  if (iconEntry) icon = iconEntry.getData().toString("base64");
+  if (iconEntry) icon = "data:image/png;base64," + iconEntry.getData().toString("base64");
 
   const newProfile = {
     id: profileId,
@@ -3395,12 +3397,33 @@ async function broadcastProfilesNow() {
   try { broadcastProfiles(await loadProfiles()); } catch { /* nothing to broadcast */ }
 }
 
+const MP_PHASE_LABELS = {
+  download: "Downloading the modpack",
+  extract: "Extracting",
+  mods: "Downloading mods",
+  done: "Installed",
+  error: "Install failed",
+};
+
 async function runModpackInstall({ ticket, url, name }) {
   const st = {
     ticket, name: name || "Modpack", phase: "download",
     done: 0, total: 0, detail: "", profileId: null, error: null, finished: false,
   };
-  const emit = (patch) => mpSend(Object.assign(st, patch || {}, { ticket }));
+  const emit = (patch) => {
+    Object.assign(st, patch || {}, { ticket });
+    mpSend(st);
+    // Also drive the ordinary launch/download progress bar — the one the
+    // sidebar, the instance page and the toolbar already show for everything
+    // else. Installing a pack had its own separate bar for no good reason.
+    if (st.profileId) {
+      if (st.finished) broadcastProgress(st.profileId, { done: true, label: MP_PHASE_LABELS[st.phase] || "Ready" });
+      else broadcastProgress(st.profileId, {
+        label: MP_PHASE_LABELS[st.phase] || "Installing",
+        current: st.done, total: st.total,
+      });
+    }
+  };
   emit({});
   try {
     const tmpPath = path.join(app.getPath("temp"), `mp-${Date.now()}.mrpack`);
@@ -3430,12 +3453,119 @@ async function runModpackInstall({ ticket, url, name }) {
   }
 }
 
+// Install a pack as a SERVER instead of a client instance: same archive, but
+// the files land in a server directory, the server jar/loader is provisioned
+// for the pack's Minecraft + loader version, and client-only overrides are
+// skipped. Returns once the server exists; mods keep downloading behind it.
+// "Pack", "Pack (2)", "Pack (3)"… Server folders are named after the server, so
+// installing the same pack twice would otherwise overwrite the first one.
+function uniqueServerName(base) {
+  const clean = String(base || "Modpack").replace(/[\\/:*?"<>|]/g, "_").trim() || "Modpack";
+  let taken = new Set();
+  try { taken = new Set((serverManager.getServers() || []).map(s => String(s.name))); } catch { /* none yet */ }
+  try {
+    const dir = path.join(dataDir, "servers");
+    if (fs.existsSync(dir)) fs.readdirSync(dir).forEach(n => taken.add(n));
+  } catch { /* directory listing is a bonus */ }
+  if (!taken.has(clean)) return clean;
+  for (let i = 2; i < 500; i++) if (!taken.has(`${clean} (${i})`)) return `${clean} (${i})`;
+  return `${clean} ${Date.now()}`;
+}
+
+async function runModpackServerInstall({ ticket, url, name }) {
+  const st = {
+    ticket, name: name || "Modpack", phase: "download", kind: "server",
+    done: 0, total: 0, detail: "", serverName: null, profileId: null, error: null, finished: false,
+  };
+  const emit = (patch) => { Object.assign(st, patch || {}, { ticket }); mpSend(st); };
+  emit({});
+  try {
+    const tmpPath = path.join(app.getPath("temp"), `mp-srv-${Date.now()}.mrpack`);
+    await downloadFile(url, tmpPath);
+    emit({ phase: "extract" });
+
+    const zip = new AdmZip(tmpPath);
+    const indexEntry = zip.getEntry("modrinth.index.json");
+    if (!indexEntry) throw new Error("modrinth.index.json not found in .mrpack");
+    const index = JSON.parse(indexEntry.getData().toString("utf8"));
+    const deps = index.dependencies || {};
+    const { loader, loaderVersion } = loaderFromMrpackDeps(deps);
+    const mcVersion = deps["minecraft"] || "1.20.1";
+
+    // A server can't run a client-only loader; vanilla is the honest fallback.
+    const serverType = ["forge", "neoforge", "fabric", "quilt"].includes(loader) ? loader : "vanilla";
+    // Server directories are keyed by name, so a second install of the same
+    // pack must not land on top of the first.
+    const srvName = uniqueServerName(index.name || name || "Modpack");
+
+    let java = "java";
+    try { java = await getJavaForMinecraft(mcVersion); } catch { /* system java */ }
+
+    let icon = null;
+    const iconEntry = zip.getEntry("icon.png");
+    if (iconEntry) icon = "data:image/png;base64," + iconEntry.getData().toString("base64");
+
+    const srv = await serverManager.makeServer({
+      name: srvName, version: mcVersion, type: serverType,
+      loaderVersion: loaderVersion || "", icon: icon || "",
+    }, java);
+    emit({ serverName: srv.name || srvName, name: index.name || st.name });
+
+    // Overrides: server-overrides/ wins over the shared overrides/, and
+    // client-overrides/ has no business on a server.
+    const dir = srv.dir || path.join(dataDir, "servers", srvName);
+    const relFor = (entryName) => {
+      if (entryName === "modrinth.index.json" || entryName === "icon.png") return null;
+      if (entryName.startsWith("client-overrides/")) return null;
+      if (entryName.startsWith("server-overrides/")) return entryName.slice("server-overrides/".length) || null;
+      if (entryName.startsWith("overrides/")) return entryName.slice("overrides/".length) || null;
+      return entryName;
+    };
+    const entries = zip.getEntries().filter(e => !e.isDirectory);
+    let exDone = 0;
+    for (const e of entries) {
+      exDone++;
+      const rel = relFor(e.entryName);
+      if (rel) {
+        const out = path.join(dir, rel);
+        fs.mkdirSync(path.dirname(out), { recursive: true });
+        fs.writeFileSync(out, e.getData());
+      }
+      emit({ phase: "extract", done: exDone, total: entries.length });
+    }
+
+    // Only the files this pack marks as server-side.
+    const files = (index.files || []).filter(f => {
+      const env = f.env || {};
+      return env.server !== "unsupported";
+    });
+    emit({ phase: "mods", done: 0, total: files.length, detail: "" });
+    let dlDone = 0;
+    for (const f of files) {
+      const out = path.join(dir, String(f.path).replace(/\//g, path.sep));
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      try { await downloadFile(f.downloads[0], out); } catch { /* one bad mod shouldn't kill the install */ }
+      dlDone++;
+      emit({ phase: "mods", done: dlDone, total: files.length, detail: String(f.path).replace(/\\/g, "/") });
+    }
+
+    emit({ phase: "done", finished: true, detail: "" });
+    return { success: true, serverName: srv.name || srvName };
+  } catch (err) {
+    emit({ phase: "error", finished: true, error: String(err && err.message || err) });
+    return { success: false, error: String(err && err.message || err) };
+  } finally {
+    setTimeout(() => modpackInstalls.delete(ticket), 5 * 60 * 1000);
+  }
+}
+
 // Kick off an install and return immediately — the caller follows the events.
-ipcMain.handle("modpack:install", (event, { url, ticket, name }) => {
+ipcMain.handle("modpack:install", (event, { url, ticket, name, as }) => {
   if (!url || !ticket) return { success: false, error: "missing url or ticket" };
   if (modpackInstalls.has(ticket)) return { success: true, already: true };
-  runModpackInstall({ ticket, url, name });
-  return { success: true };
+  if (as === "server") runModpackServerInstall({ ticket, url, name });
+  else runModpackInstall({ ticket, url, name });
+  return { success: true, as: as === "server" ? "server" : "instance" };
 });
 // For a page that loads after some progress has already gone by.
 ipcMain.handle("modpack:installState", (event, { ticket }) => modpackInstalls.get(ticket) || null);

@@ -1497,16 +1497,15 @@
         instanceDetail.style.display = "flex";
         instanceDetail.innerHTML = ""; // clear previous content
 
-        // Still being built? Say so at the top of its own page. The bar is
-        // driven by the ticket when we have one; without it (the page was
-        // opened from the list) the stored flag is all we know.
-        if (profile.installing || profile.installFailed) {
-          const st = (mpState && String(mpState.profileId) === String(profile.id)) ? mpState : {
-            name: profile.name,
-            phase: profile.installFailed ? "error" : "mods",
-            error: profile.installFailed, done: 0, total: 0, detail: "",
-          };
-          instanceDetail.appendChild(mpProgressEl(st));
+        // A pack still being built drives the ordinary launch-progress bar
+        // further down, same as every other download — nothing extra is needed
+        // here beyond saying why it failed, if it did.
+        if (profile.installFailed) {
+          const warn = document.createElement("div");
+          warn.className = "mp-install-bar";
+          warn.innerHTML = `<div class="mp-install-head"></div>`;
+          warn.querySelector(".mp-install-head").textContent = `Install failed: ${profile.installFailed}`;
+          instanceDetail.appendChild(warn);
         }
 
         // TOP ROW: ICON + INFO + BUTTONS
@@ -1558,16 +1557,24 @@
         playBtn.className = "detail-play-btn";
         playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
         playBtn.title = "Launch Profile";
-        if (profile.installing) {
-          // Half a modpack won't launch into anything but a crash report.
-          playBtn.disabled = true;
-          playBtn.title = "Still installing";
-        }
         right.appendChild(playBtn);
 
         let playState = "idle"; // idle | launching | running
+        // Read the flag LIVE rather than off the captured profile: the running-
+        // instance poll calls setPlay("idle") every couple of seconds, which
+        // re-enabled the button and let a half-installed pack be launched.
+        const stillInstalling = () => {
+          const p = (Array.isArray(profiles) ? profiles : []).find(x => String(x.id) === String(profile.id));
+          return !!(p && p.installing);
+        };
         function setPlay(state, pids) {
           playState = state;
+          if (state !== "running" && stillInstalling()) {
+            playBtn.innerHTML = `<i class="material-icons">hourglass_top</i> Installing…`;
+            playBtn.title = "Still installing";
+            playBtn.disabled = true; playBtn.style.opacity = "0.6"; playBtn.style.cursor = "not-allowed";
+            return;
+          }
           if (state === "running") {
             playBtn.innerHTML = `<i class="material-icons">stop</i> Stop`;
             playBtn.title = "Stop";
@@ -1595,6 +1602,8 @@
             return;
           }
           if (playState === "launching") return;
+          // Belt and braces: half a modpack only launches into a crash report.
+          if (stillInstalling()) return;
           if (!selectedPlayerId) { playBtn.innerHTML = "Select a player first!"; return; }
           setPlay("launching");
           ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId });

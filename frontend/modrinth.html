@@ -641,11 +641,17 @@
           };
           actions.append(pickBtn);
         } else if (!installMode && activeType === "modpack" && api === "modrinth") {
-          // A modpack's Install goes straight to the version picker. It used to
-          // fall through to the card's click handler and open the project page,
-          // where you had to find a second Install button to get here.
+          // Install opens the project's Versions tab with the picker on top of
+          // it, so the versions are there to read while choosing. It used to
+          // fall through to the card's click handler and just open the project
+          // page, where a second Install button was waiting.
           installBtn.title = "Choose a version to install";
-          installBtn.onclick = (e) => { e.stopPropagation(); openInstallScreen(proj); };
+          installBtn.onclick = (e) => {
+            e.stopPropagation();
+            localStorage.setItem("openProjectTab", "versions");
+            localStorage.setItem("openInstallPicker", "1");
+            openProjectDetails(proj);
+          };
         } else if (activeType === "server" && api === "modrinth") {
           // Server projects are modpack-shaped: set one up as an instance.
           installBtn.innerHTML = '<i class="material-icons" style="font-size:18px;vertical-align:middle;">play_arrow</i>';
