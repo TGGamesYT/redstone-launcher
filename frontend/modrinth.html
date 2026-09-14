@@ -155,6 +155,7 @@
 
     const resultsList = document.getElementById('modrinthResults');
     resultsList.classList.add("mainModView-scrolly");
+    resultsList.setAttribute("data-fit-height", "");
 
     let profiles = [];
     let servers = [];
@@ -1229,6 +1230,7 @@
     }
     updatePresence("Browsing on Modrinth")
   </script>
+  <script src="fitheight.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
 </body>

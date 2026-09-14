@@ -4,9 +4,11 @@
   "version": "1.17.0",
   "description": "A Minecraft launcher",
   "author": "Redstone Launcher Team <contact@redstone-launcher.com>",
-  "main": "main.js",
+  "main": "backend/main.js",
   "scripts": {
     "postinstall": "node scripts/ensure-electron.cjs",
+    "prestart": "node scripts/ensure-electron.cjs",
+    "start": "electron .",
     "preapp": "node scripts/ensure-electron.cjs",
     "app": "electron .",
     "buildWin": "electron-builder --win --publish=never",

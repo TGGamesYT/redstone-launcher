@@ -267,7 +267,7 @@
     <h3 style="margin: 0 0 10px 0; font-size: 18px;">No Instances</h3>
     <p style="margin: 0 0 20px 0; font-size: 14px;">Create your first instance to get started</p>
   </div>
-  <ul id="profiles-list" style="overflow-y: auto; overflow-x: hidden; padding-right: 20px;"></ul>
+  <ul id="profiles-list" data-fit-height style="overflow-y: auto; overflow-x: hidden; padding-right: 20px;"></ul>
 
   <div id="addInstanceModal" class="modal-overlay">
     <div class="modal-content">
@@ -1629,6 +1629,7 @@
         const tabButtons = {};
         const tabContent = document.createElement("div");
         tabContent.classList.add("instanceView-scrolly");
+        tabContent.setAttribute("data-fit-height", "");
         tabContent.id = "instance-tab-content";
         tabContent.style.marginTop = "10px";
         instanceDetail.appendChild(tabContent);
@@ -3156,6 +3157,7 @@
 
   <script src="filetree.js"></script>
   <script src="filebrowser.js"></script>
+  <script src="fitheight.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
   <script src="iconpicker.js"></script>

@@ -702,14 +702,19 @@ textarea::placeholder {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
+/* The title sits between two groups that each take an equal share of the
+   leftover width, so it stays put no matter how long the status message on the
+   right gets -- it used to be centred in whatever space was left, which made it
+   slide around during a download. */
 #toolbar .drag-region {
   color: var(--text-color);
   font-family: var(--text-font);
   font-size: 14px;
   letter-spacing: 1px;
   font-weight: 900;
-  
-  width: 100%;
+
+  flex: 0 0 auto;
+  white-space: nowrap;
   text-align: center;
   pointer-events: none;
 }
@@ -717,6 +722,9 @@ textarea::placeholder {
 #toolbar .toolbar-buttons {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 0;
+  min-width: 0;
   padding: 10px;
   -webkit-app-region: no-drag;
 }
@@ -758,8 +766,20 @@ textarea::placeholder {
 #toolbar .toolbar-buttons-left {
   display: flex;
   align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
   padding-left: 10px;
   -webkit-app-region: no-drag;
+}
+
+/* However long the download status gets, it truncates rather than growing the
+   group and squeezing the title. */
+#toolbar #instance-processes {
+  min-width: 0;
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #toolbar .toolbar-buttons-left button {
@@ -1271,20 +1291,19 @@ a:hover {
   clip-path: inset(0 round var(--border-radius));
 }
 
+/* Height comes from fitheight.js (data-fit-height), measured from where this
+   actually sits rather than guessed from the top of the window. */
 .instanceView-scrolly {
-  height: calc(100vh - 170px);
   overflow-y: auto;
   padding: 0px;
 }
 
 .full-scrolly {
-  height: calc(100vh - 38px);
   overflow-y: auto;
   padding: 0px;
 }
 
 .main-scrolly {
-  height: calc(100vh - 130px);
   overflow-y: auto;
   padding-left: 12px;
 }

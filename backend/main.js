@@ -2567,7 +2567,7 @@ function launchViaWorker(profileId, cfg) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
-      worker = utilityProcess.fork(path.join(app.getAppPath(), 'launcher-worker.js'), [], { serviceName: 'mc-launch' });
+      worker = utilityProcess.fork(path.join(app.getAppPath(), 'backend', 'launcher-worker.js'), [], { serviceName: 'mc-launch' });
     } catch (e) { reject(e); return; }
     let settled = false;
     worker.on('message', (m) => {
@@ -3756,6 +3756,10 @@ const EXPORT_PARTS = {
 };
 // Never worth shipping: caches, the game itself, and per-machine state.
 const EXPORT_NEVER_FILES = new Set(["usercache.json", "command_history.txt", "debug-profile.json", "realms_persistence.json", "realms_presistence.json", "launcher_profiles.json"]);
+
+// The real version from package.json, so the About section can't drift out of
+// step with what's actually installed.
+ipcMain.handle("get-app-version", () => app.getVersion());
 
 ipcMain.handle("export:parts", () =>
   Object.entries(EXPORT_PARTS).map(([key, v]) => ({ key, label: v.label })));

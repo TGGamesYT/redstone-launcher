@@ -214,11 +214,11 @@
   padding: 0px;
 }
 .mainModView-scrolly {
-  height: calc(100vh - 170px);
   overflow-y: auto;
-  /* Bottom padding so the last cards (and pagination) aren't cut off / hidden
-     under the window edge when scrolled all the way down. */
-  padding: 0 0 90px 0;
+  /* The 90px bottom padding that used to be here was compensating for the
+     container running past the window edge; it ends at the right place now, so
+     this is just breathing room under the last card. */
+  padding: 0 0 12px 0;
   box-sizing: border-box;
 }
 

@@ -257,6 +257,7 @@
 
     const playersList = document.getElementById("players-list");
     playersList.classList.add('full-scrolly');
+    playersList.setAttribute('data-fit-height', '');
     playersList.style.padding = "10px";
 
     const playerModal = document.getElementById("playerModal");
@@ -505,6 +506,7 @@
     }
     updatePresence("Looking at players")
   </script>
+  <script src="fitheight.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
 </body>
