@@ -34,7 +34,14 @@
     .ed-parts label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
     .ed-parts input { width: auto; margin: 0; }
     /* Center: texture canvas. */
-    #ed-center { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; }
+    #ed-center { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; position: relative; padding-bottom: 38px; box-sizing: border-box; }
+    /* The selection / placement bars and the hint share one strip pinned to the
+       bottom of the column. Taking them out of the flow is the point: they used
+       to be flex children, so every time one appeared it stole height from the
+       centred canvas and shoved it upwards. */
+    #ed-bottom { position: absolute; left: 0; right: 0; bottom: 2px; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+    #ed-bottom > * { pointer-events: auto; max-width: 100%; }
+    #ed-sel-bar, #ed-place-bar { justify-content: center; background: color-mix(in srgb, var(--very-dark) 88%, transparent); border-radius: var(--border-radius); padding: 4px 8px; }
     /* Largest square that fits the centre column: limited by its width (100%) or
        its height (the editor fills the viewport below the top bar + heading). */
     #ed-canvas-holder { position: relative; width: min(100%, calc(100vh - 150px)); aspect-ratio: 1 / 1; }
@@ -286,27 +293,31 @@
         <canvas id="ed-canvas" width="640" height="640"></canvas>
         <canvas id="ed-overlay" width="640" height="640"></canvas>
       </div>
-      <!-- Only while something is selected. -->
-      <div id="ed-sel-bar" style="display:none; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap;">
-        <span class="ed-hint" style="margin:0;">Drag inside to move.</span>
-        <button class="ed-btn" id="ed-sel-fliph" style="width:auto; padding:5px 10px;" title="Flip the selection left-to-right"><i class="material-icons" style="font-size:16px;">swap_horiz</i> Flip H</button>
-        <button class="ed-btn" id="ed-sel-flipv" style="width:auto; padding:5px 10px;" title="Flip the selection top-to-bottom"><i class="material-icons" style="font-size:16px;">swap_vert</i> Flip V</button>
-        <button class="ed-btn" id="ed-sel-colour" style="width:auto; padding:5px 10px;" title="Shift the selection's colours"><i class="material-icons" style="font-size:16px;">palette</i> Colour…</button>
-        <button class="ed-btn" id="ed-sel-fill" style="width:auto; padding:5px 10px;" title="Fill the selection with the brush colour"><i class="material-icons" style="font-size:16px;">format_color_fill</i> Fill</button>
-        <button class="ed-btn" id="ed-sel-delete" style="width:auto; padding:5px 10px;" title="Erase what's selected"><i class="material-icons" style="font-size:16px;">delete</i> Erase</button>
-        <button class="ed-btn" id="ed-sel-none" style="width:auto; padding:5px 10px;">Deselect</button>
+      <!-- The bars live in a floating strip under the canvas so showing or
+           hiding one never resizes or shifts the texture view. -->
+      <div id="ed-bottom">
+        <!-- Only while something is selected. -->
+        <div id="ed-sel-bar" style="display:none; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span class="ed-hint" style="margin:0;">Drag inside to move.</span>
+          <button class="ed-btn" id="ed-sel-fliph" style="width:auto; padding:5px 10px;" title="Flip the selection left-to-right"><i class="material-icons" style="font-size:16px;">swap_horiz</i> Flip H</button>
+          <button class="ed-btn" id="ed-sel-flipv" style="width:auto; padding:5px 10px;" title="Flip the selection top-to-bottom"><i class="material-icons" style="font-size:16px;">swap_vert</i> Flip V</button>
+          <button class="ed-btn" id="ed-sel-colour" style="width:auto; padding:5px 10px;" title="Shift the selection's colours"><i class="material-icons" style="font-size:16px;">palette</i> Colour…</button>
+          <button class="ed-btn" id="ed-sel-fill" style="width:auto; padding:5px 10px;" title="Fill the selection with the brush colour"><i class="material-icons" style="font-size:16px;">format_color_fill</i> Fill</button>
+          <button class="ed-btn" id="ed-sel-delete" style="width:auto; padding:5px 10px;" title="Erase what's selected"><i class="material-icons" style="font-size:16px;">delete</i> Erase</button>
+          <button class="ed-btn" id="ed-sel-none" style="width:auto; padding:5px 10px;">Deselect</button>
+        </div>
+        <!-- Only while an image is being positioned on the texture. -->
+        <div id="ed-place-bar" style="display:none; align-items:center; gap:10px; flex-wrap:wrap;">
+          <span class="ed-hint" style="margin:0;">Drag to move, corners to resize.</span>
+          <label class="rl-toggle"><input type="checkbox" id="ed-place-smooth"> Smooth scaling</label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12px;">Opacity
+            <input type="range" id="ed-place-op" min="5" max="100" value="100" style="width:90px;"></label>
+          <button class="ed-btn" id="ed-place-fit" style="width:auto; padding:5px 10px;">Fit to a face…</button>
+          <button class="ed-btn primary" id="ed-place-ok" style="width:auto; padding:5px 12px;">Place</button>
+          <button class="ed-btn" id="ed-place-cancel" style="width:auto; padding:5px 12px;">Cancel</button>
+        </div>
+        <div class="ed-hint" id="ed-bottom-hint">Drawing edits the texture; the 3D model on the left updates live.</div>
       </div>
-      <!-- Only while an image is being positioned on the texture. -->
-      <div id="ed-place-bar" style="display:none; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap;">
-        <span class="ed-hint" style="margin:0;">Drag to move, corners to resize.</span>
-        <label class="rl-toggle"><input type="checkbox" id="ed-place-smooth"> Smooth scaling</label>
-        <label style="display:flex; align-items:center; gap:6px; font-size:12px;">Opacity
-          <input type="range" id="ed-place-op" min="5" max="100" value="100" style="width:90px;"></label>
-        <button class="ed-btn" id="ed-place-fit" style="width:auto; padding:5px 10px;">Fit to a face…</button>
-        <button class="ed-btn primary" id="ed-place-ok" style="width:auto; padding:5px 12px;">Place</button>
-        <button class="ed-btn" id="ed-place-cancel" style="width:auto; padding:5px 12px;">Cancel</button>
-      </div>
-      <div class="ed-hint">Drawing edits the texture; the 3D model on the left updates live.</div>
     </div>
 
     <!-- Right: tools -->
@@ -861,6 +872,18 @@
     function refreshSelectionUI() {
       const bar = document.getElementById('ed-sel-bar');
       if (bar) bar.style.display = selection ? 'flex' : 'none';
+      refreshBottomHint();
+    }
+    // Only one thing at a time in the bottom strip: a bar if there is one to
+    // show, otherwise the general hint.
+    function refreshBottomHint() {
+      const hint = document.getElementById('ed-bottom-hint');
+      if (!hint) return;
+      const shown = ['ed-sel-bar', 'ed-place-bar'].some(id => {
+        const el = document.getElementById(id);
+        return el && el.style.display !== 'none';
+      });
+      hint.style.display = shown ? 'none' : '';
     }
 
     // Lift the selected pixels off the layer so they can be dragged around.
@@ -1330,9 +1353,16 @@
       placeDrag = null;
       if (selDrag) { selDrag = null; commitFloat(); renderOverlay(); return; }
       if (selDraft) {
-        selection = selDraft.mode === 'rect'
-          ? selectRect(selDraft.x0, selDraft.y0, selDraft.x1, selDraft.y1)
-          : selectPolygon(selDraft.pts);
+        // A click that never moved is a deselect, not a one-texel selection --
+        // otherwise a stray click inside the canvas leaves the toolbar sitting
+        // there with nothing visibly selected.
+        const dragged = selDraft.mode === 'rect'
+          ? (selDraft.x0 !== selDraft.x1 || selDraft.y0 !== selDraft.y1)
+          : selDraft.pts.length > 2;
+        selection = !dragged ? null
+          : selDraft.mode === 'rect'
+            ? selectRect(selDraft.x0, selDraft.y0, selDraft.x1, selDraft.y1)
+            : selectPolygon(selDraft.pts);
         selDraft = null;
         refreshSelectionUI();
         renderOverlay();
@@ -1427,6 +1457,7 @@
     function setPlaceBar(on) {
       const bar = document.getElementById('ed-place-bar');
       if (bar) bar.style.display = on ? 'flex' : 'none';
+      refreshBottomHint();
     }
     function cancelPlacement() {
       place = null; placeDrag = null;
