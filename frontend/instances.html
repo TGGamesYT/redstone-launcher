@@ -891,6 +891,8 @@
       const editingId = modalCreateBtn.dataset.editingId;
       window.IconPicker.open({
         instanceId: editingId || undefined,
+        // Lets the picker offer this version's banner and panorama.
+        version: (resolveVersionSelection() || {}).version || undefined,
         onPick: (d) => { pickedInstanceIcon = d; setInstancePreview(d); },
       });
     };

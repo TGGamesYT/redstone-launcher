@@ -1221,6 +1221,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     $('srvType').addEventListener('change', () => updateLoaderVersionSection());
     $('srvSelectIcon').onclick = () => window.IconPicker.open({
       serverName: editingServer ? editingServer.name : undefined,
+      version: ($('srvVersion').value || '').trim() || undefined,
       onPick: (d) => { newSrvIconData = d; $('srvIconPreview').src = d; },
     });
     $('addServerBtn').onclick = () => openServerModal(null);

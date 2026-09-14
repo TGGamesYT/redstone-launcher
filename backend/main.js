@@ -4922,6 +4922,75 @@ function extractJarIcon(jarPath, declared, outDir, key) {
 // Read a local image back as a data: URL. Content lists hand out file paths
 // (cheap); anything that has to EMBED an icon - a server's serverinfo.json, a
 // desktop shortcut - asks for the data URL of the one icon actually chosen.
+// A small thumbnail of an image on disk. The icon picker was putting full-size
+// screenshots (2-8 MB, often 4K) into 56px cells, which made opening it crawl.
+const _iconThumbCache = new Map();
+ipcMain.handle("icon:thumb", async (event, { filePath, size }) => {
+  try {
+    const p = path.resolve(String(filePath || ""));
+    if (!p.startsWith(dataDir)) return null;
+    const px = Math.max(32, Math.min(512, Number(size) || 96));
+    const st = fs.statSync(p);
+    const key = `${p}:${px}:${st.mtimeMs}:${st.size}`;
+    if (_iconThumbCache.has(key)) return _iconThumbCache.get(key);
+    const buf = await sharp(p).resize(px, px, { fit: "cover", position: "centre" }).png().toBuffer();
+    const out = "data:image/png;base64," + buf.toString("base64");
+    // A few hundred small thumbs is nothing; an unbounded map isn't.
+    if (_iconThumbCache.size > 400) _iconThumbCache.clear();
+    _iconThumbCache.set(key, out);
+    return out;
+  } catch { return null; }
+});
+
+// The wiki publishes a banner per version at a predictable path, but the
+// extension varies by version and plenty of versions have neither. Try png,
+// then jpg, and say so honestly when there is nothing.
+ipcMain.handle("icon:versionBanner", async (event, { version }) => {
+  const v = String(version || "").trim();
+  if (!v) return null;
+  for (const ext of ["png", "jpg"]) {
+    const url = `https://minecraft.wiki/images/${encodeURIComponent(v)}_banner.${ext}`;
+    try {
+      const r = await fetch(url, { headers: { "User-Agent": LAUNCHER_UA } });
+      if (!r.ok) continue;
+      const ct = r.headers.get("content-type") || "";
+      if (!ct.startsWith("image/")) continue;
+      const buf = Buffer.from(await r.arrayBuffer());
+      return { url, dataUrl: `data:${ct};base64,` + buf.toString("base64") };
+    } catch { /* try the next extension */ }
+  }
+  return null;
+});
+
+// The six panorama faces from a version's client jar. Only offered for versions
+// that are already installed somewhere — fetching a 40 MB jar to crop an icon
+// out of it would not be a fair trade.
+ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
+  try {
+    const v = String(version || "").trim();
+    if (!v) return null;
+    const clientDir = path.join(dataDir, "client");
+    if (!fs.existsSync(clientDir)) return null;
+    let jarPath = null;
+    for (const id of fs.readdirSync(clientDir)) {
+      const p = path.join(clientDir, id, "versions", v, `${v}.jar`);
+      if (fs.existsSync(p)) { jarPath = p; break; }
+    }
+    if (!jarPath) return null;
+
+    const zip = new AdmZip(jarPath);
+    const base = "assets/minecraft/textures/gui/title/background/";
+    const faces = [];
+    for (let i = 0; i < 6; i++) {
+      const e = zip.getEntry(`${base}panorama_${i}.png`);
+      if (!e) return null;                       // a partial panorama is no use
+      faces.push("data:image/png;base64," + e.getData().toString("base64"));
+    }
+    // Face 0 is the one the title screen starts on, i.e. "facing forward".
+    return { faces, forward: faces[0] };
+  } catch { return null; }
+});
+
 ipcMain.handle("icon:dataUrl", async (event, { filePath }) => {
   try {
     const p = path.resolve(String(filePath || ""));
