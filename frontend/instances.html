@@ -355,6 +355,13 @@
         <div class="modal-section">
           <label class="inline-check"><input type="checkbox" id="autoUpdateVersionCb" /> Auto-update to newer game versions when released</label>
         </div>
+        <!-- Only shown when the matching sync is on in Settings → General. -->
+        <div class="modal-section" id="instanceSyncSection" style="display:none;">
+          <label>Shared config</label>
+          <label class="inline-check" id="instanceSyncOptionsRow" style="display:none;"><input type="checkbox" id="instanceSyncOptionsCb" /> Share game options with the other instances</label>
+          <label class="inline-check" id="instanceSyncServersRow" style="display:none;"><input type="checkbox" id="instanceSyncServersCb" /> Share the multiplayer server list</label>
+          <div id="instanceSyncNote" style="display:none;font-size:11px;opacity:0.7;margin-top:4px;"></div>
+        </div>
         <div class="modal-section">
           <label>Custom JVM arguments</label>
           <input id="instanceLaunchArgs" type="text" placeholder="-XX:+UseG1GC -Dfoo=bar" />
@@ -1030,6 +1037,33 @@
         const dm = await ipcRenderer.invoke('devmod:get', { type: 'instance', id: profile.id });
         cb.checked = !!(dm && dm.enabled);
         cb.onchange = () => ipcRenderer.invoke('devmod:setEnabled', { type: 'instance', id: profile.id, enabled: cb.checked });
+      })();
+
+      // Per-instance sync opt-out. Only meaningful when the matching sync is on
+      // globally, so the whole block hides otherwise. Applied immediately (it
+      // moves files around), not on Save.
+      (async () => {
+        const section = document.getElementById('instanceSyncSection');
+        const st = await ipcRenderer.invoke('sync:status', { profileId: profile.id });
+        const any = st && (st.options || st.servers);
+        section.style.display = any ? '' : 'none';
+        if (!any) return;
+        const rows = [
+          ['options', 'instanceSyncOptionsRow', 'instanceSyncOptionsCb'],
+          ['servers', 'instanceSyncServersRow', 'instanceSyncServersCb'],
+        ];
+        for (const [kind, rowId, cbId] of rows) {
+          const row = document.getElementById(rowId), cb = document.getElementById(cbId);
+          row.style.display = st[kind] ? '' : 'none';
+          if (!st[kind]) continue;
+          cb.checked = !!(st.instance && st.instance[kind]);
+          cb.onchange = () => ipcRenderer.invoke('sync:setInstance', { profileId: profile.id, kind, enabled: cb.checked });
+        }
+        const note = document.getElementById('instanceSyncNote');
+        if (st.servers && st.instance && st.instance.merged) {
+          note.style.display = '';
+          note.textContent = "This instance has servers of its own — they are kept, with the shared ones alongside them.";
+        } else note.style.display = 'none';
       })();
 
       // Reveal the Import tab + modpack-update section for modpack instances.

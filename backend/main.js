@@ -502,6 +502,8 @@ const DEFAULT_SETTINGS = {
   gradientColors: ["#ff4d4d", "#b30c0c"],
   gradientAngle: 180,
   predefinedThemeSync: false,
+  syncOptions: false,
+  syncServers: false,
 };
 for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
   if (!settings.has(k)) settings.set(k, v);
@@ -2511,6 +2513,9 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
   instanceLogs.delete(profileId); // fresh console for this launch (previous session was kept until now)
   // Pick up any dev-mod builds produced while the launcher wasn't watching.
   try { await syncDevMods("instance", profileId); } catch { /* non-fatal */ }
+  // Options and saved servers edited in another instance since last time, and
+  // any links Minecraft severed by rewriting a file, are put right here.
+  try { await applyConfigSync(); } catch { /* non-fatal */ }
 
   try {
     broadcastLog(profileId, "Launching, please wait.");
@@ -5109,6 +5114,272 @@ async function writeServersList(profileId, serversList) {
   fs.writeFileSync(tmp, buffer);
   fs.renameSync(tmp, filePath);
 }
+
+// ── Shared config syncing ───────────────────────────────────────────────────
+// One canonical options.txt / servers.dat under the launcher's data directory,
+// hard-linked into every instance that hasn't opted out, so a keybind or a
+// saved server set up in one instance is there in all of them. Instances that
+// own servers of their own -- a Modrinth server instance, a modpack that ships
+// a server list -- are merged instead of linked, because a link would throw
+// their own entries away.
+const sharedCfgDir = () => path.join(dataDir, "shared-config");
+const sharedCfgPath = (file) => path.join(sharedCfgDir(), file);
+const instanceFile = (profileId, file) => path.join(dataDir, "client", String(profileId), file);
+
+function syncEnabled(kind) { return !!settings.get(kind === "servers" ? "syncServers" : "syncOptions"); }
+
+// A merged instance is one with servers of its own that a plain link would
+// destroy. Only servers.dat is ever merged; options.txt has no such notion.
+const ownsServers = (p) => !!(p && (p.modpack || p.serverProjectId || p.serverAddress));
+
+function sameFile(a, b) {
+  try {
+    const sa = fs.statSync(a), sb = fs.statSync(b);
+    return sa.ino === sb.ino && sa.dev === sb.dev;
+  } catch { return false; }
+}
+
+// Hard-link `target` to `shared`. Minecraft rewrites options.txt by renaming a
+// temp file over it, which SEVERS the link -- so before relinking, an instance
+// copy that is no longer the shared inode and is newer than it wins, and its
+// content becomes the shared content. Falls back to copying where links aren't
+// possible (a different volume, a filesystem without them).
+function relinkToShared(target, shared) {
+  try {
+    if (sameFile(target, shared)) return "linked";
+    if (fs.existsSync(target)) {
+      const t = fs.statSync(target), s = fs.existsSync(shared) ? fs.statSync(shared) : null;
+      if (!s || t.mtimeMs > s.mtimeMs) {
+        fs.mkdirSync(path.dirname(shared), { recursive: true });
+        fs.copyFileSync(target, shared);
+      }
+      fs.unlinkSync(target);
+    }
+    if (!fs.existsSync(shared)) return "no-source";
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    try { fs.linkSync(shared, target); return "linked"; }
+    catch { fs.copyFileSync(shared, target); return "copied"; }
+  } catch (err) {
+    devtoolsLog("Config sync: could not link", target, err);
+    return "failed";
+  }
+}
+
+const serverKey = (s) => `${String(s.ip || "").trim().toLowerCase()}|${String(s.name || "").trim()}`;
+
+async function readServersFrom(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    const parsed = await nbt.parse(fs.readFileSync(filePath));
+    const simplified = nbt.simplify(parsed.parsed);
+    return Array.isArray(simplified.servers) ? simplified.servers : [];
+  } catch (err) {
+    devtoolsLog("Failed to parse servers.dat at", filePath, err);
+    return [];
+  }
+}
+function writeServersTo(filePath, list) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const serverCompounds = list.map(s => {
+    const value = {};
+    value.name = { type: "string", value: String(s.name ?? "") };
+    value.ip = { type: "string", value: String(s.ip ?? "") };
+    if (s.icon != null && s.icon !== "") value.icon = { type: "string", value: String(s.icon) };
+    value.acceptTextures = { type: "byte", value: Number(s.acceptTextures ?? 1) ? 1 : 0 };
+    return value;
+  });
+  const buffer = nbt.writeUncompressed({
+    type: "compound", name: "",
+    value: { servers: { type: "list", value: { type: "compound", value: serverCompounds } } },
+  });
+  const tmp = filePath + ".tmp";
+  fs.writeFileSync(tmp, buffer);
+  fs.renameSync(tmp, filePath);
+}
+
+// Merge an instance that owns servers. Its own entries keep their place (a
+// server instance's address on top, a modpack's list at the bottom) and the
+// shared list fills in around them. Anything in the file that is neither shared
+// nor a recorded own entry -- a server added here, or one of its own entries
+// after being edited -- is promoted INTO the shared list, which is what makes
+// editing a pack's server "add it to the saved config too".
+async function mergeServersFor(profile, sharedList) {
+  const file = instanceFile(profile.id, "servers.dat");
+  const current = await readServersFrom(file);
+  const recordedOwn = Array.isArray(profile.ownServers) ? profile.ownServers : null;
+  const sharedKeys = new Set(sharedList.map(serverKey));
+
+  // First run: whatever is in there now is this instance's own list.
+  const ownKeys = new Set((recordedOwn || current).map(serverKey));
+  // What the shared list last put into this file. An entry from that set which
+  // is no longer shared was deleted from another instance — dropping it is the
+  // point. Without this it looks like a local addition and gets promoted back,
+  // so a server could never be deleted while a merged instance existed.
+  const lastShared = new Set(Array.isArray(profile.syncedServers) ? profile.syncedServers : []);
+
+  const promoted = [];
+  for (const s of current) {
+    const k = serverKey(s);
+    if (sharedKeys.has(k) || ownKeys.has(k) || lastShared.has(k)) continue;
+    promoted.push(s);
+    sharedKeys.add(k);
+  }
+  const nextShared = sharedList.concat(promoted);
+
+  // Keep the instance's own entries as they currently read, in file order.
+  const own = current.filter(s => ownKeys.has(serverKey(s)));
+  const ownSet = new Set(own.map(serverKey));
+  const rest = nextShared.filter(s => !ownSet.has(serverKey(s)));
+  const isServerInstance = !!(profile.serverProjectId || profile.serverAddress);
+  const merged = isServerInstance ? own.concat(rest) : rest.concat(own);
+
+  writeServersTo(file, merged);
+  return { shared: nextShared, own, syncedKeys: rest.map(serverKey) };
+}
+
+// Bring every instance into line. Safe to call repeatedly — it is how edits
+// made inside one instance reach the others.
+async function applyConfigSync() {
+  const doOptions = syncEnabled("options"), doServers = syncEnabled("servers");
+  if (!doOptions && !doServers) return { success: true, skipped: true };
+
+  const profiles = await loadProfiles();
+  fs.mkdirSync(sharedCfgDir(), { recursive: true });
+  let dirty = false;
+
+  if (doOptions) {
+    const shared = sharedCfgPath("options.txt");
+    for (const p of profiles) {
+      if (p.noSyncOptions || p.installing) continue;
+      relinkToShared(instanceFile(p.id, "options.txt"), shared);
+    }
+  }
+
+  if (doServers) {
+    const shared = sharedCfgPath("servers.dat");
+    let sharedList = await readServersFrom(shared);
+
+    // Minecraft saves servers.dat by renaming a temp file over it, which severs
+    // the hard link — so a linked instance can be sitting on an edit the shared
+    // copy has never seen. Adopt it BEFORE anything rewrites the shared file:
+    // that instance's file WAS the shared file, so its content is the shared
+    // content. Newest wins if two of them were edited.
+    let newest = null;
+    const sharedAt = fs.existsSync(shared) ? fs.statSync(shared).mtimeMs : 0;
+    for (const p of profiles) {
+      if (p.noSyncServers || p.installing || ownsServers(p)) continue;
+      const f = instanceFile(p.id, "servers.dat");
+      if (!fs.existsSync(f) || sameFile(f, shared)) continue;
+      const m = fs.statSync(f).mtimeMs;
+      if (m > sharedAt && (!newest || m > newest.m)) newest = { f, m };
+    }
+    if (newest) sharedList = await readServersFrom(newest.f);
+
+    // Merged instances next: they can contribute new entries to the shared
+    // list, and the linked ones should get those too.
+    for (const p of profiles) {
+      if (p.noSyncServers || p.installing || !ownsServers(p)) continue;
+      const res = await mergeServersFor(p, sharedList);
+      sharedList = res.shared;
+      const ownRecord = res.own.map(s => ({ name: s.name, ip: s.ip }));
+      if (JSON.stringify(p.ownServers || null) !== JSON.stringify(ownRecord)) { p.ownServers = ownRecord; dirty = true; }
+    }
+    writeServersTo(shared, sharedList);
+
+    for (const p of profiles) {
+      if (p.noSyncServers || p.installing || ownsServers(p)) continue;
+      relinkToShared(instanceFile(p.id, "servers.dat"), shared);
+    }
+    // The merged files were written before the promotions from LATER instances
+    // were known, so give them the finished list.
+    for (const p of profiles) {
+      if (p.noSyncServers || p.installing || !ownsServers(p)) continue;
+      const res = await mergeServersFor(p, sharedList);
+      if (JSON.stringify(p.syncedServers || null) !== JSON.stringify(res.syncedKeys)) { p.syncedServers = res.syncedKeys; dirty = true; }
+    }
+  }
+
+  if (dirty) saveProfiles(profiles);
+  return { success: true };
+}
+
+// Turning a toggle on: seed the shared copy from the instance the user picked,
+// then bring everything into line with it.
+ipcMain.handle("sync:enable", async (event, { kind, sourceId }) => {
+  try {
+    const file = kind === "servers" ? "servers.dat" : "options.txt";
+    const src = instanceFile(sourceId, file);
+    fs.mkdirSync(sharedCfgDir(), { recursive: true });
+    if (fs.existsSync(src)) fs.copyFileSync(src, sharedCfgPath(file));
+    else if (kind === "servers") writeServersTo(sharedCfgPath(file), []);
+    else fs.writeFileSync(sharedCfgPath(file), "");
+    settings.set(kind === "servers" ? "syncServers" : "syncOptions", true);
+    await applyConfigSync();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
+// Turning it off leaves every instance with its own real copy of what it had,
+// rather than a link that would keep changing underneath it.
+ipcMain.handle("sync:disable", async (event, { kind }) => {
+  try {
+    const file = kind === "servers" ? "servers.dat" : "options.txt";
+    const shared = sharedCfgPath(file);
+    const profiles = await loadProfiles();
+    for (const p of profiles) {
+      const target = instanceFile(p.id, file);
+      if (!sameFile(target, shared)) continue;
+      fs.unlinkSync(target);
+      fs.copyFileSync(shared, target);
+    }
+    settings.set(kind === "servers" ? "syncServers" : "syncOptions", false);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
+ipcMain.handle("sync:apply", () => applyConfigSync());
+
+// Per-instance opt-out. Opting back in relinks it; opting out gives it its own
+// copy of whatever it was sharing.
+ipcMain.handle("sync:setInstance", async (event, { profileId, kind, enabled }) => {
+  try {
+    const flag = kind === "servers" ? "noSyncServers" : "noSyncOptions";
+    const file = kind === "servers" ? "servers.dat" : "options.txt";
+    const profiles = await loadProfiles();
+    const p = profiles.find(x => String(x.id) === String(profileId));
+    if (!p) return { success: false, error: "no such instance" };
+    if (enabled) delete p[flag]; else p[flag] = true;
+    saveProfiles(profiles);
+    if (!enabled) {
+      const target = instanceFile(profileId, file), shared = sharedCfgPath(file);
+      if (sameFile(target, shared)) { fs.unlinkSync(target); fs.copyFileSync(shared, target); }
+    } else {
+      await applyConfigSync();
+    }
+    broadcastProfiles(profiles);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
+ipcMain.handle("sync:status", async (event, { profileId } = {}) => {
+  const out = { options: syncEnabled("options"), servers: syncEnabled("servers") };
+  if (profileId != null) {
+    const p = (await loadProfiles()).find(x => String(x.id) === String(profileId));
+    out.instance = p ? {
+      options: !p.noSyncOptions,
+      servers: !p.noSyncServers,
+      // A merged instance keeps its own servers on top of the shared ones.
+      merged: ownsServers(p),
+    } : null;
+  }
+  return out;
+});
 
 ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
   const serversList = await readServersList(profileId);

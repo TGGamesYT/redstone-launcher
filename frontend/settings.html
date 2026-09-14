@@ -221,10 +221,35 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     <!-- === General Section === -->
     <div class="section active settings-scrolly" id="general">
       <h3 style="margin-top: 30px;">General</h3>
-      <div style="margin-bottom: 50px;">
+      <div style="margin-bottom: 30px;">
         <label class="setting-toggle"><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label>
         <label class="setting-toggle"><input type="checkbox" id="discord-presence"> Enable Discord Presence</label>
         <label class="setting-toggle"><input type="checkbox" id="grid-view"> Enable Grid View</label>
+      </div>
+
+      <h3>Syncing</h3>
+      <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:620px;">
+        Share one copy between your instances, so a keybind or a saved server set up in
+        one is there in all of them. Instances with servers of their own — a Modrinth
+        server instance, a modpack that ships a server list — keep those and get the
+        shared ones alongside. Any instance can opt out in its own settings.
+      </p>
+      <div style="margin-bottom: 50px;">
+        <label class="setting-toggle"><input type="checkbox" id="sync-options"> Sync game options</label>
+        <label class="setting-toggle"><input type="checkbox" id="sync-servers"> Sync multiplayer servers</label>
+      </div>
+    </div>
+
+    <!-- Which instance the shared copy starts from. -->
+    <div class="modal-overlay" id="syncSeedModal">
+      <div class="modal-content" style="max-width:460px;">
+        <div class="modal-header"><h2 id="syncSeedTitle">Sync from</h2><button class="modal-close" id="syncSeedClose">✕</button></div>
+        <p style="opacity:0.8;font-size:12px;margin:0 0 10px;">
+          Pick the instance to take the first copy from. Every other instance is then
+          given that copy.
+        </p>
+        <ul class="profile-list" id="syncSeedList" style="max-height:46vh;overflow-y:auto;"></ul>
+        <div class="modal-actions"><button id="syncSeedCancel">Cancel</button></div>
       </div>
     </div>
 
@@ -787,6 +812,77 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       const gridView = document.getElementById('grid-view');
       gridView.checked = getSetting('gridView');
       gridView.addEventListener('change', () => ipcRenderer.send('save-settings', { gridView: gridView.checked }));
+
+      // ── Shared config syncing ─────────────────────────────────────────────
+      // Turning one on has to know WHICH instance's copy becomes the shared one,
+      // so the toggle opens a picker first and only sticks once an instance is
+      // chosen. Turning it off gives every instance its own real copy back.
+      {
+        const syncOptions = document.getElementById('sync-options');
+        const syncServers = document.getElementById('sync-servers');
+        const modal = document.getElementById('syncSeedModal');
+        const list = document.getElementById('syncSeedList');
+        const title = document.getElementById('syncSeedTitle');
+        let pending = null;   // { kind, toggle }
+
+        const closeSeed = () => {
+          modal.classList.remove('active');
+          // Cancelled: the toggle goes back to where it was.
+          if (pending) { pending.toggle.checked = false; pending = null; }
+        };
+        document.getElementById('syncSeedClose').onclick = closeSeed;
+        document.getElementById('syncSeedCancel').onclick = closeSeed;
+        modal.addEventListener('mousedown', e => { if (e.target === modal) closeSeed(); });
+
+        async function openSeed(kind, toggle) {
+          pending = { kind, toggle };
+          title.textContent = kind === 'servers' ? 'Sync servers from' : 'Sync game options from';
+          list.innerHTML = '<li style="opacity:0.7;">Loading…</li>';
+          modal.classList.add('active');
+          const profiles = await new Promise(res => {
+            ipcRenderer.once('profiles-list', (e, p) => res(p || []));
+            ipcRenderer.send('get-profiles');
+          });
+          list.innerHTML = '';
+          if (!profiles.length) { list.innerHTML = '<li style="opacity:0.7;">No instances yet.</li>'; return; }
+          profiles.forEach(p => {
+            const li = document.createElement('li');
+            li.className = 'profile-item';
+            li.style.cursor = 'pointer';
+            const img = document.createElement('img');
+            img.src = p.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
+            const info = document.createElement('div');
+            info.className = 'profile-info';
+            info.innerHTML = `<div class="profile-name">${p.name}</div><div class="profile-details">v${p.version} • ${p.loader}</div>`;
+            li.append(img, info);
+            li.onclick = async () => {
+              const chosen = pending; pending = null;
+              modal.classList.remove('active');
+              const r = await ipcRenderer.invoke('sync:enable', { kind: chosen.kind, sourceId: p.id });
+              if (!r || !r.success) {
+                alert('Could not turn syncing on: ' + ((r && r.error) || 'unknown error'));
+                chosen.toggle.checked = false;
+              }
+            };
+            list.appendChild(li);
+          });
+        }
+
+        const wireSync = (toggle, kind, key) => {
+          if (!toggle) return;
+          toggle.checked = !!getSetting(key);
+          toggle.addEventListener('change', async () => {
+            if (toggle.checked) return openSeed(kind, toggle);
+            const r = await ipcRenderer.invoke('sync:disable', { kind });
+            if (!r || !r.success) {
+              alert('Could not turn syncing off: ' + ((r && r.error) || 'unknown error'));
+              toggle.checked = true;
+            }
+          });
+        };
+        wireSync(syncOptions, 'options', 'syncOptions');
+        wireSync(syncServers, 'servers', 'syncServers');
+      }
 
       const devMode = document.getElementById('dev-mode');
       if (devMode) {
