@@ -96,8 +96,9 @@
     .efm-src canvas { width: 60px; height: 60px; image-rendering: pixelated; border-radius: 6px; background: #0003; display: block; }
     .efm-src .efm-sname { margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .85; }
     .efm-src .efm-sx { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border-dark); background: var(--very-dark); color: #fff; cursor: pointer; font-size: 11px; line-height: 1; padding: 0; }
-    .efm-src-bar { display: flex; gap: 6px; }
-    .efm-src-bar .ed-btn { width: auto; flex: 1; font-size: 11px; padding: 6px 4px; }
+    .efm-src-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+    .efm-src-bar .ed-btn { width: auto; flex: 1 1 46%; min-width: 0; font-size: 11px; padding: 6px 4px; }
+    .efm-src-bar .ed-btn .material-icons { font-size: 15px; }
     .efm-fill-row { display: flex; gap: 6px; align-items: center; font-size: 12px; }
     .efm-fill-row select { flex: 1; min-width: 0; }
     .efm-build { flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; align-content: start; }
@@ -465,6 +466,7 @@
         <div class="efm-src-bar">
           <button class="ed-btn" id="efm-add-file"><i class="material-icons">upload</i> File</button>
           <button class="ed-btn" id="efm-add-lib"><i class="material-icons">collections</i> Library</button>
+          <button class="ed-btn" id="efm-add-default"><i class="material-icons">groups</i> Default</button>
           <button class="ed-btn" id="efm-add-player"><i class="material-icons">person</i> Player</button>
         </div>
         <div class="efm-fill-row"><label>Fill all from</label><select id="efm-fill-sel"></select><button class="ed-btn" style="width:auto;padding:6px 10px;" id="efm-fill-btn">Apply</button></div>
@@ -2627,32 +2629,97 @@
       btn.disabled = false; btn.innerHTML = old;
     };
     document.getElementById('efm-add-lib').onclick = async () => {
-      // Merge this account's library, all other accounts' libraries, and Mojang's
-      // default skins into one pick list.
+      // Every account's saved skins. Mojang's defaults live behind their own
+      // button -- there are dozens of them and they used to bury the library.
       let items = [];
-      try { const all = await ipcRenderer.invoke('skins:allLibrary'); if (Array.isArray(all)) items = all.map(s => ({ name: s.name, base64: s.base64 })); } catch { }
-      try { const def = await ipcRenderer.invoke('mc:getDefaultSkins'); if (Array.isArray(def)) items = items.concat(def.map(s => ({ name: 'Default: ' + s.name, base64: s.base64 }))); } catch { }
-      if (!items.length) { alert('No library or default skins found.'); return; }
-      efmOpenPicker(items);
+      try {
+        const all = await ipcRenderer.invoke('skins:allLibrary');
+        if (Array.isArray(all)) items = all.map(s => ({ name: s.name, base64: s.base64, model: s.variant }));
+      } catch { }
+      if (!items.length) { alert('No saved skins found.'); return; }
+      efmOpenPicker(items, 'Pick a skin from the library');
     };
-    // A lightweight modal grid to choose one of many library/default skins.
-    function efmOpenPicker(items) {
+    document.getElementById('efm-add-default').onclick = async () => {
+      const btn = document.getElementById('efm-add-default'); const old = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '<i class="material-icons">hourglass_top</i> Loading…';
+      let items = [];
+      try {
+        const def = await ipcRenderer.invoke('mc:getDefaultSkins');
+        if (Array.isArray(def)) items = def.map(s => ({ name: s.name, base64: s.base64, model: s.model }));
+      } catch { }
+      btn.disabled = false; btn.innerHTML = old;
+      if (!items.length) { alert('Could not load the default skins.'); return; }
+      efmOpenPicker(items, 'Pick a default skin');
+    };
+
+    // ── Offscreen 3D still renderer for the picker grid ──────────────────────
+    // The grid used to show the raw 64x64 texture sheets, which are unreadable
+    // as a way of choosing a skin. One offscreen SkinViewer renders each entry
+    // to a data URL instead -- a single extra WebGL context no matter how many
+    // skins are in the list, and renders are serialised through it.
+    let _pickStill = null;
+    let _pickQueue = Promise.resolve();
+    function pickStillViewer() {
+      if (_pickStill !== null) return _pickStill;
+      try {
+        const canvas = document.createElement('canvas');
+        const v = new skinview3d.SkinViewer({ canvas, width: 160, height: 260, preserveDrawingBuffer: true });
+        v.zoom = 0.9; v.autoRotate = false; v.renderPaused = true;
+        _pickStill = { v, canvas };
+      } catch { _pickStill = false; }
+      return _pickStill;
+    }
+    function renderPickStill(src, model) {
+      const run = async () => {
+        const s = pickStillViewer(); if (!s) return null;
+        try {
+          await s.v.loadSkin(src, { model: model === 'slim' ? 'slim' : 'default' });
+          const t = (s.v.playerWrapper || s.v.playerObject);
+          if (t) t.rotation.y = 0;
+          s.v.render();
+          return s.canvas.toDataURL();
+        } catch { return null; }
+      };
+      _pickQueue = _pickQueue.then(run, run);
+      return _pickQueue;
+    }
+
+    // A modal grid to choose one of many saved/default skins, shown as 3D renders.
+    function efmOpenPicker(items, heading) {
       const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.zIndex = 4000;
-      const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '640px'; box.style.maxHeight = '80vh';
-      box.innerHTML = '<div class="ed-modal-head"><h3 style="margin:0;">Pick a skin</h3><button class="ed-btn" style="width:auto;padding:4px 10px;" id="efm-pick-x">✕</button></div>';
-      const grid = document.createElement('div'); grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:8px;margin-top:10px;';
+      const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '720px'; box.style.maxHeight = '80vh';
+      box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">${heading || 'Pick a skin'}</h3><button class="ed-btn" style="width:auto;padding:4px 10px;" id="efm-pick-x">✕</button></div>`;
+      const grid = document.createElement('div');
+      grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px;margin-top:10px;';
+      let closed = false;
       items.forEach(it => {
+        const src = 'data:image/png;base64,' + it.base64;
         const cell = document.createElement('div'); cell.style.cssText = 'text-align:center;cursor:pointer;font-size:10px;';
-        const cv = document.createElement('canvas'); cv.width = SIZE; cv.height = SIZE; cv.style.cssText = 'width:100%;aspect-ratio:1/1;image-rendering:pixelated;border-radius:4px;';
-        const im = new Image(); im.onload = () => { const c = cv.getContext('2d'); c.imageSmoothingEnabled = false; if (im.width === 64 && im.height === 32) c.drawImage(im, 0, 0, 64, 32, 0, 0, SIZE, SIZE); else c.drawImage(im, 0, 0); }; im.src = 'data:image/png;base64,' + it.base64;
+        const shot = document.createElement('div');
+        shot.style.cssText = 'width:100%;aspect-ratio:160/260;background:color-mix(in srgb, var(--very-dark) 80%, transparent);border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden;';
+        // The flat texture stands in until the render lands, so the grid is never
+        // a wall of empty boxes while the queue works through it.
+        const flat = document.createElement('canvas'); flat.width = SIZE; flat.height = SIZE;
+        flat.style.cssText = 'width:60%;image-rendering:pixelated;opacity:0.45;';
+        const im = new Image();
+        im.onload = () => { const c = flat.getContext('2d'); c.imageSmoothingEnabled = false; if (im.width === 64 && im.height === 32) c.drawImage(im, 0, 0, 64, 32, 0, 0, SIZE, SIZE); else c.drawImage(im, 0, 0); };
+        im.src = src;
+        shot.appendChild(flat);
+        renderPickStill(src, it.model).then(url => {
+          if (closed || !url) return;
+          const img = document.createElement('img');
+          img.src = url; img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+          shot.replaceChildren(img);
+        });
         const lab = document.createElement('div'); lab.textContent = it.name; lab.style.cssText = 'margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-        cell.append(cv, lab);
-        cell.onclick = () => { efmAddSource(it.name, 'data:image/png;base64,' + it.base64); ov.remove(); };
+        cell.append(shot, lab);
+        cell.onclick = () => { closed = true; efmAddSource(it.name, src); ov.remove(); };
         grid.appendChild(cell);
       });
       box.appendChild(grid); ov.appendChild(box); document.body.appendChild(ov);
-      box.querySelector('#efm-pick-x').onclick = () => ov.remove();
-      ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+      const close = () => { closed = true; ov.remove(); };
+      box.querySelector('#efm-pick-x').onclick = close;
+      ov.onclick = (e) => { if (e.target === ov) close(); };
     }
 
     // ── Simple creator — a faithful port of the Starlight Skin Creator. ──────
