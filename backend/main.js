@@ -375,6 +375,13 @@ function onInstanceExited(profileId) {
     mainWindow.webContents.send('instance-lan-closed', { profileId: String(profileId) });
   }
   updateGamePresence();
+  // Harvest whatever this session changed while it is fresh. servers.dat is
+  // saved by renaming a temp file over it, in every version from 1.6 to today,
+  // so the instance's copy is ALWAYS detached from the shared one by the time
+  // the game exits — syncing only before the next launch would leave the other
+  // instances stale until then. (options.txt is written in place, so it
+  // propagates through the link on its own and this is just a no-op for it.)
+  applyConfigSync().catch(() => { /* non-fatal */ });
   quitIfHeadlessAndIdle();
 }
 
@@ -2513,8 +2520,9 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
   instanceLogs.delete(profileId); // fresh console for this launch (previous session was kept until now)
   // Pick up any dev-mod builds produced while the launcher wasn't watching.
   try { await syncDevMods("instance", profileId); } catch { /* non-fatal */ }
-  // Options and saved servers edited in another instance since last time, and
-  // any links Minecraft severed by rewriting a file, are put right here.
+  // Pick up anything edited elsewhere, and relink this instance's servers.dat,
+  // which its last session detached by renaming over it. Also runs when a game
+  // exits, so the other instances don't stay stale until their next launch.
   try { await applyConfigSync(); } catch { /* non-fatal */ }
 
   try {
@@ -5139,10 +5147,23 @@ function sameFile(a, b) {
   } catch { return false; }
 }
 
-// Hard-link `target` to `shared`. Minecraft rewrites options.txt by renaming a
-// temp file over it, which SEVERS the link -- so before relinking, an instance
-// copy that is no longer the shared inode and is newer than it wins, and its
-// content becomes the shared content. Falls back to copying where links aren't
+// Hard-link `target` to `shared`.
+//
+// Whether a link survives the game writing to it depends on HOW the game
+// writes. Checked against the client jars for 1.6.4, 1.7.10, 1.12.2, 1.16.5,
+// 1.20.1, 26.2 and 26.3-rc-2, and it is consistent across all of them:
+//
+//   options.txt  new FileOutputStream(optionsFile) (FileWriter before 1.12) --
+//                open(O_TRUNC), writes through the link, inode kept. The link
+//                NEVER breaks, and an edit is live in every instance at once.
+//   servers.dat  a temp file renamed over the target -- _tmp + File.renameTo up
+//                to 1.12, Util.safeReplaceFile from 1.16, createTempFile +
+//                safeReplaceOrMoveFile now. A rename repoints the path at a NEW
+//                inode, so the link breaks on EVERY save, every version.
+//
+// Hence this: a target that is no longer the shared inode, and newer than it,
+// has content the shared copy has not seen, so it wins and becomes the shared
+// content before the link is remade. Falls back to copying where links aren't
 // possible (a different volume, a filesystem without them).
 function relinkToShared(target, shared) {
   try {
@@ -5277,14 +5298,13 @@ async function applyConfigSync() {
     const shared = sharedCfgPath("servers.dat");
     let sharedList = await readServersFrom(shared);
 
-    // A writer that saves by renaming a temp file over servers.dat (which is
-    // what NbtIo.safeWrite does) repoints that instance's path at a NEW inode
-    // and leaves the shared one untouched — so a linked instance can be sitting
-    // on an edit the shared copy has never seen. (A writer that truncates the
-    // file in place instead writes straight through the link, and there is
-    // nothing to do; sameFile catches that below.) Adopt a severed copy BEFORE
-    // anything rewrites the shared file: that instance's file WAS the shared
-    // file, so its content is the shared content. Newest wins if two differ.
+    // servers.dat is saved by renaming a temp file over it in every version
+    // checked (see relinkToShared), so a linked instance that has run the game
+    // is ALWAYS detached, sitting on an edit the shared copy has never seen.
+    // Adopt it BEFORE anything rewrites the shared file: that instance's file
+    // WAS the shared file, so its content is the shared content. This is the
+    // normal path, not a fallback. Newest wins if two of them differ, which is
+    // the honest answer for two sessions that both edited their server list.
     let newest = null;
     const sharedAt = fs.existsSync(shared) ? fs.statSync(shared).mtimeMs : 0;
     for (const p of profiles) {
