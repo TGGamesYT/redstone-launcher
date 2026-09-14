@@ -3336,6 +3336,12 @@ function mpSend(state) {
     try { if (!w.isDestroyed()) w.webContents.send("modpack-install", state); } catch { /* window went away */ }
   }
 }
+// saveProfiles() only writes the file; the renderers hear about changes through
+// whichever handler made them. An install runs outside any handler, so it has to
+// tell every window itself.
+async function broadcastProfilesNow() {
+  try { broadcastProfiles(await loadProfiles()); } catch { /* nothing to broadcast */ }
+}
 
 async function runModpackInstall({ ticket, url, name }) {
   const st = {
@@ -3353,15 +3359,17 @@ async function runModpackInstall({ ticket, url, name }) {
       tmpPath,
       (done, total, rel) => emit({ phase: "mods", done, total, detail: rel }),
       {
-        onCreated: (profile) => emit({ profileId: profile.id, name: profile.name }),
+        onCreated: (profile) => { emit({ profileId: profile.id, name: profile.name }); broadcastProfilesNow(); },
         onExtract: (done, total) => emit({ phase: "extract", done, total }),
       }
     );
     if (!res || !res.success) throw new Error((res && res.error) || "Install failed");
     emit({ phase: "done", finished: true, profileId: res.profile.id, name: res.profile.name, detail: "" });
+    await broadcastProfilesNow();
     return res;
   } catch (err) {
     emit({ phase: "error", finished: true, error: String(err && err.message || err) });
+    await broadcastProfilesNow();
     return { success: false, error: String(err && err.message || err) };
   } finally {
     // Keep the final state around briefly so a page that opens late still sees

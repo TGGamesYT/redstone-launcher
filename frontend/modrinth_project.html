@@ -469,9 +469,10 @@ if (downloadBtn.textContent == "Back") {
       installBtn.onclick = async () => {
         const mrpackFile = v.files.find(f => f.url.endsWith(".mrpack"));
         if (!mrpackFile) return alert("No .mrpack file available for this version");
-
-        await ipcRenderer.invoke("install-mrpack-url", mrpackFile.url);
-        alert(`Started installation of ${mod.title} (${v.version_number})`);
+        installBtn.disabled = true;
+        installBtn.textContent = "Starting…";
+        // Hands off to the instances page, which follows the install from here.
+        await window.ModpackInstall.start(mrpackFile.url, mod.title);
       };
       li.appendChild(installBtn);
 
@@ -689,6 +690,7 @@ installArea.appendChild(li);
 loadProjectDetails();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="modpack-install.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
 </body>

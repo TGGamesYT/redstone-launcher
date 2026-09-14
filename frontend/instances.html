@@ -26,6 +26,40 @@
   <link rel="stylesheet" href="instanceview.css">
   <link rel="stylesheet" href="material-icons.css">
   <style>
+    /* Modpack install progress, shown on the instance being built. */
+    .mp-install-bar {
+      background: color-mix(in srgb, var(--third-color) 60%, transparent);
+      border: 1px solid var(--border-dark);
+      border-radius: var(--border-radius);
+      padding: 10px 14px;
+      margin: 0 20px 12px 0;
+      flex: 0 0 auto;
+    }
+    .mp-install-head { font-size: 13px; margin-bottom: 6px; }
+    .mp-install-track {
+      height: 8px;
+      background: var(--very-dark);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .mp-install-fill {
+      height: 100%;
+      width: 0;
+      background: var(--base-color);
+      transition: width 0.2s linear;
+    }
+    /* No total yet (the pack file itself, or unpacking): sweep instead of
+       sitting at zero as though nothing were happening. */
+    .mp-install-fill.indeterminate {
+      width: 35%;
+      animation: mp-sweep 1.1s ease-in-out infinite;
+    }
+    @keyframes mp-sweep {
+      0% { margin-left: -35%; }
+      100% { margin-left: 100%; }
+    }
+    .mp-install-sub { font-size: 11px; opacity: 0.75; margin-top: 5px; }
+
     .modal-overlay {
       position: fixed;
       /* Content area only — the toolbar and sidebar stay sharp and functional. */
@@ -529,6 +563,93 @@
     ipcRenderer.send("get-profiles");
     ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); maybeLaunchFromShortcut(); });
     ipcRenderer.on("profiles-updated", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
+
+    // ── Modpack install, watched live ────────────────────────────────────────
+    // Arriving with ?installing=<ticket> means a pack install was just started
+    // from the browser. The main process reports its progress against that
+    // ticket and hands over the instance id as soon as the instance EXISTS —
+    // which is well before its mods are downloaded — so the page shows the
+    // pack's own instance, with the rest of the work happening on it, instead
+    // of nothing at all for minutes.
+    let mpTicket = urlParams.get("installing") || null;
+    let mpState = null;
+    const MP_PHASES = {
+      download: "Downloading the modpack file",
+      extract: "Extracting",
+      mods: "Downloading mods",
+      done: "Installed",
+      error: "Install failed",
+    };
+
+    function mpProgressEl(st) {
+      const box = document.createElement("div");
+      box.className = "mp-install-bar";
+      const pct = st.total > 0 ? Math.round((st.done / st.total) * 100) : null;
+      const head = document.createElement("div");
+      head.className = "mp-install-head";
+      head.textContent = st.phase === "error"
+        ? `${st.name}: ${st.error || "install failed"}`
+        : `${MP_PHASES[st.phase] || "Installing"} — ${st.name}`;
+      box.appendChild(head);
+      if (st.phase !== "error" && st.phase !== "done") {
+        const track = document.createElement("div");
+        track.className = "mp-install-track";
+        const fill = document.createElement("div");
+        fill.className = "mp-install-fill" + (pct === null ? " indeterminate" : "");
+        if (pct !== null) fill.style.width = pct + "%";
+        track.appendChild(fill);
+        box.appendChild(track);
+        const sub = document.createElement("div");
+        sub.className = "mp-install-sub";
+        sub.textContent = st.total > 0
+          ? `${st.done} / ${st.total}${st.detail ? " · " + st.detail.split("/").pop() : ""}`
+          : "Working…";
+        box.appendChild(sub);
+      }
+      return box;
+    }
+
+    if (mpTicket) {
+      ipcRenderer.on("modpack-install", (e, st) => {
+        if (!st || st.ticket !== mpTicket) return;
+        onMpState(st);
+      });
+      // The page may have loaded after some progress already went by.
+      ipcRenderer.invoke("modpack:installState", { ticket: mpTicket })
+        .then(st => { if (st) onMpState(st); })
+        .catch(() => { });
+    }
+
+    function onMpState(st) {
+      const hadProfile = !!(mpState && mpState.profileId);
+      mpState = st;
+      if (st.profileId && !hadProfile) {
+        // The instance is real now — switch the page over to it. replaceState,
+        // not a push: the instance page IS where "install" was meant to land.
+        const url = new URL(window.location.href);
+        url.searchParams.set("i", st.profileId);
+        history.replaceState({}, "", url);
+      }
+      if (st.profileId && !hadProfile) {
+        // Draw the instance's page now. Don't rely on the profiles broadcast to
+        // do it: the two arrive in either order, and if the list landed first it
+        // rendered before the URL pointed at the new instance.
+        renderListOrDetail();
+        return;
+      }
+      // In between, just keep the bar current rather than rebuilding the whole
+      // detail view once per downloaded file.
+      const existing = document.querySelector(".mp-install-bar");
+      if (existing) existing.replaceWith(mpProgressEl(st));
+      else renderListOrDetail();
+      if (st.finished && st.phase === "done") {
+        // Nothing left to watch — drop the ticket so a refresh isn't stuck on it.
+        const url = new URL(window.location.href);
+        url.searchParams.delete("installing");
+        history.replaceState({}, "", url);
+        mpTicket = null;
+      }
+    }
 
     // Launched via a desktop shortcut? The deep-link handler loaded us with
     // ?shortcut=1&i=<id>&mode=<start|world|server|args>&… — perform that action
@@ -1235,6 +1356,22 @@
       const urlParams = new URLSearchParams(window.location.search);
       const instanceId = urlParams.get('i');
 
+      // The first seconds of a pack install, before the instance exists: show
+      // the progress on its own rather than dropping the user on the list.
+      if (mpTicket && !instanceId && mpState && !mpState.profileId) {
+        searchsort.style.display = "none";
+        const heading = document.getElementById("instancesHeading");
+        const topBr = document.getElementById("instancesTopBr");
+        if (heading) heading.style.display = "none";
+        if (topBr) topBr.style.display = "none";
+        document.getElementById('emptyInstanceState').style.display = "none";
+        profilesList.style.display = "none";
+        instanceDetail.style.display = "flex";
+        instanceDetail.innerHTML = "";
+        instanceDetail.appendChild(mpProgressEl(mpState));
+        return;
+      }
+
       // Keep the version dropdown populated with the versions actually present.
       populateVersionFilter();
 
@@ -1284,6 +1421,22 @@
         ? allProfiles.find(p => String(p.id) === String(instanceId))
         : null;
       if (instanceId && instanceId !== 'NEWINSTANCE' && !detailProfile) {
+        // Not gone — just created. The install told us the id before the updated
+        // profile list reached us, so hold the progress view rather than
+        // deciding the instance doesn't exist and throwing the id away.
+        if (mpState && String(mpState.profileId) === String(instanceId)) {
+          searchsort.style.display = "none";
+          const heading = document.getElementById("instancesHeading");
+          const topBr = document.getElementById("instancesTopBr");
+          if (heading) heading.style.display = "none";
+          if (topBr) topBr.style.display = "none";
+          document.getElementById('emptyInstanceState').style.display = "none";
+          profilesList.style.display = "none";
+          instanceDetail.style.display = "flex";
+          instanceDetail.innerHTML = "";
+          instanceDetail.appendChild(mpProgressEl(mpState));
+          return;
+        }
         // It's gone (just deleted, or the id is stale): drop it from the URL and
         // fall through to the list rather than rendering an empty detail view.
         const url = new URL(window.location.href);
@@ -1309,6 +1462,18 @@
         // gets a bounded height and scrolls instead of overflowing the viewport.
         instanceDetail.style.display = "flex";
         instanceDetail.innerHTML = ""; // clear previous content
+
+        // Still being built? Say so at the top of its own page. The bar is
+        // driven by the ticket when we have one; without it (the page was
+        // opened from the list) the stored flag is all we know.
+        if (profile.installing || profile.installFailed) {
+          const st = (mpState && String(mpState.profileId) === String(profile.id)) ? mpState : {
+            name: profile.name,
+            phase: profile.installFailed ? "error" : "mods",
+            error: profile.installFailed, done: 0, total: 0, detail: "",
+          };
+          instanceDetail.appendChild(mpProgressEl(st));
+        }
 
         // TOP ROW: ICON + INFO + BUTTONS
         const topRow = document.createElement("div");
@@ -1359,6 +1524,11 @@
         playBtn.className = "detail-play-btn";
         playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
         playBtn.title = "Launch Profile";
+        if (profile.installing) {
+          // Half a modpack won't launch into anything but a crash report.
+          playBtn.disabled = true;
+          playBtn.title = "Still installing";
+        }
         right.appendChild(playBtn);
 
         let playState = "idle"; // idle | launching | running
@@ -2952,7 +3122,9 @@
 
         const details = document.createElement("div");
         details.className = "profile-details";
-        details.textContent = `v${p.version} • ${p.loader}`;
+        details.textContent = p.installing ? `v${p.version} • ${p.loader} • installing…`
+          : p.installFailed ? `v${p.version} • ${p.loader} • install failed`
+            : `v${p.version} • ${p.loader}`;
         info.appendChild(details);
 
         li.appendChild(info);
@@ -2971,8 +3143,17 @@
         launchBtn.className = "play-button";
         launchBtn.innerHTML = `<i class="material-icons">play_arrow</i>`;
         let isLaunching = false;
+        // A modpack that is still coming down would launch straight into a
+        // missing-dependency crash.
+        if (p.installing) {
+          launchBtn.disabled = true;
+          launchBtn.style.opacity = "0.5";
+          launchBtn.style.cursor = "not-allowed";
+          launchBtn.title = "Still installing";
+        }
         launchBtn.onclick = (e) => {
           e.stopPropagation();
+          if (p.installing) return;
           if (!selectedPlayerId) {
             launchBtn.innerHTML = `<i class="material-icons">login</i>`;
             launchBtn.title = "Select a player first!";

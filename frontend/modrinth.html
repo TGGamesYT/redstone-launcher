@@ -640,6 +640,12 @@
             openProjectDetails(proj);
           };
           actions.append(pickBtn);
+        } else if (!installMode && activeType === "modpack" && api === "modrinth") {
+          // A modpack's Install goes straight to the version picker. It used to
+          // fall through to the card's click handler and open the project page,
+          // where you had to find a second Install button to get here.
+          installBtn.title = "Choose a version to install";
+          installBtn.onclick = (e) => { e.stopPropagation(); openInstallScreen(proj); };
         } else if (activeType === "server" && api === "modrinth") {
           // Server projects are modpack-shaped: set one up as an instance.
           installBtn.innerHTML = '<i class="material-icons" style="font-size:18px;vertical-align:middle;">play_arrow</i>';
@@ -1041,9 +1047,15 @@
     // Show install screen with compatible instances/servers
     async function openInstallScreen(mod) {
       resultsList.innerHTML = `
-    <h3 style="margin-bottom:10px;">Install ${mod.title}</h3>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <button class="install-here-btn" id="installBackBtn"><i class="material-icons" style="font-size:18px;vertical-align:middle;">arrow_back</i> Back</button>
+      <h3 style="margin:0;">Install ${mod.title}</h3>
+    </div>
     <div class="install-scroll-area" id="installArea"></div>
   `;
+      // The version list replaces the results in place, so there has to be a way
+      // back to them.
+      document.getElementById("installBackBtn").onclick = () => renderProjects(currentProjects);
       const installArea = document.getElementById("installArea");
 
 
@@ -1096,9 +1108,10 @@
           installBtn.onclick = async () => {
             const mrpackFile = v.files.find(f => f.url.endsWith(".mrpack"));
             if (!mrpackFile) return alert("No .mrpack file available for this version");
-
-            await ipcRenderer.invoke("install-mrpack-url", mrpackFile.url);
-            alert(`Started installation of ${mod.title} (${v.version_number})`);
+            installBtn.disabled = true;
+            installBtn.textContent = "Starting…";
+            // Hands off to the instances page, which follows the install from here.
+            await window.ModpackInstall.start(mrpackFile.url, mod.title);
           };
           li.appendChild(installBtn);
 
@@ -1309,6 +1322,7 @@
     updatePresence("Browsing on Modrinth")
   </script>
   <script src="fitheight.js"></script>
+  <script src="modpack-install.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
 </body>
