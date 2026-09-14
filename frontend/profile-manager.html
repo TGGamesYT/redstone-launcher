@@ -216,16 +216,22 @@
     /* The arm style moved off the image and into the strip between the Selected
        badge and the skin's name, to free the top corner for the cloud. */
     .card-variant-line { font-size: 10px; opacity: 0.65; text-align: center; margin-top: 3px; line-height: 1; }
-    /* Whether the skin is on Mojang's servers. Top-LEFT, clear of the head, and
-       clickable — unlike the other badges — so a skin can be put up there. */
+    /* Whether the skin is on Mojang's servers. Top-RIGHT: the top-left corner is
+       where the drag handle appears on hover, and the badge ended up underneath
+       it. Clickable, unlike the other badges, so a skin can be put up there.
+       z-index stays low and the card is a stacking context (see .card below), so
+       this sits within its own card instead of floating over the whole page. */
     .card-cloud-badge {
-      position: absolute; top: 6px; left: 6px; z-index: 3;
+      position: absolute; top: 6px; right: 6px; z-index: 2;
       width: 24px; height: 24px; padding: 0;
       display: flex; align-items: center; justify-content: center;
       border: none; border-radius: 50%;
       background: rgba(0, 0, 0, 0.55); color: #fff;
       cursor: pointer;
     }
+    /* Without this the absolutely-positioned badge escapes its card and paints
+       over modals and the cards next to it. */
+    .card { isolation: isolate; }
     .card-cloud-badge .material-icons { font-size: 16px; }
     .card-cloud-badge.on { color: #7ee081; cursor: default; }
     .card-cloud-badge.off { color: #ffffff; opacity: 0.75; }
@@ -536,8 +542,15 @@
   <!-- Rename skin modal -->
   <div id="skinRenameModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2001;">
     <div class="skin-modal-card" style="width:320px;">
-      <h3 style="margin-top:0;">Rename skin</h3>
-      <input type="text" id="skinRenameInput" placeholder="Skin name" style="width:100%; margin-bottom:14px;">
+      <h3 style="margin-top:0;">Edit skin</h3>
+      <input type="text" id="skinRenameInput" placeholder="Skin name" style="width:100%; margin-bottom:12px;">
+      <div style="margin-bottom:14px;">
+        <div style="font-size:11px; opacity:0.7; margin-bottom:5px;">Arm style</div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="pm-btn skin-variant-btn" data-variant="classic" style="flex:1;">Wide</button>
+          <button type="button" class="pm-btn skin-variant-btn" data-variant="slim" style="flex:1;">Slim</button>
+        </div>
+      </div>
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button class="pm-btn" id="skinRenameCancelBtn">Cancel</button>
         <button class="pm-btn" id="skinRenameSaveBtn" style="background:var(--base-color);">Save</button>
@@ -563,6 +576,46 @@
   <button id="undoSkinBtn" title="Go back to the skin &amp; cape you had" style="display:none; position:fixed; bottom:20px; left:190px; z-index:1500; background:var(--secondary-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 18px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Undo</button>
   <script src="skinview3d.bundle.js"></script>
   <script>
+    // A confirm dialog in the launcher's own styling. window.confirm() opens a
+    // native Chromium box that looks nothing like the rest of the app and blocks
+    // the whole renderer while it is up.
+    function pmConfirm(title, body, opts = {}) {
+      return new Promise(resolve => {
+        const ov = document.createElement('div');
+        ov.className = 'modal-overlay';
+        ov.style.cssText = 'position:fixed; inset:38px 0 0 70px; display:flex; align-items:center; justify-content:center; z-index:4000;';
+        const card = document.createElement('div');
+        card.className = 'skin-modal-card';
+        card.style.cssText = 'width:420px; max-width:90%;';
+        const h = document.createElement('h3');
+        h.style.marginTop = '0';
+        h.textContent = title;
+        const p = document.createElement('p');
+        p.style.cssText = 'font-size:13px; opacity:0.85; line-height:1.5; margin:0 0 16px;';
+        p.textContent = body;
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
+        const cancel = document.createElement('button');
+        cancel.className = 'pm-btn';
+        cancel.textContent = opts.cancel || 'Cancel';
+        const ok = document.createElement('button');
+        ok.className = 'pm-btn';
+        ok.style.background = 'var(--base-color)';
+        ok.textContent = opts.ok || 'OK';
+        row.append(cancel, ok);
+        card.append(h, p, row);
+        ov.appendChild(card);
+        document.body.appendChild(ov);
+        const done = (v) => { ov.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+        const onKey = (e) => { if (e.key === 'Escape') done(false); if (e.key === 'Enter') done(true); };
+        document.addEventListener('keydown', onKey);
+        cancel.onclick = () => done(false);
+        ok.onclick = () => done(true);
+        ov.addEventListener('mousedown', e => { if (e.target === ov) done(false); });
+        setTimeout(() => ok.focus(), 0);
+      });
+    }
+
     // ---- Mode router ────────────────────────────────────────────────────────
     // The page's "modes" (the add menu, create-new, by-username, the default
     // skins gallery, the skin browser) are full-screen panels, not modals you
@@ -751,42 +804,115 @@
       b.innerHTML = `<i class="material-icons">${busy ? "cloud_sync" : on ? "cloud_done" : "cloud_off"}</i>`;
       b.title = busy ? "Uploading…"
         : on ? "This skin is on Mojang's servers"
-          : "Not on Mojang's servers — click to upload it";
+          // Not "isn't there": Mojang publishes no way to list an account's
+          // skins beyond what its profile still returns, so this only ever
+          // means the launcher has no record of it.
+          : "Not known to be on Mojang's servers — click to upload it";
       b.disabled = !!busy;
     }
+    // Uploads run one at a time with a gap between them. Mojang rate-limits skin
+    // changes hard, and each of these is really two changes (the skin, then the
+    // one being put back) — firing several at once just earns a 429 and loses
+    // them all.
+    const CLOUD_GAP_MS = 6000;
+    let _cloudChain = Promise.resolve();
+    let _cloudQueued = 0;
+    function queueCloudUpload(job) {
+      _cloudQueued++;
+      const run = _cloudChain.then(async () => {
+        try { return await job(); }
+        finally {
+          _cloudQueued--;
+          if (_cloudQueued > 0) await new Promise(r => setTimeout(r, CLOUD_GAP_MS));
+        }
+      });
+      // One failure must not break the chain for everything queued behind it.
+      _cloudChain = run.catch(() => { });
+      return run;
+    }
+
     async function onCloudClick(b, skin, ctx) {
-      if (skin.mojangUrl) return;
-      if (ctx.cracked) return alert("Offline accounts have no Mojang profile to upload to.");
-      const ok = confirm(
-        `Put "${skin.name || 'this skin'}" on Mojang's servers?\n\n` +
-        "There is no way to upload without applying, so the launcher applies this skin, " +
-        "notes where it ended up, and then switches your current skin back. " +
-        "Your skin may be this one for a few seconds."
+      if (skin.mojangUrl || b.disabled) return;
+      if (ctx.cracked) {
+        return pmConfirm("Offline account", "This account has no Mojang profile to upload a skin to.", { ok: "OK", cancel: "Close" });
+      }
+      const ok = await pmConfirm(
+        `Put "${skin.name || 'this skin'}" on Mojang's servers?`,
+        "Mojang has no way to upload a skin without applying it, so the launcher applies this one, "
+        + "notes where it ended up, and then puts your current skin back. You will be wearing this "
+        + "skin for a few seconds.",
+        { ok: "Upload", cancel: "Cancel" }
       );
       if (!ok) return;
+      // Show it as waiting straight away, even if it sits behind others.
       paintCloud(b, false, true);
-      try {
-        const restore = ctx.activeSkin ? {
-          base64: ctx.activeSkin.base64, variant: ctx.activeSkin.variant,
-          uuid: ctx.uuid, id: ctx.activeSkin.id,
-        } : null;
-        const r = await ipcRenderer.invoke("mc:stashSkin", {
-          uuid: ctx.uuid, id: skin.id, base64: skin.base64, variant: skin.variant, restore,
-        });
-        if (!r || !r.success) throw new Error((r && r.error) || "Upload failed");
-        skin.mojangUrl = r.url || null;
-        paintCloud(b, !!skin.mojangUrl);
-        if (r.restoreError) alert("The skin is uploaded, but switching back failed: " + r.restoreError);
-        await updateSKin();
-      } catch (err) {
-        paintCloud(b, false);
-        alert("Could not upload the skin: " + (err.message || err));
-      }
+      await queueCloudUpload(async () => {
+        try {
+          const restore = ctx.activeSkin ? {
+            base64: ctx.activeSkin.base64, variant: ctx.activeSkin.variant,
+            uuid: ctx.uuid, id: ctx.activeSkin.id,
+          } : null;
+          const r = await ipcRenderer.invoke("mc:stashSkin", {
+            uuid: ctx.uuid, id: skin.id, base64: skin.base64, variant: skin.variant, restore,
+          });
+          if (!r || !r.success) throw new Error((r && r.error) || "Upload failed");
+          skin.mojangUrl = r.url || null;
+          paintCloud(b, !!skin.mojangUrl);
+          if (r.restoreError) {
+            await pmConfirm("Uploaded, but not switched back",
+              "The skin is on Mojang's servers now, but putting your previous skin back failed: "
+              + r.restoreError, { ok: "OK", cancel: "Close" });
+          }
+          // Only redraw once the queue has drained, or each upload would rebuild
+          // the grid out from under the ones still waiting.
+          if (_cloudQueued <= 1) await updateSKin();
+        } catch (err) {
+          paintCloud(b, false);
+          await pmConfirm("Could not upload the skin", String(err && err.message || err), { ok: "OK", cancel: "Close" });
+        }
+      });
     }
     // Drag a card to a new spot in its row. HTML5 DnD is only reachable from a
     // long-press-on-a-drag-handle so it doesn't fight the ordinary click that
     // picks a skin: an ⋮⋮ handle is added to the card, and only holding down on
     // THAT starts the drag.
+    // ── Auto-scroll while dragging a card ────────────────────────────────────
+    // Dragging only reached a card off-screen if the pointer happened to sit in
+    // the last few pixels of the scroller, and moving onto the top bar or off
+    // the window entirely did nothing at all. Track the pointer for the whole
+    // drag instead and scroll whenever it is near (or past) either edge, faster
+    // the further out it goes — so dragging up onto the title bar scrolls up.
+    let _dragScrollRaf = null, _dragPointerY = 0;
+    const DRAG_EDGE = 110;          // how far from an edge the pull starts
+    const DRAG_MAX_SPEED = 26;      // px per frame at full tilt
+    const onDragOverWindow = (e) => { _dragPointerY = e.clientY; };
+    function dragScrollTarget() {
+      // Whichever scroller the skins actually live in.
+      return document.querySelector('.full-scrolly, .main-scrolly, [data-fit-height]') || document.scrollingElement;
+    }
+    function startDragScroll() {
+      _dragPointerY = 0;
+      document.addEventListener("dragover", onDragOverWindow, true);
+      const step = () => {
+        _dragScrollRaf = requestAnimationFrame(step);
+        const el = dragScrollTarget();
+        if (!el || !_dragPointerY) return;
+        const r = el.getBoundingClientRect();
+        // Past the edge counts as maximum pull, which is what makes dragging
+        // onto the top bar (or off the window) work.
+        let v = 0;
+        if (_dragPointerY < r.top + DRAG_EDGE) v = -(1 - Math.max(0, _dragPointerY - r.top) / DRAG_EDGE);
+        else if (_dragPointerY > r.bottom - DRAG_EDGE) v = 1 - Math.max(0, r.bottom - _dragPointerY) / DRAG_EDGE;
+        if (!v) return;
+        el.scrollTop += Math.max(-1, Math.min(1, v)) * DRAG_MAX_SPEED;
+      };
+      if (!_dragScrollRaf) _dragScrollRaf = requestAnimationFrame(step);
+    }
+    function stopDragScroll() {
+      document.removeEventListener("dragover", onDragOverWindow, true);
+      if (_dragScrollRaf) { cancelAnimationFrame(_dragScrollRaf); _dragScrollRaf = null; }
+    }
+
     function wireCardReorder(card, container, onCommit) {
       const handle = document.createElement("button");
       handle.className = "card-drag-handle"; handle.title = "Drag to reorder";
@@ -802,10 +928,12 @@
       card.addEventListener("dragstart", e => {
         card.classList.add("dragging");
         try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "reorder"); } catch { }
+        startDragScroll();
       });
       card.addEventListener("dragend", () => {
         card.classList.remove("dragging");
         card.removeAttribute("draggable");
+        stopDragScroll();
         [...container.querySelectorAll(".drop-target")].forEach(c => c.classList.remove("drop-target"));
         if (typeof onCommit === "function") onCommit();
       });
@@ -1389,6 +1517,13 @@
 
       // Saved local library. Clicking selects locally (no upload); Apply applies.
       // Dedup any pixel-identical entries left over from older versions.
+      // Ask Mojang which of these it is actually holding before drawing any
+      // cloud badges, so they start out right rather than only becoming right
+      // once this launcher happens to upload something.
+      if (!isCrackedAccount) {
+        try { await ipcRenderer.invoke("skins:reconcileMojang", { uuid }); } catch { /* badges fall back to what we knew */ }
+        if (!stillCurrent()) return;
+      }
       const rawLibrary = await ipcRenderer.invoke("skins:list", { uuid });
       if (!stillCurrent()) return;
       const seenHashes = new Set();
@@ -1820,9 +1955,24 @@
     // ---- Rename / delete skin modals (no native prompt/confirm) ----
     let renameTarget = null; // { uuid, skin }
     let deleteTarget = null;
+    // The arm style is as much a property of a saved skin as its name, and
+    // getting it wrong on import left no way to correct it short of re-adding.
+    let renameVariant = 'classic';
+    function paintVariantButtons() {
+      document.querySelectorAll('.skin-variant-btn').forEach(b => {
+        const on = b.dataset.variant === renameVariant;
+        b.style.background = on ? 'var(--base-color)' : '';
+        b.style.opacity = on ? '1' : '0.6';
+      });
+    }
+    document.querySelectorAll('.skin-variant-btn').forEach(b => {
+      b.onclick = () => { renameVariant = b.dataset.variant; paintVariantButtons(); };
+    });
     function openSkinRename(uuid, skin) {
       renameTarget = { uuid, skin };
       document.getElementById('skinRenameInput').value = skin.name || '';
+      renameVariant = skin.variant === 'slim' ? 'slim' : 'classic';
+      paintVariantButtons();
       document.getElementById('skinRenameModal').style.display = 'flex';
       setTimeout(() => document.getElementById('skinRenameInput').focus(), 0);
     }
@@ -1836,6 +1986,9 @@
       if (!renameTarget) return;
       const name = (document.getElementById('skinRenameInput').value || '').trim() || renameTarget.skin.name;
       await ipcRenderer.invoke("skins:rename", { uuid: renameTarget.uuid, id: renameTarget.skin.id, name });
+      if (renameVariant !== (renameTarget.skin.variant === 'slim' ? 'slim' : 'classic')) {
+        await ipcRenderer.invoke("skins:setVariant", { uuid: renameTarget.uuid, id: renameTarget.skin.id, variant: renameVariant });
+      }
       document.getElementById('skinRenameModal').style.display = 'none';
       renameTarget = null;
       updateSKin();
@@ -2020,7 +2173,25 @@
     let browseAfter = null, browseBusy = false, browseDetailViewer = null;
     const BROWSE_CHIPS = ['Knight', 'Anime', 'Ninja', 'Girl', 'Boy', 'Robot', 'Dragon', 'Cute', 'Herobrine', 'Steve'];
     let browseSeq = 0, browseQuery = '', browseSeed = '';
-    function openBrowseModal() { pmEnter('browse'); }
+    // MineSkin is an upload mirror, not a curated gallery, and the launcher's
+    // filter is a best effort over titles and pixels. Say so once per install
+    // before anyone browses it, rather than letting them find out.
+    async function openBrowseModal() {
+      try {
+        if (!localStorage.getItem('browseWarningAck')) {
+          const go = await pmConfirm(
+            'About the skin browser',
+            "These skins come from MineSkin, a public upload mirror. Nothing there is moderated by "
+            + "anyone, and the launcher's own filter catches a lot but certainly not everything — you "
+            + "may come across offensive or otherwise unwanted content.",
+            { ok: 'I understand', cancel: 'Go back' }
+          );
+          if (!go) return;
+          localStorage.setItem('browseWarningAck', '1');
+        }
+      } catch { /* if the check fails, don't block browsing */ }
+      pmEnter('browse');
+    }
     pmRegister('browse', () => showBrowseModal(), () => hideBrowseModal());
     function showBrowseModal() {
       document.getElementById('browseModal').style.display = 'flex';
@@ -2078,7 +2249,10 @@
         addBtn.innerHTML = '<i class="material-icons" style="font-size:16px;">hourglass_top</i>';
         const r = await ipcRenderer.invoke('skins:fetchUrl', { url: item.skin });
         if (r && r.base64) {
-          await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + r.base64, variant: item.model === 'slim' ? 'slim' : 'classic', name: browseName(item) });
+          // The downloader reads the arm model off the pixels; MineSkin's list
+          // response doesn't carry one, so item.model is only a fallback.
+          const variant = r.variant || (item.model === 'slim' ? 'slim' : 'classic');
+          await ipcRenderer.invoke('skins:add', { uuid: currentUuid, base64: 'data:image/png;base64,' + r.base64, variant, name: browseName(item) });
           // Say so on the button itself — a toast is gone in a second and there
           // was no way to tell which of forty cards you'd already taken.
           browseAddedAny = true;

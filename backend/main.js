@@ -7333,6 +7333,51 @@ function rememberMojangUrl(uuid, id, url) {
 }
 ipcMain.handle("skins:setMojangUrl", (event, { uuid, id, url }) => rememberMojangUrl(uuid, id, url));
 
+// Which library skins are on Mojang's servers, asked of Mojang rather than
+// guessed. The profile endpoint lists every skin the account has there (the
+// active one and any it still keeps), so matching those against the library by
+// decoded pixels is authoritative — and it stops the skin you are literally
+// wearing from showing a crossed-out cloud just because this launcher wasn't
+// the thing that uploaded it.
+ipcMain.handle("skins:reconcileMojang", async (event, { uuid }) => {
+  try {
+    const lib = loadSkinLib();
+    const arr = lib[uuid] || [];
+    if (!arr.length) return { matched: 0 };
+
+    const headers = await authHeaders();
+    const res = await fetch("https://api.minecraftservices.com/minecraft/profile", { headers });
+    if (!res.ok) return { matched: 0, error: `HTTP ${res.status}` };
+    const profile = await res.json();
+    const remote = Array.isArray(profile.skins) ? profile.skins : [];
+    if (!remote.length) return { matched: 0 };
+
+    // Hash what Mojang is serving, so re-encoding on their side doesn't matter.
+    const byHash = new Map();
+    for (const s of remote) {
+      if (!s.url) continue;
+      try {
+        const buf = Buffer.from(await (await fetch(s.url)).arrayBuffer());
+        const h = await skinPixelHash(buf.toString("base64"));
+        if (h && !byHash.has(h)) byHash.set(h, s.url);
+      } catch { /* skip this one */ }
+    }
+
+    let matched = 0, changed = false;
+    for (const s of arr) {
+      const h = s.pixelHash || (s.base64 ? await skinPixelHash(s.base64) : null);
+      const url = h && byHash.get(h);
+      if (!url) continue;
+      matched++;
+      if (s.mojangUrl !== url) { s.mojangUrl = url; s.mojangAt = s.mojangAt || Date.now(); changed = true; }
+    }
+    if (changed) { lib[uuid] = arr; saveSkinLib(lib); }
+    return { matched };
+  } catch (err) {
+    return { matched: 0, error: String(err && err.message || err) };
+  }
+});
+
 // Every skin the launcher knows to be on Mojang's servers, for a given account —
 // what a player-skin lookup shows next to the live one.
 ipcMain.handle("skins:mojangKnown", (event, { uuid }) => {
@@ -7764,7 +7809,13 @@ ipcMain.handle("skins:fetchUrl", async (event, { url }) => {
     if (!res.ok) return { error: `HTTP ${res.status}` };
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length < 8 || buf[0] !== 0x89 || buf[1] !== 0x50) return { error: "Not a PNG" };
-    return { base64: buf.toString("base64") };
+    // Report the arm model too — the caller can't tell, and MineSkin doesn't say.
+    let variant = null;
+    try {
+      const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      variant = slimFromPixels(data, info.width, info.height) ? "slim" : "classic";
+    } catch { /* fall back to whatever the caller assumed */ }
+    return { base64: buf.toString("base64"), variant };
   } catch (e) { return { error: e.message }; }
 });
 
@@ -7828,6 +7879,24 @@ function rememberScreenVerdict(url, verdict) {
 // Fetch a skin PNG and check whether the detector rejects its pixels. Returns
 // null for OK, a reason string for reject, or "fetch" if the texture 404s and
 // so has nothing to check (also worth dropping -- nothing will render either).
+// Is this a 3px-armed (slim/Alex) skin? A 64x64 slim texture leaves the last
+// column of each arm's front face transparent — x=54 on the right arm, and on
+// the second layer too. MineSkin's LIST response carries no variant field at
+// all (only uuid/shortId/name/texture/timestamp), so reading it off the pixels
+// is the only way to know without a per-skin request; every browsed skin was
+// otherwise saved as wide.
+function slimFromPixels(data, w, h) {
+  if (w < 64 || h < 64) return false;          // 64x32 is always the wide model
+  const alphaAt = (x, y) => data[(y * w + x) * 4 + 3];
+  // Sample down the column that only a wide arm fills.
+  let transparent = 0, total = 0;
+  for (let y = 20; y < 32; y++) { total++; if (alphaAt(55, y) < 8) transparent++; }
+  return total > 0 && transparent / total > 0.75;
+}
+
+// Screening decodes every texture anyway, so the variant comes along for free.
+const _skinVariantCache = new Map();
+
 async function screenSkinUrl(url) {
   if (_skinScreenCache.has(url)) return _skinScreenCache.get(url);
   try {
@@ -7835,6 +7904,7 @@ async function screenSkinUrl(url) {
     if (!res.ok) { rememberScreenVerdict(url, "fetch"); return "fetch"; }
     const buf = Buffer.from(await res.arrayBuffer());
     const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    try { _skinVariantCache.set(url, slimFromPixels(data, info.width, info.height) ? "slim" : "classic"); } catch { /* not fatal */ }
     const verdict = screenSkinPixels(data, info.width, info.height);
     rememberScreenVerdict(url, verdict);
     return verdict;
@@ -7855,11 +7925,14 @@ async function mineskinPage(filter, after) {
   const named = skins.map(s => ({
     id: s.uuid || s.shortId,
     title: s.name || null,          // no ugly "Skin <hex>" fallback; UI fills it in
+    // s.variant isn't in the list response; the real answer comes off the
+    // pixels during screening below.
     model: s.variant === "slim" ? "slim" : "classic",
     skin: s.texture ? `https://textures.minecraft.net/texture/${s.texture}` : s.url,
   })).filter(s => s.skin && !skinTextBlocked(s.title));
   const verdicts = await Promise.all(named.map(s => screenSkinUrl(s.skin).catch(() => null)));
-  const results = named.filter((_, i) => verdicts[i] == null);
+  const results = named.filter((_, i) => verdicts[i] == null)
+    .map(s => ({ ...s, model: _skinVariantCache.get(s.skin) || s.model }));
   const nextAfter = (j.pagination && j.pagination.next && j.pagination.next.after) || null;
   return { results, after: nextAfter };
 }
@@ -8003,6 +8076,17 @@ ipcMain.handle("skins:rename", (event, { uuid, id, name }) => {
   const arr = lib[uuid] || [];
   const s = arr.find(x => String(x.id) === String(id));
   if (s && name) { s.name = name; lib[uuid] = arr; saveSkinLib(lib); }
+  return arr;
+});
+
+// Correct a saved skin's arm style. Imports can't always tell (MineSkin doesn't
+// publish one, and the pixel check is a good guess rather than a promise), so
+// the edit dialog offers it.
+ipcMain.handle("skins:setVariant", (event, { uuid, id, variant }) => {
+  const lib = loadSkinLib();
+  const arr = lib[uuid] || [];
+  const s = arr.find(x => String(x.id) === String(id));
+  if (s) { s.variant = variant === "slim" ? "slim" : "classic"; lib[uuid] = arr; saveSkinLib(lib); }
   return arr;
 });
 

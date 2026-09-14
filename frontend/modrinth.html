@@ -728,10 +728,16 @@
 
 
     // Load current page
+    // Loads are fired from a dozen places (typing, tabs, filters, paging), and a
+    // slow earlier one landing after a fast later one would paint stale results
+    // over fresh ones. Only the newest load is allowed to render.
+    let loadSeq = 0;
     async function loadProjects() {
+      const mine = ++loadSeq;
       const type = document.querySelector('#typeTabs .tab.active') ? document.querySelector('#typeTabs .tab.active').dataset.type : 'mod';
       const search = searchInput.value.trim();
       const projects = await fetchProjects(type, currentPage, search);
+      if (mine !== loadSeq) return;
       renderProjects(projects);
     }
 
@@ -1288,11 +1294,6 @@
       }
     }
     // Load top projects
-    async function loadTopProjects() {
-      const type = document.querySelector('#typeTabs .tab.active') ? document.querySelector('#typeTabs .tab.active').dataset.type : 'mod';
-      const projects = await fetchProjects(type);
-      renderProjects(projects);
-    }
     const typeTabs = document.getElementById("typeTabs");
 
     typeTabs.querySelectorAll(".tab").forEach(tab => {
@@ -1306,11 +1307,13 @@
         if (typeof buildDynamicFilters === 'function') buildDynamicFilters();
         if (typeof updateFilterVisibility === 'function') updateFilterVisibility();
 
-        // optionally reload projects
         currentPage = 1;
         saveMbFilters();
+        // Just the one load. This used to also call loadTopProjects(), which
+        // fetched the same tab with NO search term and no filters — the two
+        // raced, and whichever landed last won, which is how a restored query
+        // could end up sitting above an unfiltered list.
         loadProjects();
-        loadTopProjects();
       });
     });
     // Apply the restored search + filters on first load (was loadTopProjects(),
