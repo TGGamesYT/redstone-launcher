@@ -910,6 +910,98 @@
       L.raf = requestAnimationFrame(step);
     }
 
+    // ── The big render on the left: breathing, and finds its way back ────────
+    // Every animation here is one of skinview3d's own (IdleAnimation, Wave,
+    // Hit, Crouch, Walking, Running) — none of it is hand-rolled posing. Idle is
+    // the resting state; every so often the character plays one of the others
+    // for a few seconds and then settles back into it. Assigning `animation`
+    // resets the joints and position for us, so switching never leaves a limb
+    // behind.
+    function setupMainViewerLife(v) {
+      if (!v || v._lifeWired || typeof skinview3d === "undefined") return;
+      v._lifeWired = true;
+      const S = skinview3d;
+      // Shared by both halves below: a gesture shouldn't start mid-drag, and the
+      // camera shouldn't drift home while the pointer is still on the model.
+      let dragging = false, hovering = false;
+
+      const toIdle = () => { try { v.animation = new S.IdleAnimation(); } catch { } };
+      // Small gestures come up more often than the big ones — a wave every so
+      // often reads as alive, a sprint every so often reads as broken.
+      const GESTURES = [
+        () => new S.WaveAnimation("left"),
+        () => new S.WaveAnimation("left"),
+        () => new S.WaveAnimation("right"),
+        () => new S.HitAnimation(),
+        () => new S.HitAnimation(),
+        () => { const a = new S.CrouchAnimation(); a.showProgress = true; return a; },
+        () => new S.WalkingAnimation(),
+        () => new S.RunningAnimation(),
+      ];
+      toIdle();
+
+      let gestureTimer = null, backTimer = null;
+      const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+      const scheduleGesture = () => {
+        clearTimeout(gestureTimer);
+        gestureTimer = setTimeout(playGesture, rand(9000, 22000));
+      };
+      const playGesture = () => {
+        // Don't interrupt someone who is busy turning the model around, and
+        // don't animate a tab nobody is looking at.
+        if (dragging || document.hidden) { scheduleGesture(); return; }
+        try { v.animation = GESTURES[Math.floor(Math.random() * GESTURES.length)](); } catch { }
+        clearTimeout(backTimer);
+        backTimer = setTimeout(() => { toIdle(); scheduleGesture(); }, rand(2600, 5200));
+      };
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleGesture(); });
+      scheduleGesture();
+
+      // ── Slow drift back to facing forward ─────────────────────────────────
+      // resetCameraPose() puts the camera at (0, 0, d), i.e. theta 0 / phi PI/2,
+      // looking at the origin — and orbiting preserves d — so "home" needs no
+      // bookkeeping, just the distance the camera is already at.
+      const canvas = v.canvas;
+      let raf = null, idleTimer = null;
+      const norm = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+      const stopEase = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+      const step = () => {
+        raf = null;
+        if (dragging || hovering) return;
+        let settled = true;
+        try {
+          const cam = v.camera, tgt = v.controls.target;
+          const r = cam.position.length() || 1;
+          const cur = camSpherical(cam.position);
+          const dT = norm(0 - cur.theta), dP = (Math.PI / 2) - cur.phi;
+          if (Math.abs(dT) > 0.004 || Math.abs(dP) > 0.004) {
+            // A quarter of the way per frame is right for a card you flicked;
+            // on the big render it looks like a snap. This is a drift.
+            camFromSpherical(cam.position, cur.theta + dT * 0.045, cur.phi + dP * 0.045, r);
+            settled = false;
+          } else {
+            camFromSpherical(cam.position, 0, Math.PI / 2, r);
+          }
+          if (tgt.lengthSq() > 0.0001) { tgt.multiplyScalar(0.955); settled = false; }
+          else tgt.set(0, 0, 0);
+          v.controls.update();
+        } catch { return; }
+        if (!settled) raf = requestAnimationFrame(step);
+      };
+      const armReturn = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => { stopEase(); raf = requestAnimationFrame(step); }, 2200);
+      };
+      const cancelReturn = () => { clearTimeout(idleTimer); stopEase(); };
+
+      canvas.addEventListener("pointerenter", () => { hovering = true; cancelReturn(); });
+      canvas.addEventListener("pointerleave", () => { hovering = false; armReturn(); });
+      try {
+        v.controls.addEventListener("start", () => { dragging = true; cancelReturn(); });
+        v.controls.addEventListener("end", () => { dragging = false; armReturn(); });
+      } catch { }
+    }
+
     // A card preview: an <img> holding a still 3D frame, with the size baked in.
     // `holder._ready` resolves false when the texture couldn't be rendered at all
     // (MineSkin hands out plenty of URLs that now 404), so a caller can drop the
@@ -1123,6 +1215,7 @@
         }
         try { window.skinViewer.zoom = 0.82; } catch { }
         try { window.skinViewer.controls.enableZoom = false; } catch { }  // scroll = page scroll, not zoom
+        setupMainViewerLife(window.skinViewer);
 
         if (pendingSelection) {
           window.skinViewer.loadSkin("data:image/png;base64," + pendingSelection.base64, { model: pendingSelection.variant === "slim" ? "slim" : "default" });
