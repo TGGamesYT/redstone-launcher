@@ -1035,26 +1035,54 @@
       }
     }
 
-    // Loader-version dropdown (Fabric/Quilt) — defaults to latest, lets you pin.
+    // Loader-version dropdown — defaults to latest, lets you pin. Forge and
+    // NeoForge are here too now: their builds come from Maven metadata that has
+    // to be sorted numerically, so the main process does that (loader:versions).
     const INSTANCE_LOADER_META = {
       fabric: 'https://meta.fabricmc.net/v2/versions/loader',
       quilt: 'https://meta.quiltmc.org/v3/versions/loader',
     };
+    let loaderVerSeq = 0;
     async function updateInstanceLoaderVersion(preselect) {
-      const url = INSTANCE_LOADER_META[instanceLoader.value];
+      const loader = instanceLoader.value;
       const section = document.getElementById('instanceLoaderVerSection');
       const sel = document.getElementById('instanceLoaderVersion');
-      if (!url) { section.style.display = 'none'; return; }
+      const url = INSTANCE_LOADER_META[loader];
+      const mavenLoader = loader === 'forge' || loader === 'neoforge';
+      if (!url && !mavenLoader) { section.style.display = 'none'; return; }
       section.style.display = '';
       sel.innerHTML = '<option value="">Loading…</option>';
+      const mine = ++loaderVerSeq;
+      let versions = [];
       try {
-        const list = await (await fetch(url)).json();
-        const versions = (Array.isArray(list) ? list : []).map(v => v.version).filter(Boolean);
-        sel.innerHTML = versions.map((v, i) => `<option value="${v}">${v}${i === 0 ? ' (latest)' : ''}</option>`).join('');
-        if (preselect && versions.includes(preselect)) sel.value = preselect;
-      } catch { sel.innerHTML = '<option value="">latest</option>'; }
+        if (mavenLoader) {
+          const gameVersion = (typeof resolveVersionSelection === 'function'
+            ? (resolveVersionSelection().version || '') : (instanceVersion.value || ''));
+          const r = await ipcRenderer.invoke('loader:versions', { loader, gameVersion });
+          versions = (r && r.versions) || [];
+        } else {
+          const list = await (await fetch(url)).json();
+          versions = (Array.isArray(list) ? list : []).map(v => v.version).filter(Boolean);
+        }
+      } catch { /* fall through to the "latest" placeholder */ }
+      if (mine !== loaderVerSeq) return;   // a later change won
+      if (!versions.length) { sel.innerHTML = '<option value="">latest</option>'; return; }
+      // An empty value means "whatever is newest at launch time", which is what
+      // an instance that was never pinned should keep doing.
+      sel.innerHTML = '<option value="">Latest</option>' +
+        versions.map((v, i) => `<option value="${v}">${v}${i === 0 ? ' (latest)' : ''}</option>`).join('');
+      if (preselect && versions.includes(preselect)) sel.value = preselect;
     }
     instanceLoader.addEventListener('change', () => updateInstanceLoaderVersion());
+    // Forge/NeoForge builds are per Minecraft version, so the list has to be
+    // rebuilt when the game version changes.
+    if (typeof instanceVersion !== 'undefined' && instanceVersion) {
+      instanceVersion.addEventListener('change', () => {
+        if (instanceLoader.value === 'forge' || instanceLoader.value === 'neoforge') {
+          updateInstanceLoaderVersion(document.getElementById('instanceLoaderVersion').value);
+        }
+      });
+    }
 
     async function openEditModal(profile) {
       instanceName.value = profile.name;

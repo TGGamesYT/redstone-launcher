@@ -12,6 +12,7 @@ import { ssim } from "ssim.js";
 import sharp from "sharp";
 import { shell, app, BrowserWindow, ipcMain, dialog, utilityProcess } from 'electron';
 import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
+import { getLaunchConfig, resolveNeoForgeVersion, resolveForgeVersion, neoPrefix, compareVersions as loaderCompareVersions } from './loader-versions.js';
 import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
 import serverManager from './serverManager.js';
@@ -1866,23 +1867,15 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
 
     const launcher = new Client();
     attachLauncherEvents(launcher, profileId);
-    let loaderer;
-    if (profile.loader == "fabric") {
-      loaderer = fabric
-    } else if (profile.loader == "quilt") {
-      loaderer = quilt
-    } else if (profile.loader == "forge") {
-      loaderer = forge
-    } else if (profile.loader == "neoforge") {
-      loaderer = neoforge
-    } else {
-      loaderer = vanilla
-    }
-    const launcherConfig = await withRetry(() => loaderer.getMCLCLaunchConfig({
+    // Our own resolution, not tomate-loaders': it drops the loaderVersion a
+    // modpack pins, and picks the oldest rather than the newest Forge/NeoForge
+    // build. See loader-versions.js.
+    const launcherConfig = await withRetry(() => getLaunchConfig({
+      loader: profile.loader,
       gameVersion: profile.version,
       rootPath: rootDir,
-      ...(profile.loaderVersion ? { loaderVersion: profile.loaderVersion } : {}),
-    }), { label: "Preparing launch", profileId });
+      loaderVersion: profile.loaderVersion || "",
+    }, (line) => broadcastLog(profileId, line)), { label: "Preparing launch", profileId });
     let opts = {
       ...launcherConfig,
       authorization: auth,
@@ -4632,26 +4625,54 @@ async function getForgeLatestVersion(minecraftVersion) {
 
 // ✅ NeoForge (Maven metadata XML, version is standalone)
 
-async function getNeoForgeLatestVersion() {
-  const res = await fetch(
-    "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
-  );
-  const xml = await res.text();
-  const parsed = await xml2js.parseStringPromise(xml);
-
-  const versions = parsed.metadata.versioning[0].versions[0].version;
-  const latest = versions.reduce((max, v) =>
-    compareVersions(v, max) > 0 ? v : max
-    , versions[0]);
-
+// The newest NeoForge build FOR A GIVEN Minecraft version. This used to take
+// the newest build in the whole repository regardless of the game version,
+// which on a 1.21.1 instance meant offering a build for an entirely different
+// Minecraft release.
+async function getNeoForgeLatestVersion(minecraftVersion) {
+  const latest = await resolveNeoForgeVersion(minecraftVersion || "1.21.1", "");
   return `neoforge-${latest}`;
 }
+
+// The builds an instance may pin for a loader, newest first. Fabric and Quilt
+// are read straight from their own APIs by the renderer; Forge and NeoForge go
+// through here because they come from Maven metadata that needs parsing and
+// numeric sorting.
+ipcMain.handle("loader:versions", async (event, { loader, gameVersion }) => {
+  try {
+    const kind = String(loader || "").toLowerCase();
+    if (kind !== "forge" && kind !== "neoforge") return { success: true, versions: [] };
+    const base = kind === "neoforge"
+      ? "https://maven.neoforged.net/releases/net/neoforged/neoforge"
+      : "https://maven.minecraftforge.net/net/minecraftforge/forge";
+    const res = await fetch(`${base}/maven-metadata.xml`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const xml = await res.text();
+    const all = [...xml.matchAll(/<version>([^<]+)<\/version>/g)].map(m => m[1]);
+    let list;
+    if (kind === "neoforge") {
+      const prefix = neoPrefix(gameVersion);
+      list = prefix ? all.filter(v => v.startsWith(prefix) && !v.includes("-beta")) : [];
+      list.sort(loaderCompareVersions);
+    } else {
+      const p = String(gameVersion || "") + "-";
+      list = all.filter(v => v.startsWith(p));
+      list.sort((a, b) => loaderCompareVersions(a.slice(p.length), b.slice(p.length)));
+      // Forge's Maven versions carry the game version; the instance stores just
+      // the Forge part.
+      list = list.map(v => v.slice(p.length));
+    }
+    return { success: true, versions: list.reverse() };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err), versions: [] };
+  }
+});
 
 async function getCurseForgeLoader(loader, version = "1.20.1") {
   if (loader == "fabric") return await getFabricLatestVersion()
   if (loader == "quilt") return await getQuiltLatestVersion()
   if (loader == "forge") return await getForgeLatestVersion(version)
-  if (loader == "neoforge") return await getNeoForgeLatestVersion()
+  if (loader == "neoforge") return await getNeoForgeLatestVersion(version)
 }
 // open folder
 

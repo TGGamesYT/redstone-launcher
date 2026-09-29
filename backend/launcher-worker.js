@@ -9,10 +9,8 @@
 // mclc's log/progress events back, reports the spawned PID, and stays alive only
 // long enough to report the game's exit (the game itself is detached and
 // survives this worker).
-import { vanilla, fabric, quilt, forge, neoforge } from "tomate-loaders";
 import { Client } from "minecraft-launcher-core";
-
-const LOADERS = { vanilla, fabric, quilt, forge, neoforge };
+import { getLaunchConfig } from "./loader-versions.js";
 const post = (m) => { try { process.parentPort.postMessage(m); } catch { /* ignore */ } };
 
 function isTransient(err) {
@@ -29,12 +27,15 @@ async function withRetry(fn, tries = 3) {
 }
 
 async function runLaunch(cfg) {
-  const loaderer = LOADERS[cfg.loader] || vanilla;
-  const launcherConfig = await withRetry(() => loaderer.getMCLCLaunchConfig({
+  // Not tomate-loaders: it accepts a loaderVersion and then ignores it, and
+  // picks the OLDEST Forge/NeoForge build for the game version rather than the
+  // newest. See loader-versions.js.
+  const launcherConfig = await withRetry(() => getLaunchConfig({
+    loader: cfg.loader,
     gameVersion: cfg.gameVersion,
     rootPath: cfg.rootPath,
-    ...(cfg.loaderVersion ? { loaderVersion: cfg.loaderVersion } : {}),
-  }));
+    loaderVersion: cfg.loaderVersion || "",
+  }, (line) => post({ type: "log", line })));
 
   const launcher = new Client();
   launcher.on("data", (m) => post({ type: "log", line: String(m) }));
