@@ -2308,7 +2308,22 @@ ipcMain.handle("apply-modpack-update", async (event, { profileId, decisions }) =
   }
 });
 
-async function getDownloadUrl(projectID, fileID) {
+// CurseForge's CDN path is derived from the file id: 5101365 lives at
+// /files/5101/365/<fileName>. Worth knowing, because the API's download-url
+// endpoint answers null whenever a mod author has opted out of third-party
+// distribution — and the proxy turns that into a 500, which is what "got a 500
+// and shows Unavailable" in the mod browser actually was. The CDN itself still
+// serves the file; only the API's convenience endpoint refuses to name it.
+function curseCdnUrl(fileID, fileName) {
+  const id = String(fileID || "").replace(/\D/g, "");
+  if (id.length < 5 || !fileName) return null;
+  const head = id.slice(0, 4);
+  // Leading zeros are stripped in the second segment ("0365" -> "365").
+  const tail = String(Number(id.slice(4)));
+  return `https://edge.forgecdn.net/files/${head}/${tail}/${encodeURIComponent(fileName)}`;
+}
+
+async function getDownloadUrl(projectID, fileID, fileName) {
   try {
     const response = await fetch(WORKER_URL + "/download-url", {
       method: "POST",
@@ -2326,9 +2341,33 @@ async function getDownloadUrl(projectID, fileID) {
     return data.data; // this is the actual download URL
   } catch (err) {
     devtoolsLog(`Failed to fetch mod ${projectID}/${fileID}:`, err);
+    // Fall back to the derived CDN URL. Verify it before handing it back, so a
+    // guess that doesn't exist is reported as missing rather than downloaded
+    // as an HTML error page.
+    const guess = curseCdnUrl(fileID, fileName);
+    if (!guess) return null;
+    try {
+      const head = await fetch(guess, { method: "HEAD" });
+      if (head.ok) {
+        devtoolsLog(`Using the derived CDN URL for ${projectID}/${fileID}`);
+        return guess;
+      }
+    } catch { /* no luck; fall through */ }
     return null;
   }
 }
+
+// One place for the renderer to ask, instead of three copies of the same fetch
+// to the proxy with no fallback and no error to show the user.
+ipcMain.handle("curseforge:downloadUrl", async (event, { projectID, fileID, fileName }) => {
+  const url = await getDownloadUrl(projectID, fileID, fileName);
+  if (url) return { success: true, url };
+  return {
+    success: false,
+    // The overwhelmingly common cause, and one the user can act on.
+    error: "CurseForge won't hand out a download link for this file — the author has usually disabled third-party downloads. Get it from the CurseForge website instead.",
+  };
+});
 
 // Pick an image and hand back a data: URL. The wrap-an-image mode opens its file
 // dialog straight after the page loads, and Chromium blocks a programmatic
@@ -2496,8 +2535,12 @@ async function curseforgeImport(zipPath, onProgress, hooks) {
 
       await fs.promises.mkdir(targetFolder, { recursive: true });
 
-      // Step 3: Get download URL
-      const url = await getDownloadUrl(fileObj.projectID, fileObj.fileID);
+      // Step 3: Get download URL. The pack manifest only names ids, so dig the
+      // file name out of the mod info for the CDN fallback to have something
+      // to build a path from.
+      const known = (modInfo.latestFiles || []).find(f => String(f.id) === String(fileObj.fileID));
+      const url = await getDownloadUrl(fileObj.projectID, fileObj.fileID, known && known.fileName);
+      if (!url) throw new Error("CurseForge would not hand out a download link for this file");
       const fileName = path.basename(url.split("?")[0]);
       const dest = path.join(targetFolder, fileName);
 

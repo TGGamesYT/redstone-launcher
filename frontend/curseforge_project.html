@@ -87,6 +87,21 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
 <script>
 const { ipcRenderer, shell } = require('electron');
+
+// One place to ask for a CurseForge download link. The proxy answers 500 when
+// CurseForge refuses to name a URL (authors can disable third-party downloads),
+// and the main process falls back to the derived CDN path -- so ask it rather
+// than hitting the proxy directly from here, and show the reason when there
+// genuinely isn't one.
+async function cfDownloadUrl(projectID, fileID, fileName) {
+  try {
+    const r = await ipcRenderer.invoke('curseforge:downloadUrl', { projectID, fileID, fileName });
+    return (r && r.success) ? { url: r.url } : { url: null, error: r && r.error };
+  } catch (e) {
+    return { url: null, error: e.message || String(e) };
+  }
+}
+
 let profiles = [];
 let servers = [];
 
@@ -260,14 +275,9 @@ async function openInstallScreenCF(mod) {
       const installBtn = document.createElement("button");
       installBtn.textContent = "Install";
       installBtn.onclick = async () => {
-        const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectID: mod.id, fileID: f.id }),
-        });
-        const dlData = await dl.json();
-        const dlUrl = dlData.data;
-        if (!dlUrl) return alert("Failed to get download URL");
+        const dlRes = await cfDownloadUrl(mod.id, f.id, f.fileName);
+        const dlUrl = dlRes.url;
+        if (!dlUrl) return uiAlert(dlRes.error || "Failed to get a download link.", "Can't download this file");
 
         await ipcRenderer.invoke("install-mrpack-url", dlUrl);
         alert(`Started installation of ${mod.name} (${f.displayName})`);
@@ -346,13 +356,7 @@ async function openInstallScreenCF(mod) {
 
       const installBtn = document.createElement("button");
       (async () => {
-        const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectID: mod.id, fileID: compatibleFile.id }),
-        });
-        const dlData = await dl.json();
-        const fileUrl = dlData.data;
+        const fileUrl = (await cfDownloadUrl(mod.id, compatibleFile.id, compatibleFile.fileName)).url;
         if (!fileUrl) {
           installBtn.textContent = "Unavailable";
           installBtn.disabled = true;
@@ -386,13 +390,7 @@ async function openInstallScreenCF(mod) {
         let found = false;
         let usableFile = null;
         for (const f of compatibleFiles) {
-          const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projectID: mod.id, fileID: f.id }),
-          });
-          const dlData = await dl.json();
-          const fileUrl = dlData.data;
+          const fileUrl = (await cfDownloadUrl(mod.id, f.id, f.fileName)).url;
           if (!fileUrl) continue;
 
           const exists = await ipcRenderer.invoke("check-file-exists", String(p.id), true, fileUrl);
@@ -475,15 +473,11 @@ async function openInstallScreenCF(mod) {
         installBtn.textContent = "Installing...";
         installBtn.disabled = true;
 
-        const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectID: mod.id, fileID: matchedFile.id }),
-        });
-        const dlData = await dl.json();
-        const fileUrl = dlData.data;
+        const dlRes2 = await cfDownloadUrl(mod.id, matchedFile.id, matchedFile.fileName);
+        const fileUrl = dlRes2.url;
         if (!fileUrl) {
           installBtn.textContent = "Failed";
+          installBtn.title = dlRes2.error || "";
           return;
         }
 
@@ -503,13 +497,7 @@ async function openInstallScreenCF(mod) {
         let found = false;
         let usableFile = null;
         for (const f of compatibleFiles) {
-          const dl = await fetch("https://curseforge.tgdoescode.workers.dev/download-url", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projectID: mod.id, fileID: f.id }),
-          });
-          const dlData = await dl.json();
-          const fileUrl = dlData.data;
+          const fileUrl = (await cfDownloadUrl(mod.id, f.id, f.fileName)).url;
           if (!fileUrl) continue;
 
           const exists = await ipcRenderer.invoke("check-file-exists", String(s.name), false, fileUrl);
