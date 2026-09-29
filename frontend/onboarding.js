@@ -93,7 +93,8 @@
         <p style="margin:0;font-size:12px;opacity:0.8;line-height:1.5;">
           Instances are copied, never moved — whichever launcher they came from keeps
           working exactly as it does now. Shared caches (assets, libraries, version
-          jars) are left behind; this launcher fetches its own.
+          jars) are left behind; this launcher fetches its own. Signed-in accounts
+          come across too, so you don't have to sign in again.
         </p>
         <div class="imp-list"><div style="opacity:0.7;padding:20px 0;">Looking for other launchers…</div></div>
         <div class="imp-actions">
@@ -109,11 +110,42 @@
     ov.querySelector('.imp-x').onclick = close;
     ov.querySelector('.imp-cancel').onclick = close;
 
-    let found = {};
+    let found = {}, accounts = [];
     try { found = await ipcRenderer.invoke('import:scan') || {}; } catch { }
+    try { accounts = await ipcRenderer.invoke('import:accounts') || []; } catch { }
     const kinds = Object.keys(found);
     listEl.innerHTML = '';
-    if (!kinds.length) {
+
+    // Accounts first: signing in again for every launcher you have is busywork
+    // when the tokens are already on disk.
+    const accountRows = [];
+    const newAccounts = accounts.filter(a => !a.already);
+    if (newAccounts.length) {
+      const g = document.createElement('div');
+      g.className = 'imp-group';
+      g.textContent = `Accounts — ${newAccounts.length} found`;
+      listEl.appendChild(g);
+      newAccounts.forEach(acc => {
+        const row = document.createElement('div');
+        row.className = 'imp-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = true;
+        const info = document.createElement('div');
+        info.style.flex = '1';
+        info.innerHTML = `<div class="n"></div><div class="m"></div>`;
+        info.querySelector('.n').textContent = acc.username;
+        info.querySelector('.m').textContent = acc.offline
+          ? `offline account · from ${LAUNCHER_LABELS[acc.source] || acc.source}`
+          : acc.refreshToken
+            ? `signed in · from ${LAUNCHER_LABELS[acc.source] || acc.source}`
+            : `from ${LAUNCHER_LABELS[acc.source] || acc.source} — will need signing in again soon`;
+        row.append(cb, info);
+        listEl.appendChild(row);
+        accountRows.push({ cb, acc, row });
+      });
+    }
+
+    if (!kinds.length && !accountRows.length) {
       listEl.innerHTML = `<div style="opacity:0.75;padding:20px 0;line-height:1.6;">
         No other launchers found in the usual places. If yours keeps its instances
         somewhere unusual, you can still add an instance by hand, or import a pack
@@ -136,19 +168,27 @@
         info.style.flex = '1';
         info.innerHTML = `<div class="n"></div><div class="m"></div>`;
         info.querySelector('.n').textContent = inst.name;
-        info.querySelector('.m').textContent =
-          `${inst.version}${inst.loader && inst.loader !== 'vanilla' ? ' · ' + inst.loader : ''}`;
+        info.querySelector('.m').textContent = inst.versionUnknown
+          ? "this launcher doesn't record the Minecraft version — set it after importing"
+          : `${inst.version}${inst.loader && inst.loader !== 'vanilla' ? ' · ' + inst.loader : ''}`;
+        // Nothing to copy a version from, so importing it would just fail.
+        if (inst.versionUnknown) { cb.checked = false; cb.disabled = true; row.style.opacity = '0.55'; }
         row.append(cb, info);
         listEl.appendChild(row);
         rows.push({ cb, inst, row });
       });
     });
-    goBtn.disabled = !rows.length;
+    goBtn.disabled = !rows.length && !accountRows.length;
 
     goBtn.onclick = async () => {
+      const chosenAccounts = accountRows.filter(r => r.cb.checked).map(r => r.acc);
       const chosen = rows.filter(r => r.cb.checked);
-      if (!chosen.length) return;
+      if (!chosen.length && !chosenAccounts.length) return;
       goBtn.disabled = true;
+      if (chosenAccounts.length) {
+        goBtn.textContent = 'Adding accounts…';
+        try { await ipcRenderer.invoke('import:accountsAdd', { accounts: chosenAccounts }); } catch { }
+      }
       let done = 0, failed = 0;
       for (const r of chosen) {
         goBtn.textContent = `Importing ${done + 1}/${chosen.length}…`;
@@ -161,7 +201,10 @@
       }
       goBtn.textContent = 'Import';
       if (window.notify) {
-        window.notify(failed ? `${failed} of ${chosen.length} could not be imported` : `Imported ${done} instances`,
+        const bits = [];
+        if (done || failed) bits.push(`${done} instance${done === 1 ? '' : 's'}`);
+        if (chosenAccounts.length) bits.push(`${chosenAccounts.length} account${chosenAccounts.length === 1 ? '' : 's'}`);
+        window.notify(failed ? `${failed} of ${chosen.length} could not be imported` : `Imported ${bits.join(' and ')}`,
           failed ? 'error' : 'success');
       }
       close();

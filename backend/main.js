@@ -33,6 +33,7 @@ import xml2js from "xml2js";
 import unzipper from "unzipper";
 import QRCode from "qrcode";
 import { pathToFileURL } from 'url';
+import { createRequire } from 'module';
 import { screenSkinPixels } from './skinFilter.js';
 
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
@@ -5149,6 +5150,13 @@ function knownLauncherPaths() {
       path.join(appData, "com.modrinth.theseus", "profiles"),
       path.join(appData, "ModrinthApp", "profiles"),
       path.join(home, ".local", "share", "ModrinthApp", "profiles"),
+      path.join(home, ".local", "share", "com.modrinth.theseus", "profiles"),
+      // Flatpak and Snap keep an app's home somewhere else entirely.
+      path.join(home, ".var", "app", "com.modrinth.ModrinthApp", "data", "ModrinthApp", "profiles"),
+      path.join(home, ".var", "app", "com.modrinth.ModrinthApp", "config", "ModrinthApp", "profiles"),
+      path.join(home, "snap", "modrinth-app", "current", ".local", "share", "ModrinthApp", "profiles"),
+      process.platform === "darwin" ? path.join(home, "Library", "Application Support", "ModrinthApp", "profiles") : null,
+      process.platform === "darwin" ? path.join(home, "Library", "Application Support", "com.modrinth.theseus", "profiles") : null,
     ),
     curseforge: many(
       path.join(home, "curseforge", "minecraft", "Instances"),
@@ -5203,7 +5211,79 @@ function readIniName(file) {
   } catch { return null; }
 }
 
-function scanLauncher(kind, root) {
+// The Modrinth App's profile metadata, out of its SQLite database.
+//
+// Older versions wrote a profile.json into each instance folder; current ones
+// keep everything in app.db, so without this the importer finds a pile of
+// folders it can say nothing about. node:sqlite is read-only here and every
+// failure is non-fatal — if the schema has moved on, the caller falls back to
+// whatever the folders themselves reveal.
+function modrinthDbProfiles(profilesRoot) {
+  const appRoot = path.dirname(profilesRoot);
+  const dbPath = ["app.db", "theseus.db", "data.db"]
+    .map(n => path.join(appRoot, n))
+    .find(p => fs.existsSync(p));
+  if (!dbPath) return null;
+
+  // node:sqlite is built in from Node 22, which Electron 41 ships, but guard
+  // it: this file is ESM, so the require has to be built, and an older runtime
+  // simply won't have the module.
+  let DatabaseSync;
+  try { ({ DatabaseSync } = createRequire(import.meta.url)("node:sqlite")); }
+  catch { return null; }
+
+  let db;
+  try {
+    // A copy, because the app may well be running and holding its own lock.
+    const tmp = path.join(app.getPath("temp"), `mr-scan-${Date.now()}.db`);
+    fs.copyFileSync(dbPath, tmp);
+    db = new DatabaseSync(tmp, { readOnly: true });
+    try { return readProfileRows(db); }
+    finally {
+      try { db.close(); } catch { /* ignore */ }
+      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    devtoolsLog("Could not read the Modrinth App database:", err && err.message);
+    return null;
+  }
+}
+
+// Match columns by name rather than assuming a fixed schema, so a rename in a
+// future version degrades to "version unknown" instead of throwing.
+function readProfileRows(db) {
+  const table = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('profiles','profile')"
+  ).get();
+  if (!table) return null;
+  const cols = db.prepare(`PRAGMA table_info(${table.name})`).all().map(c => c.name);
+  const pick = (...want) => want.find(w => cols.includes(w)) || null;
+  const cPath = pick("path", "profile_path", "id");
+  const cName = pick("name", "title");
+  const cVer = pick("game_version", "mc_version", "minecraft_version");
+  const cLoader = pick("mod_loader", "loader");
+  const cLoaderVer = pick("mod_loader_version", "loader_version");
+  if (!cPath) return null;
+
+  const out = {};
+  for (const row of db.prepare(`SELECT * FROM ${table.name}`).all()) {
+    const key = String(row[cPath] || "");
+    if (!key) continue;
+    const entry = {
+      name: cName ? row[cName] : null,
+      version: cVer ? row[cVer] : null,
+      loader: cLoader ? String(row[cLoader] || "vanilla").toLowerCase() : "vanilla",
+      loaderVersion: cLoaderVer ? (row[cLoaderVer] || "") : "",
+    };
+    // The stored path may be the folder name or a full path; key it both ways
+    // so the scanner finds it either way.
+    out[key] = entry;
+    out[path.basename(key)] = entry;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function scanLauncher(kind, root, dbProfiles) {
   const out = [];
   if (!fs.existsSync(root)) return out;
   let dirs = [];
@@ -5235,23 +5315,45 @@ function scanLauncher(kind, root) {
           loader: loader || "vanilla", loaderVersion: loaderVersion || "",
         });
       } else if (kind === "modrinth") {
-        // Theseus keeps profile.json next to the instance files.
+        // Older Theseus wrote a profile.json beside the instance files; current
+        // versions keep all of that in a central SQLite database instead, which
+        // is why nothing was being found here. Read the file when it exists,
+        // and otherwise take what the database said (looked up once, above).
         const f = ["profile.json", "instance.json"].map(n => path.join(dir, n)).find(p => fs.existsSync(p));
-        if (!f) continue;
-        const j = JSON.parse(fs.readFileSync(f, "utf8"));
-        const meta = j.metadata || j;
-        const lv = meta.loader_version || {};
+        if (f) {
+          const j = JSON.parse(fs.readFileSync(f, "utf8"));
+          const meta = j.metadata || j;
+          const lv = meta.loader_version || {};
+          out.push({
+            kind, dir, gameDir: dir,
+            name: meta.name || j.name || d.name,
+            version: meta.game_version || j.game_version,
+            loader: (meta.loader || "vanilla").toLowerCase(),
+            loaderVersion: lv.id || lv.version || "",
+          });
+          continue;
+        }
+        const fromDb = (dbProfiles && (dbProfiles[d.name] || dbProfiles[dir])) || null;
+        // A folder with no metadata anywhere is still a real instance; list it
+        // with the version unknown so it can be imported and set by hand,
+        // rather than dropping it silently.
+        const looksLikeAnInstance = ["mods", "config", "saves", "options.txt", "resourcepacks"]
+          .some(n => fs.existsSync(path.join(dir, n)));
+        if (!fromDb && !looksLikeAnInstance) continue;
         out.push({
           kind, dir, gameDir: dir,
-          name: meta.name || j.name || d.name,
-          version: meta.game_version || j.game_version,
-          loader: (meta.loader || "vanilla").toLowerCase(),
-          loaderVersion: lv.id || lv.version || "",
+          name: (fromDb && fromDb.name) || d.name,
+          version: fromDb ? fromDb.version : null,
+          loader: (fromDb && fromDb.loader) || "vanilla",
+          loaderVersion: (fromDb && fromDb.loaderVersion) || "",
+          versionUnknown: !(fromDb && fromDb.version),
         });
       }
     } catch { /* an unreadable instance is skipped, not fatal */ }
   }
-  return out.filter(i => i.version);
+  // Keep the ones whose version we could not work out; the import modal
+  // asks for it rather than pretending the instance isn't there.
+  return out.filter(i => i.version || i.versionUnknown);
 }
 
 // What's on this machine. Nothing is copied here — this only looks.
@@ -5277,18 +5379,193 @@ ipcMain.handle("import:scan", async () => {
       continue;
     }
     for (const root of roots) {
-      const list = scanLauncher(kind, root);
+      // The Modrinth App keeps its metadata in a database beside the profiles
+      // folder rather than in each instance.
+      const dbProfiles = kind === "modrinth" ? modrinthDbProfiles(root) : null;
+      const list = scanLauncher(kind, root, dbProfiles);
       if (list.length) { found[kind] = { root, instances: list }; break; }
     }
   }
   return found;
 });
 
+// ── Accounts from other launchers ───────────────────────────────────────────
+// Signing in again for every launcher you have installed is busywork when the
+// tokens are already sitting on disk. Prism/MultiMC and the vanilla launcher
+// keep them in plain JSON; the Modrinth App keeps them in its database.
+//
+// A refresh token is what actually matters — an access token is good for an
+// hour, a refresh token keeps the account signed in — so an account without
+// one is still offered, but marked, because it will need a real sign-in soon.
+function accountsFromPrism(root) {
+  const file = path.join(root, "accounts.json");
+  if (!fs.existsSync(file)) return [];
+  let j;
+  try { j = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return []; }
+  const out = [];
+  for (const a of j.accounts || []) {
+    const profile = a.profile || {};
+    if (!profile.name) continue;
+    const msa = a.msa || {};
+    const ygg = a.ygg || {};
+    out.push({
+      source: "prism",
+      username: profile.name,
+      uuid: profile.id || null,
+      accessToken: ygg.token || msa.access_token || null,
+      refreshToken: msa.refresh_token || null,
+      offline: String(a.type || "").toLowerCase() === "offline",
+    });
+  }
+  return out;
+}
+
+function accountsFromVanilla(root) {
+  const file = path.join(root, "launcher_accounts.json");
+  if (!fs.existsSync(file)) return [];
+  let j;
+  try { j = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return []; }
+  const out = [];
+  for (const a of Object.values(j.accounts || {})) {
+    const profile = a.minecraftProfile || {};
+    if (!profile.name) continue;
+    out.push({
+      source: "vanilla",
+      username: profile.name,
+      uuid: profile.id || a.localId || null,
+      accessToken: a.accessToken || null,
+      // The vanilla launcher keeps its refresh token in the OS credential
+      // store, not in this file, so there is nothing to carry over.
+      refreshToken: null,
+      offline: false,
+    });
+  }
+  return out;
+}
+
+function accountsFromModrinth(profilesRoot) {
+  const appRoot = path.dirname(profilesRoot);
+  const dbPath = ["app.db", "theseus.db", "data.db"].map(n => path.join(appRoot, n)).find(p => fs.existsSync(p));
+  if (!dbPath) return [];
+  let DatabaseSync;
+  try { ({ DatabaseSync } = createRequire(import.meta.url)("node:sqlite")); } catch { return []; }
+  let tmp = null;
+  try {
+    tmp = path.join(app.getPath("temp"), `mr-acc-${Date.now()}.db`);
+    fs.copyFileSync(dbPath, tmp);
+    const db = new DatabaseSync(tmp, { readOnly: true });
+    try {
+      const table = db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('minecraft_users','users','accounts')"
+      ).get();
+      if (!table) return [];
+      const cols = db.prepare(`PRAGMA table_info(${table.name})`).all().map(c => c.name);
+      const pick = (...w) => w.find(x => cols.includes(x)) || null;
+      const cName = pick("username", "name");
+      const cUuid = pick("uuid", "id");
+      const cAccess = pick("access_token", "accessToken", "token");
+      const cRefresh = pick("refresh_token", "refreshToken");
+      if (!cName) return [];
+      return db.prepare(`SELECT * FROM ${table.name}`).all().map(r => ({
+        source: "modrinth",
+        username: r[cName],
+        uuid: cUuid ? r[cUuid] : null,
+        accessToken: cAccess ? r[cAccess] : null,
+        refreshToken: cRefresh ? r[cRefresh] : null,
+        offline: false,
+      })).filter(a => a.username);
+    } finally { try { db.close(); } catch { /* ignore */ } }
+  } catch (err) {
+    devtoolsLog("Could not read Modrinth App accounts:", err && err.message);
+    return [];
+  } finally {
+    if (tmp) { try { fs.unlinkSync(tmp); } catch { /* ignore */ } }
+  }
+}
+
+// What accounts are sitting in the other launchers on this machine. Nothing is
+// written; this only looks. Accounts already in this launcher are marked so the
+// modal can skip them by default.
+ipcMain.handle("import:accounts", async () => {
+  const paths = knownLauncherPaths();
+  const firstExisting = (roots) => (roots || []).find(r => r && fs.existsSync(r)) || null;
+  const found = [];
+
+  for (const kind of ["prism", "multimc"]) {
+    const root = firstExisting(paths[kind]);
+    // accounts.json sits beside the instances folder, not inside it.
+    if (root) found.push(...accountsFromPrism(path.dirname(root)));
+  }
+  const vanillaRoot = firstExisting(paths.vanilla);
+  if (vanillaRoot) found.push(...accountsFromVanilla(vanillaRoot));
+  const mrRoot = firstExisting(paths.modrinth);
+  if (mrRoot) found.push(...accountsFromModrinth(mrRoot));
+
+  const mine = loadPlayers();
+  const seen = new Set();
+  return found.filter(a => {
+    const key = String(a.username).toLowerCase();
+    if (seen.has(key)) return false;   // the same account in two launchers
+    seen.add(key);
+    return true;
+  }).map(a => ({
+    ...a,
+    already: mine.some(p => String(p.username || "").toLowerCase() === String(a.username).toLowerCase()),
+  }));
+});
+
+// Bring chosen accounts in. A refresh token is stored the same way this
+// launcher's own sign-in stores one, so the usual refresh path takes over from
+// here and the account stays signed in.
+ipcMain.handle("import:accountsAdd", async (event, { accounts }) => {
+  try {
+    const players = loadPlayers();
+    let added = 0;
+    for (const a of accounts || []) {
+      if (!a || !a.username) continue;
+      if (players.some(p => String(p.username || "").toLowerCase() === String(a.username).toLowerCase())) continue;
+      const id = Date.now() + added;
+      if (a.offline || (!a.accessToken && !a.refreshToken)) {
+        players.push({ id, type: "cracked", username: a.username });
+      } else {
+        players.push({
+          id,
+          type: "microsoft",
+          authKind: "live",
+          username: a.username,
+          auth: {
+            name: a.username,
+            uuid: String(a.uuid || "").replace(/-/g, ""),
+            access_token: a.accessToken || "0",
+            client_token: null,
+            user_properties: "{}",
+            meta: { type: "msa", demo: false },
+          },
+          refresh: a.refreshToken || "",
+          // Force a refresh on first use rather than trusting an access token
+          // of unknown age.
+          lastRefresh: 0,
+          importedFrom: a.source,
+        });
+      }
+      added++;
+    }
+    savePlayers(players);
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.webContents.send("players-updated", players); } catch { /* gone */ }
+    }
+    return { success: true, added };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
 // Copy one of those in as a Redstone instance. The game files are copied, not
 // moved or linked, so the other launcher keeps working exactly as it did.
 ipcMain.handle("import:instance", async (event, { entry }) => {
   try {
-    if (!entry || !entry.gameDir || !entry.version) return { success: false, error: "incomplete instance" };
+    if (!entry || !entry.gameDir) return { success: false, error: "incomplete instance" };
+    if (!entry.version) return { success: false, error: "this instance doesn't say which Minecraft version it is — set one and try again" };
     const profileId = getUniqueFolderName(entry.name || "Imported");
     const dest = path.join(dataDir, "client", String(profileId));
     fs.mkdirSync(dest, { recursive: true });
