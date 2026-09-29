@@ -928,23 +928,62 @@
         reader.readAsDataURL(file);
       });
     }
+    // The hand-built creator, optionally pre-filled from something the user
+    // already chose (a mod, say). prefill: { name, icon, version, loader }.
+    function openCustomCreator(prefill) {
+      instanceName.value = (prefill && prefill.name) || "";
+      instanceLoader.value = (prefill && prefill.loader) || "vanilla";
+      pickedInstanceIcon = (prefill && prefill.icon) || null;
+      setInstancePreview(pickedInstanceIcon);
+      delete modalCreateBtn.dataset.editingId;
+      delete modalCreateBtn._originalProfile;
+      if (typeof setModalMode === 'function') setModalMode('create');
+      addInstanceModal.classList.add('active');
+
+      if (prefill && prefill.version) {
+        // The mod's newest supported version may be a snapshot, which isn't in
+        // the list until "show all" is on.
+        const showAll = document.getElementById('showAllVersions');
+        const inList = () => [...instanceVersion.options].some(o => o.value === prefill.version);
+        if (showAll && !inList() && !showAll.checked) {
+          showAll.checked = true;
+          if (typeof applyVersionMode === 'function') applyVersionMode();
+        }
+        if (!inList()) {
+          const opt = document.createElement('option');
+          opt.value = opt.textContent = prefill.version;
+          instanceVersion.appendChild(opt);
+        }
+        instanceVersion.value = prefill.version;
+      }
+      if (typeof updateInstanceLoaderVersion === 'function') updateInstanceLoaderVersion();
+      // Remembered so the mod can be installed into the instance once it exists.
+      modalCreateBtn._prefillProject = (prefill && prefill.projectId) || null;
+    }
+
     function openNewInstance(e) {
       if (e) { e.preventDefault(); e.stopPropagation(); }
       const url = new URL(window.location);
       const instanceId = url.searchParams.get('i');
       if (instanceId && instanceId !== 'NEWINSTANCE') {
         window.location.href = 'instances.html?i=NEWINSTANCE';
-      } else {
-        instanceName.value = "";
-        instanceLoader.value = "vanilla";
-        if (typeof updateInstanceLoaderVersion === 'function') updateInstanceLoaderVersion();
-        pickedInstanceIcon = null;
-        setInstancePreview(null);
-        delete modalCreateBtn.dataset.editingId;
-        delete modalCreateBtn._originalProfile;
-        if (typeof setModalMode === 'function') setModalMode('create');
-        addInstanceModal.classList.add('active');
+        return;
       }
+      // Ask HOW first. Most new instances start from a modpack, a mod, a pack
+      // file or another launcher; the full creator is one of the four rather
+      // than the only way in.
+      if (window.NewInstance) {
+        window.NewInstance.choose({
+          target: 'instance',
+          onCustom: (prefill) => openCustomCreator(prefill),
+          onImportFile: () => {
+            const btn = document.getElementById('importPackBtn') || { innerHTML: '', disabled: false };
+            runImport(btn);
+          },
+        });
+        return;
+      }
+      openCustomCreator(null);
     }
     const sidebarAddBtn = document.querySelector('.sidebar .menu.medium li#sidebar-add-instance');
     if (sidebarAddBtn) sidebarAddBtn.onclick = openNewInstance;
@@ -1239,8 +1278,31 @@
     }
 
     // Auto-open a freshly created instance.
-    ipcRenderer.on('profile-created', (e, newProfile) => {
+    ipcRenderer.on('profile-created', async (e, newProfile) => {
       if (!newProfile || !newProfile.id) return;
+      // Started from a mod? Put that mod in, so the instance is actually ready
+      // rather than an empty instance named after it.
+      const projectId = modalCreateBtn._prefillProject;
+      modalCreateBtn._prefillProject = null;
+      if (projectId) {
+        try {
+          const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`
+            + `?game_versions=${encodeURIComponent(JSON.stringify([newProfile.version]))}`
+            + `&loaders=${encodeURIComponent(JSON.stringify([newProfile.loader]))}`);
+          const versions = res.ok ? await res.json() : [];
+          const file = versions[0] && (versions[0].files || []).find(f => f.primary) || (versions[0] && versions[0].files[0]);
+          if (file) {
+            await ipcRenderer.invoke('mod-download', {
+              server: false, id: newProfile.id, fileUrl: file.url, projectType: 'mod',
+            });
+            if (window.notify) window.notify('Added the mod to the new instance', 'success');
+          } else if (window.notify) {
+            window.notify("The instance was created, but that mod has no build for this version", 'error');
+          }
+        } catch (err) {
+          if (window.notify) window.notify('The instance was created, but the mod could not be added', 'error');
+        }
+      }
       ipcRenderer.once('profiles-list', (ev, p) => { profiles = p; window.openInstanceInPage(newProfile.id); });
       ipcRenderer.send('get-profiles');
     });
@@ -3612,6 +3674,8 @@
   <script src="filetree.js"></script>
   <script src="filebrowser.js"></script>
   <script src="fitheight.js"></script>
+  <script src="modpack-install.js"></script>
+  <script src="newinstance.js"></script>
   <script src="sidebar.js"></script>
   <script src="onboarding.js"></script>
   <script src="notifications.js"></script>

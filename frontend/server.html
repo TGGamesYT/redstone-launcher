@@ -1228,7 +1228,42 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       version: ($('srvVersion').value || '').trim() || undefined,
       onPick: (d) => { newSrvIconData = d; $('srvIconPreview').src = d; },
     });
-    $('addServerBtn').onclick = () => openServerModal(null);
+    // Ask how first, same as a new instance: most servers start from a modpack
+    // rather than from a blank version/loader form.
+    $('addServerBtn').onclick = () => {
+      if (!window.NewInstance) return openServerModal(null);
+      window.NewInstance.choose({
+        target: 'server',
+        onCustom: (prefill) => {
+          openServerModal(null);
+          if (!prefill) return;
+          if (prefill.name) $('srvName').value = prefill.name;
+          // A server can't run a client-only loader, so only carry across the
+          // ones the Type list actually offers.
+          const type = $('srvType');
+          if (prefill.loader && [...type.options].some(o => o.value === prefill.loader)) {
+            type.value = prefill.loader;
+            type.dispatchEvent(new Event('change'));
+          }
+          if (prefill.version) {
+            const sel = $('srvVersion');
+            if (![...sel.options].some(o => o.value === prefill.version)) {
+              const opt = document.createElement('option');
+              opt.value = opt.textContent = prefill.version;
+              sel.appendChild(opt);
+            }
+            sel.value = prefill.version;
+          }
+        },
+        onImportFile: async () => {
+          // Bring the pack in as an instance first; the server manager can be
+          // pointed at it, and importing straight to a server has no dialog of
+          // its own yet.
+          try { await ipcRenderer.invoke('import-pack'); }
+          catch (err) { uiAlert('Import failed: ' + (err.message || err), 'Import failed'); }
+        },
+      });
+    };
     $('createServerBtn').onclick = async () => {
       const type = $('srvType').value;
       const version = $('srvVersion').value.trim() || '1.20.1';
@@ -1295,6 +1330,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <script src="filetree.js"></script>
   <script src="iconpicker.js"></script>
   <script src="fitheight.js"></script>
+  <script src="modpack-install.js"></script>
+  <script src="newinstance.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>
 </body>
