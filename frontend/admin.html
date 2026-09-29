@@ -221,6 +221,7 @@
       overflow-y: auto;
     }
   </style>
+  <script src="uimodal.js"></script>
 </head>
 <body>
   <div id="toolbar">
@@ -333,8 +334,8 @@
       }, 100);
     }
 
-    function deleteNotification(id) {
-      if (confirm('Delete this notification?')) {
+    async function deleteNotification(id) {
+      if (await uiConfirm('Delete this notification?', { title: 'Delete notification', ok: 'Delete', danger: true })) {
         ipcRenderer.send('delete-notification', id);
         setTimeout(() => {
           loadNotifications();

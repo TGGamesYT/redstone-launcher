@@ -159,6 +159,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.4);
     }
   </style>
+  <script src="uimodal.js"></script>
 </head>
 
 <body>
@@ -1023,13 +1024,15 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <script src="fitheight.js"></script>
   <script src="sidebar.js"></script>
   <script src="onboarding.js"></script>
-  <script src="notifications.js">
+  <script src="notifications.js"></script>
+  <script>
     // Shown from the app's own version rather than a string that has to be
-    // remembered on every release.
+    // remembered on every release. This needs its own tag: a <script> with a
+    // src ignores whatever is written between its tags.
     ipcRenderer.invoke('get-app-version')
       .then(v => { const el = document.getElementById('appVersion'); if (el && v) el.textContent = v; })
       .catch(() => { const el = document.getElementById('appVersion'); if (el) el.textContent = 'unknown'; });
-</script>
+  </script>
 </body>
 
 </html>

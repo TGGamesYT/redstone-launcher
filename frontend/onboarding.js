@@ -4,9 +4,16 @@
 // once, the first time the launcher is opened, and hands over to the import
 // modal at the end (or when skipped).
 (function () {
+  // Loaded both directly by a few pages and injected by sidebar.js everywhere
+  // else, so it has to be safe to evaluate twice.
+  if (window.Onboarding) return;
   const { ipcRenderer } = require('electron');
 
   const SEEN_KEY = 'onboardingDone';
+  // Survives a navigation within the tab, which is exactly the lifetime the
+  // tour needs: it walks the user through the sidebar, so it has to live
+  // across the page loads that clicking the sidebar causes.
+  const STATE_KEY = 'onboardingTour';
 
   function ensureStyle() {
     if (document.getElementById('ob-style')) return;
@@ -27,6 +34,16 @@
       .ob-pop h3 { margin:0 0 6px; font-size:1em; }
       .ob-pop p { margin:0 0 12px; font-size:12px; line-height:1.5; opacity:0.9; }
       .ob-pop .row { display:flex; gap:8px; justify-content:space-between; align-items:center; }
+      .ob-pop .ob-ask { margin:0 0 12px; font-size:12px; line-height:1.5; opacity:1;
+        color:var(--base-color); display:flex; align-items:center; gap:6px; }
+      .ob-pop .ob-ask::before { content:'👈'; font-size:13px; }
+      /* A soft pulse on the thing we are asking them to click, so "click this"
+         reads as an instruction rather than decoration. */
+      .ob-ring.ob-ask-ring { animation: ob-pulse 1.5s ease-in-out infinite; }
+      @keyframes ob-pulse {
+        0%, 100% { box-shadow:0 0 0 3px color-mix(in srgb, var(--base-color) 40%, transparent); }
+        50% { box-shadow:0 0 0 9px color-mix(in srgb, var(--base-color) 10%, transparent); }
+      }
       .ob-pop button { padding:6px 12px; border:1px solid var(--border-dark); background:var(--menu-bg);
         color:var(--text-color); border-radius:var(--border-radius); cursor:pointer; font-family:var(--text-font); }
       .ob-pop button.primary { background:var(--base-color); }
@@ -154,18 +171,46 @@
   // ── Onboarding ────────────────────────────────────────────────────────────
   // Each step points at a real sidebar item and asks the user to click it, so
   // the tour teaches where things are rather than just describing them.
+  // `page` is the file a step's tab opens. Steps that have one ask to be
+  // clicked and the tour picks itself up on the page that opens; steps without
+  // one are just explained where they are.
   const STEPS = [
-    { sel: 'a[href="index.html"]', title: 'Home', body: "Where you land. Recent instances and what's new." },
-    { sel: 'a[href="instances.html"]', title: 'Instances', body: 'Every copy of the game you have set up. Create one here, or import from another launcher.' },
-    { sel: 'a[href="modrinth.html"]', title: 'Mods & modpacks', body: 'Browse Modrinth and CurseForge. Install a mod straight into an instance, or a whole modpack as a new one.' },
-    { sel: 'a[href="server.html"]', title: 'Server manager', body: 'Run your own server, with mods and resource packs, and share it over the internet without port forwarding.' },
+    { sel: 'a[href="index.html"]', page: 'index.html', title: 'Home', body: "Where you land. Recent instances and what's new." },
+    { sel: 'a[href="instances.html"]', page: 'instances.html', title: 'Instances', body: 'Every copy of the game you have set up. Create one here, or import from another launcher.' },
+    { sel: 'a[href="modrinth.html"]', page: 'modrinth.html', title: 'Mods & modpacks', body: 'Browse Modrinth and CurseForge. Install a mod straight into an instance, or a whole modpack as a new one.' },
+    { sel: 'a[href="server.html"]', page: 'server.html', title: 'Server manager', body: 'Run your own server, with mods and resource packs, and share it over the internet without port forwarding.' },
     { sel: '.menu.middle', title: 'Your instances', body: 'Pinned instances sit here for one-click launching. Hover one for its name.' },
-    { sel: 'a[href="players.html"], #players-login', title: 'Accounts', body: 'Sign in with Microsoft here. You can add more than one account and switch between them.' },
-    { sel: 'a[href="profile-manager.html"], a[href="profile-manager.html"] i', title: 'Skins', body: 'Your skin library — edit skins, browse thousands more, and apply them without leaving the launcher.' },
-    { sel: 'a[href="settings.html"]', title: 'Settings', body: 'Themes, RAM, syncing between instances — and this tour, if you ever want it again.' },
+    { sel: 'a[href="players.html"], #players-login', page: 'players.html', title: 'Accounts', body: 'Sign in with Microsoft here. You can add more than one account and switch between them.' },
+    { sel: 'a[href="profile-manager.html"]', page: 'profile-manager.html', title: 'Skins', body: 'Your skin library — edit skins, browse thousands more, and apply them without leaving the launcher.' },
+    { sel: 'a[href="settings.html"]', page: 'settings.html', title: 'Settings', body: 'Themes, RAM, syncing between instances — and this tour, if you ever want it again.' },
   ];
 
-  function openOnboarding(onFinish) {
+  // The sidebar is not consistent: most rows are `<a><li>…</li></a>`, but Skins
+  // and Settings are `<li><a><i/></a><span/></li>`, so matching the <a> on
+  // those two highlights the bare icon and nothing else. Climb to whichever of
+  // <a>/<li> sits directly inside the menu list and highlight that, so every
+  // row gets the same treatment.
+  function navUnit(el) {
+    let best = el;
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      if (n.tagName === 'A' || n.tagName === 'LI') best = n;
+      const p = n.parentElement;
+      if (p && p.classList && p.classList.contains('menu')) return best;
+    }
+    return best;
+  }
+
+  const readState = () => {
+    try { return JSON.parse(sessionStorage.getItem(STATE_KEY) || 'null'); } catch { return null; }
+  };
+  const writeState = (s) => {
+    try {
+      if (s) sessionStorage.setItem(STATE_KEY, JSON.stringify(s));
+      else sessionStorage.removeItem(STATE_KEY);
+    } catch { }
+  };
+
+  function openOnboarding(onFinish, startAt) {
     ensureStyle();
     const shades = [0, 1, 2, 3].map(() => {
       const d = document.createElement('div');
@@ -180,24 +225,61 @@
     pop.className = 'ob-pop';
     document.body.appendChild(pop);
 
-    let i = 0;
+    let i = Math.max(0, Math.min(STEPS.length - 1, Number(startAt) || 0));
+    // The element this step asks to be clicked, so the handler can come off
+    // again when the step changes.
+    let armed = null, armedHandler = null;
+
+    const disarm = () => {
+      if (armed && armedHandler) armed.removeEventListener('click', armedHandler, true);
+      armed = null; armedHandler = null;
+    };
     const cleanup = () => {
+      disarm();
       shades.forEach(s => s.remove());
       ring.remove(); pop.remove();
       window.removeEventListener('resize', place);
     };
     const finish = (skipped) => {
       try { localStorage.setItem(SEEN_KEY, '1'); } catch { }
+      writeState(null);
       cleanup();
       if (onFinish) onFinish(skipped);
     };
 
-    function targetRect() {
+    function stepEl() {
       for (const sel of STEPS[i].sel.split(',')) {
         const el = document.querySelector(sel.trim());
-        if (el && el.getBoundingClientRect().width) return el.getBoundingClientRect();
+        if (el && el.getBoundingClientRect().width) return navUnit(el);
       }
       return null;
+    }
+    function targetRect() {
+      const el = stepEl();
+      return el ? el.getBoundingClientRect() : null;
+    }
+
+    // True when this step's tab would actually take us somewhere — on the page
+    // it points at, clicking it is a no-op, so the step is explained in place.
+    function leadsAway(step) {
+      if (!step.page) return false;
+      const here = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
+      return here !== step.page.toLowerCase();
+    }
+
+    // Hand the tour to the next page. Written before navigation so whichever
+    // page loads next picks up where this one left off.
+    function arm(step) {
+      disarm();
+      if (!leadsAway(step)) return false;
+      const el = stepEl();
+      if (!el) return false;
+      armed = el;
+      armedHandler = () => { writeState({ i: i + 1, andImport: !!openOnboarding._andImport }); };
+      // Capture, so the state is saved even if something else handles the
+      // click first and navigates.
+      el.addEventListener('click', armedHandler, true);
+      return true;
     }
 
     function place() {
@@ -235,18 +317,22 @@
 
     function render() {
       const s = STEPS[i];
+      const asking = arm(s);
+      ring.classList.toggle('ob-ask-ring', asking);
       pop.innerHTML = `
         <h3></h3><p></p>
+        ${asking ? '<p class="ob-ask"></p>' : ''}
         <div class="row">
           <span class="ob-step">${i + 1} of ${STEPS.length}</span>
           <span style="display:flex;gap:6px;">
             <button class="ob-skip">Skip</button>
             ${i > 0 ? '<button class="ob-back">Back</button>' : ''}
-            <button class="ob-next primary">${i === STEPS.length - 1 ? 'Finish' : 'Next'}</button>
+            <button class="ob-next ${asking ? '' : 'primary'}">${i === STEPS.length - 1 ? 'Finish' : 'Next'}</button>
           </span>
         </div>`;
       pop.querySelector('h3').textContent = s.title;
       pop.querySelector('p').textContent = s.body;
+      if (asking) pop.querySelector('.ob-ask').textContent = `Click ${s.title} to open it — the tour carries on there.`;
       pop.querySelector('.ob-skip').onclick = () => finish(true);
       const back = pop.querySelector('.ob-back');
       if (back) back.onclick = () => { i--; render(); place(); };
@@ -261,12 +347,33 @@
     render();
   }
 
+  // Picks the tour back up after a sidebar click navigated the page.
+  function resumeTour() {
+    const st = readState();
+    if (!st) return false;
+    writeState(null);
+    const next = Number(st.i) || 0;
+    const done = () => { if (st.andImport) openImport(); };
+    if (next >= STEPS.length) {
+      try { localStorage.setItem(SEEN_KEY, '1'); } catch { }
+      done();
+      return true;
+    }
+    // Let the page lay its sidebar out first, or the ring lands on nothing.
+    setTimeout(() => {
+      openOnboarding._andImport = !!st.andImport;
+      openOnboarding(() => done(), next);
+    }, 250);
+    return true;
+  }
+
   window.Onboarding = {
     openImport,
-    openTour: openOnboarding,
+    openTour(onFinish) { openOnboarding._andImport = false; openOnboarding(onFinish); },
     // The whole first-run flow: the tour, then the import modal either way.
-    start() { openOnboarding(() => openImport()); },
+    start() { openOnboarding._andImport = true; openOnboarding(() => openImport()); },
     hasRun() { try { return !!localStorage.getItem(SEEN_KEY); } catch { return true; } },
+    resume: resumeTour,
     // Called on the home page; runs once ever.
     maybeRunFirstTime() {
       if (window.Onboarding.hasRun()) return;
@@ -274,4 +381,12 @@
       setTimeout(() => window.Onboarding.start(), 700);
     },
   };
+
+  // Every page that has a sidebar loads this file, so this is where a tour in
+  // progress comes back after a click navigated away.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', resumeTour, { once: true });
+  } else {
+    resumeTour();
+  }
 })();

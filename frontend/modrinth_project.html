@@ -82,6 +82,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     line-height: 1.5;
   }
 </style>
+  <script src="uimodal.js"></script>
 </head>
 <body>
   <div id="loading-overlay" class="loading-overlay">
@@ -501,7 +502,8 @@ if (downloadBtn.textContent == "Back") {
         installBtn.disabled = true;
         installBtn.textContent = "Starting…";
         // Hands off to the instances page, which follows the install from here.
-        await window.ModpackInstall.start(mrpackFile.url, mod.title);
+        await window.ModpackInstall.start(mrpackFile.url, mod.title,
+          'instance', mod.icon_url || mod.icon || (mod.logo && mod.logo.url) || null);
       };
       li.appendChild(installBtn);
 

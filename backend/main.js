@@ -369,6 +369,41 @@ function stopInstance(id, pid = null) {
 // there is to say about it — the exit code, the tail of the session log, and
 // the crash report Minecraft writes if it got far enough — and hand it to the
 // UI, which was previously silent about crashes entirely.
+// Pull the crash out of a log when no crash-report file was written — which is
+// the usual case for loader failures, since FML dies before Minecraft's own
+// crash handler is in place. Without this the modal falls back to the last few
+// hundred lines, which is "all the logs" as far as anyone reading it is
+// concerned. Returns null when nothing in the log looks like a failure, and the
+// tail is then genuinely the best we have.
+function extractCrashFromLog(lines) {
+  if (!Array.isArray(lines) || !lines.length) return null;
+  const text = lines.map(l => String(l == null ? "" : l));
+
+  // 1. Some crashes print the whole report into the log as well as (or instead
+  //    of) writing the file. That block is exactly what we want, verbatim.
+  for (let i = text.length - 1; i >= 0; i--) {
+    if (text[i].includes("---- Minecraft Crash Report ----")) {
+      return { text: text.slice(i).join("\n"), kind: "log-report" };
+    }
+  }
+
+  // 2. Otherwise find the last stack trace and show it with a little of the
+  //    context above it, which is usually the line naming the mod at fault.
+  const isThrow = (l) =>
+    /^\s*(Exception in thread|Caused by:)/.test(l) ||
+    /(^|\s)(java|javax|net|com|org|io|cpw)\.[\w.$]*(Exception|Error)(:|\s|$)/.test(l) ||
+    /\b[A-Za-z_$][\w$]*(Exception|Error):/.test(l);
+  let start = -1;
+  for (let i = text.length - 1; i >= 0; i--) {
+    if (isThrow(text[i])) { start = i; break; }
+  }
+  if (start < 0) return null;
+  // Walk back over any "Caused by:" chain so the original cause is included.
+  while (start > 0 && /^\s*(Caused by:|\s*at |\.\.\. \d+ more)/.test(text[start - 1])) start--;
+  const from = Math.max(0, start - 12);
+  return { text: text.slice(from).join("\n"), kind: "log-trace" };
+}
+
 function reportInstanceCrash(profileId, cfg, code) {
   // 0 is a clean quit; 143/130 are SIGTERM/SIGINT, i.e. the user stopping it.
   if (code === 0 || code === null || code === undefined) return;
@@ -380,7 +415,7 @@ function reportInstanceCrash(profileId, cfg, code) {
     const tail = lines.slice(-400);
 
     // The newest crash report, if one was written for this session.
-    let report = null, reportPath = null;
+    let report = null, reportPath = null, reportKind = null;
     try {
       const crashDir = path.join(dir, "crash-reports");
       if (fs.existsSync(crashDir)) {
@@ -392,9 +427,17 @@ function reportInstanceCrash(profileId, cfg, code) {
         if (newest && Date.now() - newest.t < 10 * 60 * 1000) {
           reportPath = path.join(crashDir, newest.f);
           report = fs.readFileSync(reportPath, "utf8").slice(0, 60000);
+          reportKind = "file";
         }
       }
     } catch { /* no report is fine */ }
+
+    // No file — most loader crashes never get that far. Dig the failure out of
+    // the log rather than handing the whole tail over.
+    if (!report) {
+      const found = extractCrashFromLog(lines);
+      if (found) { report = found.text.slice(-60000); reportKind = found.kind; }
+    }
 
     const payload = {
       profileId: String(profileId),
@@ -402,6 +445,7 @@ function reportInstanceCrash(profileId, cfg, code) {
       code,
       tail,
       report,
+      reportKind,
       reportPath,
       at: Date.now(),
     };
@@ -1891,6 +1935,39 @@ function loaderFromCurseId(id, mcVersion) {
   return { loader, loaderVersion };
 }
 
+// The icon for a pack, as a data: URL — not bare base64, since it goes straight
+// into an <img src>. Checks the handful of places a pack may carry one, then
+// falls back to fetching the project icon from the browser listing.
+const MIME_BY_EXT = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+async function packIcon(zip, iconUrl) {
+  const inZip = ["icon.png", "overrides/icon.png", "overrides/pack.png", "pack.png",
+    "client-overrides/icon.png"];
+  for (const name of inZip) {
+    try {
+      const e = zip.getEntry(name);
+      if (e) return "data:image/png;base64," + e.getData().toString("base64");
+    } catch { /* try the next one */ }
+  }
+  if (!iconUrl) return null;
+  // Inlined rather than stored as a URL so the instance still has its icon
+  // offline, and doesn't break if the project is later taken down.
+  try {
+    const res = await fetch(iconUrl);
+    if (!res.ok) return String(iconUrl);
+    const buf = Buffer.from(await res.arrayBuffer());
+    // 256KB is plenty for a 96px icon; anything bigger stays a plain URL
+    // rather than bloating profiles.json.
+    if (buf.length > 256 * 1024) return String(iconUrl);
+    const ext = (String(iconUrl).split("?")[0].split(".").pop() || "png").toLowerCase();
+    const mime = res.headers.get("content-type") || MIME_BY_EXT[ext] || "image/png";
+    if (!/^image\//.test(mime)) return String(iconUrl);
+    return `data:${mime.split(";")[0]};base64,` + buf.toString("base64");
+  } catch {
+    // Couldn't fetch it — the URL still renders once there's a connection.
+    return String(iconUrl);
+  }
+}
+
 async function mrpackFromUrl(url) {
   const tmpFile = path.join(os.tmpdir(), `tmp-${Date.now()}.mrpack`);
   const res = await fetch(url);
@@ -1926,13 +2003,13 @@ async function mrpack(mrpackPath, onProgress, hooks) {
   const profileFolder = path.join(profilesDir, `${profileId}`);
   fs.mkdirSync(profileFolder, { recursive: true });
 
-  // The pack icon is in the archive, so the instance can look right from the
-  // moment it appears rather than after every mod has come down.
-  let icon = null;
-  const iconEntry = zip.getEntry("icon.png");
-  // A data: URL, not bare base64 — the icon goes straight into an <img src>,
-  // which is why modpack instances were coming out with the default icon.
-  if (iconEntry) icon = "data:image/png;base64," + iconEntry.getData().toString("base64");
+  // Give the instance the pack's own icon from the moment it appears. Most
+  // .mrpack files ship NO icon at all -- the format doesn't require one, and
+  // Modrinth's exporter doesn't add one -- so looking only for a root icon.png
+  // meant every pack installed from the browser came out with the default
+  // icon. Try the places packs do put one, then fall back to the project icon
+  // the caller was already showing in the browser.
+  let icon = await packIcon(zip, hooks.iconUrl);
 
   const newProfile = {
     id: profileId,
@@ -2347,7 +2424,8 @@ async function getModInfo(projectID) {
   return data.data; // CF wraps data inside { data: {...} }
 }
 
-async function curseforgeImport(zipPath, onProgress) {
+async function curseforgeImport(zipPath, onProgress, hooks) {
+  hooks = hooks || {};
   const zip = new AdmZip(zipPath);
 
   const manifestEntry = zip.getEntry("manifest.json");
@@ -2416,10 +2494,9 @@ async function curseforgeImport(zipPath, onProgress) {
 
 
 
-  // Optional: read overrides/icon.png if exists
-  let icon = null;
-  const iconEntry = zip.getEntry("overrides/icon.png");
-  if (iconEntry) icon = "data:image/png;base64," + iconEntry.getData().toString("base64");
+  // CurseForge packs rarely carry an icon either, so the same fallback chain
+  // applies: whatever is in the archive, else the project icon.
+  const icon = await packIcon(zip, hooks.iconUrl);
 
   const newProfile = {
     id: profileId,
@@ -3454,7 +3531,7 @@ const MP_PHASE_LABELS = {
   error: "Install failed",
 };
 
-async function runModpackInstall({ ticket, url, name }) {
+async function runModpackInstall({ ticket, url, name, iconUrl }) {
   const st = {
     ticket, name: name || "Modpack", phase: "download",
     done: 0, total: 0, detail: "", profileId: null, error: null, finished: false,
@@ -3483,6 +3560,7 @@ async function runModpackInstall({ ticket, url, name }) {
       tmpPath,
       (done, total, rel) => emit({ phase: "mods", done, total, detail: rel }),
       {
+        iconUrl: iconUrl || null,
         onCreated: (profile) => { emit({ profileId: profile.id, name: profile.name }); broadcastProfilesNow(); },
         onExtract: (done, total) => emit({ phase: "extract", done, total }),
       }
@@ -3521,7 +3599,7 @@ function uniqueServerName(base) {
   return `${clean} ${Date.now()}`;
 }
 
-async function runModpackServerInstall({ ticket, url, name }) {
+async function runModpackServerInstall({ ticket, url, name, iconUrl }) {
   const st = {
     ticket, name: name || "Modpack", phase: "download", kind: "server",
     done: 0, total: 0, detail: "", serverName: null, profileId: null, error: null, finished: false,
@@ -3550,9 +3628,7 @@ async function runModpackServerInstall({ ticket, url, name }) {
     let java = "java";
     try { java = await getJavaForMinecraft(mcVersion); } catch { /* system java */ }
 
-    let icon = null;
-    const iconEntry = zip.getEntry("icon.png");
-    if (iconEntry) icon = "data:image/png;base64," + iconEntry.getData().toString("base64");
+    const icon = await packIcon(zip, iconUrl);
 
     const srv = await serverManager.makeServer({
       name: srvName, version: mcVersion, type: serverType,
@@ -3609,11 +3685,11 @@ async function runModpackServerInstall({ ticket, url, name }) {
 }
 
 // Kick off an install and return immediately — the caller follows the events.
-ipcMain.handle("modpack:install", (event, { url, ticket, name, as }) => {
+ipcMain.handle("modpack:install", (event, { url, ticket, name, as, iconUrl }) => {
   if (!url || !ticket) return { success: false, error: "missing url or ticket" };
   if (modpackInstalls.has(ticket)) return { success: true, already: true };
-  if (as === "server") runModpackServerInstall({ ticket, url, name });
-  else runModpackInstall({ ticket, url, name });
+  if (as === "server") runModpackServerInstall({ ticket, url, name, iconUrl });
+  else runModpackInstall({ ticket, url, name, iconUrl });
   return { success: true, as: as === "server" ? "server" : "instance" };
 });
 // For a page that loads after some progress has already gone by.

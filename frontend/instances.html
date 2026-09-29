@@ -207,6 +207,7 @@
 
     .inline-check input { width: auto; margin: 0; }
   </style>
+  <script src="uimodal.js"></script>
 </head>
 
 <body>
@@ -581,6 +582,10 @@
       ov.className = "modal-overlay active";
       ov.style.zIndex = 7000;
       const hasReport = !!info.report;
+      const why = info.reportKind === "file" ? "Minecraft wrote a crash report:"
+        : info.reportKind === "log-report" ? "Minecraft printed a crash report to the log:"
+          : info.reportKind === "log-trace" ? "No crash report was written. This is what failed:"
+            : "No crash report was written, so here is the end of the log:";
       ov.innerHTML = `
         <div class="modal-content" style="max-width:820px; width:92%; display:flex; flex-direction:column; max-height:82vh;">
           <div class="modal-header">
@@ -588,23 +593,35 @@
             <button class="modal-close" id="crashX">✕</button>
           </div>
           <p style="margin:0 0 10px; opacity:0.85; font-size:13px;">
-            It exited with code ${info.code}.
-            ${hasReport ? "Minecraft wrote a crash report:" : "No crash report was written, so here is the end of the log:"}
+            It exited with code ${info.code}. ${why}
           </p>
           <pre id="crashText" style="flex:1; min-height:0; overflow:auto; margin:0; padding:10px;
             background:var(--very-dark); border:1px solid var(--border-dark); border-radius:var(--border-radius);
             font-size:11px; line-height:1.45; white-space:pre-wrap; word-break:break-word;"></pre>
           <div class="modal-actions">
             <button id="crashCopy">Copy</button>
+            ${hasReport && (info.tail || []).length ? '<button id="crashFull">Full log</button>' : ""}
             ${info.reportPath ? '<button id="crashOpen">Open report folder</button>' : ""}
             <button id="crashLogs">Show logs</button>
             <button id="crashClose">Close</button>
           </div>
         </div>`;
       document.body.appendChild(ov);
-      const text = hasReport ? info.report : (info.tail || []).join("\n");
+      let text = hasReport ? info.report : (info.tail || []).join("\n");
       // textContent, not innerHTML: a crash report is full of angle brackets.
-      ov.querySelector("#crashText").textContent = text || "(nothing was captured)";
+      const pre = ov.querySelector("#crashText");
+      pre.textContent = text || "(nothing was captured)";
+      const fullBtn = ov.querySelector("#crashFull");
+      if (fullBtn) {
+        let showingFull = false;
+        fullBtn.onclick = () => {
+          showingFull = !showingFull;
+          text = showingFull ? (info.tail || []).join("\n") : info.report;
+          pre.textContent = text || "(nothing was captured)";
+          pre.scrollTop = showingFull ? pre.scrollHeight : 0;
+          fullBtn.textContent = showingFull ? "Crash only" : "Full log";
+        };
+      }
       const close = () => ov.remove();
       ov.querySelector("#crashX").onclick = close;
       ov.querySelector("#crashClose").onclick = close;
@@ -1895,10 +1912,12 @@
         // Menu item clicks. Export used to be a hover flyout, which was fiddly to
         // hit and had nowhere to put the options; it opens a modal now.
         menu.querySelectorAll(".menu-item").forEach(item => {
-          item.addEventListener("click", e => {
+          item.addEventListener("click", async e => {
             e.stopPropagation();
             if (item.dataset.action === "open") ipcRenderer.send("open-folder", { id: profile.id, isClient: true });
-            if (item.dataset.action === "delete" && confirm(`Delete "${profile.name}"?`)) ipcRenderer.send("delete-profile", profile.id);
+            if (item.dataset.action === "delete" && await uiConfirm(
+              `Delete "${profile.name}"? Its worlds, mods, screenshots and logs are deleted with it. This cannot be undone.`,
+              { title: 'Delete instance', ok: 'Delete', danger: true })) ipcRenderer.send("delete-profile", profile.id);
             if (item.dataset.action === "shortcut") openShortcutModal(profile);
             if (item.dataset.action === "share") openInstanceShareModal({ localPort: 0, relayKey: `instance-${profile.id}`, defaultSub: (profile.name || "instance"), onShared: (address) => { if (window.notify) window.notify("Shared at " + address, "success"); } });
             if (item.dataset.action === "export") openExportModal(profile);
@@ -2316,7 +2335,7 @@
           del.title = running ? "Close the game to change this" : "Delete";
           del.onclick = async (e) => {
             e.stopPropagation();
-            if (!confirm(`Delete "${p.name}" from this instance?`)) return;
+            if (!await uiConfirm(`Delete "${p.name}" from this instance?`, { title: 'Delete', ok: 'Delete', danger: true })) return;
             del.disabled = true;
             await ipcRenderer.invoke("delete-instance-mod", { profileId: profile.id, tab: tabName, filename: p.filename });
             refresh();

@@ -130,6 +130,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     .inline-check { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 6px 0; cursor: pointer; white-space: nowrap; }
     .inline-check input { width: auto; margin: 0; }
   </style>
+  <script src="uimodal.js"></script>
 </head>
 <body>
   <div id="loading-overlay" class="loading-overlay">
@@ -628,7 +629,9 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     async function startServerChecked(name) {
       const e = await ipcRenderer.invoke('server-eula:get', name);
       if (!e.accepted) {
-        const ok = confirm("Before running a Minecraft server you must accept the Minecraft EULA (https://aka.ms/MinecraftEULA).\n\nClick OK to accept and start the server.");
+        const ok = await uiConfirm(
+          "Before running a Minecraft server you must accept the Minecraft EULA (https://aka.ms/MinecraftEULA).",
+          { title: 'Accept the Minecraft EULA', ok: 'Accept and start' });
         if (!ok) return false;
         await ipcRenderer.invoke('server-eula:accept', name);
       }
@@ -754,7 +757,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     };
     $('dDelete').onclick = async () => {
       $('dMenu').classList.remove('open');
-      if (!confirm(`Delete server "${selectedServer.name}" and all its files?`)) return;
+      if (!await uiConfirm(`Delete server "${selectedServer.name}" and all its files? This cannot be undone.`,
+        { title: 'Delete server', ok: 'Delete', danger: true })) return;
       await ipcRenderer.invoke('delete-server', selectedServer.name);
       closeDetail();
     };
@@ -823,7 +827,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           const copyBtn = document.createElement('i'); copyBtn.className = 'material-icons file-act'; copyBtn.textContent = 'content_copy'; copyBtn.title = 'Duplicate';
           copyBtn.onclick = async (ev) => { ev.stopPropagation(); await ipcRenderer.invoke('server-fs:copy', { name: selectedServer.name, path: rowPath }); loadFiles(sfCurrentDir); };
           const delBtn = document.createElement('i'); delBtn.className = 'material-icons file-act'; delBtn.textContent = 'delete'; delBtn.title = 'Delete';
-          delBtn.onclick = async (ev) => { ev.stopPropagation(); if (!confirm(`Delete "${e.name}"?`)) return; await ipcRenderer.invoke('server-fs:delete', { name: selectedServer.name, path: rowPath }); loadFiles(sfCurrentDir); };
+          delBtn.onclick = async (ev) => { ev.stopPropagation(); if (!await uiConfirm(`Delete "${e.name}"?`, { title: 'Delete', ok: 'Delete', danger: true })) return; await ipcRenderer.invoke('server-fs:delete', { name: selectedServer.name, path: rowPath }); loadFiles(sfCurrentDir); };
           li.append(copyBtn, delBtn);
         }
         li.onclick = () => (e.isDir || e.isArchive) ? loadFiles(rowPath) : openFile(rowPath, e.name);
@@ -1110,7 +1114,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         del.title = 'Delete';
         del.onclick = async (ev) => {
           ev.stopPropagation();
-          if (!confirm(`Delete mod "${e.name}"?`)) return;
+          if (!await uiConfirm(`Delete mod "${e.name}"?`, { title: 'Delete mod', ok: 'Delete', danger: true })) return;
           await ipcRenderer.invoke('server-fs:delete', { name: selectedServer.name, path: 'mods/' + e.name });
           loadServerMods();
         };
@@ -1151,7 +1155,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         li.appendChild(mkBtn('keyboard_arrow_up', 'Move up (higher priority)', () => move(-1), i === 0));
         li.appendChild(mkBtn('keyboard_arrow_down', 'Move down', () => move(1), i === order.length - 1));
         li.appendChild(mkBtn(p.enabled ? 'toggle_on' : 'toggle_off', p.enabled ? 'Disable' : 'Enable', async () => { await ipcRenderer.invoke('server-rp:setEnabled', { name: selectedServer.name, filename: p.filename, enabled: !p.enabled }); loadServerPacks(); }));
-        li.appendChild(mkBtn('delete', 'Delete', async () => { if (!confirm(`Delete pack "${p.filename}"?`)) return; await ipcRenderer.invoke('server-rp:remove', { name: selectedServer.name, filename: p.filename }); loadServerPacks(); }));
+        li.appendChild(mkBtn('delete', 'Delete', async () => { if (!await uiConfirm(`Delete pack "${p.filename}"?`, { title: 'Delete pack', ok: 'Delete', danger: true })) return; await ipcRenderer.invoke('server-rp:remove', { name: selectedServer.name, filename: p.filename }); loadServerPacks(); }));
         ul.appendChild(li);
       });
     }

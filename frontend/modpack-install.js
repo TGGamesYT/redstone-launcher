@@ -45,6 +45,9 @@
   // A pack whose loader has no server side can't be set up as one.
   const SERVER_LOADERS = ['forge', 'neoforge', 'fabric', 'quilt'];
   const serverCapable = (v) => (v.loaders || []).some(l => SERVER_LOADERS.includes(String(l).toLowerCase()));
+  // .mrpack files almost never contain an icon, so the instance has to get the
+  // project's icon from whichever browser the install was started in.
+  const iconOf = (p) => (p && (p.icon_url || p.iconUrl || p.icon || (p.logo && p.logo.url) || p.thumbnailUrl)) || null;
 
   window.ModpackInstall = {
     // The picker: which version, and whether this becomes a client instance or
@@ -73,7 +76,10 @@
       const noteEl = card.querySelector('.mpi-note');
       const goBtn = card.querySelector('.mpi-go');
       let mode = 'instance';
-      let chosen = null;
+      // Preselect the newest version: it is what almost everyone wants, and
+      // having nothing selected meant Install started out disabled with no
+      // hint that a row had to be picked first.
+      let chosen = list[0] || null;
 
       const close = () => ov.remove();
       card.querySelector('.mpi-x').onclick = close;
@@ -116,28 +122,32 @@
           mode = b.dataset.as;
           card.querySelectorAll('.mpi-seg button').forEach(x => x.classList.toggle('active', x === b));
           // The chosen version may not be valid for the other mode.
-          if (mode === 'server' && chosen && !serverCapable(chosen)) chosen = null;
+          // The chosen version may not exist for the other mode; fall back to
+          // the newest one that does rather than leaving nothing selected.
+          if (mode === 'server' && chosen && !serverCapable(chosen)) chosen = list.find(serverCapable) || null;
+          else if (mode === 'instance' && !chosen) chosen = list[0] || null;
           paint();
         };
       });
       goBtn.onclick = async () => {
         if (!chosen) return;
         const file = (chosen.files || []).find(f => String(f.url || '').endsWith('.mrpack')) || (chosen.files || [])[0];
-        if (!file) return alert('That version has no downloadable pack file.');
+        if (!file) return uiAlert('That version has no downloadable pack file.', 'Nothing to install');
         goBtn.disabled = true;
         goBtn.textContent = 'Starting…';
-        await window.ModpackInstall.start(file.url, project.title || chosen.name, mode);
+        await window.ModpackInstall.start(file.url, project.title || chosen.name, mode, iconOf(project));
       };
       paint();
     },
 
     // url: the .mrpack download. name: what to call it until the pack's own
     // name comes back out of the archive. as: 'instance' (default) or 'server'.
-    async start(url, name, as) {
+    // iconUrl: the project icon, used when the archive carries none.
+    async start(url, name, as, iconUrl) {
       const ticket = 'mp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-      const res = await ipcRenderer.invoke('modpack:install', { url, ticket, name: name || '', as });
+      const res = await ipcRenderer.invoke('modpack:install', { url, ticket, name: name || '', as, iconUrl: iconUrl || null });
       if (!res || !res.success) {
-        alert('Could not start the install: ' + ((res && res.error) || 'unknown error'));
+        await uiAlert('Could not start the install: ' + ((res && res.error) || 'unknown error'), 'Install failed');
         return null;
       }
       const page = as === 'server' ? 'server.html' : 'instances.html';

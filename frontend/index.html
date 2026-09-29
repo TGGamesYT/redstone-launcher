@@ -23,6 +23,7 @@
   </script>
   <link rel="stylesheet" href="server.css" />
   <link rel="stylesheet" href="material-icons.css">
+  <script src="uimodal.js"></script>
 </head>
 
 <body>
@@ -151,9 +152,9 @@
             <button class="remove-btn" title="Remove account">✕</button>
           `;
           
-          item.querySelector('.remove-btn').onclick = (e) => {
+          item.querySelector('.remove-btn').onclick = async (e) => {
             e.stopPropagation();
-            if (confirm(`Remove ${player.name}?`)) {
+            if (await uiConfirm(`Remove ${player.name} from this launcher?`, { title: 'Remove account', ok: 'Remove', danger: true })) {
               ipcRenderer.send('remove-player', player.id);
               renderAccountsSidebar();
             }

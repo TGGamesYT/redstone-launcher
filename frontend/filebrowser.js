@@ -92,7 +92,7 @@
             const cp = document.createElement('i'); cp.className = 'material-icons file-act'; cp.textContent = 'content_copy'; cp.title = 'Duplicate';
             cp.onclick = async (ev) => { ev.stopPropagation(); await ipcRenderer.invoke(chan + ':copy', arg({ path: rowPath })); loadDir(curDir); };
             const dl = document.createElement('i'); dl.className = 'material-icons file-act'; dl.textContent = 'delete'; dl.title = 'Delete';
-            dl.onclick = async (ev) => { ev.stopPropagation(); if (!confirm(`Delete "${e.name}"?`)) return; await ipcRenderer.invoke(chan + ':delete', arg({ path: rowPath })); loadDir(curDir); };
+            dl.onclick = async (ev) => { ev.stopPropagation(); if (!await uiConfirm(`Delete "${e.name}"?`, { title: 'Delete', ok: 'Delete', danger: true })) return; await ipcRenderer.invoke(chan + ':delete', arg({ path: rowPath })); loadDir(curDir); };
             li.append(cp, dl);
           }
           li.onclick = () => (e.isDir || e.isArchive) ? loadDir(rowPath) : openFile(rowPath, e.name);

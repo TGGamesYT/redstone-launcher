@@ -25,6 +25,7 @@
   <link rel="stylesheet" href="modrinth.css" />
   <link rel="stylesheet" href="server.css" />
   <link rel="stylesheet" href="material-icons.css">
+  <script src="uimodal.js"></script>
 </head>
 
 <body>
@@ -835,6 +836,17 @@
     // Opening a project navigates away, so coming back re-runs this script. The
     // browser restores <select> values only AFTER the first load, which left a
     // filter showing in the toolbar without being applied. Persist + re-apply.
+    // Chromium tells us how the page was entered. The sort/version/loader
+    // filters are preferences and stay sticky, but the search text and the type
+    // tab are part of "the results I was just looking at" -- they come back on
+    // a back/forward navigation and nowhere else.
+    const enteredViaBack = (() => {
+      try {
+        const nav = performance.getEntriesByType('navigation')[0];
+        return !!nav && nav.type === 'back_forward';
+      } catch { return false; }   // treat as a fresh visit
+    })();
+
     function saveMbFilters() {
       if (installMode) return;   // install mode pins its own type/filters
       try {
@@ -842,8 +854,10 @@
         const tab = document.querySelector('#typeTabs .tab.active');
         localStorage.setItem('mb_filters', JSON.stringify({
           sort: g('sortSelect'), version: g('versionFilter'), loader: g('loaderFilter'),
-          showAll: g('versionShowAll'), type: tab ? tab.dataset.type : '',
+          showAll: g('versionShowAll'),
         }));
+        // Session-scoped, and only read back on a back-navigation.
+        if (tab) sessionStorage.setItem('mb_type', tab.dataset.type);
       } catch { /* ignore */ }
     }
     function restoreMbFilters() {
@@ -855,9 +869,15 @@
       set('sortSelect', s.sort); set('loaderFilter', s.loader);
       const sa = document.getElementById('versionShowAll'); if (sa) sa.checked = !!s.showAll;
       _wantMbVersion = s.version || '';
-      if (s.type) {
+
+      let wantType = '';
+      try {
+        if (enteredViaBack) wantType = sessionStorage.getItem('mb_type') || '';
+        else sessionStorage.removeItem('mb_type');
+      } catch { /* ignore */ }
+      if (wantType) {
         const tabs = document.querySelectorAll('#typeTabs .tab');
-        const want = [...tabs].find(t => t.dataset.type === s.type);
+        const want = [...tabs].find(t => t.dataset.type === wantType);
         if (want) { tabs.forEach(t => t.classList.remove('active')); want.classList.add('active'); }
       }
     }
@@ -872,13 +892,8 @@
       loadProjects();
     };
     if (!installMode) {
-      let cameBack = false;
       try {
-        const nav = performance.getEntriesByType('navigation')[0];
-        cameBack = !!nav && nav.type === 'back_forward';
-      } catch { /* treat as a fresh visit */ }
-      try {
-        if (cameBack) {
+        if (enteredViaBack) {
           const s = sessionStorage.getItem('mb_search');
           if (s) searchInput.value = s;
         } else {
@@ -1123,7 +1138,8 @@
             installBtn.disabled = true;
             installBtn.textContent = "Starting…";
             // Hands off to the instances page, which follows the install from here.
-            await window.ModpackInstall.start(mrpackFile.url, mod.title);
+            await window.ModpackInstall.start(mrpackFile.url, mod.title,
+              'instance', mod.icon_url || mod.icon || (mod.logo && mod.logo.url) || null);
           };
           li.appendChild(installBtn);
 

@@ -730,3 +730,14 @@ function applyOnlineState() {
 window.addEventListener('online', applyOnlineState);
 window.addEventListener('offline', applyOnlineState);
 applyOnlineState();
+
+// ── Onboarding ──
+// The tour walks the user through the sidebar, so it has to be able to resume
+// on whatever page a sidebar click opens — which means every page with a
+// sidebar needs onboarding.js. A few pages include it themselves; load it here
+// for the rest. (onboarding.js no-ops if it has already run.)
+if (!document.querySelector('script[src$="onboarding.js"]')) {
+  const ob = document.createElement('script');
+  ob.src = 'onboarding.js';
+  document.head.appendChild(ob);
+}

@@ -1,0 +1,140 @@
+# Launcher TODO
+
+Everything asked for across the last seven rounds of feedback, in one place.
+`[x]` = shipped and believed working. `[~]` = shipped once but reported broken
+again, so it counts as outstanding. `[ ]` = not started.
+
+---
+
+## 1. Regressions — shipped before, reported still broken
+
+- [~] **Modpack instances don't get the modpack icon.** Reported three times.
+      Both `icon = data:image/png;base64,...` sites in `backend/main.js` were
+      patched; the icon still never lands on the instance. Needs tracing from
+      `mrpack()` through profile save, not another blind patch.
+- [~] **Grid view is a single full-width column,** not a grid. Screenshot shows
+      stacked rows at 100% width.
+- [~] **Scroll areas still cut off mid-page.** `fitheight.js` replaced the
+      `calc(100vh - N)` heights but the panes are still wrong.
+- [~] **Crash modal shows the whole log** instead of the crash report.
+      `reportInstanceCrash` sends `report` and `tail`; the modal is rendering the
+      tail even when a report exists.
+- [~] **Mod browser persists the active type tab.** Query restore now works, but
+      the tab should only be restored when arriving via back-navigation
+      (`performance.getEntriesByType('navigation')[0].type === 'back_forward'`),
+      never on a fresh visit.
+- [~] **Onboarding tour dies when a sidebar tab is clicked.** It should survive
+      the navigation, carry over to the new page, and on each tab both *prompt*
+      the click and *explain* what the tab is.
+- [~] **Onboarding highlight is smaller for the Skins and Settings tabs.** Their
+      selectors (`a[href="profile-manager.html"]`, `a[href="settings.html"]`)
+      match an `<a>` that wraps only the `<i>`; every other row's `<a>` wraps the
+      whole `<li>`. Highlight the `<li>` instead.
+- [~] **Settings shows the app version as `...`** in dev mode, even though the
+      logs report 1.17.0.
+- [~] **Server merge doesn't group same-IP entries.** Servers that share an IP
+      but differ in name should render as `NAME A / NAME B / NAME C`, with the IP
+      under the name line and the instances that have it listed below that.
+- [~] **Opening a modpack instance from the instances list just reloads.**
+      Opening the same instance from the sidebar works.
+- [~] **Modrinth App instances are not found by the importer.**
+- [~] **Skins-page bounce-back is too fast and too short.** Wait 3–4 s before
+      returning (currently 2.2 s) and return more slowly.
+
+## 2. New work
+
+### Instances & servers
+- [ ] Replace every remaining Electron `confirm`/`alert` with a launcher modal.
+      Start with the instance-delete confirm; `pmConfirm` already exists in
+      `profile-manager.html` and should be promoted to a shared helper.
+- [ ] **Actually delete instance files on delete.** Deleting an instance and then
+      importing one with the same name surfaces the deleted instance's logs, so
+      the directory is surviving.
+- [ ] **Instance/server creation type selector**, styled like the sync instance
+      picker, offering: custom setup (the current creator, stripped down), mod or
+      modpack, upload a modpack, import an instance.
+- [ ] **Mod-or-modpack search** in that same style — mostly modpacks but mods
+      too, sorted by downloads. Choosing a *mod* gives the new instance that
+      mod's icon and name and opens the custom setup pre-filled to the mod's
+      latest supported version.
+- [ ] **Play button becomes "Cancel" while launching** and cancels the launch
+      when clicked, before it turns into "Stop".
+- [ ] **Stop instance tabs from refreshing while modpack mods download** — with
+      the Mods tab open it lags badly.
+- [ ] **Auto-select the newest version** in the modpack install picker.
+- [ ] **Import player refresh/access tokens** from other launchers, alongside the
+      instance import.
+
+### Skins & capes
+- [ ] **Cape selection is over-cached.** Applying a cape still shows the old one
+      as selected; after a reload the list is right but the 3D render is still
+      wrong; it survives an app restart.
+- [ ] **Skin upload can stamp apply/undo onto the actually-selected skin.**
+- [ ] **Skin upload sometimes forgets to set the skin back,** and triggers an
+      annoying full reload.
+- [ ] **Cloud icon should show the skin's location on Mojang's servers** once it
+      has been uploaded.
+- [ ] **Add a skin from its Mojang texture URL / id.**
+- [ ] **Edit-skin menu shows the Mojang texture id** when uploaded, and lets you
+      set it when not — verifying the texture actually matches and warning that
+      setting it will override.
+- [ ] **Don't reload capes on every skins-page open** (rate limiting makes them
+      vanish). Add reload buttons next to the "Capes" and "Your Skins" title rows.
+- [ ] **Reset buttons next to those reload buttons** — skins resets to the default
+      skin, capes removes the cape. Both are removed from their lists but stay
+      applyable/undoable exactly as now.
+
+### Animations tooling
+- [ ] **`bbmodelconvert.js` at the repo root**, separate from the launcher: run it
+      with a path to a `.bbmodel` and it converts every animation in the file into
+      the random skins-page animations, saved where the Electron app can read them.
+- [ ] **Devtools commands `playerRenderAnimList()` and
+      `playerRenderAnimPlay("animationname")`.**
+
+## 3. Investigations — diagnose before changing anything
+
+- [ ] **NeoForge installs the wrong version.** Create+ crashes on launch here but
+      runs in other launchers. The launch line carries
+      `--fml.neoForgeVersion 21.1.1` while the pack's mods require `[21.1.169,)`,
+      ending in
+      `NoClassDefFoundError: net/neoforged/fml/loading/moddiscovery/ModFileParser$MixinConfig`.
+      So the pack's `loaderVersion` isn't reaching the installer — find where it's
+      dropped.
+- [ ] **CurseForge mod downloads return 500** and show "unavailable", even though
+      the Cloudflare Worker is up. The worker only 500s from its outer `catch` or
+      the "Unable to fetch download URL" branch, so identify the failing request
+      before touching the worker.
+
+---
+
+## 4. Done in the previous rounds
+
+Kept for the record so nothing gets re-reported as missing.
+
+- [x] Top toolbar draggable across the whole bar, not just the title text
+- [x] Mod browser restores the search query when navigating back
+- [x] Play button not clickable while an install is running
+- [x] Modpack install reuses the existing progress UI instead of its own bar
+- [x] "Update all" on the instance and server mod tabs
+- [x] Modpack install offers instance *or* server
+- [x] Install button opens the versions tab with a version/target modal
+- [x] Browsed skins detect slim vs wide (MineSkin's list response has no variant
+      field; read off the pixel column at `x=55`, `y=20..32`)
+- [x] Cloud button pinned top-right, above the drag layer, with a real modal
+- [x] Cloud badge no longer renders over everything (`isolation: isolate`)
+- [x] Bounciness and momentum on the player render's return-to-centre
+- [x] Drag-reorder works away from the extreme page edge
+- [x] Unmoderated-API warning on the skin browser
+- [x] Screenshots thumbnailed via `sharp` instead of rendering full-size
+- [x] Crop / circle-mask on a selected screenshot, defaulting on for opaque squares
+- [x] Version banner section (`minecraft.wiki/images/<version>_banner.png|jpg`,
+      png preferred, nothing shown if neither exists) plus the seven edition icons
+- [x] Version panorama, facing forward, with a stitched crop view
+- [x] Server-list merge mode across instances
+- [x] Crash modal on unexpected instance exit
+- [x] Queued cloud uploads that respect the rate limit
+- [x] Import modal for Modrinth / CurseForge / MultiMC / Prism / vanilla
+- [x] First-launch onboarding tour of the sidebar, both re-runnable from Settings
+- [x] Slim/wide toggle on the skins-page rename dialog
+- [x] Auth refresh consolidated behind one throttle (the 429 storm)
+- [x] Config sync stops severing `servers.dat` hard links on every sync
