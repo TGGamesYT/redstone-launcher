@@ -880,32 +880,82 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           try { all = await ipcRenderer.invoke('sync:allServers') || []; } catch { }
           list.innerHTML = '';
           if (!all.length) { list.innerHTML = '<li style="opacity:0.7;">No saved servers found in any instance.</li>'; return; }
+          // One row per ADDRESS. A server saved under different names in
+          // different instances is still one server, so the names are offered
+          // side by side with the address under them and the instances below
+          // that, instead of the same server appearing three times.
           all.forEach(s => {
+            const names = (s.names && s.names.length ? s.names : [{ name: s.name, from: s.from }]);
+            let chosen = names[0].name;
+
             const li = document.createElement('li');
             li.className = 'profile-item';
             li.style.cursor = 'pointer';
             const cb = document.createElement('input');
             cb.type = 'checkbox';
-            cb.checked = s.count === 1;
+            cb.checked = true;
             cb.style.cssText = 'width:18px;height:18px;margin-right:10px;flex:0 0 18px;';
             cb.onclick = (e) => e.stopPropagation();
+
             const info = document.createElement('div');
             info.className = 'profile-info';
-            const sub = s.count > 1
-              ? `${s.ip} — in ${s.count} instances (${s.from.slice(0, 3).join(', ')}${s.from.length > 3 ? '…' : ''})`
-              : `${s.ip} — ${s.from[0]}`;
-            info.innerHTML = `<div class="profile-name"></div><div class="profile-details"></div>`;
-            info.querySelector('.profile-name').textContent = s.name || s.ip;
-            info.querySelector('.profile-details').textContent = sub;
+            const nameRow = document.createElement('div');
+            nameRow.className = 'profile-name';
+            nameRow.style.cssText = 'display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 0;';
+            const ipRow = document.createElement('div');
+            ipRow.className = 'profile-details';
+            ipRow.textContent = s.ip;
+            const whereRow = document.createElement('div');
+            whereRow.className = 'profile-details';
+            whereRow.style.opacity = '0.7';
+            whereRow.textContent = s.from.length > 1
+              ? `in ${s.from.length} instances: ${s.from.join(', ')}`
+              : `in ${s.from[0]}`;
+
+            const paintNames = () => {
+              [...nameRow.querySelectorAll('span[data-nm]')].forEach(x => {
+                const on = x.dataset.nm === String(chosen);
+                x.style.opacity = on ? '1' : '0.5';
+                x.style.textDecoration = on ? 'underline' : 'none';
+              });
+            };
+            if (names.length === 1) {
+              nameRow.textContent = names[0].name || s.ip;
+            } else {
+              // Each name is clickable: whichever is picked is the one the
+              // merged list keeps.
+              names.forEach((n, i) => {
+                if (i) {
+                  const sep = document.createElement('span');
+                  sep.textContent = ' / ';
+                  sep.style.opacity = '0.45';
+                  nameRow.appendChild(sep);
+                }
+                const b = document.createElement('span');
+                b.textContent = n.name || '(no name)';
+                b.style.cssText = 'cursor:pointer;padding:0 2px;border-radius:4px;';
+                b.title = `Saved in: ${n.from.join(', ')}`;
+                b.dataset.nm = String(n.name);
+                b.onclick = (e) => { e.stopPropagation(); chosen = n.name; paintNames(); };
+                nameRow.appendChild(b);
+              });
+              paintNames();
+            }
+
+            info.append(nameRow, ipRow, whereRow);
             li.append(cb, info);
             li.onclick = () => { cb.checked = !cb.checked; };
-            li._server = s; li._cb = cb;
+            li._cb = cb;
+            // Read the picked name at submit time rather than freezing it here.
+            li._pick = () => ({ name: chosen, ip: s.ip, icon: s.icon, acceptTextures: s.acceptTextures });
             list.appendChild(li);
           });
         }
 
         mergeGo.onclick = async () => {
-          const chosen = [...list.querySelectorAll('li')].filter(li => li._cb && li._cb.checked).map(li => li._server);
+          const chosen = [...list.querySelectorAll('li')]
+            .filter(li => li._cb && li._cb.checked && li._pick)
+            .map(li => li._pick());
           const t = pending; pending = null;
           modal.classList.remove('active');
           const r = await ipcRenderer.invoke('sync:enableMerged', { servers: chosen });
@@ -921,7 +971,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           document.getElementById('syncModeMerge').classList.toggle('active', merging);
           mergeGo.style.display = merging ? '' : 'none';
           help.textContent = merging
-            ? 'Tick the servers to keep. Ones saved in several instances are probably the same server, so they start unticked.'
+            ? 'Tick the servers to keep. One row per address — where a server was saved under different names, click the name to keep.'
             : 'Pick the instance to take the first copy from. Every other instance is then given that copy.';
           if (merging) paintMerge(); else paintSeedList();
         };

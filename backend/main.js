@@ -6453,8 +6453,37 @@ ipcMain.handle("sync:allServers", async () => {
       });
     }
   }
-  // Duplicates first: they are the ones needing a decision.
-  return [...seen.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  // Group by ADDRESS, not by name+address. The same server saved under
+  // different names in different instances is still one server, and listing it
+  // three times asked the user to notice that themselves. Each group carries
+  // every name it was saved under so one can be picked.
+  const byIp = new Map();
+  for (const e of seen.values()) {
+    const ip = String(e.ip || "").trim().toLowerCase();
+    const g = byIp.get(ip);
+    if (g) {
+      g.names.push({ name: e.name, count: e.count, from: e.from });
+      g.count += e.count;
+      for (const f of e.from) if (!g.from.includes(f)) g.from.push(f);
+      if (!g.icon && e.icon) g.icon = e.icon;
+    } else {
+      byIp.set(ip, {
+        key: ip, ip: e.ip, icon: e.icon, acceptTextures: e.acceptTextures,
+        names: [{ name: e.name, count: e.count, from: e.from }],
+        count: e.count, from: e.from.slice(),
+      });
+    }
+  }
+  return [...byIp.values()].map(g => {
+    // Most-used name first, so the default pick is the one most instances agree
+    // on; the rest are offered beside it.
+    g.names.sort((a, b) => b.count - a.count || String(a.name).localeCompare(String(b.name)));
+    g.name = (g.names[0] && g.names[0].name) || g.ip;
+    // How many INSTANCES have this address, which is what "saved in several
+    // instances" should mean now that names are merged.
+    g.count = g.from.length;
+    return g;
+  }).sort((a, b) => b.count - a.count || String(a.name).localeCompare(String(b.name)));
 });
 
 // Turn server syncing on from a hand-picked list rather than one instance's file.
