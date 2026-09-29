@@ -8397,16 +8397,28 @@ ipcMain.handle("mc:stashSkin", async (event, { uuid, id, base64, variant, restor
     if (uuid && id && url) rememberMojangUrl(uuid, id, url);
     let restored = false;
     if (restore && restore.base64) {
-      // Back to back uploads get rate-limited, so give Mojang a moment.
-      await new Promise(r => setTimeout(r, 2500));
-      try {
-        const backUrl = await postSkinToMojang(restore.base64, restore.variant);
-        if (restore.uuid && restore.id && backUrl) rememberMojangUrl(restore.uuid, restore.id, backUrl);
-        restored = true;
-      } catch (err) {
+      // Back to back uploads get rate-limited, so give Mojang a moment — and
+      // keep trying when it says no. Giving up after one attempt is how an
+      // upload ended up leaving the wrong skin on the account.
+      let lastErr = null;
+      for (const wait of [2500, 6000, 15000]) {
+        await new Promise(r => setTimeout(r, wait));
+        try {
+          const backUrl = await postSkinToMojang(restore.base64, restore.variant);
+          if (restore.uuid && restore.id && backUrl) rememberMojangUrl(restore.uuid, restore.id, backUrl);
+          restored = true;
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          // Only a rate limit is worth waiting out; anything else won't improve.
+          if (!/rate-limit|429/i.test(String(err && err.message || err))) break;
+        }
+      }
+      if (!restored) {
         // The skin IS uploaded; we just couldn't switch back. Say so rather
         // than reporting the whole thing as a failure.
-        return { success: true, url, restored: false, restoreError: String(err && err.message || err) };
+        return { success: true, url, restored: false, restoreError: String(lastErr && lastErr.message || lastErr) };
       }
     }
     return { success: true, url, restored };

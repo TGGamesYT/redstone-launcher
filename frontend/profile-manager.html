@@ -467,6 +467,7 @@
         <button class="add-opt" id="addDefaultBtn"><i class="material-icons">groups</i><span>Select default</span><small>Minecraft's default skins</small></button>
         <button class="add-opt" id="addUsernameBtn"><i class="material-icons">person_search</i><span>By username</span><small>Grab another player's skin</small></button>
         <button class="add-opt" id="addBrowseBtn"><i class="material-icons">travel_explore</i><span>Browse skins</span><small>Search a skin library</small></button>
+        <button class="add-opt" id="addTextureBtn"><i class="material-icons">link</i><span>From a texture URL</span><small>A Mojang texture link or id</small></button>
       </div>
       <div style="display:flex; gap:8px; margin-top:16px; justify-content:flex-end;">
         <button class="pm-btn" id="addSkinCancelBtn">Cancel</button>
@@ -586,9 +587,35 @@
           <button type="button" class="pm-btn skin-variant-btn" data-variant="slim" style="flex:1;">Slim</button>
         </div>
       </div>
+      <div style="margin-bottom:14px;">
+        <div style="font-size:11px; opacity:0.7; margin-bottom:5px;">Mojang texture</div>
+        <input type="text" id="skinTextureInput" placeholder="Not on Mojang's servers" style="width:100%;">
+        <div id="skinTextureNote" style="font-size:11px; opacity:0.65; margin-top:5px; line-height:1.45;"></div>
+      </div>
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button class="pm-btn" id="skinRenameCancelBtn">Cancel</button>
         <button class="pm-btn" id="skinRenameSaveBtn" style="background:var(--base-color);">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add a skin straight from a Mojang texture URL or id. -->
+  <div id="textureUrlModal" class="modal-overlay" style="position:fixed; inset:38px 0 0 70px; display:none; align-items:center; justify-content:center; z-index:2100;">
+    <div class="skin-modal-card" style="width:520px; max-width:92%;">
+      <h3 style="margin-top:0;">Add from a texture URL</h3>
+      <p style="margin:0 0 12px; font-size:12px; opacity:0.8; line-height:1.5;">
+        Paste a Mojang texture link — <code>textures.minecraft.net/texture/&lt;id&gt;</code> —
+        or just the id on its own. These are what skins actually live at, and they never expire.
+      </p>
+      <input type="text" id="textureUrlInput" placeholder="https://textures.minecraft.net/texture/…" style="width:100%; margin-bottom:12px;">
+      <div id="textureUrlPreview" style="display:none; gap:14px; align-items:center; margin-bottom:12px;">
+        <div id="textureUrlThumb" style="width:110px; flex:0 0 110px;"></div>
+        <div style="flex:1; font-size:12px; line-height:1.6;" id="textureUrlInfo"></div>
+      </div>
+      <div id="textureUrlError" style="display:none; font-size:12px; color:#ff8b7d; margin-bottom:12px;"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="pm-btn" id="textureUrlCancelBtn">Cancel</button>
+        <button class="pm-btn" id="textureUrlAddBtn" style="background:var(--base-color);" disabled>Add</button>
       </div>
     </div>
   </div>
@@ -868,8 +895,48 @@
       return run;
     }
 
+    // A skin that IS on Mojang's servers has a URL worth seeing — it's where the
+    // texture actually lives, and it's what you hand to anything that wants a
+    // skin by URL. Clicking the cloud shows it rather than doing nothing.
+    async function showMojangLocation(skin) {
+      const url = skin.mojangUrl;
+      const id = String(url).split("/").pop();
+      const ov = document.createElement("div");
+      ov.className = "modal-overlay active";
+      ov.style.zIndex = 7200;
+      ov.innerHTML = `
+        <div class="modal-content" style="max-width:560px;width:92%;">
+          <div class="modal-header"><h2>On Mojang's servers</h2><button class="modal-close" id="mjX">✕</button></div>
+          <p style="margin:0 0 6px;font-size:12px;opacity:0.85;">Texture id</p>
+          <input id="mjId" readonly style="width:100%;box-sizing:border-box;margin-bottom:12px;">
+          <p style="margin:0 0 6px;font-size:12px;opacity:0.85;">Full URL</p>
+          <input id="mjUrl" readonly style="width:100%;box-sizing:border-box;margin-bottom:6px;">
+          <p style="margin:0 0 14px;font-size:11px;opacity:0.65;line-height:1.5;">
+            Texture URLs are permanent — Mojang keys them by the image's own
+            content, so this link keeps working whatever skin you wear next.
+          </p>
+          <div class="modal-actions">
+            <button id="mjCopy">Copy URL</button>
+            <button id="mjOpen">Open</button>
+            <button id="mjClose">Close</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      ov.querySelector("#mjId").value = id;
+      ov.querySelector("#mjUrl").value = url;
+      const close = () => ov.remove();
+      ov.querySelector("#mjX").onclick = close;
+      ov.querySelector("#mjClose").onclick = close;
+      ov.addEventListener("mousedown", e => { if (e.target === ov) close(); });
+      ov.querySelector("#mjCopy").onclick = () => {
+        try { navigator.clipboard.writeText(url); if (window.notify) window.notify("Copied", "success"); } catch { }
+      };
+      ov.querySelector("#mjOpen").onclick = () => { try { require("electron").shell.openExternal(url); } catch { } };
+    }
+
     async function onCloudClick(b, skin, ctx) {
-      if (skin.mojangUrl || b.disabled) return;
+      if (b.disabled) return;
+      if (skin.mojangUrl) return showMojangLocation(skin);
       if (ctx.cracked) {
         return pmConfirm("Offline account", "This account has no Mojang profile to upload a skin to.", { ok: "OK", cancel: "Close" });
       }
@@ -898,11 +965,19 @@
           if (r.restoreError) {
             await pmConfirm("Uploaded, but not switched back",
               "The skin is on Mojang's servers now, but putting your previous skin back failed: "
-              + r.restoreError, { ok: "OK", cancel: "Close" });
+              + r.restoreError + "\n\nApply your skin again when Mojang stops rate-limiting.",
+              { ok: "OK", cancel: "Close" });
+            // The account really is wearing the wrong skin, so the page has to
+            // be re-read to show that honestly.
+            if (_cloudQueued <= 1) await updateSKin({ force: true });
+            return;
           }
-          // Only redraw once the queue has drained, or each upload would rebuild
-          // the grid out from under the ones still waiting.
-          if (_cloudQueued <= 1) await updateSKin();
+          // Nothing the page shows has changed -- the skin that was applied is
+          // applied again -- so DON'T rebuild. Reloading here re-read the
+          // profile, and because Mojang re-encodes an upload the restored skin
+          // came back as a new entry that no longer matched the library, which
+          // is what put a stray Apply/Undo on the skin already being worn.
+          if (window.notify) window.notify("Uploaded to Mojang", "success");
         } catch (err) {
           paintCloud(b, false);
           await pmConfirm("Could not upload the skin", String(err && err.message || err), { ok: "OK", cancel: "Close" });
@@ -2144,6 +2219,22 @@
       document.getElementById('skinRenameInput').value = skin.name || '';
       renameVariant = skin.variant === 'slim' ? 'slim' : 'classic';
       paintVariantButtons();
+      // Where this skin lives on Mojang's servers, if the launcher knows. When
+      // it doesn't, the field is editable so a texture id can be attached by
+      // hand -- checked against the actual image before it is believed.
+      const tex = document.getElementById('skinTextureInput');
+      const note = document.getElementById('skinTextureNote');
+      if (skin.mojangUrl) {
+        tex.value = String(skin.mojangUrl).split('/').pop();
+        tex.readOnly = true;
+        tex.style.opacity = '0.75';
+        note.textContent = 'This skin is on Mojang’s servers. Texture ids are permanent.';
+      } else {
+        tex.value = '';
+        tex.readOnly = false;
+        tex.style.opacity = '1';
+        note.textContent = 'Paste a texture link or id to record where this skin lives. The image is checked against this skin first.';
+      }
       document.getElementById('skinRenameModal').style.display = 'flex';
       setTimeout(() => document.getElementById('skinRenameInput').focus(), 0);
     }
@@ -2155,6 +2246,45 @@
     document.getElementById('skinRenameCancelBtn').onclick = () => { document.getElementById('skinRenameModal').style.display = 'none'; renameTarget = null; };
     document.getElementById('skinRenameSaveBtn').onclick = async () => {
       if (!renameTarget) return;
+      const saveBtn = document.getElementById('skinRenameSaveBtn');
+      const tex = document.getElementById('skinTextureInput');
+
+      // A texture id typed in by hand is claimed, not known, so fetch it and
+      // compare the pixels before recording it. Attaching the wrong one would
+      // make the cloud badge lie about where the skin is.
+      if (!renameTarget.skin.mojangUrl && tex.value.trim()) {
+        const url = textureUrlFrom(tex.value);
+        if (!url) {
+          await pmConfirm('Not a texture link', "That isn't a Mojang texture link or id.", { ok: 'OK', cancel: 'Close' });
+          return;
+        }
+        saveBtn.disabled = true;
+        const prevLabel = saveBtn.textContent;
+        saveBtn.textContent = 'Checking…';
+        try {
+          const r = await ipcRenderer.invoke('skins:fetchUrl', { url });
+          if (!r || r.error || !r.base64) {
+            await pmConfirm('Could not read that texture',
+              (r && r.error) ? String(r.error) : 'Mojang did not return an image for that id.',
+              { ok: 'OK', cancel: 'Close' });
+            return;
+          }
+          const theirs = await ipcRenderer.invoke('skins:pixelHash', { base64: r.base64 });
+          if (theirs !== renameTarget.skin.pixelHash) {
+            const ok = await pmConfirm('That texture is a different skin',
+              'The image at that id does not match this skin. Recording it anyway will '
+              + 'override what the launcher shows for this skin, and the cloud badge will point at '
+              + 'an image that isn’t this one.',
+              { ok: 'Record it anyway', cancel: 'Cancel' });
+            if (!ok) return;
+          }
+          await ipcRenderer.invoke('skins:setMojangUrl', { uuid: renameTarget.uuid, id: renameTarget.skin.id, url });
+        } finally {
+          saveBtn.disabled = false;
+          saveBtn.textContent = prevLabel;
+        }
+      }
+
       const name = (document.getElementById('skinRenameInput').value || '').trim() || renameTarget.skin.name;
       await ipcRenderer.invoke("skins:rename", { uuid: renameTarget.uuid, id: renameTarget.skin.id, name });
       if (renameVariant !== (renameTarget.skin.variant === 'slim' ? 'slim' : 'classic')) {
@@ -2174,6 +2304,108 @@
       deleteTarget = null;
       updateSKin();
     };
+
+    // ---- Add a skin from a Mojang texture URL ------------------------------
+    // Texture URLs are how skins are actually addressed: Mojang keys them by the
+    // image's own content, so one never expires and never changes underneath
+    // you. Accept the full link or just the id.
+    const TEXTURE_BASE = 'https://textures.minecraft.net/texture/';
+    function textureUrlFrom(input) {
+      const raw = String(input || '').trim();
+      if (!raw) return null;
+      // A bare id: 64 hex characters is the usual shape, but Mojang has never
+      // promised that, so accept any plausible id rather than rejecting one
+      // that would have worked.
+      if (/^[0-9a-f]{32,64}$/i.test(raw)) return TEXTURE_BASE + raw.toLowerCase();
+      if (/^https?:\/\//i.test(raw)) {
+        // Only Mojang's own texture host — anything else isn't a texture id.
+        if (!/(^|\.)minecraft\.net\//i.test(raw.replace(/^https?:\/\//i, '//'))) return null;
+        return raw.split('?')[0];
+      }
+      return null;
+    }
+
+    let _texFetch = null, _texResult = null;
+    pmRegister('texture',
+      () => {
+        document.getElementById('textureUrlModal').style.display = 'flex';
+        setTimeout(() => document.getElementById('textureUrlInput').focus(), 0);
+      },
+      () => { document.getElementById('textureUrlModal').style.display = 'none'; });
+
+    {
+      const input = document.getElementById('textureUrlInput');
+      const prev = document.getElementById('textureUrlPreview');
+      const thumb = document.getElementById('textureUrlThumb');
+      const info = document.getElementById('textureUrlInfo');
+      const errEl = document.getElementById('textureUrlError');
+      const addBtn = document.getElementById('textureUrlAddBtn');
+
+      const reset = () => {
+        _texResult = null;
+        prev.style.display = 'none';
+        errEl.style.display = 'none';
+        addBtn.disabled = true;
+        thumb.innerHTML = '';
+      };
+      const fail = (msg) => { reset(); errEl.textContent = msg; errEl.style.display = ''; };
+
+      let timer = null;
+      input.addEventListener('input', () => {
+        clearTimeout(timer);
+        reset();
+        const url = textureUrlFrom(input.value);
+        if (!url) {
+          if (input.value.trim()) fail("That isn't a Mojang texture link or id.");
+          return;
+        }
+        timer = setTimeout(async () => {
+          const mine = _texFetch = {};
+          errEl.style.display = 'none';
+          info.textContent = 'Loading…';
+          prev.style.display = 'flex';
+          const r = await ipcRenderer.invoke('skins:fetchUrl', { url });
+          if (mine !== _texFetch) return;   // a later keystroke won
+          if (!r || r.error || !r.base64) return fail(r && r.error ? `Couldn't read that texture: ${r.error}` : "Couldn't read that texture.");
+          _texResult = { url, base64: r.base64, variant: r.variant === 'slim' ? 'slim' : 'classic' };
+          thumb.innerHTML = '';
+          thumb.appendChild(skin3dPreview('data:image/png;base64,' + r.base64, _texResult.variant, 110, 150));
+          info.innerHTML = '';
+          const a = document.createElement('div'); a.textContent = `Arm style: ${variantLabel(_texResult.variant)}`;
+          const b = document.createElement('div'); b.style.opacity = '0.7'; b.style.wordBreak = 'break-all';
+          b.textContent = url.split('/').pop();
+          info.append(a, b);
+          addBtn.disabled = false;
+        }, 400);
+      });
+
+      document.getElementById('textureUrlCancelBtn').onclick = () => { input.value = ''; reset(); pmBack(); };
+      document.getElementById('textureUrlModal').addEventListener('mousedown', (e) => {
+        if (e.target.id === 'textureUrlModal') { input.value = ''; reset(); pmBack(); }
+      });
+      addBtn.onclick = async () => {
+        if (!_texResult || !currentUuid) return;
+        addBtn.disabled = true;
+        const id = _texResult.url.split('/').pop();
+        await ipcRenderer.invoke('skins:add', {
+          uuid: currentUuid,
+          base64: 'data:image/png;base64,' + _texResult.base64,
+          variant: _texResult.variant,
+          name: 'Texture ' + id.slice(0, 8),
+        });
+        // It came FROM Mojang, so it is by definition already there.
+        try {
+          const lib = await ipcRenderer.invoke('skins:list', { uuid: currentUuid });
+          const hash = await ipcRenderer.invoke('skins:pixelHash', { base64: _texResult.base64 });
+          const match = (lib || []).find(x => x.pixelHash === hash);
+          if (match) await ipcRenderer.invoke('skins:setMojangUrl', { uuid: currentUuid, id: match.id, url: _texResult.url });
+        } catch { /* the skin is saved either way */ }
+        input.value = '';
+        reset();
+        pmBack();
+        await updateSKin();
+      };
+    }
 
     // ---- Add-skin menu: upload / create new / convert image ----
     function openAddSkinMenu() { pmEnter('add'); }
@@ -2200,6 +2432,7 @@
     document.getElementById('addCreateNewBtn').onclick = () => openCreateNewModal();
     document.getElementById('addUsernameBtn').onclick = () => openUsernameModal();
     document.getElementById('addBrowseBtn').onclick = () => openBrowseModal();
+    document.getElementById('addTextureBtn').onclick = () => pmEnter('texture');
 
     // ---- Create-new sub-modal (Create skin / Convert image / Template) ----
     // The showcased "Create a skin" skin, as a Starlight skin code (also preloaded
