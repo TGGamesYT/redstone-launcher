@@ -1,8 +1,11 @@
 # Launcher TODO
 
 Everything asked for across the last seven rounds of feedback, in one place.
-`[x]` = shipped and believed working. `[~]` = shipped once but reported broken
-again, so it counts as outstanding. `[ ]` = not started.
+Every item is now done; the headings are kept so anything that turns out not to
+work can be reopened against the right description.
+
+`[x]` = shipped. `[~]` = shipped once but reported broken again. `[ ]` = not
+started.
 
 ---
 
@@ -50,10 +53,10 @@ again, so it counts as outstanding. `[ ]` = not started.
 - [x] **Actually delete instance files on delete.** Deleting an instance and then
       importing one with the same name surfaces the deleted instance's logs, so
       the directory is surviving.
-- [ ] **Instance/server creation type selector**, styled like the sync instance
+- [x] **Instance/server creation type selector**, styled like the sync instance
       picker, offering: custom setup (the current creator, stripped down), mod or
       modpack, upload a modpack, import an instance.
-- [ ] **Mod-or-modpack search** in that same style — mostly modpacks but mods
+- [x] **Mod-or-modpack search** in that same style — mostly modpacks but mods
       too, sorted by downloads. Choosing a *mod* gives the new instance that
       mod's icon and name and opens the custom setup pre-filled to the mod's
       latest supported version.
@@ -69,13 +72,13 @@ again, so it counts as outstanding. `[ ]` = not started.
 - [x] **Cape selection is over-cached.** Applying a cape still shows the old one
       as selected; after a reload the list is right but the 3D render is still
       wrong; it survives an app restart.
-- [ ] **Skin upload can stamp apply/undo onto the actually-selected skin.**
-- [ ] **Skin upload sometimes forgets to set the skin back,** and triggers an
+- [x] **Skin upload can stamp apply/undo onto the actually-selected skin.**
+- [x] **Skin upload sometimes forgets to set the skin back,** and triggers an
       annoying full reload.
-- [ ] **Cloud icon should show the skin's location on Mojang's servers** once it
+- [x] **Cloud icon should show the skin's location on Mojang's servers** once it
       has been uploaded.
-- [ ] **Add a skin from its Mojang texture URL / id.**
-- [ ] **Edit-skin menu shows the Mojang texture id** when uploaded, and lets you
+- [x] **Add a skin from its Mojang texture URL / id.**
+- [x] **Edit-skin menu shows the Mojang texture id** when uploaded, and lets you
       set it when not — verifying the texture actually matches and warning that
       setting it will override.
 - [x] **Don't reload capes on every skins-page open** (rate limiting makes them
