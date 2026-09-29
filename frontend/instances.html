@@ -711,10 +711,16 @@
         return;
       }
       // In between, just keep the bar current rather than rebuilding the whole
-      // detail view once per downloaded file.
+      // detail view once per downloaded file. There is a state event PER MOD,
+      // so a rebuild here meant hundreds of full re-renders of the open tab --
+      // which is what made the Mods tab crawl during a modpack install. The
+      // toolbar/sidebar progress is driven separately by broadcastProgress, so
+      // nothing is lost by leaving the view alone.
       const existing = document.querySelector(".mp-install-bar");
       if (existing) existing.replaceWith(mpProgressEl(st));
-      else renderListOrDetail();
+      // Finishing (or failing) DOES change the view -- the Play button becomes
+      // usable, the "installing…" line goes away -- so rebuild then.
+      if (st.finished) renderListOrDetail();
       if (st.finished && st.phase === "done") {
         // Nothing left to watch — drop the ticket so a refresh isn't stuck on it.
         const url = new URL(window.location.href);
@@ -1677,8 +1683,12 @@
             playBtn.disabled = false; playBtn.style.opacity = "1"; playBtn.style.cursor = "pointer";
             playBtn._pids = pids || [];
           } else if (state === "launching") {
-            playBtn.innerHTML = `<i class="material-icons">hourglass_top</i> Launching...`;
-            playBtn.disabled = true; playBtn.style.opacity = "0.6"; playBtn.style.cursor = "not-allowed";
+            // Clickable, and it cancels. Preparing a launch downloads assets,
+            // libraries and the loader installer -- minutes on a big modpack --
+            // and there was no way out of it short of quitting the launcher.
+            playBtn.innerHTML = `<i class="material-icons">close</i> Cancel`;
+            playBtn.title = "Cancel this launch";
+            playBtn.disabled = false; playBtn.style.opacity = "1"; playBtn.style.cursor = "pointer";
           } else {
             playBtn.innerHTML = `<i class="material-icons">play_arrow</i> Play`;
             playBtn.title = "Launch Profile";
@@ -1697,7 +1707,15 @@
             setTimeout(refreshPlayState, 500);
             return;
           }
-          if (playState === "launching") return;
+          if (playState === "launching") {
+            const r = await ipcRenderer.invoke("cancel-launch", { profileId: profile.id });
+            // If the game got going in the meantime there is nothing to cancel;
+            // let the poll work out what the button should say.
+            if (window.notify) window.notify(r && r.success ? "Launch cancelled" : "Too late to cancel", r && r.success ? "success" : "error");
+            setPlay("idle");
+            setTimeout(refreshPlayState, 300);
+            return;
+          }
           // Belt and braces: half a modpack only launches into a crash report.
           if (stillInstalling()) return;
           if (!selectedPlayerId) { playBtn.innerHTML = "Select a player first!"; return; }

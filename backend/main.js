@@ -2863,12 +2863,35 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
 // Fork the launcher worker, relay its log/progress events, resolve when the game
 // process has spawned, and track its exit. The game is detached so it survives
 // the worker (and the launcher) closing.
+// The launch worker for each profile currently starting up, so a launch can be
+// called off. Preparing a launch downloads assets, libraries and the loader
+// installer, which on a big modpack is minutes of work with no way out of it
+// short of quitting the launcher.
+const launchWorkers = new Map(); // profileId -> utilityProcess
+
+function cancelLaunch(profileId) {
+  const key = String(profileId);
+  const worker = launchWorkers.get(key);
+  if (!worker) return false;
+  launchWorkers.delete(key);
+  try { worker.kill(); } catch { /* already gone */ }
+  // launchingProfiles is keyed by whatever the caller passed, so clear both.
+  launchingProfiles.delete(key);
+  launchingProfiles.delete(profileId);
+  broadcastProgress(key, { done: true, label: "Cancelled" });
+  broadcastLog(key, "[INFO] Launch cancelled");
+  return true;
+}
+
+ipcMain.handle("cancel-launch", (event, { profileId }) => ({ success: cancelLaunch(profileId) }));
+
 function launchViaWorker(profileId, cfg) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
       worker = utilityProcess.fork(path.join(app.getAppPath(), 'backend', 'launcher-worker.js'), [], { serviceName: 'mc-launch' });
     } catch (e) { reject(e); return; }
+    launchWorkers.set(String(profileId), worker);
     let settled = false;
     worker.on('message', (m) => {
       if (!m) return;
@@ -2882,6 +2905,9 @@ function launchViaWorker(profileId, cfg) {
           broadcastProgress(profileId, { stage: m.s.type, fileName: m.s.name, current: m.s.current, total: m.s.total, bytes: true, label: 'Downloading files' }); break;
         case 'spawned':
           settled = true;
+          // Past the point of cancelling: the game itself is up now, and the
+          // Stop button takes over from here.
+          launchWorkers.delete(String(profileId));
           broadcastProgress(profileId, { done: true, label: 'Starting Minecraft' });
           instanceMeta.set(profileId, { name: cfg.name, version: cfg.gameVersion });
           startInstance(profileId, m.pid);
@@ -2903,7 +2929,16 @@ function launchViaWorker(profileId, cfg) {
           break;
       }
     });
-    worker.on('exit', () => { if (!settled) { settled = true; reject(new Error('Launch worker stopped unexpectedly')); } });
+    worker.on('exit', () => {
+      const wasCancelled = !launchWorkers.has(String(profileId));
+      launchWorkers.delete(String(profileId));
+      if (!settled) {
+        settled = true;
+        // cancelLaunch() removes the entry before killing the worker, so an
+        // exit with no entry left is a cancellation rather than a failure.
+        reject(new Error(wasCancelled ? 'Launch cancelled' : 'Launch worker stopped unexpectedly'));
+      }
+    });
     worker.postMessage({ type: 'launch', cfg });
   });
 }

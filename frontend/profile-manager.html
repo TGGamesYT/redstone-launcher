@@ -1240,12 +1240,17 @@
         // Don't interrupt someone who is busy turning the model around, and
         // don't animate a tab nobody is looking at.
         if (dragging || document.hidden) { scheduleGesture(); return; }
+        let hold = rand(2600, 5200);
         try {
           const list = gestures();
-          v.animation = list[Math.floor(Math.random() * list.length)](v);
+          const anim = list[Math.floor(Math.random() * list.length)](v);
+          v.animation = anim;
+          // A converted clip knows how long it is, so let a one-shot finish
+          // rather than cutting it off (or sitting on its last frame).
+          if (anim && anim.clipLength && !anim.clipLoops) hold = anim.clipLength * 1000 + 150;
         } catch { }
         clearTimeout(backTimer);
-        backTimer = setTimeout(() => { toIdle(); scheduleGesture(); }, rand(2600, 5200));
+        backTimer = setTimeout(() => { toIdle(); scheduleGesture(); }, hold);
       };
       document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleGesture(); });
       scheduleGesture();
