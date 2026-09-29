@@ -186,7 +186,7 @@ function renderInstances(instances) {
 
       // clickable icon + link
       const a = document.createElement("a");
-      a.href = `instances.html?i=${instance.id}`;
+      a.href = `instances.html?i=${encodeURIComponent(instance.id)}`;
       // If we're already on the instances page, switch in-page instead of
       // triggering a full reload.
       a.addEventListener("click", (e) => {

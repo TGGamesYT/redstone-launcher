@@ -1683,6 +1683,24 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
     });
 });
 
+// Drop every trace of an instance that lives outside its own folder. Called on
+// delete so a later instance that lands on the same derived id starts clean.
+function forgetInstanceState(id) {
+  const key = String(id);
+  for (const k of [id, key]) {
+    try { instanceLogs.delete(k); } catch { /* not there */ }
+    try { lanPorts.delete(k); } catch { /* not there */ }
+    try { runningInstances.delete(k); } catch { /* not there */ }
+  }
+  // The mod index and hash caches, which live outside the instance folder.
+  try {
+    const meta = metaDir("client", key);
+    if (fs.existsSync(meta)) fs.rmSync(meta, { recursive: true, force: true });
+  } catch (err) {
+    devtoolsLog("Failed to clear instance metadata:", err);
+  }
+}
+
 ipcMain.on("delete-profile", async (event, profileId) => {
   const profiles = await loadProfiles();
   const id = profileId
@@ -1704,6 +1722,14 @@ ipcMain.on("delete-profile", async (event, profileId) => {
   } catch (err) {
     devtoolsLog("Failed to delete profile folder:", err);
   }
+
+  // Everything else keyed by this id. Instance ids are derived from the
+  // instance NAME, so deleting an instance and then adding another with the
+  // same name reuses the id — and anything left behind under it surfaces on
+  // the new instance. That is why a fresh import was showing the deleted
+  // instance's logs: instanceLogs is deliberately kept after a game exits so
+  // the Logs tab still works, and nothing was clearing it on delete.
+  forgetInstanceState(id);
 
   saveProfiles(newProfiles);
   event.reply("profiles-updated", newProfiles);
@@ -7700,11 +7726,12 @@ async function ssimCompare(file1, file2) {
   }
 }
 
-ipcMain.handle("mc:getProfile", async () => {
+ipcMain.handle("mc:getProfile", async (event, opts) => {
   const now = Date.now();
   const id = storage.get("selectedPlayerId", null);
-  
-  if (profileCache.has(id)) {
+  const force = !!(opts && opts.force);
+
+  if (!force && profileCache.has(id)) {
     const entry = profileCache.get(id);
     if (now - entry.timestamp < PROFILE_CACHE_TTL) {
       return entry.data;
@@ -7748,6 +7775,7 @@ ipcMain.handle("mc:getProfile", async () => {
 
   let data = { skins: [], capes: [] };
 
+  let fetched = false;
   if (accessToken) {
     // 3️⃣ Fetch Mojang profile
     try {
@@ -7758,9 +7786,22 @@ ipcMain.handle("mc:getProfile", async () => {
 
       if (response.ok) {
         data = await response.json();
+        fetched = true;
+      } else {
+        devtoolsLog("Mojang profile fetch returned HTTP", response.status);
       }
     } catch (e) {
       devtoolsLog("Failed to fetch Mojang profile:", e);
+    }
+  }
+
+  // Mojang rate-limits this, and a 429 used to fall through as an empty
+  // profile — which read on screen as "all your capes are gone". An expired
+  // cache entry is a far better answer than nothing; it just isn't fresh.
+  if (!fetched) {
+    const stale = profileCache.get(id);
+    if (stale && stale.data && ((stale.data.skins || []).length || (stale.data.capes || []).length)) {
+      return { ...stale.data, stale: true };
     }
   }
 
@@ -7889,6 +7930,10 @@ ipcMain.handle("mc:applyCape", async (event, capeId) => {
   });
 
   if (!res.ok) throw new Error(await res.text());
+  // The active cape just changed, so the cached profile is wrong. Resetting a
+  // skin and disabling a cape both did this; applying one did not, which is
+  // why the old cape stayed selected for the next five minutes.
+  profileCache.clear();
   return true;
 });
 

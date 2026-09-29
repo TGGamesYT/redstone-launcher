@@ -251,11 +251,11 @@
           e.stopPropagation();
           if (!selectedPlayerId) return alert("Select a player first!");
           ipcRenderer.send("launch-profile", { profileId: p.id, playerId: selectedPlayerId });
-          window.location.href = `instances.html?i=${p.id}`;
+          window.location.href = `instances.html?i=${encodeURIComponent(p.id)}`;
         };
         li.appendChild(launchBtn);
         li.onclick = () => {
-          window.location.href = `instances.html?i=${p.id}`;
+          window.location.href = `instances.html?i=${encodeURIComponent(p.id)}`;
         };
 
         profilesList.appendChild(li);

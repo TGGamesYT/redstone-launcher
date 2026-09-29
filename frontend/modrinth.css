@@ -194,15 +194,13 @@
   display: flex;
   flex-direction: column;
   /* Scroll the WHOLE project page (header + tabs + whichever panel is active),
-     not just the description. */
-  height: calc(100vh - 44px);
+     not just the description. Height from fitheight.js. */
   overflow-y: auto;
   padding-bottom: 40px;
   box-sizing: border-box;
 }
 
 .install-scroll-area {
-  height: calc(100vh - 250px);
   overflow-y: auto;
   padding: 0px;
 }

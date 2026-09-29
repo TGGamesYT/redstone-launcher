@@ -18,11 +18,16 @@
 
   function fitOne(el) {
     // An element that isn't displayed has no meaningful top edge; leave it
-    // alone so it sizes correctly once it is shown.
-    if (!el.isConnected || el.offsetParent === null) return;
-    const gap = Number(el.dataset.fitGap || 12);
-    const top = el.getBoundingClientRect().top;
-    const h = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight - top - gap));
+    // alone so it sizes correctly once it is shown. offsetParent is null for a
+    // hidden element -- but ALSO for anything inside a fixed-position
+    // ancestor, which would silently skip perfectly visible containers, so
+    // check the box instead and only treat a zero-sized one as hidden.
+    if (!el.isConnected) return;
+    const box = el.getBoundingClientRect();
+    if (!box.width && !box.height) return;
+    const gap = el.dataset.fitGap === '' || el.dataset.fitGap == null ? 12 : Number(el.dataset.fitGap);
+    const top = box.top;
+    const h = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight - top - (Number.isFinite(gap) ? gap : 12)));
     const next = h + 'px';
     // Only write when it changed: a no-op style write still invalidates layout,
     // and this runs from a MutationObserver.

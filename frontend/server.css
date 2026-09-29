@@ -1326,7 +1326,6 @@ a:hover {
 }
 
 .settings-scrolly {
-  height: calc(100vh - 130px);
   overflow-y: auto;
   padding-left: 12px;
 }

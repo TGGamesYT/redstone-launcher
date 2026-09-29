@@ -480,7 +480,7 @@
     </div>
   </div> -->
 
-  <div id="instance-detail" style="display:none;">
+  <div id="instance-detail" data-fit-height data-fit-gap="16" style="display:none;">
     <div id="instance-toolbar-container"></div>
     <div id="instance-tab-content" class="tab-content"></div>
     <pre id="logs"
@@ -3199,7 +3199,10 @@
             } else if (tab.toLowerCase() === "files") {
               logsEl.style.display = "none";
               tabContent.innerHTML = "";
-              tabContent.style.height = "calc(100vh - 210px)";
+              // No hardcoded height here: tabContent carries data-fit-height and
+              // is measured against the window, so writing an inline calc() was
+              // overriding that and leaving the file browser cut off.
+              if (window.fitHeights) window.fitHeights();
               // Full instance file manager (edit configs, world .dat files, read
               // .gz/.zip logs — same editor the server manager uses).
               window.FileBrowser.mount(tabContent, { channel: "client-fs", idField: "id", id: profile.id, rootLabel: profile.name || "instance" });
@@ -3243,7 +3246,11 @@
       }
 
       emptyState.style.display = 'none';
-      profilesList.style.display = 'block';
+      // Not 'block': an inline display beats the stylesheet, so setting it here
+      // was overriding `#profiles-list.grid-mode { display: grid }` and grid
+      // view came out as a column of full-width rows. Clearing the inline value
+      // lets whichever rule applies win.
+      profilesList.style.display = '';
 
       // (The "+" button beside the search bar creates new instances now.)
 
@@ -3325,18 +3332,23 @@
         };
         li.appendChild(launchBtn);
         li.onclick = () => {
-          window.location.href = `instances.html?i=${p.id}`;
+          // Instance ids come from the instance NAME, so a pack called
+          // "Create+" gives the id "Create+" — and interpolating that straight
+          // into a query string means the + decodes back as a space, no
+          // instance matches, and the page appears to just reload. Switch the
+          // view in place instead, which encodes the id properly and skips the
+          // reload entirely.
+          window.openInstanceInPage(p.id);
         };
 
         profilesList.appendChild(li);
       });
 
-      // Size the list to the space actually left below it so the last item and
-      // the "Add an instance" button aren't pushed off-screen.
-      requestAnimationFrame(() => {
-        const top = profilesList.getBoundingClientRect().top;
-        profilesList.style.maxHeight = Math.max(120, window.innerHeight - top - 16) + "px";
-      });
+      // fitheight.js owns this element's height (it carries data-fit-height).
+      // A second max-height written here just fought with it; nudge it to
+      // re-measure now that the rows exist instead.
+      profilesList.style.maxHeight = "";
+      if (window.fitHeights) window.fitHeights();
     }
 
     if (modalCancelBtn) {

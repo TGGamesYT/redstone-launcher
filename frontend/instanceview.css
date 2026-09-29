@@ -86,7 +86,7 @@
 #instance-detail {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 38px - 16px);
+  /* Height comes from fitheight.js (data-fit-height on the element). */
   box-sizing: border-box;
   margin: 0;
   padding-right: 20px;
