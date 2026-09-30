@@ -266,7 +266,7 @@
     /* Full-width row. No `width:100%` — with the 10px margins that overflowed past
        the skin cards' right edge, making this row wider than the grid below it. */
     .skin-actions-row { flex: 1 1 100%; min-width: 0; display: flex; gap: 20px; margin: 10px; }
-    .skin-actions-row .card.action-card { flex: 1; width: auto; margin: 0; }
+    .skin-actions-row .card.action-card { flex: 0 1 240px; width: auto; margin: 0; }
 
     /* Live 3D spin preview swapped in on hover. */
     .hover-spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
@@ -1604,8 +1604,14 @@
       isCrackedAccount = player.type === "cracked";
       crackedPlayerId = isCrackedAccount ? player.id : null;
       unavailable.style.display = "none";
-      showLoading(true);
-      sections.style.display = "none";
+      // A refresh keeps what's on screen while it works. Blanking the page and
+      // showing the spinner is right when the ACCOUNT changes and everything on
+      // screen belongs to someone else -- but for a reload it read as the whole
+      // page reloading for no reason.
+      if (!forceProfile || sections.style.display === "none") {
+        showLoading(true);
+        sections.style.display = "none";
+      }
 
       let profile = { skins: [], capes: [] };
       if (isCrackedAccount) {
@@ -1726,15 +1732,14 @@
       skinsDiv.innerHTML = "";
       capesDiv.innerHTML = "";
 
-      // Two action cards: Add skin · Reset skin — filling their own full row.
+      // Just "Add skin" here. Reset moved to the button beside the "Your Skins"
+      // heading, and having it in both places meant two controls doing the same
+      // thing a few centimetres apart.
       const actionsRow = document.createElement("div");
       actionsRow.className = "skin-actions-row";
       const uploadCard = createCard("Add skin", openAddSkinMenu, iconEl("add"));
       uploadCard.classList.add("action-card");
-      const resetCard = createCard("Reset skin", () => selectReset(), iconEl("restart_alt"));
-      resetCard.classList.add("action-card");
-      resetCard.dataset.reset = "1";
-      actionsRow.append(uploadCard, resetCard);
+      actionsRow.append(uploadCard);
       skinsDiv.appendChild(actionsRow);
 
       // Saved local library. Clicking selects locally (no upload); Apply applies.
@@ -1857,9 +1862,8 @@
       if (capesSection) capesSection.style.display = isCrackedAccount ? "none" : "";
       if (isCrackedAccount) { refreshCapeUI(); return; }
       activeCapeId = activeCape ? activeCape.id : null;
-      const noneCard = createCard("None (disable)", () => selectCape({ id: null }), null);
-      noneCard.dataset.capeid = "__none__";
-      capesDiv.appendChild(noneCard);
+      // No "None (disable)" card: the reset button beside the "Capes" heading
+      // does that now, and two ways to take a cape off was one too many.
 
       const seenCapes = new Set();
       const capeList = (profile.capes || []).filter(c => { if (seenCapes.has(c.id)) return false; seenCapes.add(c.id); return true; });
@@ -1900,9 +1904,12 @@
       const cards = [...document.querySelectorAll('#capes .card[data-capeid]')];
       cards.forEach(c => { c.classList.remove("selected"); setCardBadge(c, ""); });
       const wantId = pendingCape ? pendingCape.id : activeCapeId;
-      const key = wantId == null ? "__none__" : String(wantId);
-      const match = cards.find(c => c.dataset.capeid === key);
-      if (match) { match.classList.add("selected"); setCardBadge(match, "Selected"); }
+      // A null id means no cape. There is no card for that any more, so nothing
+      // is highlighted — which reads correctly on its own.
+      if (wantId != null) {
+        const match = cards.find(c => c.dataset.capeid === String(wantId));
+        if (match) { match.classList.add("selected"); setCardBadge(match, "Selected"); }
+      }
       updateApplyButton();
     }
     const capePending = () => pendingCape && (pendingCape.id || null) !== (activeCapeId || null);
@@ -2079,9 +2086,12 @@
         b.disabled = true; b.classList.add('spinning');
         try { await updateSKin({ force: true }); }
         finally {
-          // Mojang gets cross if this is hammered, so make it obvious the
-          // button isn't ready again immediately.
-          setTimeout(() => { b.disabled = false; b.classList.remove('spinning'); }, 2500);
+          // Stop spinning the moment the work is actually done -- it used to
+          // keep going for a fixed 2.5s after, which looked like it was still
+          // loading. A short cooldown stays, since Mojang gets cross if this is
+          // hammered, but the button only LOOKS busy while it is.
+          b.classList.remove('spinning');
+          setTimeout(() => { b.disabled = false; }, 1200);
         }
       };
       wire('skinsReloadBtn', reload);

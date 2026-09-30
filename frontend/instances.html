@@ -2334,9 +2334,27 @@
           const devMod = (devMods || []).find(m => p.filename === m.modId + "-dev.jar" || p.filename === m.modId + "-dev.jar.disabled");
           if (devMod) li.style.borderColor = "var(--accent)";
 
+          // The list is painted twice: once from what's on disk, then again once
+          // Modrinth/CurseForge have been asked. Showing an icon before it has
+          // actually decoded meant a wrong or broken image flashed up on the
+          // first pass and was replaced a moment later. Hold the space with a
+          // plain tile and fade the real icon in when it is ready.
           const img = document.createElement("img");
+          img.style.opacity = "0";
+          img.style.transition = "opacity 0.15s ease";
+          img.style.background = "var(--menu-bg)";
+          img.alt = "";
+          const reveal = () => { img.style.opacity = "1"; };
+          img.onload = reveal;
+          img.onerror = () => {
+            // Only fall back once, or a failing default would loop.
+            if (img.dataset.fallback) { reveal(); return; }
+            img.dataset.fallback = "1";
+            img.src = DEFAULT_ICON;
+          };
           img.src = p.icon || DEFAULT_ICON;
-          img.onerror = () => { img.src = DEFAULT_ICON; };
+          // A cached image can be complete before onload is attached.
+          if (img.complete && img.naturalWidth) reveal();
           li.appendChild(img);
 
           const info = document.createElement("div");
@@ -2736,8 +2754,13 @@
           // own import/add actions). Content tabs only show when non-empty —
           // except Mods, which is always shown for modded instances so there's
           // somewhere to install mods into even when empty.
+          //
+          // Resourcepacks is always shown too: EVERY instance can take a
+          // resource pack, vanilla included, so hiding the tab until one exists
+          // left no way to add the first one.
           const isModded = (profile.loader || "vanilla").toLowerCase() !== "vanilla";
-          let alwaysVisible = ["logs", "servers", "worlds", "files"].includes(tName) || (tName === "mods" && isModded);
+          let alwaysVisible = ["logs", "servers", "worlds", "files", "resourcepacks"].includes(tName)
+            || (tName === "mods" && isModded);
           let exists = alwaysVisible ? true
             : await ipcRenderer.invoke("check-instance-tab", { profileId: profile.id, tab: tName });
           if (!exists && !alwaysVisible) continue;

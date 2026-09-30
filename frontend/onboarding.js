@@ -34,9 +34,13 @@
       .ob-pop h3 { margin:0 0 6px; font-size:1em; }
       .ob-pop p { margin:0 0 12px; font-size:12px; line-height:1.5; opacity:0.9; }
       .ob-pop .row { display:flex; gap:8px; justify-content:space-between; align-items:center; }
-      .ob-pop .ob-ask { margin:0 0 12px; font-size:12px; line-height:1.5; opacity:1;
-        color:var(--base-color); display:flex; align-items:center; gap:6px; }
-      .ob-pop .ob-ask::before { content:'👈'; font-size:13px; }
+      /* A call to action, not a sentence in the body text. It used to be
+         var(--base-color) on the panel, which on a red theme is red on red. */
+      .ob-pop .ob-ask { margin:0 0 12px; padding:7px 10px; font-size:12px; line-height:1.4;
+        display:flex; align-items:center; gap:7px; border-radius:var(--border-radius);
+        background:var(--base-color); color:#fff; font-weight:600;
+        border:1px solid rgba(255,255,255,0.25); text-shadow:0 1px 2px rgba(0,0,0,0.45); }
+      .ob-pop .ob-ask i { font-size:16px; }
       /* A soft pulse on the thing we are asking them to click, so "click this"
          reads as an instruction rather than decoration. */
       .ob-ring.ob-ask-ring { animation: ob-pulse 1.5s ease-in-out infinite; }
@@ -253,8 +257,15 @@
     } catch { }
   };
 
+  // Only ever one tour on screen. Two could start at once -- a resume landing
+  // at the same time as a Settings "run the tour again", say -- and each built
+  // its own shades and popup, so the screen ended up double-dimmed with two
+  // conflicting rings.
+  let closeCurrentTour = null;
+
   function openOnboarding(onFinish, startAt) {
     ensureStyle();
+    if (closeCurrentTour) { try { closeCurrentTour(); } catch { /* gone already */ } }
     const shades = [0, 1, 2, 3].map(() => {
       const d = document.createElement('div');
       d.className = 'ob-shade';
@@ -273,6 +284,20 @@
     // again when the step changes.
     let armed = null, armedHandler = null;
 
+    // Whatever navigates the page, the tour goes with it. Arming the step's own
+    // tab only covered the tabs; clicking a pinned instance in the sidebar (the
+    // "Your instances" step literally asks you to look at them) opened that
+    // instance and the tour died on the spot. beforeunload catches every route
+    // out of the page, so the tour always comes back.
+    const handoff = () => {
+      // Clicking the step's OWN tab advances; anything else resumes where it is.
+      if (!writeState._armedFired) {
+        writeState({ i, andImport: !!openOnboarding._andImport });
+      }
+      writeState._armedFired = false;
+    };
+    window.addEventListener('beforeunload', handoff);
+
     const disarm = () => {
       if (armed && armedHandler) armed.removeEventListener('click', armedHandler, true);
       armed = null; armedHandler = null;
@@ -282,7 +307,10 @@
       shades.forEach(s => s.remove());
       ring.remove(); pop.remove();
       window.removeEventListener('resize', place);
+      window.removeEventListener('beforeunload', handoff);
+      if (closeCurrentTour === cleanup) closeCurrentTour = null;
     };
+    closeCurrentTour = cleanup;
     const finish = (skipped) => {
       try { localStorage.setItem(SEEN_KEY, '1'); } catch { }
       writeState(null);
@@ -318,7 +346,12 @@
       const el = stepEl();
       if (!el) return false;
       armed = el;
-      armedHandler = () => { writeState({ i: i + 1, andImport: !!openOnboarding._andImport }); };
+      armedHandler = () => {
+        writeState({ i: i + 1, andImport: !!openOnboarding._andImport });
+        // Tell the beforeunload handler this one is already accounted for, so
+        // it doesn't overwrite the advance with the current step.
+        writeState._armedFired = true;
+      };
       // Capture, so the state is saved even if something else handles the
       // click first and navigates.
       el.addEventListener('click', armedHandler, true);
@@ -370,12 +403,16 @@
           <span style="display:flex;gap:6px;">
             <button class="ob-skip">Skip</button>
             ${i > 0 ? '<button class="ob-back">Back</button>' : ''}
-            <button class="ob-next ${asking ? '' : 'primary'}">${i === STEPS.length - 1 ? 'Finish' : 'Next'}</button>
+            <button class="ob-next ${asking ? '' : 'primary'}">${i === STEPS.length - 1 ? 'Finish' : asking ? 'Skip this' : 'Next'}</button>
           </span>
         </div>`;
       pop.querySelector('h3').textContent = s.title;
       pop.querySelector('p').textContent = s.body;
-      if (asking) pop.querySelector('.ob-ask').textContent = `Click ${s.title} to open it — the tour carries on there.`;
+      if (asking) {
+        const ask = pop.querySelector('.ob-ask');
+        ask.innerHTML = '<i class="material-icons">ads_click</i><span></span>';
+        ask.querySelector('span').textContent = `Open ${s.title}`;
+      }
       pop.querySelector('.ob-skip').onclick = () => finish(true);
       const back = pop.querySelector('.ob-back');
       if (back) back.onclick = () => { i--; render(); place(); };
@@ -390,31 +427,77 @@
     render();
   }
 
+  // The end of the tour. Finishing on the Settings page with the panel simply
+  // vanishing gave no sense that it was over -- and left the user parked on
+  // Settings, which is not where anyone wants to start. Say it's done, then go
+  // home.
+  function showFinished(onClose) {
+    ensureStyle();
+    const ov = document.createElement('div');
+    ov.className = 'imp-overlay';
+    ov.style.zIndex = 9100;
+    ov.innerHTML = `
+      <div class="imp-card" style="width:420px;text-align:center;">
+        <div style="font-size:40px;line-height:1;margin:6px 0 10px;">🎉</div>
+        <h2 style="margin:0 0 8px;font-size:1.15em;">That's the tour</h2>
+        <p style="margin:0 0 18px;font-size:13px;opacity:0.85;line-height:1.6;">
+          You know where everything lives now. Make an instance, or start one you
+          imported — you're ready to play.
+        </p>
+        <div class="imp-actions" style="justify-content:center;">
+          <button class="ob-done primary">Take me home</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    const go = () => {
+      ov.remove();
+      if (onClose) onClose();
+      // Back to the start, not wherever the last step happened to be.
+      const here = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
+      if (here !== 'index.html') location.href = 'index.html';
+    };
+    ov.querySelector('.ob-done').onclick = go;
+    ov.addEventListener('mousedown', e => { if (e.target === ov) go(); });
+  }
+
   // Picks the tour back up after a sidebar click navigated the page.
   function resumeTour() {
     const st = readState();
     if (!st) return false;
     writeState(null);
     const next = Number(st.i) || 0;
-    const done = () => { if (st.andImport) openImport(); };
+    const done = (skipped) => {
+      if (st.andImport) openImport(() => { if (!skipped) showFinished(); });
+      else if (!skipped) showFinished();
+    };
     if (next >= STEPS.length) {
       try { localStorage.setItem(SEEN_KEY, '1'); } catch { }
-      done();
+      done(false);
       return true;
     }
     // Let the page lay its sidebar out first, or the ring lands on nothing.
     setTimeout(() => {
       openOnboarding._andImport = !!st.andImport;
-      openOnboarding(() => done(), next);
+      openOnboarding((skipped) => done(skipped), next);
     }, 250);
     return true;
   }
 
   window.Onboarding = {
     openImport,
-    openTour(onFinish) { openOnboarding._andImport = false; openOnboarding(onFinish); },
-    // The whole first-run flow: the tour, then the import modal either way.
-    start() { openOnboarding._andImport = true; openOnboarding(() => openImport()); },
+    openTour(onFinish) {
+      openOnboarding._andImport = false;
+      openOnboarding((skipped) => {
+        if (!skipped) showFinished();
+        if (onFinish) onFinish(skipped);
+      });
+    },
+    // The whole first-run flow: the tour, then the import modal either way, and
+    // a send-off back to the home page when it wasn't skipped.
+    start() {
+      openOnboarding._andImport = true;
+      openOnboarding((skipped) => openImport(() => { if (!skipped) showFinished(); }));
+    },
     hasRun() { try { return !!localStorage.getItem(SEEN_KEY); } catch { return true; } },
     resume: resumeTour,
     // Called on the home page; runs once ever.
