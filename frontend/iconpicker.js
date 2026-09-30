@@ -41,6 +41,17 @@
   // that gets embedded in serverinfo.json and desktop shortcuts. Centre-crop to
   // a square and downscale, so what the picker previews is exactly what the
   // icon ends up being.
+  // An absolute path from the main process -> something an <img> can load.
+  // Each segment is encoded so spaces and # survive, but a Windows drive letter
+  // keeps its colon: file:///C%3A/... doesn't resolve.
+  const toFileUrl = (p) => {
+    const norm = String(p).replace(/\\/g, '/');
+    const enc = norm.split('/')
+      .map(seg => /^[A-Za-z]:$/.test(seg) ? seg : encodeURIComponent(seg))
+      .join('/');
+    return 'file://' + (enc.startsWith('/') ? '' : '/') + enc;
+  };
+
   const ICON_PX = 128;
   function squareIconDataUrl(src) {
     return new Promise((res, rej) => {
@@ -136,9 +147,12 @@
       <div class="modal-header"><h2>Adjust icon</h2><button class="modal-close" id="ipCropX">✕</button></div>
       <div id="ipCropStage" style="position:relative; width:100%; aspect-ratio:1/1; background:var(--menu-bg);
         border:1px solid var(--border-dark); border-radius:var(--border-radius); overflow:hidden; touch-action:none; cursor:grab;">
-        <canvas id="ipCropCv" style="width:100%; height:100%; display:block;"></canvas>
+        <canvas id="ipCropCv" style="width:100%; height:100%; display:block; pointer-events:none;"></canvas>
       </div>
-      <div class="ip-section-title" style="margin-top:10px;">Zoom</div>
+      <p id="ipCropHint" style="margin:8px 0 0; font-size:11px; opacity:0.7; text-align:center;">
+        Drag to choose what's in frame · scroll to zoom
+      </p>
+      <div class="ip-section-title" style="margin-top:8px;">Zoom</div>
       <input type="range" id="ipCropZoom" min="100" max="400" value="100" style="width:100%;">
       <label class="ip-circle-row"><input type="checkbox" id="ipCropCircle"> Round off the corners</label>
       <div class="modal-actions"><button id="ipCropOk">Use this</button><button id="ipCropCancel">Cancel</button></div>
@@ -173,6 +187,14 @@
       oy = Math.max(-maxY, Math.min(maxY, oy));
       cx.drawImage(im, (OUT - w) / 2 + ox, (OUT - h) / 2 + oy, w, h);
       cx.restore();
+      // A square image at 100% fills the box exactly, so there is nowhere to
+      // drag it — say so instead of inviting a drag that does nothing.
+      const hint = ov.querySelector('#ipCropHint');
+      if (hint) {
+        hint.textContent = (maxX > 0.5 || maxY > 0.5)
+          ? "Drag to choose what's in frame · scroll to zoom"
+          : 'Zoom in to choose what\'s in frame';
+      }
     };
 
     im.onload = () => {
@@ -184,9 +206,24 @@
 
     zoomEl.oninput = () => { zoom = zoomEl.value / 100; draw(); };
     circleEl.onchange = draw;
+
+    // Zooming with the wheel, which is what anyone tries first on a crop box.
+    // Keeps the slider in step so the two never disagree.
+    stage.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const next = Math.max(1, Math.min(4, zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      zoom = next;
+      zoomEl.value = String(Math.round(zoom * 100));
+      draw();
+    }, { passive: false });
+
     stage.addEventListener('pointerdown', e => {
+      // The canvas is pointer-events:none, so every press lands on the stage —
+      // a press that started on the canvas used to depend on bubbling, and a
+      // native image-drag could take it away first.
+      e.preventDefault();
       drag = { x: e.clientX, y: e.clientY, ox, oy };
-      stage.setPointerCapture(e.pointerId);
+      try { stage.setPointerCapture(e.pointerId); } catch { /* not captured; move still works */ }
       stage.style.cursor = 'grabbing';
     });
     stage.addEventListener('pointermove', e => {
@@ -252,10 +289,19 @@
       document.body.appendChild(ov);
       const close = () => ov.remove();
       const pick = (dataUrl) => { close(); opts.onPick && opts.onPick(dataUrl); };
-      // Anything that isn't already a small square goes through the cropper, so
-      // a wide banner or a panorama becomes a deliberate icon rather than a
-      // centre-crop nobody chose.
+      // EVERYTHING goes through the cropper. It used to be only the wide
+      // sources (banner, panorama, screenshots) — so a mod icon, a world icon
+      // or a custom image was taken exactly as it came, which for anything that
+      // wasn't already square meant it got stretched into the icon slot, with
+      // no way to zoom or choose the framing. The cropper opens on the whole
+      // image fitted, so "Use this" is one click and gives a proper square.
       const editThenPick = (src) => openCropper(src, (out) => { if (out) pick(out); });
+      // Read a remote/preset URL as data first: the cropper draws onto a canvas
+      // and reads it back, which a cross-origin or file:// image would taint.
+      const editUrlThenPick = async (url) => {
+        try { editThenPick(await urlToDataUrl(url)); }
+        catch { editThenPick(url); }
+      };
       ov.querySelector('#ipClose').onclick = close;
       ov.querySelector('#ipCancel').onclick = close;
       ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
@@ -270,7 +316,7 @@
         img.src = url; img.loading = 'lazy';
         img.onerror = () => cell.remove();
         cell.appendChild(img);
-        cell.onclick = async () => { try { pick(await urlToDataUrl(url)); } catch { pick(url); } };
+        cell.onclick = () => editUrlThenPick(url);
         editions.appendChild(cell);
       });
 
@@ -306,13 +352,18 @@
         const cell = document.createElement('div'); cell.className = 'ip-cell';
         cell.title = file.replace(/_JE.*$|_BE.*$|\.png$/g, '').replace(/_/g, ' ');
         cell.innerHTML = `<img src="${src}" />`;
-        cell.onclick = async () => { try { pick(await urlToDataUrl(src)); } catch { pick(src); } };
+        cell.onclick = () => editUrlThenPick(src);
         presets.appendChild(cell);
       });
 
       const fileInput = ov.querySelector('#ipFile');
       ov.querySelector('#ipCustom').onclick = () => fileInput.click();
-      fileInput.onchange = async () => { if (fileInput.files[0]) pick(await fileToDataUrl(fileInput.files[0])); };
+      fileInput.onchange = async () => {
+        if (!fileInput.files[0]) return;
+        // Straight to the cropper: a photo or a screenshot is almost never
+        // square, and picking one used to squash it into the icon slot.
+        editThenPick(await fileToDataUrl(fileInput.files[0]));
+      };
 
       // World + server icons from the instance (if any).
       if (opts.instanceId) {
@@ -358,7 +409,7 @@
             const url = toUrl(w.icon);
             const cell = document.createElement('div'); cell.className = 'ip-cell'; cell.title = w.name || '';
             cell.innerHTML = `<img src="${url}" />`;
-            cell.onclick = () => pick(url);
+            cell.onclick = () => editThenPick(url);
             wc.appendChild(cell);
           });
         }).catch(() => {});
@@ -371,7 +422,7 @@
             const url = toUrl(s.icon);
             const cell = document.createElement('div'); cell.className = 'ip-cell'; cell.title = (s.name || s.ip || '') + (s.ip ? ` (${s.ip})` : '');
             cell.innerHTML = `<img src="${url}" />`;
-            cell.onclick = () => pick(url);
+            cell.onclick = () => editThenPick(url);
             sc.appendChild(cell);
           });
         }).catch(() => {});
@@ -404,20 +455,29 @@
         const g = ov.querySelector(gridSel);
         items.forEach(it => {
           const cell = document.createElement('div'); cell.className = 'ip-cell'; cell.title = it.name || '';
-          const img = document.createElement('img'); img.src = it.icon;
+          const img = document.createElement('img');
+          // `icon` prefers the Modrinth/CurseForge artwork, which for
+          // CurseForge is the project LOGO — frequently a wide banner rather
+          // than a square. `iconPath` is the icon out of the jar itself. The
+          // click used to take iconPath while the cell previewed icon, so the
+          // picker showed one image and handed over another. Preview whichever
+          // one is actually going to be used.
+          img.src = it.iconPath ? toFileUrl(it.iconPath) : it.icon;
           // A cached icon that has since been cleaned up would leave a blank cell.
-          img.onerror = () => cell.remove();
+          img.onerror = () => { if (it.icon && img.src !== it.icon) img.src = it.icon; else cell.remove(); };
           cell.appendChild(img);
           cell.onclick = async () => {
             // The chosen icon gets embedded (in serverinfo.json, in a shortcut),
             // so it has to travel as data — a file:// path wouldn't survive.
+            // Through the cropper, because a mod's logo is often a wide banner
+            // rather than a square, and taking it as-is stretched it.
             try {
               if (it.iconPath) {
                 const d = await ipcRenderer.invoke('icon:dataUrl', { filePath: it.iconPath });
-                if (d) return pick(d);
+                if (d) return editThenPick(d);
               }
-              pick(await urlToDataUrl(it.icon));
-            } catch { pick(it.icon); }
+              editThenPick(await urlToDataUrl(it.icon));
+            } catch { editThenPick(it.icon); }
           };
           g.appendChild(cell);
         });
