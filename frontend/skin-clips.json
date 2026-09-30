@@ -1,12 +1,12 @@
 {
   "source": "3442371b-player.bbmodel",
-  "generated": "2026-09-29T17:45:52.473Z",
+  "generated": "2026-09-30T07:40:08.981Z",
+  "flipYZ": false,
   "clips": {
     "animation": {
       "length": 2.5,
       "loop": false,
       "degrees": true,
-      "flipYZ": true,
       "bones": {
         "root": {
           "rotation": [
@@ -440,7 +440,6 @@
       "length": 1.45833,
       "loop": true,
       "degrees": true,
-      "flipYZ": true,
       "bones": {
         "root": {
           "rotation": [
@@ -963,7 +962,6 @@
       "length": 1.5,
       "loop": true,
       "degrees": true,
-      "flipYZ": true,
       "bones": {
         "root": {
           "rotation": [
@@ -1162,7 +1160,6 @@
       "length": 2,
       "loop": true,
       "degrees": true,
-      "flipYZ": true,
       "bones": {
         "cape": {
           "rotation": [
@@ -1634,7 +1631,6 @@
       "length": 2,
       "loop": true,
       "degrees": true,
-      "flipYZ": true,
       "bones": {
         "root": {
           "position": [

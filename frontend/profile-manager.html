@@ -1286,10 +1286,10 @@
       // character jogging on the spot for no reason. A wave or a look around is
       // the most that belongs here.
       //
-      // window.SkinAnimations is the hook for the hand-made Blockbench
-      // animations — drop a module that defines `idle` and `gestures` (each
-      // returning a skinview3d PlayerAnimation) and they are used instead of
-      // these; see skin-animations.js.
+      // window.SkinAnimations supplies the Blockbench-authored ones when
+      // skin-clips.json is present: each plays ONCE and then the player goes
+      // back to the resting idle. These built-ins are the fallback when there
+      // are no converted clips. See skin-animations.js.
       const BUILT_IN_GESTURES = [
         () => new S.WaveAnimation("left"),
         () => new S.WaveAnimation("right"),
@@ -1306,10 +1306,12 @@
       const rand = (lo, hi) => lo + Math.random() * (hi - lo);
       // Rare enough to be a surprise rather than a tic. At the old 9–22s the
       // character was doing something roughly a third of the time it was on
-      // screen, which is why it read as restless.
+      // screen, which is why it read as restless. The authored clips are only a
+      // couple of seconds each, so 35–80s was the other extreme — you could sit
+      // on the page and never see one.
       const scheduleGesture = () => {
         clearTimeout(gestureTimer);
-        gestureTimer = setTimeout(playGesture, rand(35000, 80000));
+        gestureTimer = setTimeout(playGesture, rand(20000, 45000));
       };
       const playGesture = () => {
         // Don't interrupt someone who is busy turning the model around, and

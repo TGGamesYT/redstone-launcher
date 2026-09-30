@@ -13,12 +13,13 @@
 //
 // Options:
 //   -o, --out <file>   where to write (default: frontend/skin-clips.json)
-//   --no-flip          keep Blockbench's Y/Z rotation signs as-is
+//   --flip             mirror Y/Z rotation (for Bedrock-style rigs)
 //   --list             print what's in the file and write nothing
 //
-// Blockbench and three.js disagree about the sign of Y and Z rotation for a
-// humanoid rig, so by default both are negated on the way out. If an animation
-// comes out mirrored, re-run with --no-flip.
+// Blockbench's "free" model format uses the same handedness as three.js, so
+// rotations are written out unchanged. Rigs authored the Bedrock way mirror Y
+// and Z; pass --flip for those. In the app, playerRenderAnimFlip() in devtools
+// switches between the two so you can see which is right before committing.
 // The package is ESM ("type": "module" in package.json), so this is too.
 import fs from 'fs';
 import path from 'path';
@@ -56,14 +57,17 @@ const normaliseBone = (name) => {
 // Keyframe values are strings, and Blockbench allows a Molang expression where
 // a number is expected. Anything that isn't a plain number is not something
 // this tool can evaluate, so it becomes 0 and is reported.
-function num(v, warnings, where) {
-  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+function num(v, warnings, where, fallback) {
+  // `fallback` is what an absent or unreadable component means for THIS
+  // channel: 0 for a rotation or a position offset, but 1 for a scale, where 0
+  // would flatten the part out of existence.
+  if (typeof v === 'number') return Number.isFinite(v) ? v : fallback;
   const s = String(v == null ? '' : v).trim();
-  if (s === '') return 0;
+  if (s === '') return fallback;
   const n = Number(s);
   if (Number.isFinite(n)) return n;
-  warnings.push(`${where}: couldn't read "${s}" as a number, used 0`);
-  return 0;
+  warnings.push(`${where}: couldn't read "${s}" as a number, used ${fallback}`);
+  return fallback;
 }
 
 function convertAnimator(animator, warnings, animName) {
@@ -73,9 +77,12 @@ function convertAnimator(animator, warnings, animName) {
     if (channel !== 'rotation' && channel !== 'position' && channel !== 'scale') continue;
     const dp = (kf.data_points || [])[0] || {};
     const where = `${animName}/${animator.name || 'bone'}/${channel}@${kf.time}`;
+    // Blockbench leaves out components that weren't touched. For scale that
+    // means "still 1", not "now 0" -- reading it as 0 collapses the part.
+    const blank = channel === 'scale' ? 1 : 0;
     (tracks[channel] || (tracks[channel] = [])).push({
       time: Number(kf.time) || 0,
-      value: [num(dp.x, warnings, where), num(dp.y, warnings, where), num(dp.z, warnings, where)],
+      value: [num(dp.x, warnings, where, blank), num(dp.y, warnings, where, blank), num(dp.z, warnings, where, blank)],
       // Blockbench's "catmullrom" is a smooth curve; the player treats anything
       // that isn't linear as smooth and eases between the keys.
       ...(kf.interpolation && kf.interpolation !== 'linear' ? { smooth: true } : {}),
@@ -124,9 +131,10 @@ function convert(model, { flip = true } = {}) {
     const name = String(anim.name || 'animation').replace(/^animation\./, '') || 'animation';
     clips[name] = {
       length: Number(anim.length) || 0,
+      // Recorded, but the launcher plays everything once at random intervals;
+      // this flag is about previewing in Blockbench.
       loop: anim.loop === 'loop',
       degrees: true,
-      flipYZ: !!flip,
       bones,
     };
   }
@@ -136,10 +144,10 @@ function convert(model, { flip = true } = {}) {
 function main(argv) {
   const args = argv.slice(2);
   if (!args.length || args.includes('-h') || args.includes('--help')) {
-    console.log('usage: node bbmodelconvert.js <file.bbmodel> [-o out.json] [--no-flip] [--list]');
+    console.log('usage: node bbmodelconvert.js <file.bbmodel> [-o out.json] [--flip] [--list]');
     return 0;
   }
-  const flip = !args.includes('--no-flip');
+  const flip = args.includes('--flip');
   const listOnly = args.includes('--list');
   const outIdx = Math.max(args.indexOf('-o'), args.indexOf('--out'));
   const out = outIdx >= 0 ? args[outIdx + 1] : DEFAULT_OUT;
@@ -167,7 +175,7 @@ function main(argv) {
   for (const w of warnings) console.warn('note: ' + w);
   for (const n of names) {
     const c = clips[n];
-    console.log(`  ${n.padEnd(16)} ${c.loop ? 'loop' : 'once'}  ${c.length}s  ${Object.keys(c.bones).join(', ')}`);
+    console.log(`  ${n.padEnd(16)} ${c.length}s  ${Object.keys(c.bones).join(', ')}`);
   }
   if (listOnly) return 0;
 
@@ -175,6 +183,8 @@ function main(argv) {
   fs.writeFileSync(out, JSON.stringify({
     source: path.basename(input),
     generated: new Date().toISOString(),
+    // How the rig was authored, not a per-clip property.
+    flipYZ: !!flip,
     clips,
   }, null, 2) + '\n');
   console.log(`\nWrote ${names.length} animation${names.length === 1 ? '' : 's'} to ${out}`);
