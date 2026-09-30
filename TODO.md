@@ -1,11 +1,39 @@
 # Launcher TODO
 
-Everything asked for across the last seven rounds of feedback, in one place.
-Every item is now done; the headings are kept so anything that turns out not to
-work can be reopened against the right description.
+Everything asked for across the rounds of feedback so far, in one place. The
+headings are kept even once done, so anything that turns out not to work can be
+reopened against the right description.
 
 `[x]` = shipped. `[~]` = shipped once but reported broken again. `[ ]` = not
 started.
+
+---
+
+## 0. Round 9
+
+- [x] **The Blockbench animations were badly broken** — positions applied as
+      absolute instead of rest-relative, so the figure sat low and collapsed
+      into itself; every clip looped forever instead of playing once.
+- [x] Reloading skins/capes looked like a full page reload, and the button kept
+      spinning after the work had finished
+- [x] Reset skin / reset cape cards removed from the lists (the headings have
+      buttons now)
+- [x] Onboarding: "click this" text was red on red, and read as filler
+- [x] Onboarding: two tours could start at once
+- [x] Onboarding: clicking a pinned instance opened it and killed the tour
+- [x] Onboarding: ended on Settings with no send-off; now finishes and goes home
+- [x] Icon picker: everything goes through the cropper, so nothing is stretched
+- [x] Icon picker: mod/pack cells previewed the CurseForge banner but picked the
+      jar icon
+- [x] Icon picker: dragging worked but nothing said so; wheel zoom added
+- [x] Mod icons no longer flash a wrong image before the real one loads
+- [x] Resourcepacks tab always shown — every instance can take a resource pack
+
+**Answered, not a bug:** the cloud badge means "this skin is on *Mojang's*
+servers", not "synced between your computers". There is no account system or
+server-side storage in this launcher — the skin library is a local
+`skinlibrary.json`, and `relay-server` is a Minecraft TCP relay with no API.
+Syncing libraries across machines would need a backend that does not exist yet.
 
 ---
 
