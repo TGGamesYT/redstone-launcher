@@ -240,6 +240,19 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         <label class="setting-toggle"><input type="checkbox" id="sync-servers"> Sync multiplayer servers</label>
       </div>
 
+      <h4 style="margin:0 0 6px;font-size:13px;">Between accounts on this computer</h4>
+      <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:620px;">
+        Show one skin library to every account signed in here, instead of each
+        account having its own. Switching account still selects whichever skin
+        that account is actually wearing — only the list of skins is shared.
+        Capes are not: a cape is granted to one Mojang account and only that
+        account may wear it.
+      </p>
+      <div style="margin-bottom: 24px;">
+        <label class="setting-toggle"><input type="checkbox" id="pool-skins"> Share skins between accounts</label>
+        <div id="poolSkinsState" style="font-size:12px;opacity:0.75;margin-top:6px;"></div>
+      </div>
+
       <h4 style="margin:0 0 6px;font-size:13px;">Between computers</h4>
       <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:620px;">
         Keep your skin library on the Redstone relay, against your Minecraft
@@ -1080,6 +1093,23 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           ipcRenderer.send('save-settings', { gradientEnabled: false });
         }
       });
+    }
+
+    // ── One skin library across this machine's accounts ────────────────────
+    {
+      const cb = document.getElementById('pool-skins');
+      const state = document.getElementById('poolSkinsState');
+      const say = (r) => {
+        if (!r || !r.enabled) { state.textContent = ''; return; }
+        state.textContent = r.accounts > 1
+          ? `${r.total} skins shared across ${r.accounts} accounts`
+          : `${r.total} skins — only one account is signed in here so far`;
+      };
+      ipcRenderer.invoke('skins:poolEnabled').then(on => { cb.checked = !!on; }).catch(() => { });
+      cb.onchange = async () => {
+        const r = await ipcRenderer.invoke('skins:poolSetEnabled', { on: cb.checked });
+        say(r);
+      };
     }
 
     // ── Skin library sync ──────────────────────────────────────────────────

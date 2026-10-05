@@ -3415,6 +3415,9 @@ async function syncSkinLibraryNow() {
 
   const remote = await relayClient.syncRelay({ ...opts, op: "get", kind: "skins" });
   const lib = loadSkinLib();
+  // This account's OWN bucket, never the local pool: pooling is a view for this
+  // machine, and pushing the pool would copy every account's skins into this
+  // one's cloud library.
   const mine = lib[uuid] || [];
   const theirs = (remote && remote.data && Array.isArray(remote.data.skins)) ? remote.data.skins : [];
   const merged = mergeSkinLists(mine, theirs);
@@ -3429,6 +3432,28 @@ async function syncSkinLibraryNow() {
 ipcMain.handle("skins:cloudSync", async () => {
   try { return await syncSkinLibraryNow(); }
   catch (err) { return { success: false, error: String(err && err.message || err) }; }
+});
+
+// Share one skin library across the accounts on THIS machine. Separate from
+// the relay sync above, which carries one account's library between computers:
+// this is local, and the two compose — pooling decides what the page shows,
+// the relay sync still only ever pushes and pulls the signed-in account's own
+// skins, so turning pooling on can't leak one account's library into another's
+// cloud copy.
+ipcMain.handle("skins:poolEnabled", () => poolingSkins());
+ipcMain.handle("skins:poolSetEnabled", (event, { on }) => {
+  settings.set(POOL_SKINS_SETTING, !!on);
+  const lib = loadSkinLib();
+  // Turning it off drops the pooled ordering; each account's own order is
+  // untouched and comes straight back.
+  if (!on && lib[POOL_ORDER_KEY]) { delete lib[POOL_ORDER_KEY]; saveSkinLib(lib); }
+  const accounts = Object.keys(lib).filter(u => u !== POOL_ORDER_KEY && Array.isArray(lib[u]));
+  return {
+    success: true,
+    enabled: !!on,
+    accounts: accounts.length,
+    total: on ? pooledSkinList(lib).length : 0,
+  };
 });
 
 ipcMain.handle("skins:cloudEnabled", () => settings.get(SYNC_SKINS_SETTING, false) === true);
@@ -8854,12 +8879,10 @@ ipcMain.handle("mc:stashSkin", async (event, { uuid, id, base64, variant, restor
 function rememberMojangUrl(uuid, id, url) {
   try {
     const lib = loadSkinLib();
-    const arr = lib[uuid] || [];
-    const s = arr.find(x => String(x.id) === String(id));
-    if (!s) return false;
-    s.mojangUrl = url;
-    s.mojangAt = Date.now();
-    lib[uuid] = arr;
+    const hit = findSkinEntry(lib, uuid, id);
+    if (!hit) return false;
+    hit.skin.mojangUrl = url;
+    hit.skin.mojangAt = Date.now();
     saveSkinLib(lib);
     return true;
   } catch { return false; }
@@ -8875,7 +8898,10 @@ ipcMain.handle("skins:setMojangUrl", (event, { uuid, id, url }) => rememberMojan
 ipcMain.handle("skins:reconcileMojang", async (event, { uuid }) => {
   try {
     const lib = loadSkinLib();
-    const arr = lib[uuid] || [];
+    // With a shared library, a skin this account wears may be filed under
+    // another one — match against the whole pool or its cloud badge stays
+    // crossed out.
+    const arr = skinViewFor(lib, uuid);
     if (!arr.length) return { matched: 0 };
 
     const headers = await authHeaders();
@@ -8904,7 +8930,9 @@ ipcMain.handle("skins:reconcileMojang", async (event, { uuid }) => {
       matched++;
       if (s.mojangUrl !== url) { s.mojangUrl = url; s.mojangAt = s.mojangAt || Date.now(); changed = true; }
     }
-    if (changed) { lib[uuid] = arr; saveSkinLib(lib); }
+    // `arr` holds the live objects out of lib, so the edits above are already
+    // in place — just persist.
+    if (changed) saveSkinLib(lib);
     return { matched };
   } catch (err) {
     return { matched: 0, error: String(err && err.message || err) };
@@ -8914,7 +8942,8 @@ ipcMain.handle("skins:reconcileMojang", async (event, { uuid }) => {
 // Every skin the launcher knows to be on Mojang's servers, for a given account —
 // what a player-skin lookup shows next to the live one.
 ipcMain.handle("skins:mojangKnown", (event, { uuid }) => {
-  const arr = loadSkinLib()[uuid] || [];
+  const lib = loadSkinLib();
+  const arr = skinViewFor(lib, uuid);
   return arr.filter(s => s.mojangUrl)
     .map(s => ({ id: s.id, name: s.name, variant: s.variant, url: s.mojangUrl, at: s.mojangAt || 0 }))
     .sort((a, b) => b.at - a.at);
@@ -9202,6 +9231,83 @@ ipcMain.handle("mc:getDefaultSkins", async () => {
 // ---- LOCAL SKIN LIBRARY (per account uuid) ----
 // So a player's previously-used skins persist even if their active skin is
 // changed elsewhere. Deduped by decoded-pixel hash.
+// ── One shared skin library across the accounts on this machine ─────────────
+// Off by default, each account keeps its own library. On, every account on this
+// computer sees the same pool of skins — which is what people actually want
+// when they have an alt: a skin is a skin, not a property of the account that
+// happened to save it.
+//
+// The on-disk shape does NOT change: skins stay filed under the account that
+// added them, so turning the setting off gives everyone their own library back
+// exactly as it was. Pooling is a view over that, plus the ability to edit a
+// skin that lives in somebody else's bucket.
+//
+// CAPES ARE NOT POOLED. They aren't ours to pool: a cape is granted to a Mojang
+// account and only that account may wear it, so they stay per-account.
+const POOL_SKINS_SETTING = "poolSkinsAcrossAccounts";
+const poolingSkins = () => settings.get(POOL_SKINS_SETTING, false) === true;
+
+// The display order of the pooled list, which spans accounts and so can't live
+// in any one of them. Kept under a key no UUID can collide with.
+const POOL_ORDER_KEY = "__pool_order__";
+
+function pooledSkinList(lib) {
+  const seen = new Set();
+  const out = [];
+  for (const [uuid, arr] of Object.entries(lib)) {
+    if (uuid === POOL_ORDER_KEY) continue;
+    for (const s of arr || []) {
+      // The same skin saved by two accounts is one skin.
+      const key = s.pixelHash || `id:${s.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+  }
+  const order = Array.isArray(lib[POOL_ORDER_KEY]) ? lib[POOL_ORDER_KEY] : null;
+  if (order && order.length) {
+    const rank = new Map(order.map((id, i) => [String(id), i]));
+    // Anything not in the stored order is new, and belongs at the front.
+    out.sort((a, b) => {
+      const ra = rank.has(String(a.id)) ? rank.get(String(a.id)) : -1;
+      const rb = rank.has(String(b.id)) ? rank.get(String(b.id)) : -1;
+      if (ra !== rb) return ra - rb;
+      return (b.addedAt || 0) - (a.addedAt || 0);
+    });
+    return out;
+  }
+  return out.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+}
+
+// What a handler should hand back after changing something: the pooled list
+// when pooling, this account's own otherwise.
+const skinViewFor = (lib, uuid) => poolingSkins() ? pooledSkinList(lib) : (lib[uuid] || []);
+
+// Find a skin by id. With pooling on it may be filed under another account, so
+// look there too — otherwise renaming a shared skin would silently do nothing.
+function findSkinEntry(lib, uuid, id) {
+  const inBucket = (u) => {
+    if (u === POOL_ORDER_KEY) return null;
+    const arr = lib[u];
+    if (!Array.isArray(arr)) return null;
+    const idx = arr.findIndex(s => String(s.id) === String(id));
+    return idx >= 0 ? { uuid: u, arr, idx, skin: arr[idx] } : null;
+  };
+  const own = inBucket(uuid);
+  if (own || !poolingSkins()) return own;
+  for (const u of Object.keys(lib)) {
+    const hit = inBucket(u);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Every account's skins as one flat list, for matching against Mojang.
+function skinBucketsToScan(lib, uuid) {
+  if (!poolingSkins()) return [uuid];
+  return Object.keys(lib).filter(u => u !== POOL_ORDER_KEY);
+}
+
 function loadSkinLib() {
   try { return JSON.parse(fs.readFileSync(skinLibraryPath, "utf8")) || {}; } catch { return {}; }
 }
@@ -9211,7 +9317,8 @@ function saveSkinLib(obj) {
 }
 
 ipcMain.handle("skins:list", (event, { uuid }) => {
-  return loadSkinLib()[uuid] || [];
+  const lib = loadSkinLib();
+  return skinViewFor(lib, uuid);
 });
 
 // Every saved skin across ALL accounts (for the editor's "copy faces → from
@@ -9530,11 +9637,20 @@ ipcMain.handle("modrinth:findServerByIp", async (event, { ip }) => {
 // if a pixel-identical skin is already saved.
 ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name, editorType, creatorState, layerState }) => {
   const b = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
-  if (!b || !uuid) return loadSkinLib()[uuid] || [];
+  if (!b || !uuid) return skinViewFor(loadSkinLib(), uuid);
   const pixelHash = await skinPixelHash(b);
   const lib = loadSkinLib();
   const arr = lib[uuid] || [];
-  const existing = arr.find(s => s.pixelHash === pixelHash);
+  // Already here? With a shared library that includes another account's copy —
+  // adding it again would put the same picture in the list twice.
+  let existing = arr.find(s => s.pixelHash === pixelHash);
+  if (!existing && poolingSkins()) {
+    for (const u of Object.keys(lib)) {
+      if (u === POOL_ORDER_KEY || u === uuid || !Array.isArray(lib[u])) continue;
+      const hit = lib[u].find(s => s.pixelHash === pixelHash);
+      if (hit) { existing = hit; break; }
+    }
+  }
   if (existing) {
     // Update the name if a nicer one was provided.
     if (name && existing.name !== name) existing.name = name;
@@ -9542,13 +9658,13 @@ ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name, editorT
     if (creatorState !== undefined) existing.creatorState = creatorState;
     if (layerState !== undefined) existing.layerState = layerState;
     lib[uuid] = arr; saveSkinLib(lib);
-    return arr;
+    return skinViewFor(lib, uuid);
   }
   arr.unshift({ id: Date.now(), pixelHash, name: name || "Skin", base64: b, variant: (variant || "classic"), addedAt: Date.now(), editorType: editorType || "advanced", creatorState: creatorState || null, layerState: layerState || null });
   lib[uuid] = arr;
   saveSkinLib(lib);
   scheduleSkinSync();
-  return arr;
+  return skinViewFor(lib, uuid);
 });
 
 // Save a skin PNG (base64) into the user's Downloads folder.
@@ -9567,10 +9683,12 @@ ipcMain.handle("skins:download", (event, { base64, name }) => {
 
 ipcMain.handle("skins:remove", (event, { uuid, id }) => {
   const lib = loadSkinLib();
-  lib[uuid] = (lib[uuid] || []).filter(s => String(s.id) !== String(id));
+  // With a shared library the skin may be filed under another account.
+  const hit = findSkinEntry(lib, uuid, id);
+  if (hit) hit.arr.splice(hit.idx, 1);
   saveSkinLib(lib);
   scheduleSkinSync();
-  return lib[uuid];
+  return skinViewFor(lib, uuid);
 });
 
 // Reorder the library to match the order the renderer just drew. The renderer
@@ -9578,8 +9696,15 @@ ipcMain.handle("skins:remove", (event, { uuid, id }) => {
 // (relative to itself) at the end -- so a card added mid-drag doesn't vanish.
 ipcMain.handle("skins:reorder", (event, { uuid, order }) => {
   const lib = loadSkinLib();
+  if (!Array.isArray(order) || !order.length) return skinViewFor(lib, uuid);
+  // A pooled list spans accounts, so its order can't be stored inside any one
+  // of them — it goes in a key of its own and the pooled view reads it back.
+  if (poolingSkins()) {
+    lib[POOL_ORDER_KEY] = order.map(String);
+    saveSkinLib(lib);
+    return pooledSkinList(lib);
+  }
   const arr = lib[uuid] || [];
-  if (!Array.isArray(order) || !order.length) return arr;
   const byId = new Map(arr.map(s => [String(s.id), s]));
   const ordered = [];
   for (const id of order) {
@@ -9609,10 +9734,10 @@ ipcMain.handle("capes:setOrder", (event, { uuid, order }) => {
 
 ipcMain.handle("skins:rename", (event, { uuid, id, name }) => {
   const lib = loadSkinLib();
-  const arr = lib[uuid] || [];
-  const s = arr.find(x => String(x.id) === String(id));
-  if (s && name) { s.name = name; lib[uuid] = arr; saveSkinLib(lib); scheduleSkinSync(); }
-  return arr;
+  const hit = findSkinEntry(lib, uuid, id);
+  const s = hit && hit.skin;
+  if (s && name) { s.name = name; saveSkinLib(lib); scheduleSkinSync(); }
+  return skinViewFor(lib, uuid);
 });
 
 // Correct a saved skin's arm style. Imports can't always tell (MineSkin doesn't
@@ -9620,19 +9745,19 @@ ipcMain.handle("skins:rename", (event, { uuid, id, name }) => {
 // the edit dialog offers it.
 ipcMain.handle("skins:setVariant", (event, { uuid, id, variant }) => {
   const lib = loadSkinLib();
-  const arr = lib[uuid] || [];
-  const s = arr.find(x => String(x.id) === String(id));
-  if (s) { s.variant = variant === "slim" ? "slim" : "classic"; lib[uuid] = arr; saveSkinLib(lib); scheduleSkinSync(); }
-  return arr;
+  const hit = findSkinEntry(lib, uuid, id);
+  const s = hit && hit.skin;
+  if (s) { s.variant = variant === "slim" ? "slim" : "classic"; saveSkinLib(lib); scheduleSkinSync(); }
+  return skinViewFor(lib, uuid);
 });
 
 // Update an existing library skin in place (from the skin editor). Keeps the id
 // so the same card is edited rather than a duplicate created.
 ipcMain.handle("skins:update", async (event, { uuid, id, base64, variant, name, editorType, creatorState, layerState }) => {
   const lib = loadSkinLib();
-  const arr = lib[uuid] || [];
-  const s = arr.find(x => String(x.id) === String(id));
-  if (!s) return arr;
+  const hit = findSkinEntry(lib, uuid, id);
+  if (!hit) return skinViewFor(lib, uuid);
+  const s = hit.skin;
   if (base64) {
     const b = String(base64).replace(/^data:image\/\w+;base64,/, "");
     s.base64 = b;
@@ -9645,10 +9770,9 @@ ipcMain.handle("skins:update", async (event, { uuid, id, base64, variant, name, 
   // The editor's layer stack, so re-opening the skin restores it.
   if (layerState !== undefined) s.layerState = layerState;
   s.updatedAt = Date.now();
-  lib[uuid] = arr;
   saveSkinLib(lib);
   scheduleSkinSync();
-  return arr;
+  return skinViewFor(lib, uuid);
 });
 
 // Pixel hash for arbitrary base64 (used to detect if the active Mojang skin
