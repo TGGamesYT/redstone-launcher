@@ -9,6 +9,21 @@ started.
 
 ---
 
+## 0. Round 16
+
+- [x] **Import from Lunar Client.** Its accounts live in
+      `.lunarclient/settings/game/accounts.json` (the same shape the Minecraft
+      launcher uses), and the Minecraft versions it has downloaded are the
+      folders under `.lunarclient/offline/`. Lunar keeps no local skin library,
+      so there is nothing to import there.
+- [x] **Build player heads ourselves** instead of pointing an `<img>` at
+      minotar / mc-heads. Those answer a rate limit with HTTP 200 and a default
+      Steve, so the lists quietly filled with the wrong faces. Composite the
+      face at (8,8) with the hat layer at (40,8) from the skin Mojang is
+      actually serving, and cache by texture hash.
+
+---
+
 ## 0. Round 15
 
 ### The player render

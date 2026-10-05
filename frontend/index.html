@@ -144,14 +144,26 @@
           const item = document.createElement('div');
           item.className = 'account-item';
           item.innerHTML = `
-            <img src="https://minotar.net/avatar/${player.id || 'Steve'}" alt="${player.name}">
+            <img alt="${player.name}">
             <div class="account-item-info">
               <div class="account-name">${player.name}</div>
               <div class="account-type">${player.type === 'microsoft' ? 'Microsoft' : 'Offline'}</div>
             </div>
             <button class="remove-btn" title="Remove account">✕</button>
           `;
-          
+          // Built from the player's real skin. The old src pointed an avatar
+          // service at `player.id`, which is this launcher's own account id and
+          // not a Minecraft name or uuid at all — so every row here was a
+          // stranger's face, or a Steve, by chance.
+          if (window.setPlayerHead) {
+            window.setPlayerHead(item.querySelector('img'), {
+              uuid: player.auth?.uuid || player.uuid,
+              name: player.auth?.name || player.name || player.username,
+              size: 32,
+              offline: player.type !== 'microsoft',
+            });
+          }
+
           item.querySelector('.remove-btn').onclick = async (e) => {
             e.stopPropagation();
             if (await uiConfirm(`Remove ${player.name} from this launcher?`, { title: 'Remove account', ok: 'Remove', danger: true })) {

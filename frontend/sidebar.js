@@ -1,3 +1,32 @@
+// ── Player heads ──
+// Heads are built by the launcher out of Mojang's own skin rather than fetched
+// from an avatar service (playerhead.js says why). Every page with a sidebar
+// shows at least one, so it is loaded here for the pages that don't include it
+// themselves, and `setPlayerHead` waits for it rather than silently drawing
+// nothing if a list renders before the script has arrived.
+const whenPlayerHead = (() => {
+  if (!window.PlayerHead && !document.querySelector('script[src$="playerhead.js"]')) {
+    const t = document.createElement('script');
+    t.src = 'playerhead.js';
+    document.head.appendChild(t);
+  }
+  let p = null;
+  return () => p || (p = new Promise(res => {
+    const t0 = Date.now();
+    const tick = () => {
+      if (window.PlayerHead) return res(true);
+      if (Date.now() - t0 > 5000) return res(false);   // it is not coming
+      setTimeout(tick, 30);
+    };
+    tick();
+  }));
+})();
+
+function setPlayerHead(img, opts) {
+  whenPlayerHead().then(ok => { if (ok && img) window.PlayerHead.set(img, opts); });
+}
+window.setPlayerHead = setPlayerHead;
+
 function error(text, duration = 3000) {
   console.error(text)
   // Create container if needed
@@ -143,10 +172,14 @@ async function updateLoginIcon() {
 
     const img = document.createElement('img');
     // Offline accounts get the default skin, premium accounts their real one.
-    img.src = player.type === 'microsoft'
-      ? `https://minotar.net/helm/${encodeURIComponent(username)}/24`
-      : 'https://minotar.net/helm/MHF_Steve/24';
-    img.onerror = () => { img.src = 'https://tggamesyt.dev/assets/stevehead.png'; };
+    // Built here from Mojang's skin rather than fetched from an avatar service
+    // — see playerhead.js for why that mattered.
+    setPlayerHead(img, {
+      uuid: player.auth?.uuid || player.uuid,
+      name: username,
+      size: 24,
+      offline: player.type !== 'microsoft',
+    });
     img.style.width = '24px';
     img.style.height = '24px';
     img.style.borderRadius = '4px';

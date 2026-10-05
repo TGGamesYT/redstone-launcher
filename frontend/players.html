@@ -263,6 +263,8 @@
   <link rel="stylesheet" href="server.css">
   <link rel="stylesheet" href="material-icons.css">
   <script src="uimodal.js"></script>
+  <!-- Before the inline script below, which calls into it as it renders. -->
+  <script src="playerhead.js"></script>
 </head>
 
 <body>
@@ -350,7 +352,7 @@
       <div class="fr-add">
         <!-- Whose head you are about to send a request to. Steve until you
              type something that resolves. -->
-        <img id="frAddFace" alt="" src="https://minotar.net/helm/MHF_Steve/32">
+        <img id="frAddFace" alt="">
         <input type="text" id="frAddInput" placeholder="Add by username…" autocomplete="off">
         <button id="frAddBtn">Add</button>
       </div>
@@ -503,9 +505,11 @@
     };
     const frList = () => document.getElementById('frList');
     const undash = (id) => String(id || '').replace(/-/g, '');
-    // The same heads the account rows use, by name, rather than a second
-    // service carried over from the API example.
-    const faceUrl = (name) => `https://minotar.net/helm/${encodeURIComponent(name || 'MHF_Steve')}/32`;
+    // Heads are built by the launcher from Mojang's own skin, not fetched from
+    // an avatar service that answers a rate limit with somebody else's face.
+    const setFace = (img, opts) => {
+      if (window.PlayerHead) window.PlayerHead.set(img, opts);
+    };
 
     const STATUS_LABEL = {
       ONLINE: 'Online',
@@ -522,8 +526,9 @@
       const row = document.createElement('div');
       row.className = 'fr-row';
       const img = document.createElement('img');
-      img.src = faceUrl(p.name);
-      img.onerror = () => { img.src = 'https://tggamesyt.dev/assets/stevehead.png'; };
+      // The friends API gives a profile id, which is the exact thing to ask
+      // for — no username lookup needed, and no chance of the wrong player.
+      setFace(img, { uuid: p.profileId, name: p.name, size: 38 });
       const body = document.createElement('div');
       body.style.cssText = 'min-width:0;flex:1;';
       const name = document.createElement('div');
@@ -721,22 +726,21 @@
       const addBtn = document.getElementById('frAddBtn');
       const addInput = document.getElementById('frAddInput');
       const addFace = document.getElementById('frAddFace');
-      const STEVE = 'https://minotar.net/helm/MHF_Steve/32';
 
       // The head beside the field follows what is typed. Debounced, because
-      // every keystroke would otherwise be a request for a head that is one
-      // letter into a name nobody has; and a name that does not exist falls
-      // back to Steve rather than a broken image.
+      // every keystroke would otherwise be a name lookup for something one
+      // letter into a name nobody has; a name that does not exist gets the
+      // default head, which the main process returns on its own.
       let faceTimer = null;
       const showFace = () => {
         if (!addFace) return;
         const who = (addInput.value || '').trim();
         // Minecraft names are 3-16 of [A-Za-z0-9_]; anything else is still
         // being typed, so there is nothing to look up yet.
-        const url = /^\w{3,16}$/.test(who) ? faceUrl(who) : STEVE;
-        if (addFace.getAttribute('src') !== url) addFace.src = url;
+        const named = /^\w{3,16}$/.test(who);
+        setFace(addFace, { name: named ? who : null, size: 34, offline: !named });
       };
-      if (addFace) addFace.onerror = () => { if (addFace.src !== STEVE) addFace.src = STEVE; };
+      if (addFace) showFace();
 
       const doAdd = async () => {
         const who = (addInput.value || '').trim();
@@ -800,10 +804,12 @@
         const img = document.createElement("img");
         // Offline accounts show the DEFAULT skin, not whatever skin a real
         // account with that name happens to have.
-        img.src = p.type === "microsoft"
-          ? `https://minotar.net/helm/${encodeURIComponent(p.auth?.name || p.username || "Steve")}/32`
-          : "https://minotar.net/helm/MHF_Steve/32";
-        img.onerror = () => { img.src = "https://tggamesyt.dev/assets/stevehead.png"; };
+        setFace(img, {
+          uuid: p.auth?.uuid || p.uuid,
+          name: p.auth?.name || p.username,
+          size: 32,
+          offline: p.type !== "microsoft",
+        });
         li.appendChild(img);
 
         const info = document.createElement("div");

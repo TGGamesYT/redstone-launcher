@@ -278,7 +278,7 @@
         row(list, {
           icon: 'move_to_inbox',
           title: 'From another launcher',
-          desc: 'Copy an instance out of Prism, MultiMC, CurseForge, the Modrinth App or the vanilla launcher.',
+          desc: 'Copy an instance out of Prism, MultiMC, CurseForge, the Modrinth App, Lunar Client or the vanilla launcher.',
           onClick: () => {
             close();
             // One instance, picked by clicking it — not the bulk importer from

@@ -5486,7 +5486,139 @@ function knownLauncherPaths() {
       process.platform === "darwin" ? path.join(home, "Library", "Application Support", "minecraft") : null,
       process.platform === "linux" ? path.join(home, ".minecraft") : null,
     ),
+    lunar: lunarRoots(),
   };
+}
+
+// ── Lunar Client ────────────────────────────────────────────────────────────
+// Lunar keeps everything under a single .lunarclient folder in the user's home
+// directory on every platform (its own support pages give
+// %USERPROFILE%\.lunarclient and ~/.lunarclient), with the client jars in
+// offline/ and the signed-in accounts in settings/game/accounts.json. Some
+// Windows installs put it under %APPDATA% instead, and the Flatpak build keeps
+// its own home, so all of those are tried.
+//
+// It is not a launcher with instance folders: one Minecraft directory serves
+// every version, which is why this is handled separately from the scanners
+// that walk a folder of instances.
+function lunarRoots() {
+  const { home, appData } = launcherSearchRoots();
+  return [
+    path.join(home, ".lunarclient"),
+    path.join(appData, ".lunarclient"),
+    path.join(home, ".var", "app", "com.lunarclient.LunarClient", "data", ".lunarclient"),
+    path.join(home, ".var", "app", "com.lunarclient.LunarClient", ".lunarclient"),
+  ].filter((p, i, a) => a.indexOf(p) === i);
+}
+
+const lunarRoot = () => lunarRoots().find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+
+// Which Minecraft directory Lunar actually plays out of. By default it is the
+// vanilla one — Lunar does not keep its own saves, servers or resource packs —
+// but the launcher lets that be changed per version, so a game directory
+// sitting inside .lunarclient wins if there is one.
+function lunarGameDirs() {
+  const out = [];
+  const root = lunarRoot();
+  const looksPlayed = (d) => {
+    try {
+      return ["saves", "servers.dat", "options.txt", "resourcepacks", "config"]
+        .some(n => fs.existsSync(path.join(d, n)));
+    } catch { return false; }
+  };
+  if (root) {
+    for (const sub of ["minecraft", ".minecraft", "game"]) {
+      const d = path.join(root, sub);
+      if (fs.existsSync(d) && looksPlayed(d)) out.push(d);
+    }
+  }
+  const vanilla = lunarVanillaDirs().find(p => p && fs.existsSync(p) && looksPlayed(p));
+  if (vanilla) out.push(vanilla);
+  return out;
+}
+
+// The vanilla .minecraft candidates, without going through knownLauncherPaths()
+// — which calls lunarRoots() and would recurse.
+function lunarVanillaDirs() {
+  const { home, appData } = launcherSearchRoots();
+  return [
+    process.platform === "win32" ? path.join(appData, ".minecraft") : null,
+    process.platform === "darwin" ? path.join(home, "Library", "Application Support", "minecraft") : null,
+    process.platform === "linux" ? path.join(home, ".minecraft") : null,
+  ].filter(Boolean);
+}
+
+// Lunar's mod profiles. These are named sets of Lunar's own mod settings and
+// live in <gameDir>/config/lunar/profile_manager.json, each entry carrying the
+// folder `name` and the `displayName` the launcher shows. They share one game
+// directory, so they are names for an instance rather than separate ones.
+function lunarProfileNames(gameDir) {
+  const f = path.join(gameDir, "config", "lunar", "profile_manager.json");
+  try {
+    if (!fs.existsSync(f)) return [];
+    const j = JSON.parse(fs.readFileSync(f, "utf8"));
+    const list = Array.isArray(j) ? j : (j.profiles || j.profileList || []);
+    return list
+      .map(p => (p && (p.displayName || p.name)) || null)
+      .filter(Boolean);
+  } catch { return []; }
+}
+
+// The Minecraft versions Lunar has actually downloaded. offline/ holds one
+// folder per client branch — some are versions ("1.8", "1.21"), and "multiver"
+// is the combined build that is not a version at all, so only the ones that
+// parse as a Minecraft version are offered.
+function lunarVersions(root) {
+  const dir = path.join(root, "offline");
+  let names = [];
+  try { names = fs.readdirSync(dir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name); }
+  catch { return []; }
+  const out = [];
+  for (const n of names) {
+    const m = String(n).match(/^(\d+\.\d+(?:\.\d+)?)$/);
+    if (m) out.push(m[1]);
+  }
+  return out.sort(loaderCompareVersions);
+}
+
+// What there is to import from Lunar: one entry per Minecraft version it has
+// downloaded, all playing out of the same directory. If none of the folder
+// names parse as a version (Lunar has moved most of its builds into a single
+// "multiver" one), the directory still knows what it last ran, so fall back to
+// the same sniffing every other unknown launcher gets.
+function lunarInstances() {
+  const root = lunarRoot();
+  if (!root) return [];
+  const gameDirs = lunarGameDirs();
+  if (!gameDirs.length) return [];
+  const gameDir = gameDirs[0];
+
+  const profiles = lunarProfileNames(gameDir);
+  const label = profiles.length === 1 ? ` (${profiles[0]})` : "";
+  const out = [];
+
+  for (const version of lunarVersions(root)) {
+    out.push({
+      kind: "lunar", dir: gameDir, gameDir,
+      icon: null,
+      name: `Lunar Client ${version}${label}`,
+      version, loader: "vanilla", loaderVersion: "",
+      versionFrom: "lunar",
+    });
+  }
+  if (!out.length) {
+    const sniffed = sniffInstanceVersion(gameDir);
+    out.push({
+      kind: "lunar", dir: gameDir, gameDir,
+      icon: null,
+      name: `Lunar Client${label}`,
+      version: sniffed && sniffed.version,
+      loader: "vanilla", loaderVersion: "",
+      versionUnknown: !(sniffed && sniffed.version),
+      versionFrom: sniffed ? sniffed.from : null,
+    });
+  }
+  return out;
 }
 
 // Prism/MultiMC record the loader as a "component" list in mmc-pack.json.
@@ -5990,6 +6122,15 @@ ipcMain.handle("import:scan", async () => {
       if (profiles.length) found.vanilla = { root, instances: profiles };
       continue;
     }
+    if (kind === "lunar") {
+      // Lunar has no instance folders either: one Minecraft directory serves
+      // every version it has downloaded.
+      const root = lunarRoot();
+      if (!root) continue;
+      const list = lunarInstances();
+      if (list.length) found.lunar = { root, instances: list };
+      continue;
+    }
     for (const root of roots) {
       // The Modrinth App keeps its metadata in a database beside the profiles
       // folder rather than in each instance.
@@ -6032,27 +6173,50 @@ function accountsFromPrism(root) {
   return out;
 }
 
-function accountsFromVanilla(root) {
-  const file = path.join(root, "launcher_accounts.json");
+// The Minecraft launcher's launcher_accounts.json, and Lunar Client's
+// settings/game/accounts.json, are the same shape: an `accounts` map keyed by
+// local id, each entry carrying `accessToken`, `localId` and a
+// `minecraftProfile` of { id, name }. Lunar reuses Mojang's launcher format,
+// so one reader covers both.
+function accountsFromLauncherJson(file, source) {
   if (!fs.existsSync(file)) return [];
   let j;
-  try { j = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return []; }
+  try { j = JSON.parse(fs.readFileSync(file, "utf8")); } catch (err) {
+    devtoolsLog(`Could not read ${source} accounts:`, err && err.message);
+    return [];
+  }
   const out = [];
   for (const a of Object.values(j.accounts || {})) {
     const profile = a.minecraftProfile || {};
-    if (!profile.name) continue;
+    const name = profile.name || a.username;
+    if (!name) continue;
+    // Lunar stores offline ("cracked") accounts in the same file, and marks
+    // them by giving the access token the account's own UUID instead of a real
+    // one. A token that is just a UUID is not a session.
+    const token = a.accessToken || null;
+    const tokenIsUuid = !!token && /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(token);
     out.push({
-      source: "vanilla",
-      username: profile.name,
+      source,
+      username: name,
       uuid: profile.id || a.localId || null,
-      accessToken: a.accessToken || null,
-      // The vanilla launcher keeps its refresh token in the OS credential
-      // store, not in this file, so there is nothing to carry over.
+      accessToken: tokenIsUuid ? null : token,
+      // Neither launcher keeps a refresh token here — the Minecraft launcher
+      // puts its one in the OS credential store — so there is nothing to carry
+      // over and the account will need signing in again.
       refreshToken: null,
-      offline: false,
+      offline: tokenIsUuid || !token,
     });
   }
+  devtoolsLog(`${source} accounts: ${out.length} found in ${path.basename(file)}`);
   return out;
+}
+
+function accountsFromVanilla(root) {
+  return accountsFromLauncherJson(path.join(root, "launcher_accounts.json"), "vanilla");
+}
+
+function accountsFromLunar(root) {
+  return accountsFromLauncherJson(path.join(root, "settings", "game", "accounts.json"), "lunar");
 }
 
 // minecraft_users(uuid, active, username, access_token, refresh_token, expires)
@@ -6323,6 +6487,8 @@ ipcMain.handle("import:accounts", async () => {
   }
   const vanillaRoot = firstExisting(paths.vanilla);
   if (vanillaRoot) found.push(...accountsFromVanilla(vanillaRoot));
+  const lunarDir = lunarRoot();
+  if (lunarDir) found.push(...accountsFromLunar(lunarDir));
   // Not gated on an instances folder existing: the accounts are in app.db, and
   // somebody can perfectly well have signed in without making an instance.
   found.push(...accountsFromModrinth());
@@ -9164,6 +9330,229 @@ ipcMain.handle("skins:similarityOrder", async (event, { uuid }) => {
     devtoolsLog("Could not group skins by similarity:", err && err.message);
     return [];
   }
+});
+
+// ── Player heads, drawn here rather than fetched from an avatar service ─────
+// Every head in this launcher used to be an <img> pointed at minotar.net or
+// mc-heads.net. Those services are rate limited, and when they throttle they do
+// not fail — they answer 200 with a default Steve. So under load the accounts
+// list, the sidebar and the friends panel quietly filled up with the WRONG
+// faces, with nothing to tell you it had happened.
+//
+// A head is two 8x8 squares out of the skin sheet: the face at (8,8) and the
+// hat layer at (40,8) on top of it. Mojang serves the skin itself from
+// textures.minecraft.net, which is a CDN for immutable content rather than a
+// per-request rendering service, so this does the compositing here and keeps
+// the result. When a lookup genuinely fails the answer is the DEFAULT head,
+// said to be the default — never somebody else's face.
+const HEADS_DIR = path.join(texturesDir, "heads");
+const FACE_RECT = { left: 8, top: 8, width: 8, height: 8 };
+const HAT_RECT = { left: 40, top: 8, width: 8, height: 8 };
+// Mojang's own default skins, verified to be 64x64 PNGs of Steve and Alex.
+const DEFAULT_SKIN_TEXTURE = {
+  classic: "1a4af718455d4aab528e7a61f86fa25e6a369d1768dcb13f7df319a713eb810b",
+  slim: "83cee5ca6afcdb171285aa00e8049c297b2dbeba0efb8ff970a5677a1b644032",
+};
+const TEXTURES_BASE = "https://textures.minecraft.net/texture/";
+
+const HEAD_PROFILE_TTL = 6 * 60 * 60 * 1000;   // a skin change shows up within this
+const HEAD_FAIL_TTL = 10 * 60 * 1000;          // don't hammer a lookup that just failed
+const _headProfile = new Map();   // uuid  -> { hash, slim, at }
+const _headUuid = new Map();      // name  -> { uuid, at }  (null uuid = no such player)
+const _headFail = new Map();      // key   -> when to try again
+const _headRendered = new Map();  // hash|size -> data URL
+const HEAD_RENDER_MAX = 600;
+
+const _headFresh = (e, ttl) => !!e && (Date.now() - e.at) < ttl;
+const _headCooling = (k) => Date.now() < (_headFail.get(k) || 0);
+const _headCool = (k) => _headFail.set(k, Date.now() + HEAD_FAIL_TTL);
+
+// Which default skin a UUID gets, by Minecraft's own rule: the Java hashCode
+// of the 128-bit value, odd means the slim model.
+function defaultModelFor(uuid) {
+  const hex = String(uuid || "").replace(/-/g, "");
+  if (hex.length !== 32) return "classic";
+  let h = 0;
+  for (let i = 0; i < 32; i += 8) {
+    h ^= parseInt(hex.slice(i, i + 8), 16) | 0;
+  }
+  return (h & 1) ? "slim" : "classic";
+}
+
+// A skin PNG by its texture hash, kept on disk forever — the hash IS the
+// content, so it can never go stale.
+async function skinByTextureHash(hash) {
+  const file = path.join(HEADS_DIR, `tex-${hash}.png`);
+  try { if (fs.existsSync(file)) return fs.readFileSync(file); } catch { /* re-fetch */ }
+  const res = await fetch(TEXTURES_BASE + hash);
+  if (!res.ok) throw new Error(`textures.minecraft.net says ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 24 || buf[0] !== 0x89 || buf[1] !== 0x50) throw new Error("not a PNG");
+  try { fs.mkdirSync(HEADS_DIR, { recursive: true }); fs.writeFileSync(file, buf); } catch { /* cache is optional */ }
+  return buf;
+}
+
+// Face + hat, composited and scaled with nearest-neighbour so it stays the
+// crisp block of pixels it is meant to be.
+async function headFromSkin(skinPng, size) {
+  const src = sharp(skinPng).ensureAlpha();
+  const meta = await src.metadata();
+  if (meta.width !== 64) throw new Error(`not a skin sheet (${meta.width}x${meta.height})`);
+  const face = await src.clone().extract(FACE_RECT).png().toBuffer();
+  let out = sharp(face);
+  // The hat layer is optional in practice — plenty of skins leave it empty —
+  // and on a 64x32 sheet it is still inside the image, so this is safe either
+  // way. A failure to read it just means a bare face.
+  try {
+    const hat = await sharp(skinPng).ensureAlpha().extract(HAT_RECT).png().toBuffer();
+    out = out.composite([{ input: hat, blend: "over" }]);
+  } catch { /* no hat layer */ }
+  return await out
+    .resize(size, size, { kernel: sharp.kernel.nearest })
+    .png().toBuffer();
+}
+
+// uuid -> the texture hash of the skin Mojang is serving for it.
+async function headTextureForUuid(uuid) {
+  const key = String(uuid || "").replace(/-/g, "");
+  if (!key) return null;
+  const hit = _headProfile.get(key);
+  if (_headFresh(hit, HEAD_PROFILE_TTL)) return hit;
+  if (_headCooling("p:" + key)) return hit || null;    // stale is better than wrong
+  try {
+    const res = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${key}`);
+    if (!res.ok) throw new Error(`profile ${res.status}`);
+    const prof = await res.json();
+    const tex = (prof.properties || []).find(p => p.name === "textures");
+    if (!tex) throw new Error("no textures property");
+    const decoded = JSON.parse(Buffer.from(tex.value, "base64").toString("utf8"));
+    const url = decoded?.textures?.SKIN?.url || "";
+    const hash = url.split("/").pop() || null;
+    const slim = decoded?.textures?.SKIN?.metadata?.model === "slim";
+    const entry = { hash, slim, at: Date.now() };
+    _headProfile.set(key, entry);
+    return entry;
+  } catch (err) {
+    _headCool("p:" + key);
+    devtoolsLog(`head: no profile for ${key}:`, err && err.message);
+    return hit || null;
+  }
+}
+
+async function headUuidForName(name) {
+  const key = String(name || "").trim().toLowerCase();
+  if (!key) return null;
+  const hit = _headUuid.get(key);
+  if (_headFresh(hit, HEAD_PROFILE_TTL)) return hit.uuid;
+  if (_headCooling("n:" + key)) return hit ? hit.uuid : null;
+  try {
+    const res = await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(key)}`);
+    // 404 is a real answer: there is no such player, so remember that rather
+    // than asking again every time the list redraws.
+    if (res.status === 404 || res.status === 204) {
+      _headUuid.set(key, { uuid: null, at: Date.now() });
+      return null;
+    }
+    if (!res.ok) throw new Error(`names ${res.status}`);
+    const j = await res.json();
+    const uuid = j && j.id ? String(j.id) : null;
+    _headUuid.set(key, { uuid, at: Date.now() });
+    return uuid;
+  } catch (err) {
+    _headCool("n:" + key);
+    devtoolsLog(`head: could not resolve "${key}":`, err && err.message);
+    return hit ? hit.uuid : null;
+  }
+}
+
+async function renderHead(hash, size) {
+  const key = `${hash}|${size}`;
+  const cached = _headRendered.get(key);
+  if (cached) return cached;
+  const file = path.join(HEADS_DIR, `${hash}-${size}.png`);
+  try {
+    if (fs.existsSync(file)) {
+      const url = "data:image/png;base64," + fs.readFileSync(file).toString("base64");
+      _headRendered.set(key, url);
+      return url;
+    }
+  } catch { /* render it again */ }
+  const png = await headFromSkin(await skinByTextureHash(hash), size);
+  const url = "data:image/png;base64," + png.toString("base64");
+  try { fs.mkdirSync(HEADS_DIR, { recursive: true }); fs.writeFileSync(file, png); } catch { /* optional */ }
+  if (_headRendered.size >= HEAD_RENDER_MAX) _headRendered.delete(_headRendered.keys().next().value);
+  _headRendered.set(key, url);
+  return url;
+}
+
+// The head for a player. `offline` skips Mojang entirely — an offline account
+// is a username nobody owns, and showing the real owner's face for it would be
+// a lie. Answers { url, from } where `from` is "skin" or "default", so the
+// caller can tell a real head from a stand-in.
+async function playerHead({ name, uuid, size, offline }) {
+  const px = Math.max(8, Math.min(512, Number(size) || 32));
+  let id = String(uuid || "").replace(/-/g, "") || null;
+  try {
+    if (!offline) {
+      if (!id && name) id = await headUuidForName(name);
+      if (id) {
+        const prof = await headTextureForUuid(id);
+        if (prof && prof.hash) {
+          return { url: await renderHead(prof.hash, px), from: "skin" };
+        }
+      }
+    }
+  } catch (err) {
+    devtoolsLog("head: falling back to the default:", err && err.message);
+  }
+  // No skin to be had. A default head, chosen the way Minecraft chooses one.
+  try {
+    const model = defaultModelFor(id || "");
+    return { url: await renderHead(DEFAULT_SKIN_TEXTURE[model], px), from: "default" };
+  } catch (err) {
+    devtoolsLog("head: even the default failed:", err && err.message);
+    return { url: null, from: "none" };
+  }
+}
+
+// The whole skin sheet for a player, from the same cached Mojang lookup the
+// heads use. The render on the skins page used to ask an avatar service for
+// this, which has the same problem: throttled, it answers 200 with a default
+// skin and the page shows the wrong character without saying so.
+ipcMain.handle("head:skin", async (event, { name, uuid, offline } = {}) => {
+  let id = String(uuid || "").replace(/-/g, "") || null;
+  try {
+    if (!offline) {
+      if (!id && name) id = await headUuidForName(name);
+      if (id) {
+        const prof = await headTextureForUuid(id);
+        if (prof && prof.hash) {
+          const png = await skinByTextureHash(prof.hash);
+          return { base64: png.toString("base64"), slim: !!prof.slim, from: "skin" };
+        }
+      }
+    }
+  } catch (err) {
+    devtoolsLog("skin: falling back to the default:", err && err.message);
+  }
+  try {
+    const model = defaultModelFor(id || "");
+    const png = await skinByTextureHash(DEFAULT_SKIN_TEXTURE[model]);
+    return { base64: png.toString("base64"), slim: model === "slim", from: "default" };
+  } catch (err) {
+    return { error: String(err && err.message || err) };
+  }
+});
+
+ipcMain.handle("head:get", async (event, opts) => playerHead(opts || {}));
+// Several at once, so a list of twenty accounts is one round trip rather than
+// twenty. Each entry answers independently; one failure does not sink the rest.
+ipcMain.handle("head:many", async (event, { players, size }) => {
+  const list = Array.isArray(players) ? players.slice(0, 200) : [];
+  return Promise.all(list.map(async (p) => {
+    try { return await playerHead({ ...p, size: p.size || size }); }
+    catch { return { url: null, from: "none" }; }
+  }));
 });
 
 // ------------------------

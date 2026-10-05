@@ -171,12 +171,17 @@
     return _impQueue;
   }
 
+  // A 1x1 transparent PNG: the row builder only makes an <img> when it is
+  // given one, and the real head is filled in a moment later.
+  const TRANSPARENT_PX = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
   const LAUNCHER_LABELS = {
     modrinth: 'Modrinth App',
     curseforge: 'CurseForge',
     prism: 'Prism Launcher',
     multimc: 'MultiMC',
     vanilla: 'Minecraft Launcher',
+    lunar: 'Lunar Client',
   };
 
   // ── Import ────────────────────────────────────────────────────────────────
@@ -285,10 +290,23 @@
     // ── Accounts first: not having to sign in again is the best part of this.
     const newAccounts = accounts.filter(a => !a.already);
     if (!single) group(countLabel('Accounts', accounts, newAccounts));
+    // The head is built by the launcher from the account's real skin rather
+    // than fetched from an avatar service, so a rate limit cannot turn this
+    // list into a column of strangers.
+    // setPlayerHead comes from sidebar.js and waits for playerhead.js to
+    // arrive; PlayerHead is the direct call, for the pages that include it
+    // themselves. Either way a missing one just leaves the placeholder.
+    const accountFace = (r, acc) => {
+      const i = r.el.querySelector('img');
+      if (!i) return;
+      const opts = { uuid: acc.uuid, name: acc.username, size: 40, offline: !!acc.offline };
+      if (window.setPlayerHead) window.setPlayerHead(i, opts);
+      else if (window.PlayerHead) window.PlayerHead.set(i, opts);
+    };
     newAccounts.forEach(acc => {
       const r = row({
         icon: 'person',
-        img: `https://mc-heads.net/avatar/${encodeURIComponent(acc.username)}/40`,
+        img: TRANSPARENT_PX,
         title: acc.username,
         detail: acc.offline ? 'offline account'
           : acc.refreshToken ? 'signed in — comes across ready to play'
@@ -296,6 +314,7 @@
         tag: LAUNCHER_LABELS[acc.source] || acc.source,
         checkbox: true,
       });
+      accountFace(r, acc);
       accountRows.push({ cb: r.cb, acc, row: r.el });
     });
     // Already-signed-in accounts are shown greyed out rather than hidden, so
@@ -303,11 +322,12 @@
     if (!single) accounts.filter(a => a.already).forEach(acc => {
       const r = row({
         icon: 'person',
-        img: `https://mc-heads.net/avatar/${encodeURIComponent(acc.username)}/40`,
+        img: TRANSPARENT_PX,
         title: acc.username,
         detail: 'already signed in here',
         tag: LAUNCHER_LABELS[acc.source] || acc.source,
       });
+      accountFace(r, acc);
       r.el.style.opacity = '0.55';
     });
 

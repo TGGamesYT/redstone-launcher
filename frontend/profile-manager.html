@@ -1816,7 +1816,15 @@
           const skinUrl = activeSkin.base64 ? ("data:image/png;base64," + activeSkin.base64) : activeSkin.url;
           window.skinViewer.loadSkin(skinUrl, { model: activeSkin.variant === "SLIM" ? "slim" : "default" });
         } else {
-          window.skinViewer.loadSkin(`https://mc-heads.net/skin/${name}`);
+          // Straight from Mojang, through the main process, rather than from
+          // an avatar service that answers a rate limit with a default skin
+          // and no indication that is what happened.
+          ipcRenderer.invoke("head:skin", { name, uuid: player.auth?.uuid || player.uuid, offline: isCrackedAccount })
+            .then(r => {
+              if (!r || !r.base64 || !window.skinViewer) return;
+              window.skinViewer.loadSkin("data:image/png;base64," + r.base64,
+                { model: r.slim ? "slim" : "default" });
+            }).catch(() => { });
         }
 
         // The cape on the render comes from the Mojang profile we just read,
@@ -1844,15 +1852,23 @@
           try { window.skinViewer.loadCape(null); } catch { }
         }
       } else {
+        // No WebGL: draw the flat skin sheet rather than asking an avatar
+        // service to render a body, which it will happily do for the wrong
+        // player once it starts throttling.
         let canvas = document.getElementById('skin_container');
         const ctx = canvas.getContext('2d');
-        const img = new Image();
-        img.src = `https://mc-heads.net/body/${name}/300`;
-        img.onload = function () {
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-          ctx.drawImage(img, 0, 0);
-        };
+        ipcRenderer.invoke("head:skin", { name, uuid: player.auth?.uuid || player.uuid, offline: isCrackedAccount })
+          .then(r => {
+            if (!r || !r.base64) return;
+            const img = new Image();
+            img.onload = function () {
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              ctx.imageSmoothingEnabled = false;
+              ctx.drawImage(img, 0, 0);
+            };
+            img.src = "data:image/png;base64," + r.base64;
+          }).catch(() => { });
       }
 
       const uuid = profile.id || player.uuid || (player.auth && player.auth.uuid) || name;
@@ -2254,7 +2270,16 @@
       if (window.skinViewer) {
         try {
           if (def) window.skinViewer.loadSkin("data:image/png;base64," + def.base64, { model: def.model === 'slim' ? 'slim' : 'default' });
-          else window.skinViewer.loadSkin("https://mc-heads.net/skin/MHF_Steve");
+          else {
+            // Mojang's own default skin, by uuid, through the main process.
+            ipcRenderer.invoke("head:skin", { uuid: currentUuid, offline: true })
+              .then(r => {
+                if (r && r.base64 && window.skinViewer) {
+                  window.skinViewer.loadSkin("data:image/png;base64," + r.base64,
+                    { model: r.slim ? 'slim' : 'default' });
+                }
+              }).catch(() => { });
+          }
         } catch { }
       }
       refreshSelectionUI();
