@@ -5321,11 +5321,127 @@ function launcherSearchRoots() {
   return { home, appData, cfg };
 }
 
+// ── The Modrinth App's database ─────────────────────────────────────────────
+// Everything the Modrinth App knows -- instances, accounts, saved skins -- is
+// in one SQLite file, app.db, and that file is NOT under the instances folder.
+// From modrinth/code (packages/app-lib/src/state/db.rs and state/dirs.rs):
+//
+//   settings_dir = $THESEUS_CONFIG_DIR or dirs::data_dir()/<app identifier>
+//   app.db       = settings_dir/app.db
+//   instances    = (settings.custom_dir or settings_dir)/profiles
+//
+// and the app identifier is "ModrinthApp" (apps/app/tauri.conf.json). The
+// instances folder is a *setting*, so anchoring the search on it -- which is
+// what this used to do -- finds nothing at all whenever the user moved it, or
+// whenever they have accounts and skins but no instances yet. Anchor on the
+// database instead, and ask the database where the instances went.
+function modrinthAppRoots() {
+  const { home, appData } = launcherSearchRoots();
+  const ids = ["ModrinthApp", "com.modrinth.theseus", "ModrinthAppDev"];
+  const bases = [
+    appData,
+    path.join(home, ".local", "share"),
+    path.join(home, ".var", "app", "com.modrinth.ModrinthApp", "data"),
+    path.join(home, ".var", "app", "com.modrinth.ModrinthApp", "config"),
+    path.join(home, "snap", "modrinth-app", "current", ".local", "share"),
+    process.platform === "darwin" ? path.join(home, "Library", "Application Support") : null,
+  ].filter(Boolean);
+  const out = [];
+  if (process.env.THESEUS_CONFIG_DIR) out.push(process.env.THESEUS_CONFIG_DIR);
+  for (const b of bases) for (const id of ids) out.push(path.join(b, id));
+  return out;
+}
+
+function modrinthDbPath() {
+  for (const root of modrinthAppRoots()) {
+    for (const n of ["app.db", "theseus.db", "data.db"]) {
+      const p = path.join(root, n);
+      try { if (fs.existsSync(p) && fs.statSync(p).size > 0) return p; } catch { /* next */ }
+    }
+  }
+  return null;
+}
+
+// Open a read-only snapshot of the Modrinth App database and hand it to `fn`.
+//
+// The copy matters twice over. The app may be running and holding its own lock,
+// and -- the part that was silently losing data -- the database is in WAL mode
+// (db.rs: .journal_mode(SqliteJournalMode::Wal)). In WAL mode recent commits
+// live in app.db-wal until a checkpoint folds them in, so copying app.db alone
+// can hand back a database that is missing the newest accounts and skins, or,
+// if it has never been checkpointed, everything. Copy the sidecars too.
+function withModrinthDb(label, fn) {
+  const dbPath = modrinthDbPath();
+  if (!dbPath) return null;
+
+  // node:sqlite is built in from Node 22, which Electron 41 ships, but guard
+  // it: this file is ESM, so the require has to be built, and an older runtime
+  // simply won't have the module.
+  let DatabaseSync;
+  try { ({ DatabaseSync } = createRequire(import.meta.url)("node:sqlite")); }
+  catch { return null; }
+
+  const tmp = path.join(app.getPath("temp"), `mr-${label}-${Date.now()}-${process.pid}.db`);
+  const copies = [tmp];
+  try {
+    fs.copyFileSync(dbPath, tmp);
+    for (const ext of ["-wal", "-shm"]) {
+      try {
+        if (fs.existsSync(dbPath + ext)) { fs.copyFileSync(dbPath + ext, tmp + ext); copies.push(tmp + ext); }
+      } catch { /* without it we just see the last checkpoint */ }
+    }
+    // Not readOnly: replaying the WAL into the snapshot is a write, and a
+    // read-only handle would refuse it and show stale rows instead. The
+    // snapshot is a throwaway copy, so writing to it costs nothing.
+    const db = new DatabaseSync(tmp);
+    try { return fn(db); }
+    finally { try { db.close(); } catch { /* ignore */ } }
+  } catch (err) {
+    devtoolsLog(`Could not read the Modrinth App database (${label}):`, err && err.message);
+    return null;
+  } finally {
+    for (const f of [...copies, tmp + "-wal", tmp + "-shm"]) {
+      try { fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+  }
+}
+
+const tableExistsIn = (db, name) => {
+  try {
+    return !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
+  } catch { return false; }
+};
+const columnsOf = (db, table) => {
+  try { return db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name); }
+  catch { return []; }
+};
+
+// Where the Modrinth App actually keeps its instances: settings.custom_dir if
+// the user moved them, otherwise beside the database.
+function modrinthInstancesDirs() {
+  const dbPath = modrinthDbPath();
+  const out = [];
+  if (dbPath) {
+    const custom = withModrinthDb("dir", (db) => {
+      if (!tableExistsIn(db, "settings")) return null;
+      if (!columnsOf(db, "settings").includes("custom_dir")) return null;
+      const r = db.prepare("SELECT custom_dir FROM settings WHERE custom_dir IS NOT NULL").get();
+      return r && r.custom_dir ? String(r.custom_dir) : null;
+    });
+    if (custom) out.push(path.join(custom, "profiles"));
+    out.push(path.join(path.dirname(dbPath), "profiles"));
+  }
+  return out.filter(p => { try { return fs.existsSync(p); } catch { return false; } });
+}
+
 function knownLauncherPaths() {
   const { home, appData, cfg } = launcherSearchRoots();
   const many = (...xs) => xs.filter(Boolean);
   return {
     modrinth: many(
+      // What the database says first -- it is the only answer that survives
+      // the user moving their instances folder.
+      ...modrinthInstancesDirs(),
       path.join(appData, "com.modrinth.theseus", "profiles"),
       path.join(appData, "ModrinthApp", "profiles"),
       path.join(home, ".local", "share", "ModrinthApp", "profiles"),
@@ -5394,38 +5510,11 @@ function readIniName(file) {
 //
 // Older versions wrote a profile.json into each instance folder; current ones
 // keep everything in app.db, so without this the importer finds a pile of
-// folders it can say nothing about. node:sqlite is read-only here and every
-// failure is non-fatal — if the schema has moved on, the caller falls back to
-// whatever the folders themselves reveal.
-function modrinthDbProfiles(profilesRoot) {
-  const appRoot = path.dirname(profilesRoot);
-  const dbPath = ["app.db", "theseus.db", "data.db"]
-    .map(n => path.join(appRoot, n))
-    .find(p => fs.existsSync(p));
-  if (!dbPath) return null;
-
-  // node:sqlite is built in from Node 22, which Electron 41 ships, but guard
-  // it: this file is ESM, so the require has to be built, and an older runtime
-  // simply won't have the module.
-  let DatabaseSync;
-  try { ({ DatabaseSync } = createRequire(import.meta.url)("node:sqlite")); }
-  catch { return null; }
-
-  let db;
-  try {
-    // A copy, because the app may well be running and holding its own lock.
-    const tmp = path.join(app.getPath("temp"), `mr-scan-${Date.now()}.db`);
-    fs.copyFileSync(dbPath, tmp);
-    db = new DatabaseSync(tmp, { readOnly: true });
-    try { return readProfileRows(db); }
-    finally {
-      try { db.close(); } catch { /* ignore */ }
-      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
-    }
-  } catch (err) {
-    devtoolsLog("Could not read the Modrinth App database:", err && err.message);
-    return null;
-  }
+// folders it can say nothing about. Every failure is non-fatal — if the schema
+// has moved on, the caller falls back to whatever the folders themselves
+// reveal.
+function modrinthDbProfiles(_profilesRoot) {
+  return withModrinthDb("scan", (db) => readProfileRows(db));
 }
 
 // Read the Modrinth App's instance list out of its database.
@@ -5953,44 +6042,33 @@ function accountsFromVanilla(root) {
   return out;
 }
 
-function accountsFromModrinth(profilesRoot) {
-  const appRoot = path.dirname(profilesRoot);
-  const dbPath = ["app.db", "theseus.db", "data.db"].map(n => path.join(appRoot, n)).find(p => fs.existsSync(p));
-  if (!dbPath) return [];
-  let DatabaseSync;
-  try { ({ DatabaseSync } = createRequire(import.meta.url)("node:sqlite")); } catch { return []; }
-  let tmp = null;
-  try {
-    tmp = path.join(app.getPath("temp"), `mr-acc-${Date.now()}.db`);
-    fs.copyFileSync(dbPath, tmp);
-    const db = new DatabaseSync(tmp, { readOnly: true });
-    try {
-      const table = db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('minecraft_users','users','accounts')"
-      ).get();
-      if (!table) return [];
-      const cols = db.prepare(`PRAGMA table_info(${table.name})`).all().map(c => c.name);
-      const pick = (...w) => w.find(x => cols.includes(x)) || null;
-      const cName = pick("username", "name");
-      const cUuid = pick("uuid", "id");
-      const cAccess = pick("access_token", "accessToken", "token");
-      const cRefresh = pick("refresh_token", "refreshToken");
-      if (!cName) return [];
-      return db.prepare(`SELECT * FROM ${table.name}`).all().map(r => ({
-        source: "modrinth",
-        username: r[cName],
-        uuid: cUuid ? r[cUuid] : null,
-        accessToken: cAccess ? r[cAccess] : null,
-        refreshToken: cRefresh ? r[cRefresh] : null,
-        offline: false,
-      })).filter(a => a.username);
-    } finally { try { db.close(); } catch { /* ignore */ } }
-  } catch (err) {
-    devtoolsLog("Could not read Modrinth App accounts:", err && err.message);
-    return [];
-  } finally {
-    if (tmp) { try { fs.unlinkSync(tmp); } catch { /* ignore */ } }
-  }
+// minecraft_users(uuid, active, username, access_token, refresh_token, expires)
+// — straight out of packages/app-lib/migrations. The column names are still
+// probed rather than assumed, so a rename does not take the whole scan down.
+function accountsFromModrinth() {
+  return withModrinthDb("acc", (db) => {
+    const table = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('minecraft_users','users','accounts')"
+    ).get();
+    if (!table) { devtoolsLog("Modrinth App database has no accounts table"); return []; }
+    const cols = columnsOf(db, table.name);
+    const pick = (...w) => w.find(x => cols.includes(x)) || null;
+    const cName = pick("username", "name");
+    const cUuid = pick("uuid", "id");
+    const cAccess = pick("access_token", "accessToken", "token");
+    const cRefresh = pick("refresh_token", "refreshToken");
+    if (!cName) { devtoolsLog(`Modrinth App ${table.name} has no username column:`, cols.join(",")); return []; }
+    const rows = db.prepare(`SELECT * FROM ${table.name}`).all();
+    devtoolsLog(`Modrinth App ${table.name}: ${rows.length} row(s)`);
+    return rows.map(r => ({
+      source: "modrinth",
+      username: r[cName],
+      uuid: cUuid ? r[cUuid] : null,
+      accessToken: cAccess ? r[cAccess] : null,
+      refreshToken: cRefresh ? r[cRefresh] : null,
+      offline: false,
+    })).filter(a => a.username);
+  }) || [];
 }
 
 // The account the skin library belongs to right now.
@@ -6027,8 +6105,18 @@ async function addSkinToLibrary(uuid, { base64, variant, name }) {
 // ── Skins from other launchers ──────────────────────────────────────────────
 // Most launchers keep a local skin library, and re-adding every skin by hand
 // after importing the account is exactly the kind of busywork importing is
-// supposed to remove. These are plain PNG files on disk; the texture they came
-// from is not recorded, so they arrive as ordinary library skins.
+// supposed to remove.
+//
+// None of them keeps those skins as loose PNG files, which is why scanning for
+// loose PNG files found nothing:
+//
+//   Modrinth App  — PNG blobs in app.db (custom_minecraft_skin_textures.texture,
+//                   joined to custom_minecraft_skins for the model variant)
+//   Minecraft     — base64 data URLs in .minecraft/launcher_custom_skins.json
+//   Prism/MultiMC — no skin library at all
+//
+// Loose-PNG scanning is kept as a last resort for anything that does write
+// files, but it is no longer the only thing tried.
 function skinsFromDir(dir, source, limit = 200) {
   const out = [];
   if (!dir || !fs.existsSync(dir)) return out;
@@ -6057,33 +6145,118 @@ function skinsFromDir(dir, source, limit = 200) {
   return out;
 }
 
+// The Modrinth App's saved skins. The texture is a PNG blob in the database --
+// see packages/app-lib/migrations/20250413162050_skin-selector.sql:
+//
+//   custom_minecraft_skin_textures(texture_key TEXT PRIMARY KEY, texture BLOB)
+//   custom_minecraft_skins(minecraft_user_uuid, texture_key, variant, cape_id,
+//                          display_order)
+//
+// `variant` is 'CLASSIC' | 'SLIM' | 'UNKNOWN' and there is no name column, so
+// the skins are named by the account they belong to. display_order only exists
+// from migration 20260609, hence the probe.
+function skinsFromModrinthDb() {
+  return withModrinthDb("skins", (db) => {
+    if (!tableExistsIn(db, "custom_minecraft_skin_textures")) {
+      devtoolsLog("Modrinth App database has no saved-skin tables");
+      return [];
+    }
+    const hasJoin = tableExistsIn(db, "custom_minecraft_skins");
+    const hasOrder = hasJoin && columnsOf(db, "custom_minecraft_skins").includes("display_order");
+    const names = new Map();
+    if (tableExistsIn(db, "minecraft_users")) {
+      try {
+        for (const u of db.prepare("SELECT uuid, username FROM minecraft_users").all()) {
+          names.set(String(u.uuid).replace(/-/g, "").toLowerCase(), u.username);
+        }
+      } catch { /* names are a nicety */ }
+    }
+
+    let rows;
+    if (hasJoin) {
+      rows = db.prepare(`
+        SELECT t.texture AS texture, s.variant AS variant,
+               s.minecraft_user_uuid AS uuid
+        FROM custom_minecraft_skins s
+        JOIN custom_minecraft_skin_textures t ON t.texture_key = s.texture_key
+        ORDER BY ${hasOrder ? "s.display_order ASC, " : ""}s.rowid ASC`).all();
+    } else {
+      // The textures table on its own still holds every skin's pixels.
+      rows = db.prepare("SELECT texture FROM custom_minecraft_skin_textures").all();
+    }
+    devtoolsLog(`Modrinth App saved skins: ${rows.length} row(s)`);
+
+    const out = [];
+    for (const r of rows) {
+      const buf = Buffer.isBuffer(r.texture) ? r.texture
+        : r.texture instanceof Uint8Array ? Buffer.from(r.texture) : null;
+      if (!buf || buf.length < 24 || buf[0] !== 0x89 || buf[1] !== 0x50) continue;
+      const who = names.get(String(r.uuid || "").replace(/-/g, "").toLowerCase());
+      out.push({
+        source: "modrinth",
+        name: who ? `${who}'s skin` : "Modrinth skin",
+        base64: buf.toString("base64"),
+        variant: String(r.variant || "").toUpperCase() === "SLIM" ? "slim" : "classic",
+      });
+    }
+    return out;
+  }) || [];
+}
+
+// The Minecraft launcher's own skin library: launcher_custom_skins.json in
+// .minecraft, holding each saved skin as a data: URL under customSkins.
+function skinsFromVanillaJson(root) {
+  const file = path.join(root, "launcher_custom_skins.json");
+  let j;
+  try {
+    if (!fs.existsSync(file)) return [];
+    j = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (err) {
+    devtoolsLog("Could not read launcher_custom_skins.json:", err && err.message);
+    return [];
+  }
+  const entries = Object.values(j.customSkins || j.skins || {});
+  devtoolsLog(`Minecraft launcher saved skins: ${entries.length} entry/entries`);
+  const out = [];
+  for (const s of entries) {
+    const url = s && (s.skinImage || s.image || s.texture);
+    const m = typeof url === "string" && url.match(/^data:image\/\w+;base64,(.+)$/s);
+    if (!m) continue;
+    out.push({
+      source: "vanilla",
+      name: s.name || "Minecraft skin",
+      base64: m[1],
+      variant: s.slim || String(s.modelType || s.variant || "").toLowerCase() === "slim"
+        ? "slim" : "classic",
+    });
+  }
+  return out;
+}
+
 ipcMain.handle("import:skins", async () => {
-  const { home, appData } = launcherSearchRoots();
   const paths = knownLauncherPaths();
   const firstExisting = (roots) => (roots || []).find(r => r && fs.existsSync(r)) || null;
   const found = [];
 
-  // The Modrinth App keeps saved skins beside its profiles.
-  const mr = firstExisting(paths.modrinth);
-  if (mr) {
-    for (const sub of ["skins", "caches/skins", "skin_cache"]) {
-      found.push(...skinsFromDir(path.join(path.dirname(mr), sub), "modrinth"));
-    }
-  }
-  // The vanilla launcher caches the skins you have uploaded.
+  // The Modrinth App keeps its saved skins in app.db, not on disk.
+  found.push(...skinsFromModrinthDb());
+
   const vanilla = firstExisting(paths.vanilla);
   if (vanilla) {
+    found.push(...skinsFromVanillaJson(vanilla));
+    // Older launcher builds, and anything that drops a PNG in by hand.
     found.push(...skinsFromDir(path.join(vanilla, "skins"), "vanilla"));
     found.push(...skinsFromDir(path.join(vanilla, "assets", "skins"), "vanilla"));
   }
-  // Prism and MultiMC keep them next to the instances folder.
+  // Prism and MultiMC have no skin library, but respect one if it is there.
   for (const kind of ["prism", "multimc"]) {
     const root = firstExisting(paths[kind]);
     if (root) found.push(...skinsFromDir(path.join(path.dirname(root), "skins"), kind));
   }
 
   // Two launchers often hold the same skin; key by pixels so it only appears
-  // once, and leave out anything already in the library.
+  // once. Skins already in the library are still returned, marked, so the
+  // importer can say "3 already here" instead of "none found".
   const uuid = (await currentAccountUuid()) || null;
   const mine = uuid ? (loadSkinLib()[uuid] || []) : [];
   const haveHashes = new Set(mine.map(x => x.pixelHash).filter(Boolean));
@@ -6097,6 +6270,7 @@ ipcMain.handle("import:skins", async () => {
     seen.add(key);
     out.push({ ...sk, pixelHash: hash, already: !!(hash && haveHashes.has(hash)) });
   }
+  devtoolsLog(`Importable skins: ${out.length} (${out.filter(s => s.already).length} already in the library)`);
   return out;
 });
 
@@ -6136,12 +6310,16 @@ ipcMain.handle("import:accounts", async () => {
   }
   const vanillaRoot = firstExisting(paths.vanilla);
   if (vanillaRoot) found.push(...accountsFromVanilla(vanillaRoot));
-  const mrRoot = firstExisting(paths.modrinth);
-  if (mrRoot) found.push(...accountsFromModrinth(mrRoot));
+  // Not gated on an instances folder existing: the accounts are in app.db, and
+  // somebody can perfectly well have signed in without making an instance.
+  found.push(...accountsFromModrinth());
 
   const mine = loadPlayers();
   const seen = new Set();
-  return found.filter(a => {
+  // Accounts already in this launcher are returned, marked, rather than
+  // dropped — otherwise "none found" is what you see when detection worked
+  // perfectly and simply had nothing new to offer.
+  const out = found.filter(a => {
     const key = String(a.username).toLowerCase();
     if (seen.has(key)) return false;   // the same account in two launchers
     seen.add(key);
@@ -6150,6 +6328,8 @@ ipcMain.handle("import:accounts", async () => {
     ...a,
     already: mine.some(p => String(p.username || "").toLowerCase() === String(a.username).toLowerCase()),
   }));
+  devtoolsLog(`Importable accounts: ${out.length} (${out.filter(a => a.already).length} already signed in here)`);
+  return out;
 });
 
 // Bring chosen accounts in. A refresh token is stored the same way this
@@ -6335,22 +6515,97 @@ function assetObjectPath(hash) {
   return path.join(dataDir, "assets", "objects", String(hash).slice(0, 2), String(hash));
 }
 
+// Fetch the panorama straight from Mojang when it isn't on disk. The assets are
+// content-addressed and public, so this is the same data the game would
+// download; it is cached into the launcher's own asset store so it is only
+// fetched once.
+const MOJANG_RESOURCES = "https://resources.download.minecraft.net";
+let _versionManifestCache = null;
+
+async function mojangVersionJson(version) {
+  if (!_versionManifestCache) {
+    const r = await fetch("https://launchermeta.mojang.com/mc/game/version_manifest_v2.json");
+    if (!r.ok) throw new Error(`version manifest: HTTP ${r.status}`);
+    _versionManifestCache = await r.json();
+  }
+  const entry = (_versionManifestCache.versions || []).find(v => v.id === version);
+  if (!entry) throw new Error(`Mojang has no version called ${version}`);
+  const vr = await fetch(entry.url);
+  if (!vr.ok) throw new Error(`version json: HTTP ${vr.status}`);
+  return vr.json();
+}
+
+async function fetchPanoramaFromMojang(version) {
+  const vjson = await mojangVersionJson(version);
+  const ai = vjson.assetIndex;
+  if (!ai || !ai.url) throw new Error(`${version} has no asset index`);
+  const ir = await fetch(ai.url);
+  if (!ir.ok) throw new Error(`asset index: HTTP ${ir.status}`);
+  const objects = (await ir.json()).objects || {};
+
+  // Cache the index too, so the local path finds it next time.
+  try {
+    const idxDir = path.join(dataDir, "assets", "indexes");
+    fs.mkdirSync(idxDir, { recursive: true });
+    fs.writeFileSync(path.join(idxDir, `${ai.id}.json`), JSON.stringify({ objects }));
+  } catch { /* caching is a bonus */ }
+
+  const out = [];
+  for (let i = 0; i < 6; i++) {
+    const rec = objects[`${PANORAMA_ASSET_PREFIX}${i}.png`];
+    if (!rec || !rec.hash) throw new Error(`${version}'s asset index has no panorama_${i}`);
+    const dest = assetObjectPath(rec.hash);
+    if (fs.existsSync(dest)) { out.push(fs.readFileSync(dest)); continue; }
+    const two = String(rec.hash).slice(0, 2);
+    const r = await fetch(`${MOJANG_RESOURCES}/${two}/${rec.hash}`);
+    if (!r.ok) throw new Error(`panorama_${i}: HTTP ${r.status}`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, buf);
+    } catch { /* not cacheable, still usable */ }
+    out.push(buf);
+  }
+  return out;
+}
+
 // The asset index this version uses, from whichever instance has it installed.
 function findAssetIndexFor(version) {
+  const indexesDir = path.join(dataDir, "assets", "indexes");
+  const tryIndex = (id) => {
+    if (!id) return null;
+    const p = path.join(indexesDir, `${id}.json`);
+    return fs.existsSync(p) ? p : null;
+  };
+  // An instance's version json names the asset index it uses. A modded
+  // instance keeps its loader version under another name, so look at every
+  // version folder, not just one matching the version id.
   const clientDir = path.join(dataDir, "client");
-  if (!fs.existsSync(clientDir)) return null;
-  for (const id of fs.readdirSync(clientDir)) {
-    const vjson = path.join(clientDir, id, "versions", String(version), `${version}.json`);
-    try {
-      if (!fs.existsSync(vjson)) continue;
-      const j = JSON.parse(fs.readFileSync(vjson, "utf8"));
-      const assetId = (j.assetIndex && j.assetIndex.id) || j.assets;
-      if (!assetId) continue;
-      const idx = path.join(dataDir, "assets", "indexes", `${assetId}.json`);
-      if (fs.existsSync(idx)) return idx;
-    } catch { /* try the next instance */ }
+  if (fs.existsSync(clientDir)) {
+    for (const id of fs.readdirSync(clientDir)) {
+      const versDir = path.join(clientDir, id, "versions");
+      let names = [];
+      try { names = fs.readdirSync(versDir); } catch { continue; }
+      for (const name of names) {
+        // Both <name>/<name>.json and the plain <version>.json inside it.
+        for (const file of [`${name}.json`, `${version}.json`]) {
+          const vjson = path.join(versDir, name, file);
+          try {
+            if (!fs.existsSync(vjson)) continue;
+            const j = JSON.parse(fs.readFileSync(vjson, "utf8"));
+            // Only this version's (or the one it inherits from).
+            if (j.id !== version && j.inheritsFrom !== version) continue;
+            const hit = tryIndex((j.assetIndex && j.assetIndex.id) || j.assets);
+            if (hit) return hit;
+          } catch { /* next */ }
+        }
+      }
+    }
   }
-  return null;
+  // Failing that, the index is usually named after the version's major line
+  // (1.21.1 -> "1.21"), and a single index covers many versions.
+  const m = /^(\d+\.\d+)/.exec(String(version));
+  return tryIndex(version) || (m && tryIndex(m[1])) || null;
 }
 
 function findClientJar(version) {
@@ -6424,10 +6679,16 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
       }
     }
 
+    // 3. Not on disk anywhere: fetch it. These are public, content-addressed
+    //    assets — the same bytes the game downloads — and they are cached into
+    //    the launcher's own asset store so this happens once per version.
     if (!faces) {
-      return {
-        error: "this version's panorama hasn't been downloaded yet — run the game once and try again",
-      };
+      try {
+        faces = await fetchPanoramaFromMojang(v);
+      } catch (e) {
+        devtoolsLog("panorama: could not download it:", e && e.message);
+        return { error: `Couldn't get ${v}'s panorama: ${e && e.message}` };
+      }
     }
 
     // Downscale before sending: a face is 1024x1024 and six of them as base64

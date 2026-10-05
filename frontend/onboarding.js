@@ -195,51 +195,70 @@
 
     const accountRows = [], skinRows = [], rows = [];
 
+    // A heading that distinguishes "we looked and there was nothing" from "we
+    // found them all and you already have them" — the two used to read the
+    // same, which made working detection look broken.
+    const countLabel = (what, all, fresh) => {
+      if (!all.length) return `${what} — none found in other launchers`;
+      const have = all.length - fresh.length;
+      if (!fresh.length) return `${what} — ${have} found, all already here`;
+      return have ? `${what} — ${fresh.length} to add, ${have} already here`
+        : `${what} — ${fresh.length} found`;
+    };
+
     // ── Accounts first: not having to sign in again is the best part of this.
     const newAccounts = accounts.filter(a => !a.already);
-    if (!single) {
-      group(newAccounts.length ? `Accounts — ${newAccounts.length} found`
-        : 'Accounts — none found in other launchers');
-    }
-    if (newAccounts.length) {
-      newAccounts.forEach(acc => {
-        const r = row({
-          icon: 'person',
-          img: `https://mc-heads.net/avatar/${encodeURIComponent(acc.username)}/40`,
-          title: acc.username,
-          detail: acc.offline ? 'offline account'
-            : acc.refreshToken ? 'signed in — comes across ready to play'
-              : 'will need signing in again before long',
-          tag: LAUNCHER_LABELS[acc.source] || acc.source,
-          checkbox: true,
-        });
-        accountRows.push({ cb: r.cb, acc, row: r.el });
+    if (!single) group(countLabel('Accounts', accounts, newAccounts));
+    newAccounts.forEach(acc => {
+      const r = row({
+        icon: 'person',
+        img: `https://mc-heads.net/avatar/${encodeURIComponent(acc.username)}/40`,
+        title: acc.username,
+        detail: acc.offline ? 'offline account'
+          : acc.refreshToken ? 'signed in — comes across ready to play'
+            : 'will need signing in again before long',
+        tag: LAUNCHER_LABELS[acc.source] || acc.source,
+        checkbox: true,
       });
-    }
+      accountRows.push({ cb: r.cb, acc, row: r.el });
+    });
+    // Already-signed-in accounts are shown greyed out rather than hidden, so
+    // the list reflects what is actually on the machine.
+    if (!single) accounts.filter(a => a.already).forEach(acc => {
+      const r = row({
+        icon: 'person',
+        img: `https://mc-heads.net/avatar/${encodeURIComponent(acc.username)}/40`,
+        title: acc.username,
+        detail: 'already signed in here',
+        tag: LAUNCHER_LABELS[acc.source] || acc.source,
+      });
+      r.el.style.opacity = '0.55';
+    });
 
     const newSkins = skins.filter(sk => !sk.already);
-    if (!single) {
-      group(newSkins.length ? `Skins — ${newSkins.length} found`
-        : 'Skins — none found in other launchers');
-    }
-    if (newSkins.length) {
-      newSkins.forEach(sk => {
-        const r = row({
-          icon: 'face',
-          img: 'data:image/png;base64,' + sk.base64,
-          title: sk.name,
-          detail: 'adds to your skin library',
-          tag: LAUNCHER_LABELS[sk.source] || sk.source,
-          checkbox: true,
-        });
-        // A skin PNG is 64x64 of flat colour; let it show as pixels.
-        const i = r.el.querySelector('img');
-        if (i) i.style.imageRendering = 'pixelated';
-        skinRows.push({ cb: r.cb, sk });
+    if (!single) group(countLabel('Skins', skins, newSkins));
+    const skinRow = (sk, already) => {
+      const r = row({
+        icon: 'face',
+        img: 'data:image/png;base64,' + sk.base64,
+        title: sk.name,
+        detail: already ? 'already in your skin library' : 'adds to your skin library',
+        tag: LAUNCHER_LABELS[sk.source] || sk.source,
+        checkbox: !already,
       });
-    }
+      // A skin PNG is 64x64 of flat colour; let it show as pixels.
+      const i = r.el.querySelector('img');
+      if (i) i.style.imageRendering = 'pixelated';
+      if (already) r.el.style.opacity = '0.55';
+      return r;
+    };
+    newSkins.forEach(sk => skinRows.push({ cb: skinRow(sk, false).cb, sk }));
+    if (!single) skins.filter(sk => sk.already).forEach(sk => skinRow(sk, true));
 
-    if (!kinds.length && !accountRows.length && !skinRows.length) {
+    // Only wipe the list when there is genuinely nothing on the machine.
+    // Accounts and skins that are already here count as "found" — they are
+    // rendered above, and blanking over them would be a lie.
+    if (!kinds.length && !accounts.length && !skins.length) {
       listEl.innerHTML = `<div class="imp-empty">
         No other launchers found in the usual places. If yours keeps its instances
         somewhere unusual, you can still add an instance by hand, or install a pack
