@@ -9039,6 +9039,120 @@ async function skinPixelHash(base64) {
   }
 }
 
+// ── Grouping a skin library by what the skins actually look like ────────────
+// A library collects variations: the same skin with a different jacket, the
+// same character with and without a hat layer. Those arrive at whatever times
+// they happened to be added, so they end up scattered down the grid. Comparing
+// the decoded pixels puts them back together.
+//
+// The comparison is "how many pixels are the same", which is what you would
+// count by eye. A pixel that is transparent in both counts as agreement; a
+// pixel opaque in one and not the other does not.
+const SIM_THRESHOLD = 0.82;   // 82% of pixels identical => a variation
+const _simPixelCache = new Map();   // pixelHash -> Uint8Array(64*64*4)
+const SIM_CACHE_MAX = 400;
+
+// Decode a skin to a fixed 64x64 RGBA buffer. Legacy 64x32 skins are padded so
+// every buffer is the same length and can be compared index for index.
+async function skinPixels(base64, key) {
+  if (key && _simPixelCache.has(key)) return _simPixelCache.get(key);
+  const raw = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
+  if (!raw) return null;
+  let px = null;
+  try {
+    const img = sharp(Buffer.from(raw, "base64")).ensureAlpha();
+    const meta = await img.metadata();
+    if (meta.width !== 64) return null;      // not a skin sheet
+    const buf = meta.height === 64
+      ? await img.raw().toBuffer()
+      : await img.extend({ bottom: 64 - (meta.height || 32), background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .raw().toBuffer();
+    if (buf.length === 64 * 64 * 4) px = new Uint8Array(buf);
+  } catch { return null; }
+  if (px && key) {
+    if (_simPixelCache.size >= SIM_CACHE_MAX) _simPixelCache.delete(_simPixelCache.keys().next().value);
+    _simPixelCache.set(key, px);
+  }
+  return px;
+}
+
+// Fraction of pixels that are identical. `step` samples every Nth pixel, which
+// is used as a cheap prefilter before the full pass.
+function pixelAgreement(a, b, step = 1) {
+  const n = 64 * 64;
+  let same = 0, counted = 0;
+  for (let i = 0; i < n; i += step) {
+    const o = i * 4;
+    const aa = a[o + 3], ba = b[o + 3];
+    counted++;
+    // Transparent in both is agreement -- most of a skin sheet's second layer
+    // is empty, and calling that a match is what the eye does too.
+    if (aa < 8 && ba < 8) { same++; continue; }
+    if (aa < 8 || ba < 8) continue;
+    if (a[o] === b[o] && a[o + 1] === b[o + 1] && a[o + 2] === b[o + 2]) same++;
+  }
+  return counted ? same / counted : 0;
+}
+
+// Order a skin list so variations of the same skin sit together.
+//
+// The result is a REFINEMENT of the order it was given, not a replacement: the
+// first skin of each group keeps the position it already had, and its
+// variations are pulled up behind it. A library nobody has reordered therefore
+// groups itself, and a library somebody HAS reordered keeps their arrangement.
+async function groupSkinsBySimilarity(skins) {
+  const list = (skins || []).filter(Boolean);
+  if (list.length < 3) return list.map((s, i) => ({ id: s.id, group: i }));
+
+  const px = [];
+  for (const s of list) px.push(await skinPixels(s.base64, s.pixelHash));
+
+  // Union-find over "these two are variations of each other".
+  const parent = list.map((_, i) => i);
+  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const union = (i, j) => { const a = find(i), b = find(j); if (a !== b) parent[Math.max(a, b)] = Math.min(a, b); };
+
+  for (let i = 0; i < list.length; i++) {
+    if (!px[i]) continue;
+    for (let j = i + 1; j < list.length; j++) {
+      if (!px[j]) continue;
+      if (find(i) === find(j)) continue;          // already in one group
+      // Every 16th pixel first: 256 samples is enough to throw out two skins
+      // that have nothing in common, and that is most pairs.
+      if (pixelAgreement(px[i], px[j], 16) < SIM_THRESHOLD - 0.15) continue;
+      if (pixelAgreement(px[i], px[j]) >= SIM_THRESHOLD) union(i, j);
+    }
+  }
+
+  // Groups in the order their first member appears; members in their own order.
+  const groups = new Map();
+  list.forEach((_, i) => {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(i);
+  });
+  const out = [];
+  let g = 0;
+  for (const members of groups.values()) {
+    for (const i of members) out.push({ id: list[i].id, group: g });
+    g++;
+  }
+  return out;
+}
+
+// The display order for a library: id -> rank, plus which group each skin is
+// in so the page can tell a pair of variations from two unrelated skins.
+ipcMain.handle("skins:similarityOrder", async (event, { uuid }) => {
+  try {
+    const lib = loadSkinLib();
+    const ranked = await groupSkinsBySimilarity(skinViewFor(lib, uuid));
+    return ranked.map((r, i) => ({ id: r.id, rank: i, group: r.group }));
+  } catch (err) {
+    devtoolsLog("Could not group skins by similarity:", err && err.message);
+    return [];
+  }
+});
+
 // ------------------------
 // Helper: load JSON
 async function loadJSON(filePath) {

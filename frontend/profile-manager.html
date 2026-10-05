@@ -132,20 +132,41 @@
 
     @keyframes pm-spin { to { transform: rotate(360deg); } }
 
-    /* Holder for skins and capes */
+    /* Holder for skins and capes.
+       A grid of fixed columns rather than wrapping flex. The spacing is
+       unchanged -- one track is exactly one card's outer size, and the gap is
+       the gap flex had, so the same number of cards sit on a row at any width
+       -- but the track count is now something the layout knows about, and that
+       is what lets the "Add skin" row span exactly the columns the cards
+       occupy. As a flex item it was 100% wide, so it stuck out past the last
+       card whenever the leftover space was less than one more card.
+
+       server.css sets `* { box-sizing: border-box }`, so a .card's padding is
+       already inside its 160px and only the margins are outside it. The track
+       is written out of the two rather than as a bare number that would
+       quietly stop matching the moment either changed. */
+    :root {
+      --card-w: 160px;
+      --card-pad: 8px;
+      --card-gutter: 10px;
+      /* One card's outer size, which is one grid track. */
+      --card-track: calc(var(--card-w) + var(--card-gutter) * 2);
+    }
+
     #skins,
     #capes {
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, var(--card-track));
       gap: 10px;
+      align-items: start;
     }
 
     .card {
-      width: 160px;
+      width: var(--card-w);
       background: var(--base-color);
       border-radius: var(--border-radius);
-      margin: 10px;
-      padding: 8px;
+      margin: var(--card-gutter);
+      padding: var(--card-pad);
       cursor: pointer;
       transition: transform 0.15s ease, box-shadow 0.15s ease;
       display: inline-block;
@@ -262,10 +283,11 @@
     .card-cloud-badge.busy { cursor: progress; }
     .card-cloud-badge:not(.on):hover { background: var(--base-color); opacity: 1; }
 
-    /* Add skin · Reset skin take up their own full row above the skins. */
-    /* Full-width row. No `width:100%` — with the 10px margins that overflowed past
-       the skin cards' right edge, making this row wider than the grid below it. */
-    .skin-actions-row { flex: 1 1 100%; min-width: 0; display: flex; gap: 20px; margin: 10px; }
+    /* Add skin takes its own row above the skins. `1 / -1` spans every column
+       of the grid, so the row ends exactly where the last card in a full row
+       ends — not at the container's edge, which left it visibly wider than the
+       skins underneath it. */
+    .skin-actions-row { grid-column: 1 / -1; min-width: 0; display: flex; gap: 20px; margin: 10px; }
     /* With Reset gone this row holds one card, so let it have the row rather
        than leaving a conspicuous gap beside it. */
     .skin-actions-row .card.action-card { flex: 1 1 auto; width: auto; margin: 0; }
@@ -1090,6 +1112,54 @@
     // total, no matter how many skins are on screen. The behaviour is unchanged:
     // still and facing forward by default, spins while hovered, eases back on leave.
     const spinTarget = (v) => (v && (v.playerWrapper || v.playerObject)) || null;
+
+    // ── How far up and down the previews may be tilted ──────────────────────
+    // OrbitControls lets the polar angle run the whole 0..PI, so these renders
+    // could be dragged right over the top of the head and under the feet, out
+    // to looking at the model from directly above or below — a view with no
+    // information in it that then has to be dragged back. 55 degrees either
+    // side of level is past the point where the top of the head and the soles
+    // of the boots are plainly visible, and stops there.
+    //
+    // This is for the PREVIEWS only. The skin editor's viewer is a modelling
+    // tool, where being able to look straight down at the top of the head is
+    // the whole point, and it is deliberately left alone.
+    const PITCH_LIMIT = 55 * Math.PI / 180;
+    const MIN_POLAR = Math.PI / 2 - PITCH_LIMIT;
+    const MAX_POLAR = Math.PI / 2 + PITCH_LIMIT;
+    // Spanning every column already ends the "Add skin" row exactly where a
+    // FULL row of skins ends. When there are fewer skins than there are
+    // columns they stop short of that, so the row is narrowed to match.
+    //
+    // Narrowing it by shortening the grid SPAN does not work: the moment the
+    // row stops covering the whole first grid row, the first skins flow up
+    // into the columns it left free and sit beside the button instead of under
+    // it. So the span stays at every column and only the rendered width is cut,
+    // measured off the cards themselves rather than recomputed from the track
+    // size — whatever the grid actually did is what it lines up with.
+    function fitActionsRow() {
+      const grid = document.getElementById("skins");
+      const row = grid && grid.querySelector(".skin-actions-row");
+      if (!grid || !row) return;
+      row.style.width = "";              // measure the natural layout, not the last answer
+      const cards = [...grid.querySelectorAll(".card[data-skinid]")];
+      if (!cards.length) return;         // no skins: let it have the whole row
+      const boxes = cards.map(c => c.getBoundingClientRect());
+      const topY = Math.min(...boxes.map(b => b.top));
+      const firstRow = boxes.filter(b => Math.abs(b.top - topY) < 1);
+      const left = Math.min(...firstRow.map(b => b.left));
+      const right = Math.max(...firstRow.map(b => b.right));
+      if (right > left) row.style.width = (right - left) + "px";
+    }
+    window.addEventListener("resize", fitActionsRow);
+
+    function limitPitch(v) {
+      try {
+        v.controls.minPolarAngle = MIN_POLAR;
+        v.controls.maxPolarAngle = MAX_POLAR;
+      } catch { /* no controls on this viewer */ }
+    }
+
     function killViewer(v) {
       // dispose() alone does NOT release the WebGL context — that leaks a context
       // per recreation until the browser starts dropping them.
@@ -1169,6 +1239,15 @@
       const v = new skinview3d.SkinViewer({ canvas, width: 150, height: 300 });
       v.zoom = 0.9; v.autoRotate = false;
       try { v.controls.enableZoom = false; } catch { }   // wheel scrolls the page
+      limitPitch(v);
+      // These cards spin the model itself, so the limbs can take their reaction
+      // to the spin straight off it: arms thrown outward, the cape caught by
+      // the air, the head coming round last. No clips here, just the rest pose
+      // and the physics on top of it.
+      try {
+        const SA = window.SkinAnimations;
+        if (SA && SA.spinOnly) v.animation = SA.spinOnly();
+      } catch { /* a card that doesn't react is only duller, not broken */ }
       // Dragging a card orbits the CAMERA (skinview3d uses OrbitControls); only
       // the auto-spin turns the model. Resetting the model's rotation alone
       // therefore never put a dragged card back where it started -- the camera
@@ -1380,6 +1459,19 @@
 
       const stopLoop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
 
+      // Orbiting the camera one way around a still model looks exactly like
+      // spinning the model the other way, so that is what the limbs are told
+      // is happening: velTheta is radians per FRAME, and the physics wants
+      // radians per second. The sign is flipped because the apparent spin of
+      // the model is the opposite of the camera's travel.
+      const FRAMES_PER_SEC = 60;
+      const reportSpin = () => {
+        try {
+          const SA = window.SkinAnimations;
+          if (SA && SA.setSpin) SA.setSpin(-velTheta * FRAMES_PER_SEC);
+        } catch { }
+      };
+
       // While dragging, measure how fast the camera is actually moving so the
       // flick carries over when the pointer is released.
       const sampleDrag = () => {
@@ -1391,6 +1483,7 @@
           }
           lastTheta = cur.theta; lastPhi = cur.phi;
         } catch { }
+        reportSpin();
       };
 
       const step = () => {
@@ -1413,12 +1506,15 @@
           velTheta = Math.max(-MAX_VEL, Math.min(MAX_VEL, velTheta));
           velPhi = Math.max(-MAX_VEL, Math.min(MAX_VEL, velPhi));
 
-          // phi is the polar angle; letting it reach 0 or PI flips the camera.
-          const nextPhi = Math.max(0.15, Math.min(Math.PI - 0.15, cur.phi + velPhi));
+          // The same limit the controls enforce while dragging, so a flick
+          // that carries on after the pointer leaves cannot sail past it.
+          const nextPhi = Math.max(MIN_POLAR, Math.min(MAX_POLAR, cur.phi + velPhi));
+          if (nextPhi !== cur.phi + velPhi) velPhi = 0;   // hit the stop; don't keep pushing
           camFromSpherical(cam.position, cur.theta + velTheta, nextPhi, r);
 
           if (tgt.lengthSq() > 0.0001) tgt.multiplyScalar(0.9); else tgt.set(0, 0, 0);
           v.controls.update();
+          reportSpin();
 
           const offT = Math.abs(norm(0 - cur.theta)), offP = Math.abs(HOME_PHI - cur.phi);
           const speed = Math.abs(velTheta) + Math.abs(velPhi);
@@ -1696,6 +1792,7 @@
         }
         try { window.skinViewer.zoom = 0.82; } catch { }
         try { window.skinViewer.controls.enableZoom = false; } catch { }  // scroll = page scroll, not zoom
+        limitPitch(window.skinViewer);
         setupMainViewerLife(window.skinViewer);
 
         if (pendingSelection) {
@@ -1770,11 +1867,14 @@
       // the second must replace whatever the first put in rather than a node
       // that has already been swapped out.
       const commitLists = () => {
-        if (skinsDiv.isConnected) return;
-        const curSkins = document.getElementById("skins");
-        const curCapes = document.getElementById("capes");
-        if (curSkins) curSkins.replaceWith(skinsDiv);
-        if (curCapes) curCapes.replaceWith(capesDiv);
+        if (!skinsDiv.isConnected) {
+          const curSkins = document.getElementById("skins");
+          const curCapes = document.getElementById("capes");
+          if (curSkins) curSkins.replaceWith(skinsDiv);
+          if (curCapes) curCapes.replaceWith(capesDiv);
+        }
+        // Only measurable once it is in the document.
+        fitActionsRow();
       };
 
       // Just "Add skin" here. Reset moved to the button beside the "Your Skins"
@@ -1805,6 +1905,27 @@
         seenHashes.add(key);
         return true;
       });
+
+      // Variations of the same skin -- the same character with a different
+      // jacket, with and without a hat layer -- are added at whatever times
+      // they happen to be added, so they scatter down the grid. The main
+      // process compares the decoded pixels and hands back an order that keeps
+      // them together. It refines the order rather than replacing it, so a
+      // library somebody has dragged into shape stays that way.
+      const simGroup = new Map();
+      try {
+        const ranked = await ipcRenderer.invoke("skins:similarityOrder", { uuid });
+        if (!stillCurrent()) return;
+        if (Array.isArray(ranked) && ranked.length) {
+          const rank = new Map();
+          ranked.forEach(r => { rank.set(String(r.id), r.rank); simGroup.set(String(r.id), r.group); });
+          library.sort((a, b) => {
+            const ra = rank.has(String(a.id)) ? rank.get(String(a.id)) : 1e9;
+            const rb = rank.has(String(b.id)) ? rank.get(String(b.id)) : 1e9;
+            return ra - rb;
+          });
+        }
+      } catch { /* ungrouped is only less tidy, not broken */ }
       libraryCache = library;
 
       // Always show the currently-applied skin, even if the library is empty or
@@ -1864,6 +1985,9 @@
         if (!isCrackedAccount) setCloudBadge(card, skin, cloudCtx);
         card.dataset.pixelhash = skin.pixelHash || "";
         card.dataset.skinid = String(skin.id);
+        // Which pile of lookalikes this one belongs to, for anyone inspecting
+        // why two cards ended up side by side.
+        if (simGroup.has(String(skin.id))) card.dataset.simgroup = String(simGroup.get(String(skin.id)));
 
         // Edit-in-editor + rename + delete controls.
         const acts = document.createElement("div");

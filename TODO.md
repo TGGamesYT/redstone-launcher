@@ -9,6 +9,43 @@ started.
 
 ---
 
+## 0. Round 14 — player render feel, and the skins grid
+
+- [x] **Clamp the skin render's vertical rotation.** The card previews (NOT the
+      3D skin editor) can currently be spun right over the top and under the
+      bottom. Limit the pitch to just past "you can see the top / bottom
+      clearly" and no further. — 55° either side of level, on the big render
+      and the card previews; the editor's viewer is untouched.
+- [x] **Physics while spinning.** Rotating the model should throw the limbs
+      around a little: arms trailing the rotation, the cape caught by the
+      spinning air, the head lagging too.
+- [x] **Parent the cape to the body** in the animation system, so a body
+      stretch stretches the cape with it and a body move takes it along, rather
+      than the cape being animated as a sibling.
+- [x] **"Add skin" is wider than the grid.** It spans the full row while the
+      skin cards stop short of it — it should end where they end.
+
+---
+
+## 0. Round 13
+
+- [x] Panorama: download it from Mojang when it isn't on disk, and look in
+      every instance's version folders, not just one named after the version
+- [x] Modrinth App accounts and skins came back empty — app.db is in WAL mode,
+      so copying app.db alone snapshots a database with no rows (and no schema)
+      in it at all. Copy the `-wal`/`-shm` sidecars.
+- [x] Find the Modrinth App by its database, not by a profiles folder that
+      `settings.custom_dir` may have moved
+- [x] Read saved skins from `custom_minecraft_skin_textures` (PNG blobs) and
+      from the Minecraft launcher's `launcher_custom_skins.json` — no launcher
+      keeps them as loose PNG files
+- [x] Show accounts/skins that are already here rather than hiding them, so
+      "none found" means none found
+- [x] Skins page: put pixel-similar skins next to each other by default, so
+      variations of the same skin group together
+
+---
+
 ## 0. Round 12
 
 ### Importing (stop guessing — read the actual source)

@@ -48,12 +48,39 @@
   // frame writes rest + keyframe for EVERY bone, including the ones the clip
   // says nothing about, so a clip can never leave a limb where the last one
   // put it.
+  // ── The cape belongs to the body ─────────────────────────────────────────
+  // skinview3d hangs the cape off the PLAYER, as a sibling of the whole skin
+  // group, so it is only ever coincidentally in the right place: a clip that
+  // leans the body, lifts it or stretches it leaves the cape hanging in the air
+  // where the back used to be. It is fastened to a torso, so it belongs to the
+  // torso -- reparent it there once and every body transform carries it along
+  // for free, stretch included.
+  //
+  // attach() (as opposed to add()) keeps the cape exactly where it already is
+  // while changing whose child it is, so this is invisible on the frame it
+  // happens. The rest pose is captured AFTER it, so the cape's rest position is
+  // recorded in body space -- which is what every later frame writes back.
+  function capeToBody(player) {
+    try {
+      const cape = player.cape, body = player.skin && player.skin.body;
+      if (!cape || !body || cape.parent === body) return;
+      player.updateMatrixWorld(true);
+      if (typeof body.attach === 'function') body.attach(cape);
+      else {
+        // Pre-r109 three.js has no attach(); the offset is a constant anyway.
+        body.add(cape);
+        cape.position.set(cape.position.x, cape.position.y - 2, cape.position.z);
+      }
+    } catch { /* leave it where skinview3d put it */ }
+  }
+
   function restPose(player) {
     if (player.__restPose) return player.__restPose;
     // PlayerObject.resetJoints() puts the whole rig back to its defaults,
     // cape included. Without it a reload mid-animation would bake the current
     // pose in as "rest".
     try { player.resetJoints(); } catch { /* older build: read as-is */ }
+    capeToBody(player);
     const pose = [];
     for (const [name, get] of Object.entries(BONES)) {
       let part;
@@ -233,6 +260,138 @@
     });
   }
 
+  // ── Being spun around ────────────────────────────────────────────────────
+  // Turning the figure used to move a perfectly rigid statue. A real body
+  // spinning on the spot throws its arms outward, trails its head behind the
+  // turn, and drags a cape through the air it is stirring up. All of that is
+  // added ON TOP of whatever pose the animation has already set, so it layers
+  // over the idle and over any clip without either of them knowing.
+  //
+  // `omega` is how fast the figure appears to be turning, in radians per
+  // second, positive for a turn to its left. The main render gets it from the
+  // camera orbit (orbiting the camera one way looks exactly like spinning the
+  // model the other), card previews from the model's own spin.
+  //
+  // Each reaction is a target value run through a damped spring rather than
+  // written straight on, so the limbs take a moment to fly out and swing past
+  // centre once on the way back instead of snapping.
+  const SPIN = {
+    stiffness: 55,       // how hard it pulls toward the target
+    damping: 9,          // < 2*sqrt(stiffness) leaves some overshoot
+    // How much of each effect, and how far it is ever allowed to go. The
+    // outward ones go with omega SQUARED -- that is what centrifugal force
+    // does, and it is why a slow turn barely moves anything and a fast one
+    // throws the arms right out.
+    armOut: [0.055, 0.90], armLag: [0.080, 0.50],
+    capeLift: [0.050, 0.80], capeSway: [0.070, 0.45],
+    headLag: [0.060, 0.45], bodyTwist: [0.022, 0.18],
+    legLag: [0.030, 0.25],
+  };
+  const clamp = (v, m) => Math.max(-m, Math.min(m, v));
+
+  function newSpinState() {
+    const k = {};
+    for (const n of ['armOut', 'armLag', 'capeLift', 'capeSway', 'headLag', 'bodyTwist', 'legLag']) {
+      k[n] = { x: 0, v: 0 };
+    }
+    return k;
+  }
+
+  // One spring step. dt is clamped by the caller.
+  function springTo(s, target, dt) {
+    s.v += ((target - s.x) * SPIN.stiffness - s.v * SPIN.damping) * dt;
+    s.x += s.v * dt;
+    return s.x;
+  }
+
+  // Add the spin reactions to the pose already on the model.
+  function applySpin(state, rest, omega, dt) {
+    const w = Number.isFinite(omega) ? omega : 0;
+    const sq = w * Math.abs(w);     // omega^2, keeping the sign for the sway
+    const abs = Math.abs(sq);
+    const t = {
+      armOut: clamp(SPIN.armOut[0] * abs, SPIN.armOut[1]),
+      armLag: clamp(SPIN.armLag[0] * w, SPIN.armLag[1]),
+      capeLift: clamp(SPIN.capeLift[0] * abs, SPIN.capeLift[1]),
+      capeSway: clamp(SPIN.capeSway[0] * w, SPIN.capeSway[1]),
+      headLag: clamp(SPIN.headLag[0] * w, SPIN.headLag[1]),
+      bodyTwist: clamp(SPIN.bodyTwist[0] * w, SPIN.bodyTwist[1]),
+      legLag: clamp(SPIN.legLag[0] * w, SPIN.legLag[1]),
+    };
+    const v = {};
+    for (const n of Object.keys(t)) v[n] = springTo(state[n], t[n], dt);
+
+    // Nothing to add once everything has settled back to zero.
+    let moving = false;
+    for (const n of Object.keys(t)) if (Math.abs(v[n]) > 1e-4 || Math.abs(state[n].v) > 1e-4) moving = true;
+    if (!moving) return;
+
+    const part = (name) => {
+      const r = rest.find(x => x.name === name);
+      return r ? r.part : null;
+    };
+    // Arms fly outward (positive Z swings the LEFT arm away from the body, so
+    // the right one mirrors it) and trail the turn. The trail is opposite in
+    // the two arms because an arm held out to the left and one held out to the
+    // right move in opposite directions when the body turns: one goes forward,
+    // the other back. That asymmetry is most of what sells it.
+    const la = part('leftArm'), ra = part('rightArm');
+    if (la) { la.rotation.z += v.armOut; la.rotation.x -= v.armLag; }
+    if (ra) { ra.rotation.z -= v.armOut; ra.rotation.x += v.armLag; }
+
+    const ll = part('leftLeg'), rl = part('rightLeg');
+    if (ll) ll.rotation.x -= v.legLag;
+    if (rl) rl.rotation.x += v.legLag;
+
+    // The head is heavy and on a neck: it comes round last.
+    const hd = part('head');
+    if (hd) { hd.rotation.y -= v.headLag; hd.rotation.z -= v.headLag * 0.35; }
+
+    const bd = part('body');
+    if (bd) bd.rotation.y -= v.bodyTwist;
+
+    // The cape is cloth in moving air: it lifts away from the back and streams
+    // out to the side the turn is coming from.
+    const cp = part('cape');
+    if (cp) { cp.rotation.x += v.capeLift; cp.rotation.z -= v.capeSway; }
+  }
+
+  // How fast the page says the figure is turning. It is set from outside every
+  // frame something is moving; when the updates stop it bleeds away on its own
+  // rather than leaving the limbs held out forever.
+  let spinOmega = 0, spinStamp = 0;
+  function setSpin(w) {
+    spinOmega = Number.isFinite(w) ? w : 0;
+    spinStamp = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  }
+  function currentSpin() {
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (now - spinStamp > 120) spinOmega *= 0.80;
+    if (Math.abs(spinOmega) < 1e-3) spinOmega = 0;
+    return spinOmega;
+  }
+
+  // A standalone animation for the card previews: no idle, no clips, just the
+  // rest pose plus the physics, with the turn rate measured from the model's
+  // own rotation (those cards spin the model itself rather than the camera).
+  function spinOnlyAnimation() {
+    const anim = new skinview3d.PlayerAnimation();
+    const state = newSpinState();
+    let lastYaw = null;
+    anim.animate = function (player, delta) {
+      const rest = restPose(player);
+      const dt = Number.isFinite(delta) && delta > 0 ? Math.min(delta, 0.1) : 1 / 60;
+      let yaw = 0;
+      try { yaw = (player.parent || player).rotation.y; } catch { }
+      let w = 0;
+      if (lastYaw !== null) w = Math.atan2(Math.sin(yaw - lastYaw), Math.cos(yaw - lastYaw)) / dt;
+      lastYaw = yaw;
+      applyPose(rest, blankPose(rest));
+      applySpin(state, rest, w, dt);
+    };
+    return anim;
+  }
+
   // ── The conductor ────────────────────────────────────────────────────────
   // ONE animation owns the player for the whole page. It idles, and when a clip
   // is requested it waits for the calm point of the idle, eases into the clip's
@@ -249,18 +408,31 @@
     // Set when play() interrupts something: the blend starts from the pose the
     // model is actually in, not from the idle curve.
     let cutIn = false;
+    // The last pose the ANIMATION produced, before the spin reactions were
+    // layered on top. Interrupting mid-clip blends out of this rather than off
+    // the model itself, which by then has the spin baked into it and would
+    // therefore get it applied a second time.
+    let lastClean = null;
 
     const anim = new skinview3d.PlayerAnimation();
+    const spinState = newSpinState();
     anim.animate = function (player, delta) {
       const rest = restPose(player);
       // skinview3d hands the speed-scaled delta to animate(); guard the first
       // frame, where it can be undefined.
       const dt = Number.isFinite(delta) && delta > 0 ? Math.min(delta, 0.1) : 1 / 60;
+      // Every return path below goes through this, so being spun around reads
+      // on the model whatever it happens to be doing at the time.
+      const put = (pose) => {
+        lastClean = pose;
+        applyPose(rest, pose);
+        applySpin(spinState, rest, currentSpin(), dt);
+      };
 
       // Interrupted mid-clip: blend out of exactly where the model stands.
       if (cutIn) {
         cutIn = false;
-        fromPose = rest.map(r => ({
+        fromPose = lastClean || rest.map(r => ({
           p: [r.part.position.x, r.part.position.y, r.part.position.z],
           r: [r.part.rotation.x, r.part.rotation.y, r.part.rotation.z],
           s: [r.part.scale.x, r.part.scale.y, r.part.scale.z],
@@ -281,14 +453,14 @@
             blendT = 0; clipT = 0; phase = 'in';
           }
         }
-        applyPose(rest, evalIdle(rest, idleProgress));
+        put(evalIdle(rest, idleProgress));
         return;
       }
 
       if (phase === 'in') {
         blendT += dt;
         const f = Math.min(1, blendT / BLEND);
-        applyPose(rest, lerpPose(fromPose, evalClip(rest, clip, 0), ease(f)));
+        put(lerpPose(fromPose, evalClip(rest, clip, 0), ease(f)));
         if (f >= 1) { phase = 'clip'; clipT = 0; }
         return;
       }
@@ -297,16 +469,16 @@
         clipT += dt;
         const len = clip.length || 0;
         if (looping && len) {
-          applyPose(rest, evalClip(rest, clip, clipT % len));
+          put(evalClip(rest, clip, clipT % len));
           return;
         }
         if (len && clipT >= len) {
           fromPose = evalClip(rest, clip, len);
-          applyPose(rest, fromPose);
+          put(fromPose);
           blendT = 0; phase = 'out';
           return;
         }
-        applyPose(rest, evalClip(rest, clip, clipT));
+        put(evalClip(rest, clip, clipT));
         return;
       }
 
@@ -314,7 +486,7 @@
       // position the arms are already in rather than jumping to meet it.
       blendT += dt;
       const f = Math.min(1, blendT / BLEND);
-      applyPose(rest, lerpPose(fromPose, evalIdle(rest, IDLE_CALM), ease(f)));
+      put(lerpPose(fromPose, evalIdle(rest, IDLE_CALM), ease(f)));
       if (f >= 1) {
         phase = 'idle';
         idleProgress = IDLE_CALM;
@@ -375,16 +547,24 @@
     return conductor;
   }
 
-  if (names.length) {
-    window.SkinAnimations = {
-      clips,
-      names,
-      resetPose: resetToRest,
-      conductor: getConductor,
-      // A clip at random, for whoever is doing the scheduling.
-      randomName: () => names[Math.floor(Math.random() * names.length)],
-    };
-  }
+  // The spin reactions and the cape reparenting are useful with or without
+  // converted clips, so this object exists either way; only `conductor` and
+  // `clips` depend on there being any.
+  window.SkinAnimations = {
+    clips,
+    names,
+    resetPose: resetToRest,
+    conductor: names.length ? getConductor : null,
+    // A clip at random, for whoever is doing the scheduling.
+    randomName: () => names[Math.floor(Math.random() * names.length)],
+    // How fast the figure looks like it is turning, radians per second,
+    // positive for a turn to its left. Set it every frame while something is
+    // moving; it bleeds away on its own once the updates stop.
+    setSpin,
+    // Rest pose plus the spin reactions, for the card previews -- they spin the
+    // model itself, so this reads the rate off the model.
+    spinOnly: spinOnlyAnimation,
+  };
 
   // ── Devtools ────────────────────────────────────────────────────────────
   const viewer = () => window.skinViewer || null;
