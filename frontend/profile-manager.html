@@ -1576,6 +1576,10 @@
     // "classic" arms are called "wide" in Minecraft's own UI.
     function variantLabel(v) { return v === "slim" ? "slim" : "wide"; }
 
+    // Which account the page is currently showing, so a re-render can tell a
+    // refresh from an account switch.
+    let renderedPlayerId = null;
+
     async function updateSKin(opts) {
       const forceProfile = !!(opts && opts.force);
       const mySeq = ++renderSeq;
@@ -1599,14 +1603,18 @@
       isCrackedAccount = player.type === "cracked";
       crackedPlayerId = isCrackedAccount ? player.id : null;
       unavailable.style.display = "none";
-      // A refresh keeps what's on screen while it works. Blanking the page and
-      // showing the spinner is right when the ACCOUNT changes and everything on
-      // screen belongs to someone else -- but for a reload it read as the whole
-      // page reloading for no reason.
-      if (!forceProfile || sections.style.display === "none") {
+      // Blank the page ONLY when there is nothing on it yet, or when the
+      // account changed and everything on screen now belongs to someone else.
+      // Every other re-render -- applying a skin or a cape, renaming one,
+      // adding one, the reload button -- keeps what is there and swaps it when
+      // the new data arrives. Keying this off `force` had it backwards: the
+      // reload button kept the page while applying a skin blanked it.
+      const switchingAccount = String(selectedplayer) !== String(renderedPlayerId);
+      if (sections.style.display === "none" || switchingAccount) {
         showLoading(true);
         sections.style.display = "none";
       }
+      renderedPlayerId = selectedplayer;
 
       let profile = { skins: [], capes: [] };
       if (isCrackedAccount) {
@@ -1722,10 +1730,25 @@
       const appliedId = localStorage.getItem('appliedSkin_' + uuid);
 
       // ---- Render Skins ----
-      const skinsDiv = document.getElementById("skins");
-      const capesDiv = document.getElementById("capes");
-      skinsDiv.innerHTML = "";
-      capesDiv.innerHTML = "";
+      // Built into detached stand-ins and swapped in at the end. Clearing the
+      // live lists here emptied them across the Mojang lookups that follow --
+      // reconcileMojang, skins:list, capes:getOrder -- so every re-render wiped
+      // the page for as long as a network round-trip took. Nothing on screen
+      // changes until the replacements are ready.
+      const skinsDiv = document.getElementById("skins").cloneNode(false);
+      const capesDiv = document.getElementById("capes").cloneNode(false);
+      // Whatever happens below, the stand-ins must end up in the document --
+      // an early return would otherwise leave the old lists in place forever.
+      // Looked up at commit time, not captured: two renders can overlap, and
+      // the second must replace whatever the first put in rather than a node
+      // that has already been swapped out.
+      const commitLists = () => {
+        if (skinsDiv.isConnected) return;
+        const curSkins = document.getElementById("skins");
+        const curCapes = document.getElementById("capes");
+        if (curSkins) curSkins.replaceWith(skinsDiv);
+        if (curCapes) curCapes.replaceWith(capesDiv);
+      };
 
       // Just "Add skin" here. Reset moved to the button beside the "Your Skins"
       // heading, and having it in both places meant two controls doing the same
@@ -1848,14 +1871,15 @@
         skinsDiv.appendChild(card);
       });
 
-      refreshSelectionUI();
+      // (refreshSelectionUI runs after commitLists below: it queries #skins in
+      // the document, which is still the OLD list until the swap happens.)
 
       // ---- Capes: a "None" card to disable, then the owned capes. Clicking a
       // cape TEMP-selects it (preview only); "Apply cape" commits it, like skins.
       // Offline accounts have no Mojang capes at all, so hide the whole section.
       const capesSection = document.getElementById('capes-section');
       if (capesSection) capesSection.style.display = isCrackedAccount ? "none" : "";
-      if (isCrackedAccount) { refreshCapeUI(); return; }
+      if (isCrackedAccount) { commitLists(); refreshSelectionUI(); refreshCapeUI(); return; }
       activeCapeId = activeCape ? activeCape.id : null;
       // No "None (disable)" card: the reset button beside the "Capes" heading
       // does that now, and two ways to take a cape off was one too many.
@@ -1885,6 +1909,8 @@
         });
       });
 
+      commitLists();
+      refreshSelectionUI();
       refreshCapeUI();
     }
 
