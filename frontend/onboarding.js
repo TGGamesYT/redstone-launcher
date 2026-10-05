@@ -252,6 +252,7 @@
           + (inst.approximate ? ' (best guess)' : '');
         const r = row({
           icon: 'inventory_2',
+          img: inst.icon || undefined,
           title: inst.name,
           detail,
           tag: inst.loader && inst.loader !== 'vanilla' ? inst.loader : 'vanilla',

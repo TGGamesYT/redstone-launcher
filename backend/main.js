@@ -5378,34 +5378,80 @@ function modrinthDbProfiles(profilesRoot) {
   }
 }
 
-// Match columns by name rather than assuming a fixed schema, so a rename in a
-// future version degrades to "version unknown" instead of throwing.
+// Read the Modrinth App's instance list out of its database.
+//
+// This is NOT guesswork: it follows modrinth/code (packages/app-lib/migrations).
+// The schema was reorganised, so there are two shapes to handle.
+//
+//   Before 20260611 "instances-content-foundation":
+//     profiles(path, name, icon_path, game_version, mod_loader, mod_loader_version)
+//
+//   After it:
+//     instances(id, path, applied_content_set_id, name, icon_path, ...)
+//     instance_content_sets(id, instance_id, game_version, loader, loader_version, ...)
+//   — the version and loader moved OUT of the instance row entirely, into the
+//     content set the instance currently has applied. Reading only the instance
+//     row therefore finds a name and nothing else, which is exactly why the
+//     version and loader kept coming back missing or wrong.
+//
+// `path` is relative to the app's instances dir (api/instance/paths.rs joins it
+// onto instances_dir()), so it is the folder name — which is how the scanner
+// keys these.
 function readProfileRows(db) {
-  const table = db.prepare(
-    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('profiles','profile')"
-  ).get();
-  if (!table) return null;
-  const cols = db.prepare(`PRAGMA table_info(${table.name})`).all().map(c => c.name);
-  const pick = (...want) => want.find(w => cols.includes(w)) || null;
-  const cPath = pick("path", "profile_path", "id");
-  const cName = pick("name", "title");
-  const cVer = pick("game_version", "mc_version", "minecraft_version");
-  const cLoader = pick("mod_loader", "loader", "modloader", "loader_name");
-  const cLoaderVer = pick("mod_loader_version", "loader_version", "modloader_version");
-  if (!cPath) return null;
+  const tableExists = (name) => !!db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+  ).get(name);
+
+  let rows = [];
+  if (tableExists("instances") && tableExists("instance_content_sets")) {
+    rows = db.prepare(`
+      SELECT i.path AS path, i.name AS name, i.icon_path AS icon_path,
+             cs.game_version AS game_version,
+             cs.loader AS loader,
+             cs.loader_version AS loader_version
+      FROM instances i
+      LEFT JOIN instance_content_sets cs ON cs.id = i.applied_content_set_id
+    `).all();
+    // An instance with no applied content set still has a name and an icon;
+    // take whatever content set it does have rather than reporting nothing.
+    const missing = rows.filter(r => !r.game_version).map(r => r.path);
+    if (missing.length) {
+      const fallback = db.prepare(`
+        SELECT i.path AS path, cs.game_version AS game_version,
+               cs.loader AS loader, cs.loader_version AS loader_version
+        FROM instances i
+        JOIN instance_content_sets cs ON cs.instance_id = i.id
+        ORDER BY cs.modified DESC
+      `).all();
+      const byPath = new Map();
+      for (const f of fallback) if (!byPath.has(f.path)) byPath.set(f.path, f);
+      rows = rows.map(r => r.game_version ? r : { ...r, ...(byPath.get(r.path) || {}) });
+    }
+  } else if (tableExists("profiles")) {
+    rows = db.prepare(`
+      SELECT path, name, icon_path,
+             game_version,
+             mod_loader AS loader,
+             mod_loader_version AS loader_version
+      FROM profiles
+    `).all();
+  } else {
+    return null;
+  }
 
   const out = {};
-  for (const row of db.prepare(`SELECT * FROM ${table.name}`).all()) {
-    const key = String(row[cPath] || "");
+  for (const row of rows) {
+    const key = String(row.path || "");
     if (!key) continue;
     const entry = {
-      name: cName ? row[cName] : null,
-      version: cVer ? row[cVer] : null,
-      loader: cLoader ? String(row[cLoader] || "vanilla").toLowerCase() : "vanilla",
-      loaderVersion: cLoaderVer ? (row[cLoaderVer] || "") : "",
+      name: row.name || null,
+      version: row.game_version || null,
+      loader: String(row.loader || "vanilla").toLowerCase(),
+      loaderVersion: row.loader_version || "",
+      iconPath: row.icon_path || null,
     };
-    // The stored path may be the folder name or a full path; key it both ways
-    // so the scanner finds it either way.
+    // Keyed both by the stored path and by its last segment, since the scanner
+    // walks folder names.
     out[key] = entry;
     out[path.basename(key)] = entry;
   }
@@ -5428,6 +5474,7 @@ function scanLauncher(kind, root, dbProfiles) {
         const sub = ["minecraft", ".minecraft"].map(s => path.join(dir, s)).find(p => fs.existsSync(p));
         out.push({
           kind, dir, gameDir: sub || dir,
+          icon: mmcIcon(dir, root),
           name: readIniName(path.join(dir, "instance.cfg")) || d.name,
           version: pack.version, loader: pack.loader, loaderVersion: pack.loaderVersion,
         });
@@ -5438,7 +5485,8 @@ function scanLauncher(kind, root, dbProfiles) {
         const mc = j.baseModLoader || {};
         const { loader, loaderVersion } = loaderFromCurseId(mc.name, j.gameVersion);
         out.push({
-          kind, dir, gameDir: dir,
+          kind, dir,
+          icon: curseforgeIcon(dir), gameDir: dir,
           name: j.name || d.name,
           version: j.gameVersion || mc.minecraftVersion,
           loader: loader || "vanilla", loaderVersion: loaderVersion || "",
@@ -5455,6 +5503,7 @@ function scanLauncher(kind, root, dbProfiles) {
           const lv = meta.loader_version || {};
           out.push({
             kind, dir, gameDir: dir,
+            icon: modrinthIcon(j.icon_path || meta.icon_path, dir),
             name: meta.name || j.name || d.name,
             version: meta.game_version || j.game_version,
             loader: (meta.loader || "vanilla").toLowerCase(),
@@ -5481,6 +5530,7 @@ function scanLauncher(kind, root, dbProfiles) {
         if (!loader || loader === "vanilla") loader = sniffInstanceLoader(dir) || loader || "vanilla";
         out.push({
           kind, dir, gameDir: dir,
+          icon: modrinthIcon(fromDb && fromDb.iconPath, dir),
           name: (fromDb && fromDb.name) || d.name,
           version,
           loader,
@@ -5496,11 +5546,88 @@ function scanLauncher(kind, root, dbProfiles) {
   return out.filter(i => i.version || i.versionUnknown);
 }
 
-// Which loader an instance uses, read off the instance itself. The Modrinth App
-// records this in its database, but not under a column name we can rely on
-// across versions — and when the row is missing entirely there is nothing at
-// all. The files are unambiguous: a loader leaves its own marks, and every mod
-// jar declares which loader it is for.
+// ── Instance icons from other launchers ─────────────────────────────────────
+// Every launcher keeps these somewhere different, and none of them in the
+// instance folder under a predictable name — which is why none were coming
+// through. Each case below follows what that launcher actually does.
+const ICON_EXTS = ["", ".png", ".jpg", ".jpeg", ".webp"];
+
+function iconFileToDataUrl(file) {
+  try {
+    if (!file || !fs.existsSync(file)) return null;
+    const st = fs.statSync(file);
+    if (!st.isFile() || st.size > 2 * 1024 * 1024) return null;
+    const ext = path.extname(file).toLowerCase();
+    const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg"
+      : ext === ".webp" ? "image/webp" : "image/png";
+    return `data:${mime};base64,` + fs.readFileSync(file).toString("base64");
+  } catch { return null; }
+}
+
+// Try a path with and without the usual extensions — Prism's iconKey sometimes
+// carries one and sometimes doesn't.
+function iconFromBase(base) {
+  for (const ext of ICON_EXTS) {
+    const d = iconFileToDataUrl(base + ext);
+    if (d) return d;
+  }
+  return null;
+}
+
+// Prism / MultiMC: instance.cfg names an iconKey, and the file lives in the
+// launcher's shared icons folder (mmc.rs: mmc_base_path.join("icons").join(key)).
+// The built-in keys have no file of their own, so fall back to anything the
+// instance itself carries.
+function mmcIcon(instanceDir, instancesRoot) {
+  let key = null;
+  try {
+    const txt = fs.readFileSync(path.join(instanceDir, "instance.cfg"), "utf8");
+    const m = txt.match(/^iconKey=(.*)$/m);
+    if (m) key = m[1].trim();
+  } catch { /* no cfg */ }
+  if (key && key !== "default") {
+    const base = path.dirname(instancesRoot);   // instances/ sits beside icons/
+    const d = iconFromBase(path.join(base, "icons", key));
+    if (d) return d;
+  }
+  for (const rel of ["icon.png", ".minecraft/icon.png", "minecraft/icon.png"]) {
+    const d = iconFileToDataUrl(path.join(instanceDir, rel));
+    if (d) return d;
+  }
+  return null;
+}
+
+// CurseForge writes minecraftinstance.json next to the game files; the pack art
+// is a URL on their CDN rather than a local file.
+function curseforgeIcon(instanceDir) {
+  try {
+    const f = path.join(instanceDir, "minecraftinstance.json");
+    if (!fs.existsSync(f)) return null;
+    const j = JSON.parse(fs.readFileSync(f, "utf8"));
+    const url = (j.installedModpack && (j.installedModpack.thumbnailUrl
+      || (j.installedModpack.addonID && j.installedModpack.iconUrl)))
+      || j.thumbnailUrl || null;
+    return url || null;
+  } catch { return null; }
+}
+
+// The vanilla launcher stores the icon ON the profile: either a data URL for a
+// custom one, or the name of a built-in block (which has no file to read).
+function vanillaIcon(p) {
+  const icon = p && p.icon;
+  if (typeof icon === "string" && icon.startsWith("data:image/")) return icon;
+  return null;
+}
+
+// The Modrinth App records an icon_path in its database.
+function modrinthIcon(iconPath, instanceDir) {
+  if (!iconPath) return null;
+  const direct = iconFileToDataUrl(iconPath);
+  if (direct) return direct;
+  // Some rows store it relative to the instance.
+  return iconFileToDataUrl(path.join(instanceDir, iconPath));
+}
+
 function sniffInstanceLoader(dir) {
   // 1. Marks the loader itself leaves in the instance folder.
   const marks = [
@@ -5681,6 +5808,7 @@ async function vanillaProfiles(root) {
       kind: "vanilla",
       dir: root,
       gameDir: p.gameDir || root,
+      icon: vanillaIcon(p),
       name: (p.name || "").trim() || auto,
       version: info.version,
       loader: info.loader,
@@ -6065,8 +6193,10 @@ ipcMain.handle("import:instance", async (event, { entry }) => {
     }
 
     // An icon, if the source launcher kept one.
-    let icon = null;
-    outer: for (const base of [entry.gameDir, entry.dir]) {
+    // The scan already resolved this launcher's own icon for the instance;
+    // prefer it over guessing at a file in the folder.
+    let icon = entry.icon || null;
+    outer: for (const base of icon ? [] : [entry.gameDir, entry.dir]) {
       if (!base) continue;
       for (const n of ["icon.png", "instance.png", "pack.png"]) {
         const p = path.join(base, n);
