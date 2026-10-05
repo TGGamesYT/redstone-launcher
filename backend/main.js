@@ -1263,6 +1263,14 @@ async function refreshPlayer(player, opts = {}) {
 
   const run = (async () => {
     try {
+      // No refresh token at all means there is nothing to refresh with — msmc
+      // would read refresh_token off undefined and throw a TypeError that says
+      // nothing useful. Fail with the real reason instead.
+      if (!player.refresh) {
+        const e = new Error("This account has no refresh token — please sign in again");
+        e.needsReauth = true;
+        throw e;
+      }
       // QR / device-code accounts use the login.live.com (MBI_SSL, "t=") path,
       // which msmc can't refresh — handle them with the manual chain.
       if (player.authKind === "live") {
@@ -1279,10 +1287,24 @@ async function refreshPlayer(player, opts = {}) {
       player.lastRefresh = Date.now();
       _refreshAt.set(key, player.lastRefresh);
       _refreshCooldown.delete(key);
+      // It worked, so whatever was wrong before isn't any more.
+      if (player.needsReauth) { delete player.needsReauth; persistPlayer(player); }
       return player;
     } catch (err) {
-      const rateLimited = err?.response?.status === 429
-        || String(err && (err.message ?? err)).includes("429");
+      const msg = String(err && (err.message ?? err));
+      const rateLimited = err?.response?.status === 429 || msg.includes("429");
+      // Some failures are temporary (rate limits, no network). These are not:
+      // the grant is gone and no amount of retrying brings it back, so say so
+      // instead of quietly carrying on with a dead token and letting every
+      // call fail with a 401 nobody can explain.
+      const dead = err.needsReauth
+        || /invalid_grant|must sign in again|grant is expired|reading 'refresh_token'/i.test(msg);
+      if (dead) {
+        err.needsReauth = true;
+        player.needsReauth = true;
+        persistPlayer(player);
+        notifyReauthNeeded(player);
+      }
       _refreshCooldown.set(key, Date.now() + (rateLimited ? REFRESH_RATELIMIT_GAP : REFRESH_RETRY_GAP));
       devtoolsLog("Failed to refresh player:", err);
       throw err;
@@ -1292,6 +1314,34 @@ async function refreshPlayer(player, opts = {}) {
   })();
   _refreshInFlight.set(key, run);
   return run;
+}
+
+// Write a changed account back to disk without disturbing the others.
+function persistPlayer(player) {
+  try {
+    const players = loadPlayers();
+    const i = players.findIndex(p => String(p.id) === String(player.id));
+    if (i === -1) return;
+    players[i] = { ...players[i], ...player };
+    savePlayers(players);
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.webContents.send("players-updated", players); } catch { /* gone */ }
+    }
+  } catch (err) { devtoolsLog("could not persist the account:", err && err.message); }
+}
+
+// Tell the user once, rather than letting everything quietly 401.
+const _reauthTold = new Set();
+function notifyReauthNeeded(player) {
+  const key = String(player && player.id);
+  if (_reauthTold.has(key)) return;
+  _reauthTold.add(key);
+  const name = (player && (player.username || (player.auth && player.auth.name))) || "An account";
+  for (const w of BrowserWindow.getAllWindows()) {
+    try {
+      if (!w.isDestroyed()) w.webContents.send("account-needs-signin", { id: player.id, name });
+    } catch { /* gone */ }
+  }
 }
 
 function getUniqueFolderName(baseName) {
@@ -6267,61 +6317,133 @@ ipcMain.handle("icon:versionBanner", async (event, { version }) => {
 // The six panorama faces from a version's client jar. Only offered for versions
 // that are already installed somewhere — fetching a 40 MB jar to crop an icon
 // out of it would not be a fair trade.
+// The six panorama faces for a version.
+//
+// NOT from the client jar. In modern versions the jar's
+// assets/minecraft/textures/gui/title/background/panorama_*.png are 1x1
+// PLACEHOLDERS — 69 bytes each, a single grey pixel — which is precisely why
+// this came out as a grey box with nothing logged: the files were found and
+// decoded perfectly, they were just one grey pixel stretched across the canvas.
+// The real images (600-950 KB each) are hashed assets, listed in the version's
+// asset index and stored under assets/objects/<2>/<hash>.
+//
+// Older versions really do keep them in the jar, so that is still the fallback
+// — but only when what is in there is a real image.
+const PANORAMA_ASSET_PREFIX = "minecraft/textures/gui/title/background/panorama_";
+
+function assetObjectPath(hash) {
+  return path.join(dataDir, "assets", "objects", String(hash).slice(0, 2), String(hash));
+}
+
+// The asset index this version uses, from whichever instance has it installed.
+function findAssetIndexFor(version) {
+  const clientDir = path.join(dataDir, "client");
+  if (!fs.existsSync(clientDir)) return null;
+  for (const id of fs.readdirSync(clientDir)) {
+    const vjson = path.join(clientDir, id, "versions", String(version), `${version}.json`);
+    try {
+      if (!fs.existsSync(vjson)) continue;
+      const j = JSON.parse(fs.readFileSync(vjson, "utf8"));
+      const assetId = (j.assetIndex && j.assetIndex.id) || j.assets;
+      if (!assetId) continue;
+      const idx = path.join(dataDir, "assets", "indexes", `${assetId}.json`);
+      if (fs.existsSync(idx)) return idx;
+    } catch { /* try the next instance */ }
+  }
+  return null;
+}
+
+function findClientJar(version) {
+  const clientDir = path.join(dataDir, "client");
+  if (!fs.existsSync(clientDir)) return null;
+  for (const id of fs.readdirSync(clientDir)) {
+    const p = path.join(clientDir, id, "versions", String(version), `${version}.jar`);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+// A PNG's dimensions live at bytes 16..24. Used to tell a real face from the
+// 1x1 placeholder the jar ships.
+function pngSize(buf) {
+  try {
+    if (!buf || buf.length < 24 || buf[0] !== 0x89 || buf[1] !== 0x50) return null;
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  } catch { return null; }
+}
+
 ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
   try {
     const v = String(version || "").trim();
-    if (!v) return null;
-    const clientDir = path.join(dataDir, "client");
-    if (!fs.existsSync(clientDir)) return { error: "no instances yet" };
-    // Any instance that has this version downloaded will do. A modded instance
-    // keeps its loader under another name but still has the plain <v>/<v>.jar.
-    let jarPath = null;
-    for (const id of fs.readdirSync(clientDir)) {
-      const p = path.join(clientDir, id, "versions", v, `${v}.jar`);
-      if (fs.existsSync(p)) { jarPath = p; break; }
-    }
-    if (!jarPath) return { error: `no instance has ${v} downloaded yet` };
+    if (!v) return { error: "no version given" };
 
-    const zip = new AdmZip(jarPath);
-    // Where the faces live has moved around between versions.
-    const BASES = [
-      "assets/minecraft/textures/gui/title/background/",
-      "assets/minecraft/textures/gui/title/background/panorama/",
-      "assets/minecraft/textures/gui/background/",
-    ];
-    let entries = null;
-    for (const base of BASES) {
-      const found = [];
-      for (let i = 0; i < 6; i++) {
-        const e = zip.getEntry(`${base}panorama_${i}.png`);
-        if (!e) break;
-        found.push(e);
-      }
-      if (found.length === 6) { entries = found; break; }   // a partial one is no use
-    }
-    if (!entries) {
-      devtoolsLog(`panorama: ${v}'s jar has no panorama_0..5 in any known path`);
-      return { error: "this version's jar has no panorama" };
-    }
+    let faces = null;
 
-    // Downscale before sending. A panorama face is 1024x1024, and six of them
-    // as base64 is tens of megabytes over IPC for a picture that ends up in a
-    // 56px cell and a 220px-tall strip — which is what left the picker showing
-    // nothing but grey.
-    const faces = [];
-    for (const e of entries) {
-      const raw = e.getData();
-      let out = raw;
+    // 1. The asset store, which is where these actually live now.
+    const idxFile = findAssetIndexFor(v);
+    if (idxFile) {
       try {
-        out = await sharp(raw).resize(512, 512, { fit: "fill" }).png({ compressionLevel: 9 }).toBuffer();
+        const objects = JSON.parse(fs.readFileSync(idxFile, "utf8")).objects || {};
+        const bufs = [];
+        for (let i = 0; i < 6; i++) {
+          const rec = objects[`${PANORAMA_ASSET_PREFIX}${i}.png`];
+          if (!rec || !rec.hash) break;
+          const f = assetObjectPath(rec.hash);
+          if (!fs.existsSync(f)) break;
+          bufs.push(fs.readFileSync(f));
+        }
+        if (bufs.length === 6) faces = bufs;
+        else devtoolsLog(`panorama: ${v} asset index has ${bufs.length}/6 faces downloaded`);
       } catch (e) {
-        // Send it as it is rather than losing the panorama entirely.
+        devtoolsLog("panorama: could not read the asset index:", e && e.message);
+      }
+    }
+
+    // 2. Older versions keep real images in the jar.
+    if (!faces) {
+      const jarPath = findClientJar(v);
+      if (!jarPath) return { error: `${v} is not downloaded in any instance yet` };
+      const zip = new AdmZip(jarPath);
+      const BASES = [
+        "assets/minecraft/textures/gui/title/background/",
+        "assets/minecraft/textures/gui/title/background/panorama/",
+        "assets/minecraft/textures/gui/background/",
+      ];
+      for (const base of BASES) {
+        const found = [];
+        for (let i = 0; i < 6; i++) {
+          const e = zip.getEntry(`${base}panorama_${i}.png`);
+          if (!e) break;
+          const data = e.getData();
+          const size = pngSize(data);
+          // The placeholder is 1x1; anything that small is not a panorama.
+          if (!size || size.width < 16 || size.height < 16) break;
+          found.push(data);
+        }
+        if (found.length === 6) { faces = found; break; }
+      }
+    }
+
+    if (!faces) {
+      return {
+        error: "this version's panorama hasn't been downloaded yet — run the game once and try again",
+      };
+    }
+
+    // Downscale before sending: a face is 1024x1024 and six of them as base64
+    // is tens of megabytes over IPC for a picture that ends up 220px tall.
+    const out = [];
+    for (const raw of faces) {
+      let buf = raw;
+      try {
+        buf = await sharp(raw).resize(512, 512, { fit: "fill" }).png({ compressionLevel: 9 }).toBuffer();
+      } catch (e) {
         devtoolsLog("panorama: could not resize a face:", e && e.message);
       }
-      faces.push("data:image/png;base64," + out.toString("base64"));
+      out.push("data:image/png;base64," + buf.toString("base64"));
     }
     // Face 0 is the one the title screen starts on, i.e. "facing forward".
-    return { faces, forward: faces[0] };
+    return { faces: out, forward: out[0] };
   } catch (err) {
     devtoolsLog("panorama failed:", err && err.message);
     return { error: String(err && err.message || err) };
@@ -8606,6 +8728,7 @@ async function authHeadersFor(id) {
     }
   } catch { /* use existing token */ }
   const token = obj?.auth?.access_token;
+  if (obj.needsReauth) throw new Error("This account's sign-in has expired — sign in again to use it");
   if (!token || token === "0") throw new Error("This account has no valid session — please sign in again");
   return { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
 }

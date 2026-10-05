@@ -197,8 +197,11 @@
 
     // ── Accounts first: not having to sign in again is the best part of this.
     const newAccounts = accounts.filter(a => !a.already);
+    if (!single) {
+      group(newAccounts.length ? `Accounts — ${newAccounts.length} found`
+        : 'Accounts — none found in other launchers');
+    }
     if (newAccounts.length) {
-      group(`Accounts — ${newAccounts.length} found`);
       newAccounts.forEach(acc => {
         const r = row({
           icon: 'person',
@@ -215,8 +218,11 @@
     }
 
     const newSkins = skins.filter(sk => !sk.already);
+    if (!single) {
+      group(newSkins.length ? `Skins — ${newSkins.length} found`
+        : 'Skins — none found in other launchers');
+    }
     if (newSkins.length) {
-      group(`Skins — ${newSkins.length} found`);
       newSkins.forEach(sk => {
         const r = row({
           icon: 'face',

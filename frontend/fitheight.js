@@ -58,6 +58,21 @@
 
   function start() {
     schedule();
+    // The first measurement often lands before the page has settled — fonts,
+    // images and the sidebar all move things — and the MutationObserver only
+    // fires on changes, not on a layout that simply finished late. That is why
+    // a page could stay mis-sized until something else (visiting Settings,
+    // resizing the window) happened to poke it. A few follow-up passes cost
+    // nothing and make the right answer the one you see on arrival.
+    [50, 150, 400, 1000].forEach(ms => setTimeout(schedule, ms));
+    window.addEventListener('load', schedule);
+    // An element that was hidden when first measured gets its turn when it is
+    // shown; ResizeObserver catches the container growing for any other reason.
+    try {
+      const ro = new ResizeObserver(schedule);
+      ro.observe(document.documentElement);
+      if (document.body) ro.observe(document.body);
+    } catch { /* older runtime: the passes above still cover it */ }
     // Content appearing above a list (a heading, a filter row wrapping to two
     // lines) moves its top edge, so re-measure when the page changes shape.
     try {

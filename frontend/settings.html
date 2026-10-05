@@ -178,10 +178,15 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       background: linear-gradient(135deg, color-mix(in srgb, var(--secondary-color) 50%, black) 0%, var(--menu-bg) 100%);
       box-sizing: border-box;
     }
-    .color-input > span {
-      flex: 1 1 auto;
+    /* The card's title, on its own line above the controls, so each card says
+       what it actually sets instead of relying on a word squeezed in beside a
+       swatch. */
+    .color-input { flex-wrap: wrap; }
+    .color-input .color-title {
+      flex: 1 0 100%;
       min-width: 0;
-      font-size: 12px;
+      font-size: 13px;
+      margin-bottom: 2px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -203,6 +208,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       font-size: 12px;
     }
     .color-input button { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; }
+    /* A dropdown with five entries has no business spanning the page. */
+    .narrow-select { max-width: 260px; width: 100%; }
 
     /* The version sits outside the scrolling sections, which are sized to the
        bottom of the window — so in the flow it fell off the end and only its
@@ -314,7 +321,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       </p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:50px;">
         <button id="runTourBtn">Run the tour again</button>
-        <button id="runImportBtn">Import from another launcher…</button>
+        <button id="runImportBtn">Import instances, accounts &amp; skins…</button>
       </div>
     </div>
 
@@ -360,28 +367,28 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 
       <div class="color-grid">
       <div class="color-input">
-        <span>Base:</span>
+        <span class="color-title">Base</span>
         <input type="color" id="base-color">
         <input type="text" id="base-color-code" placeholder="#RRGGBB">
         <button data-color="base">Reset</button>
       </div>
 
       <div class="color-input">
-        <span>Secondary:</span>
+        <span class="color-title">Secondary</span>
         <input type="color" id="secondary-color">
         <input type="text" id="secondary-color-code" placeholder="#RRGGBB">
         <button data-color="secondary">Reset</button>
       </div>
 
       <div class="color-input">
-        <span>Text:</span>
+        <span class="color-title">Text</span>
         <input type="color" id="text-color">
         <input type="text" id="text-color-code" placeholder="#RRGGBB">
         <button data-color="text">Reset</button>
       </div>
 
       <div class="color-input">
-        <span>Third (Middle):</span>
+        <span class="color-title">Third (middle)</span>
         <input type="color" id="third-color">
         <input type="text" id="third-color-code" placeholder="#RRGGBB">
         <button data-color="third">Reset</button>
@@ -390,7 +397,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <label class="setting-toggle"><input type="checkbox" id="auto-third" checked> Automatic Third Color</label>
       <br>
       <label style="margin-top: 40px;">Font</label>
-      <select id="font-selector">
+      <select id="font-selector" class="narrow-select">
         <option value="Pixel">Pixel</option>
         <option value="Arial">Arial</option>
         <option value="Verdana">Verdana</option>
@@ -1110,7 +1117,16 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       const tourBtn = document.getElementById('runTourBtn');
       if (tourBtn) tourBtn.onclick = () => window.Onboarding && window.Onboarding.openTour();
       const importBtn = document.getElementById('runImportBtn');
-      if (importBtn) importBtn.onclick = () => window.Onboarding && window.Onboarding.openImport();
+      if (importBtn) {
+        importBtn.onclick = () => {
+          // Silently doing nothing when the module hasn't loaded is how a
+          // button ends up looking broken.
+          if (!window.Onboarding || !window.Onboarding.openImport) {
+            return uiAlert('The importer could not be loaded. Restart the launcher and try again.', 'Import');
+          }
+          window.Onboarding.openImport();
+        };
+      }
 
       const devMode = document.getElementById('dev-mode');
       if (devMode) {

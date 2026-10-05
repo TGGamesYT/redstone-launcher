@@ -196,3 +196,16 @@ ipcRenderer.on('notification-dismissed', () => {
 window.addEventListener('DOMContentLoaded', () => {
   checkAndShowNotifications();
 });
+
+// An account whose Microsoft sign-in has expired. The main process tells us
+// once per account; without this every call simply 401s and nothing explains
+// why. Shown wherever you happen to be, since it affects the whole launcher.
+try {
+  const { ipcRenderer: _ipc } = require('electron');
+  _ipc.on('account-needs-signin', (e, info) => {
+    const name = (info && info.name) || 'An account';
+    if (window.notify) {
+      window.notify(`${name} needs signing in again — open the Accounts page`, 'error');
+    }
+  });
+} catch { /* not in a renderer with electron available */ }
