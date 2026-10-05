@@ -234,19 +234,14 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         one is there in all of them. Instances with servers of their own — a Modrinth
         server instance, a modpack that ships a server list — keep those and get the
         shared ones alongside. Any instance can opt out in its own settings.
+        Sharing skins shows one library to every account signed in here; capes
+        stay per-account, since only the account granted one may wear it.
       </p>
-      <div style="margin-bottom: 24px;">
+      <div style="margin-bottom: 12px;">
         <label class="setting-toggle"><input type="checkbox" id="sync-options"> Sync game options</label>
         <label class="setting-toggle"><input type="checkbox" id="sync-servers"> Sync multiplayer servers</label>
       </div>
 
-      <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:620px;">
-        Show one skin library to every account signed in on this computer,
-        instead of each account having its own. Switching account still selects
-        whichever skin that account is actually wearing — only the list of skins
-        is shared. Capes are not: a cape is granted to one Mojang account and
-        only that account may wear it.
-      </p>
       <div style="margin-bottom: 50px;">
         <label class="setting-toggle"><input type="checkbox" id="pool-skins"> Share skins between accounts</label>
         <div id="poolSkinsState" style="font-size:12px;opacity:0.75;margin-top:6px;"></div>

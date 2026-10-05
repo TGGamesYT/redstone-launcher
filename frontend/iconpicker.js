@@ -160,7 +160,11 @@
       </p>
       <div class="ip-section-title" style="margin-top:8px;">Zoom</div>
       <input type="range" id="ipCropZoom" min="100" max="400" value="100" style="width:100%;">
-      <label class="ip-circle-row"><input type="checkbox" id="ipCropCircle"> Round off the corners</label>
+      <div class="ip-section-title" style="margin-top:8px;">Corners</div>
+      <div class="ip-circle-row">
+        <input type="range" id="ipCropRound" min="0" max="50" value="0" style="flex:1;">
+        <span id="ipCropRoundLabel" style="font-size:11px;opacity:0.75;min-width:52px;text-align:right;"></span>
+      </div>
       <div class="modal-actions"><button id="ipCropOk">Use this</button><button id="ipCropCancel">Cancel</button></div>
     </div>`;
     document.body.appendChild(ov);
@@ -168,7 +172,11 @@
     const cv = ov.querySelector('#ipCropCv');
     const stage = ov.querySelector('#ipCropStage');
     const zoomEl = ov.querySelector('#ipCropZoom');
-    const circleEl = ov.querySelector('#ipCropCircle');
+    // How rounded, as a percentage of half the icon's width: 0 is a square,
+    // 50 is a circle, and everything between is a rounded square. It used to be
+    // a checkbox, which only offered those two ends.
+    const roundEl = ov.querySelector('#ipCropRound');
+    const roundLabel = ov.querySelector('#ipCropRoundLabel');
     const OUT = 256;
     cv.width = OUT; cv.height = OUT;
     const cx = cv.getContext('2d');
@@ -178,9 +186,20 @@
     const draw = () => {
       cx.clearRect(0, 0, OUT, OUT);
       cx.save();
-      if (circleEl.checked) {
+      const roundPct = Number(roundEl.value) || 0;
+      if (roundPct > 0) {
+        const r = (OUT / 2) * (roundPct / 50);
         cx.beginPath();
-        cx.arc(OUT / 2, OUT / 2, OUT / 2, 0, Math.PI * 2);
+        if (cx.roundRect) cx.roundRect(0, 0, OUT, OUT, r);
+        else {
+          // Older canvas: trace it by hand.
+          cx.moveTo(r, 0);
+          cx.arcTo(OUT, 0, OUT, OUT, r);
+          cx.arcTo(OUT, OUT, 0, OUT, r);
+          cx.arcTo(0, OUT, 0, 0, r);
+          cx.arcTo(0, 0, OUT, 0, r);
+          cx.closePath();
+        }
         cx.clip();
       }
       // Cover the square, then apply zoom and the dragged offset.
@@ -193,6 +212,11 @@
       oy = Math.max(-maxY, Math.min(maxY, oy));
       cx.drawImage(im, (OUT - w) / 2 + ox, (OUT - h) / 2 + oy, w, h);
       cx.restore();
+      if (roundLabel) {
+        roundLabel.textContent = roundPct === 0 ? 'Square'
+          : roundPct === 50 ? 'Circle'
+            : `${Math.round(roundPct * 2)}%`;
+      }
       // A square image at 100% fills the box exactly, so there is nowhere to
       // drag it — say so instead of inviting a drag that does nothing.
       const hint = ov.querySelector('#ipCropHint');
@@ -204,14 +228,17 @@
     };
 
     im.onload = () => {
-      circleEl.checked = isFullyOpaque(im);   // opaque squares default to round
+      // An image with no transparency of its own has nothing to lose from
+      // rounding, and usually wants it; one that is already a cut-out shape
+      // would just have its corners eaten.
+      roundEl.value = isFullyOpaque(im) ? '50' : '0';
       draw();
     };
     im.onerror = () => { ov.remove(); onDone(null); };
     im.src = src;
 
     zoomEl.oninput = () => { zoom = zoomEl.value / 100; draw(); };
-    circleEl.onchange = draw;
+    roundEl.oninput = draw;
 
     // Zooming with the wheel, which is what anyone tries first on a crop box.
     // Keeps the slider in step so the two never disagree.
@@ -261,8 +288,8 @@
       .ip-cell.ip-shot img { padding:0; object-fit:cover; }
       /* A banner or panorama is wide; give it two columns so it reads as one. */
       .ip-cell.ip-wide { width:auto; grid-column:span 2; }
-      .ip-circle-row { display:flex; align-items:center; gap:8px; margin:10px 0 0; font-size:12px; }
-      .ip-circle-row input { width:18px; height:18px; margin:0; }
+      .ip-circle-row { display:flex; align-items:center; gap:10px; margin:4px 0 0; font-size:12px; }
+      .ip-circle-row input[type=range] { margin:0; }
       .ip-cell { width:56px; height:56px; border:2px solid var(--border-dark); border-radius:var(--border-radius); cursor:pointer; display:flex; align-items:center; justify-content:center; background:var(--menu-bg); overflow:hidden; }
       .ip-cell:hover { border-color:var(--accent); }
       .ip-cell img { width:100%; height:100%; object-fit:contain; padding:4px; image-rendering:auto; }
@@ -341,15 +368,30 @@
           cell.appendChild(img);
           cell.onclick = onClick;
           grid.appendChild(cell);
+          return cell;
         };
         ipcRenderer.invoke('icon:versionBanner', { version: opts.version }).then(b => {
           // Plenty of versions have no banner at all; that's simply nothing to show.
-          if (b && b.dataUrl) addCell(`${opts.version} banner`, b.dataUrl, () => editThenPick(b.dataUrl), true);
+          if (b && b.dataUrl) {
+            const cell = addCell(`${opts.version} banner`, b.dataUrl, () => editThenPick(b.dataUrl), true);
+            const img = cell && cell.querySelector('img');
+            if (img) img.onerror = () => cell.remove();
+          }
         }).catch(() => { });
         ipcRenderer.invoke('icon:versionPanorama', { version: opts.version }).then(p => {
-          if (!p || !p.forward) return;
-          addCell(`${opts.version} panorama`, p.forward, () => openPanorama(p, editThenPick), true);
-        }).catch(() => { });
+          // No cell at all unless there is an image to put in it. Adding one
+          // regardless is what left a grey box with nothing in it, and the
+          // reason was only ever in the main process log.
+          if (!p || !p.forward) {
+            if (p && p.error) console.info('[icon picker] no panorama:', p.error);
+            return;
+          }
+          const cell = addCell(`${opts.version} panorama`, p.forward, () => openPanorama(p, editThenPick), true);
+          // Belt and braces: if the data URL somehow won't decode, drop the
+          // cell rather than leaving it empty.
+          const img = cell && cell.querySelector('img');
+          if (img) img.onerror = () => cell.remove();
+        }).catch((e) => console.info('[icon picker] panorama lookup failed:', e && e.message));
       }
 
       const presets = ov.querySelector('#ipPresets');

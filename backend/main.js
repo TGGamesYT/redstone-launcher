@@ -5390,8 +5390,8 @@ function readProfileRows(db) {
   const cPath = pick("path", "profile_path", "id");
   const cName = pick("name", "title");
   const cVer = pick("game_version", "mc_version", "minecraft_version");
-  const cLoader = pick("mod_loader", "loader");
-  const cLoaderVer = pick("mod_loader_version", "loader_version");
+  const cLoader = pick("mod_loader", "loader", "modloader", "loader_name");
+  const cLoaderVer = pick("mod_loader_version", "loader_version", "modloader_version");
   if (!cPath) return null;
 
   const out = {};
@@ -5472,11 +5472,18 @@ function scanLauncher(kind, root, dbProfiles) {
         // list of instances that couldn't be selected.
         const sniffed = (fromDb && fromDb.version) ? null : sniffInstanceVersion(dir);
         const version = (fromDb && fromDb.version) || (sniffed && sniffed.version) || null;
+        // The loader is worked out separately from the version: the database
+        // may answer one and not the other, and the log line that gives the
+        // version only names the loader for Fabric-family launches. A modpack
+        // coming through as "vanilla" is wrong in a way that breaks the
+        // imported instance, so fall back to reading the files.
+        let loader = (fromDb && fromDb.loader) || (sniffed && sniffed.loader) || null;
+        if (!loader || loader === "vanilla") loader = sniffInstanceLoader(dir) || loader || "vanilla";
         out.push({
           kind, dir, gameDir: dir,
           name: (fromDb && fromDb.name) || d.name,
           version,
-          loader: (fromDb && fromDb.loader) || (sniffed && sniffed.loader) || "vanilla",
+          loader,
           loaderVersion: (fromDb && fromDb.loaderVersion) || (sniffed && sniffed.loaderVersion) || "",
           versionUnknown: !version,
           versionFrom: sniffed ? sniffed.from : (fromDb ? "database" : null),
@@ -5487,6 +5494,47 @@ function scanLauncher(kind, root, dbProfiles) {
   // Keep the ones whose version we could not work out; the import modal
   // asks for it rather than pretending the instance isn't there.
   return out.filter(i => i.version || i.versionUnknown);
+}
+
+// Which loader an instance uses, read off the instance itself. The Modrinth App
+// records this in its database, but not under a column name we can rely on
+// across versions — and when the row is missing entirely there is nothing at
+// all. The files are unambiguous: a loader leaves its own marks, and every mod
+// jar declares which loader it is for.
+function sniffInstanceLoader(dir) {
+  // 1. Marks the loader itself leaves in the instance folder.
+  const marks = [
+    [".fabric", "fabric"],
+    ["quilt", "quilt"],
+    ["config/fabric", "fabric"],
+  ];
+  for (const [rel, loader] of marks) {
+    try { if (fs.existsSync(path.join(dir, rel))) return loader; } catch { /* next */ }
+  }
+
+  // 2. What the mods themselves say. One jar is enough, but check a few in
+  //    case the first is a resource-only pack with no metadata.
+  const modsDir = path.join(dir, "mods");
+  let jars = [];
+  try {
+    jars = fs.readdirSync(modsDir).filter(f => /\.jar$/i.test(f)).slice(0, 8);
+  } catch { return null; }
+
+  const votes = { fabric: 0, quilt: 0, neoforge: 0, forge: 0 };
+  for (const j of jars) {
+    try {
+      const zip = new AdmZip(path.join(modsDir, j));
+      // neoforge.mods.toml is NeoForge-only; mods.toml is Forge's (and
+      // NeoForge still ships one for compatibility, so check the specific
+      // file first).
+      if (zip.getEntry("META-INF/neoforge.mods.toml")) votes.neoforge++;
+      else if (zip.getEntry("META-INF/mods.toml")) votes.forge++;
+      if (zip.getEntry("quilt.mod.json")) votes.quilt++;
+      else if (zip.getEntry("fabric.mod.json")) votes.fabric++;
+    } catch { /* unreadable jar */ }
+  }
+  const best = Object.entries(votes).sort((a, b) => b[1] - a[1])[0];
+  return best && best[1] > 0 ? best[0] : null;
 }
 
 // Work out an instance's Minecraft version from the instance itself, for
@@ -6094,13 +6142,15 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
     const v = String(version || "").trim();
     if (!v) return null;
     const clientDir = path.join(dataDir, "client");
-    if (!fs.existsSync(clientDir)) return null;
+    if (!fs.existsSync(clientDir)) return { error: "no instances yet" };
+    // Any instance that has this version downloaded will do. A modded instance
+    // keeps its loader under another name but still has the plain <v>/<v>.jar.
     let jarPath = null;
     for (const id of fs.readdirSync(clientDir)) {
       const p = path.join(clientDir, id, "versions", v, `${v}.jar`);
       if (fs.existsSync(p)) { jarPath = p; break; }
     }
-    if (!jarPath) return null;
+    if (!jarPath) return { error: `no instance has ${v} downloaded yet` };
 
     const zip = new AdmZip(jarPath);
     // Where the faces live has moved around between versions.
@@ -6119,7 +6169,10 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
       }
       if (found.length === 6) { entries = found; break; }   // a partial one is no use
     }
-    if (!entries) return null;
+    if (!entries) {
+      devtoolsLog(`panorama: ${v}'s jar has no panorama_0..5 in any known path`);
+      return { error: "this version's jar has no panorama" };
+    }
 
     // Downscale before sending. A panorama face is 1024x1024, and six of them
     // as base64 is tens of megabytes over IPC for a picture that ends up in a
@@ -6131,12 +6184,18 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
       let out = raw;
       try {
         out = await sharp(raw).resize(512, 512, { fit: "fill" }).png({ compressionLevel: 9 }).toBuffer();
-      } catch { /* sharp unavailable for this image: send it as it is */ }
+      } catch (e) {
+        // Send it as it is rather than losing the panorama entirely.
+        devtoolsLog("panorama: could not resize a face:", e && e.message);
+      }
       faces.push("data:image/png;base64," + out.toString("base64"));
     }
     // Face 0 is the one the title screen starts on, i.e. "facing forward".
     return { faces, forward: faces[0] };
-  } catch { return null; }
+  } catch (err) {
+    devtoolsLog("panorama failed:", err && err.message);
+    return { error: String(err && err.message || err) };
+  }
 });
 
 ipcMain.handle("icon:dataUrl", async (event, { filePath }) => {

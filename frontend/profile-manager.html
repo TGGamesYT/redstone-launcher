@@ -1113,7 +1113,19 @@
     const STILL_SCALE = Math.min(4, Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)));
     // Renders are serialised through one viewer, so queue them.
     let _stillQueue = Promise.resolve();
+    // Rendered stills, keyed by exactly what produced them. Re-rendering the
+    // whole list is cheap for the DOM but NOT for these: each one is a WebGL
+    // render queued behind all the others, so a rebuilt list showed a column of
+    // blank cards filling in one at a time. The texture is content-addressed by
+    // its own data, so a cache hit is always correct.
+    const _stillCache = new Map();
+    const STILL_CACHE_MAX = 300;
+    const stillKey = (src, model, w, h) => `${w}x${h}|${model || "default"}|${src}`;
+
     function renderStill(src, model, w, h) {
+      const key = stillKey(src, model, w, h);
+      const cached = _stillCache.get(key);
+      if (cached) return Promise.resolve(cached);
       const run = async () => {
         const s = ensureStill(); if (!s) return null;
         try {
@@ -1121,7 +1133,16 @@
           await s.v.loadSkin(src, { model: model === "slim" ? "slim" : "default" });
           spinTarget(s.v).rotation.y = 0;
           s.v.render();
-          return s.canvas.toDataURL();
+          const url = s.canvas.toDataURL();
+          if (url) {
+            // Bound it: a long browsing session would otherwise hold every skin
+            // it has ever previewed.
+            if (_stillCache.size >= STILL_CACHE_MAX) {
+              _stillCache.delete(_stillCache.keys().next().value);
+            }
+            _stillCache.set(key, url);
+          }
+          return url;
         } catch { return null; }
       };
       _stillQueue = _stillQueue.then(run, run);
@@ -1451,6 +1472,10 @@
       holder.appendChild(img);
       holder._spin = { src, model, w, h };
       holder._still = img;
+      // Straight out of the cache when we have it, so a rebuilt list appears
+      // already drawn instead of filling in card by card.
+      const ready = _stillCache.get(stillKey(src, model, w, h));
+      if (ready) img.src = ready;
       holder._ready = renderStill(src, model, w, h).then(url => {
         if (url) { img.src = url; return true; }
         // No WebGL at all on this machine: fall back to the flat texture rather
@@ -2093,6 +2118,24 @@
       }
       refreshSelectionUI();
     }
+
+    // A WebGL canvas is cleared to white as the page tears down, and that lands
+    // on screen before the next page paints. Hide it the moment navigation
+    // starts: by then nobody is looking at it anyway.
+    const hideRenderOnExit = () => {
+      const c = document.getElementById('skin_container');
+      if (c) c.style.visibility = 'hidden';
+    };
+    window.addEventListener('pagehide', hideRenderOnExit);
+    window.addEventListener('beforeunload', hideRenderOnExit);
+    // A sidebar link is a normal navigation, so catch the click too — pagehide
+    // can fire late enough that the flash has already happened.
+    document.addEventListener('click', (e) => {
+      const a = e.target && e.target.closest && e.target.closest('a[href]');
+      if (!a) return;
+      const href = a.getAttribute('href') || '';
+      if (href && !href.startsWith('#') && !/^https?:/i.test(href)) hideRenderOnExit();
+    }, true);
 
     // ---- Skin library sync ------------------------------------------------
     // Pull from the relay as the page opens, so a skin uploaded to Mojang on
