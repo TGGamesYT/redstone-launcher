@@ -9039,6 +9039,96 @@ ipcMain.handle("skins:mojangKnown", (event, { uuid }) => {
     .sort((a, b) => b.at - a.at);
 });
 
+// ── Minecraft friends ───────────────────────────────────────────────────────
+// api.minecraftservices.com exposes the in-game friends list: /friends gives
+// the list plus pending requests in both directions, and /presence does double
+// duty — it reports YOUR status AND answers with every online friend's. There
+// is no GET for presence, which is why reading the list means telling the
+// service you are around.
+//
+// Everything here is per-account: the headers come from whichever account the
+// page asked about, so switching account switches friends list.
+async function mcFriendsRequest(accountId, endpoint, method = "GET", body = null) {
+  const headers = await authHeadersFor(accountId);
+  const res = await fetch(`https://api.minecraftservices.com${endpoint}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+  return { ok: res.ok, status: res.status, data };
+}
+
+// The error shape is { details: { status, errorMessage }, errorMessage }.
+function friendsError(r) {
+  const d = (r && r.data) || {};
+  return (d.details && d.details.errorMessage) || d.errorMessage
+    || (typeof d === "string" && d) || `HTTP ${r && r.status}`;
+}
+
+ipcMain.handle("friends:list", async (event, { accountId }) => {
+  try {
+    const r = await mcFriendsRequest(accountId, "/friends");
+    if (!r.ok) return { success: false, error: friendsError(r) };
+    const d = r.data || {};
+    return {
+      success: true,
+      friends: d.friends || [],
+      incoming: d.incomingRequests || [],
+      outgoing: d.outgoingRequests || [],
+    };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
+// Reporting presence is also how the online friends are read back.
+ipcMain.handle("friends:presence", async (event, { accountId, status }) => {
+  try {
+    const r = await mcFriendsRequest(accountId, "/presence", "POST", { status: status || "ONLINE" });
+    if (!r.ok) return { success: false, error: friendsError(r) };
+    const list = (r.data && r.data.presence) || [];
+    const byId = {};
+    for (const p of list) {
+      if (!p || !p.profileId) continue;
+      byId[String(p.profileId).replace(/-/g, "")] = p.status || "ONLINE";
+    }
+    return { success: true, presence: byId };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
+// type: "ADD" (also how a request is accepted) or "REMOVE" (also deny/cancel).
+ipcMain.handle("friends:update", async (event, { accountId, player, type }) => {
+  try {
+    const who = String(player || "").trim();
+    if (!who) return { success: false, error: "No player given" };
+    // A UUID goes in profileId, a username in name.
+    const payload = { updateType: type === "REMOVE" ? "REMOVE" : "ADD" };
+    if (/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(who)) payload.profileId = who;
+    else payload.name = who;
+    const r = await mcFriendsRequest(accountId, "/friends", "PUT", payload);
+    if (!r.ok) {
+      const msg = friendsError(r);
+      // Mojang reports a pending request in EITHER direction as
+      // "already friends", which reads as nonsense on its own.
+      const code = (r.data && r.data.details && r.data.details.status) || "";
+      return {
+        success: false,
+        error: /ALREADY_FRIENDS/i.test(code)
+          ? "Mojang says you are already friends — check your incoming and outgoing requests, a pending one either way counts."
+          : msg,
+      };
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
 // ---- RESET skin to the account's default ----
 ipcMain.handle("mc:resetSkin", async () => {
   try {

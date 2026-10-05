@@ -9,48 +9,48 @@ started.
 
 ---
 
-## 0. Round 11 — current
+## 0. Round 11
 
 ### Importing
-- [ ] Modrinth App: version is found now, but the loader still comes back
+- [x] Modrinth App: version is found now, but the loader still comes back
       "vanilla" for an obvious modpack
 
 ### Onboarding
-- [ ] The "Your instances" step points at the wrong place on the instances page
+- [x] The "Your instances" step points at the wrong place on the instances page
 
 ### Icons
-- [ ] The version panorama is still fully grey
-- [ ] Round corners should be a SLIDER (square → slightly rounded → circle),
+- [x] The version panorama is still fully grey
+- [x] Round corners should be a SLIDER (square → slightly rounded → circle),
       not an on/off toggle
 
 ### Skins page
-- [ ] Applying a skin still blanks the skin renders for a moment
-- [ ] Leaving the skins page flashes the main render white for under a second
+- [x] Applying a skin still blanks the skin renders for a moment
+- [x] Leaving the skins page flashes the main render white for under a second
 
 ### Settings
-- [ ] Drop the description under the "share skins between accounts" toggle —
+- [x] Drop the description under the "share skins between accounts" toggle —
       only sections get descriptions
-- [ ] Pooled skins must never be cloud-saved against the wrong account
-- [ ] Theme tab: the colour pickers and hex inputs span the full page width;
+- [x] Pooled skins must never be cloud-saved against the wrong account
+- [x] Theme tab: the colour pickers and hex inputs span the full page width;
       they should be cards side by side
-- [ ] The version line at the bottom clips off-screen — sometimes only its top
+- [x] The version line at the bottom clips off-screen — sometimes only its top
       2-3 pixel rows show
 
 ### Layout
-- [ ] Scroll areas still leave a gap at the bottom on home, instances, the mod
+- [x] Scroll areas still leave a gap at the bottom on home, instances, the mod
       browser, servers, skins and players
 
 ### Instances
-- [ ] A mod's "change version" button appears late
-- [ ] Tabbing out of the launcher and back reloads the instance detail
-- [ ] The mod icon changes depending on whether change-version has loaded —
+- [x] A mod's "change version" button appears late
+- [x] Tabbing out of the launcher and back reloads the instance detail
+- [x] The mod icon changes depending on whether change-version has loaded —
       the platform it came from is already known, so cache it instead of
       re-checking every time
-- [ ] Grid view: cards overlap and aren't centred in their cells
+- [x] Grid view: cards overlap and aren't centred in their cells
 
 ### Players page
-- [ ] "Add new player" should stick to the top, like the headings on the skins page
-- [ ] A friends panel down the right using Minecraft's friends API: list with
+- [x] "Add new player" should stick to the top, like the headings on the skins page
+- [x] A friends panel down the right using Minecraft's friends API: list with
       presence, tabs for friends / incoming / outgoing, and a badge on incoming
 
 ---
