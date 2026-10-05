@@ -25,7 +25,10 @@
     if (!el.isConnected) return;
     const box = el.getBoundingClientRect();
     if (!box.width && !box.height) return;
-    const gap = el.dataset.fitGap === '' || el.dataset.fitGap == null ? 12 : Number(el.dataset.fitGap);
+    // Flush to the bottom of the window by default. A 12px default left a dead
+    // strip under every scroller on every page; a page that genuinely wants
+    // breathing room can ask for it with data-fit-gap.
+    const gap = el.dataset.fitGap === '' || el.dataset.fitGap == null ? 0 : Number(el.dataset.fitGap);
     const top = box.top;
     const h = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight - top - (Number.isFinite(gap) ? gap : 12)));
     const next = h + 'px';

@@ -6443,16 +6443,28 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
       const jar = e.jar || {};
       const cleanName = r._filename.replace(/\.disabled$/i, "");
       const ownIcon = e.iconFile ? path.join(iconsDir, e.iconFile) : null;
+      // The index already remembers which Modrinth/CurseForge project a file
+      // is -- it is keyed by the file's sha1, which cannot change under us --
+      // so use it HERE rather than only in the full pass below. Leaving it out
+      // meant every mod was drawn first with its jar icon and no update
+      // button, then redrawn moments later with the project artwork and the
+      // button, as though the launcher had forgotten and gone to look again.
+      const m = e.modrinth, cf = e.curse;
+      const known = m || cf;
       return {
         ...r,
         filename: r._filename,
-        name: jar.name || cleanName,
-        icon: ownIcon ? pathToFileURL(ownIcon).href : null,
+        name: (m && m.title) || (cf && cf.title) || jar.name || cleanName,
+        icon: (m && m.icon) || (cf && cf.icon) || (ownIcon ? pathToFileURL(ownIcon).href : null),
         iconPath: ownIcon,
-        version: jar.version || null,
+        version: (m && m.versionNumber) || jar.version || null,
         author: jar.authors || null,
-        details: [jar.version, jar.authors].filter(Boolean).join("  •  ") || cleanName,
-        pending: true,          // still to be matched against the mod sites
+        details: [(m && m.versionNumber) || jar.version, jar.authors].filter(Boolean).join("  •  ") || cleanName,
+        source: m ? "modrinth" : cf ? "curseforge" : null,
+        projectId: (m && m.projectId) || (cf && cf.projectId) || null,
+        // Only the files we have never matched are still "pending" — the rest
+        // are already as complete as the second pass will make them.
+        pending: !known,
       };
     });
     early.forEach(r => delete r._filename);

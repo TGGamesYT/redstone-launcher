@@ -483,7 +483,7 @@
     </div>
   </div> -->
 
-  <div id="instance-detail" data-fit-height data-fit-gap="16" style="display:none;">
+  <div id="instance-detail" data-fit-height style="display:none;">
     <div id="instance-toolbar-container"></div>
     <div id="instance-tab-content" class="tab-content"></div>
     <pre id="logs"
@@ -871,11 +871,26 @@
 
     // When the launcher regains focus after being away (e.g. you tabbed out to
     // the running game and changed its servers / resource packs), re-render the
-    // currently-open instance tab so the launcher reflects those on-disk changes.
+    // currently-open instance tab so the launcher reflects those on-disk
+    // changes.
+    //
+    // The bar for that is deliberately high. At 1.2s every alt-tab rebuilt the
+    // open tab, which is the most visible thing on the page — you looked away
+    // for a second and came back to it reloading. On-disk changes only happen
+    // when the GAME has been running, so that is what it waits for; failing
+    // that, a long absence (half a minute) is the only other reason to bother.
     let _instLastBlur = 0;
+    const AWAY_LONG_MS = 30000;
     window.addEventListener('blur', () => { _instLastBlur = Date.now(); });
-    window.addEventListener('focus', () => {
-      if (Date.now() - _instLastBlur < 1200) return;
+    window.addEventListener('focus', async () => {
+      const away = Date.now() - _instLastBlur;
+      if (away < 2000) return;
+      let gameWasRunning = false;
+      try {
+        const running = await ipcRenderer.invoke('get-running-instances');
+        gameWasRunning = (running || []).some(r => String(r.id) === String(currentDetailId));
+      } catch { /* treat as not running */ }
+      if (!gameWasRunning && away < AWAY_LONG_MS) return;
       const activeTab = document.querySelector('.instance-tab-btn.active');
       if (activeTab) activeTab.click();
     });

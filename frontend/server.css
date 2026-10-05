@@ -1232,10 +1232,14 @@ a:hover {
 
 #profiles-list.grid-mode {
   display: grid;
-  /* Cap the column width so a single instance stays a normal tile instead of
-     stretching to fill the whole row; pack tiles from the left. */
-  grid-template-columns: repeat(auto-fill, minmax(170px, 210px));
-  justify-content: start;
+  /* Equal tracks that share the row, so tiles line up in real columns. The
+     tile itself is capped below, and centred in its track, which is what keeps
+     a half-empty last row from looking lopsided. */
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  justify-items: center;
+  /* start, NOT stretch: a stretched tile grows to the tallest in its row and
+     its centred content drifts away from the others. */
+  align-items: start;
   align-content: start;
   gap: 16px;
   padding: 10px 0;
@@ -1248,23 +1252,37 @@ a:hover {
   align-items: center;
   text-align: center;
   width: 100%;
-  max-width: unset;
+  max-width: 210px;
   margin: 0;
-  min-height: 200px;
-  justify-content: center;
+  /* Let the content decide the height. A min-height taller than the content,
+     with the content centred inside it, is what had tiles running into each
+     other -- anything that didn't fit simply spilled out of the box. */
+  min-height: 0;
+  justify-content: flex-start;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+/* The row layout pushes its buttons away from the text with a left margin.
+   In a column that just shoves them off-centre. */
+#profiles-list.grid-mode .profile-item button {
+  margin-left: 0;
+  margin-right: 0;
 }
 
 #profiles-list.grid-mode .profile-item img {
   width: 100px;
   height: 100px;
-  margin-bottom: 12px;
+  margin-bottom: 0;      /* the tile's gap handles the spacing now */
   border-radius: 10px;
+  flex: 0 0 auto;
 }
 
 #profiles-list.grid-mode .profile-info {
   margin-left: 0;
   align-items: center;
   width: 100%;
+  min-width: 0;          /* so a long name wraps instead of widening the tile */
 }
 
 #profiles-list.grid-mode .profile-name {
@@ -1290,7 +1308,7 @@ a:hover {
   }
   
   #profiles-list.grid-mode {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 190px));
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   }
 }
 
