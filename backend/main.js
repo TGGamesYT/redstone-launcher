@@ -1080,6 +1080,13 @@ if (!gotTheLock) {
     // Keep auto-updating shortcut icons (e.g. server icons) fresh.
     refreshShortcutIcons().catch(() => {});
 
+    // The nine default player skins, out of the client jar. They are needed by
+    // every head an account without a skin has, and by the skins page's default
+    // gallery, so build them once here rather than making the first page that
+    // wants one wait for a client jar to download. Cached per Minecraft
+    // release, so this is a no-op on every run but the first.
+    buildDefaultSkins().catch(err => devtoolsLog("default skins:", err && err.message));
+
     // Quietly stage the next update in the background (no install this run).
     stageUpdateInBackground();
   });
@@ -3463,7 +3470,21 @@ function mergeSkinLists(mine, theirs) {
 // Null rather than a throw when there is nobody to sync for: an offline-only
 // account isn't a failure, it just has no Mojang library to carry anywhere, and
 // treating it as one would put the backoff on for ten minutes every time.
+// Whether the selected account is an offline one. Offline accounts have no
+// Mojang session, so they cannot authenticate to the relay and nothing of
+// theirs is ever synced or stored in the cloud — their skin library lives on
+// this machine and nowhere else.
+function selectedAccountIsOffline() {
+  try {
+    const id = storage.get("selectedPlayerId", null);
+    const players = loadPlayers();
+    const p = players.find(x => String(x.id) === String(id)) || players[0];
+    return !!p && isOfflineAccount(p);
+  } catch { return false; }
+}
+
 async function relayAccountForSync() {
+  if (selectedAccountIsOffline()) return null;
   const id = storage.get("selectedPlayerId", null);
   return (await accountCredsByIdFresh(id)) || null;
 }
@@ -3550,6 +3571,11 @@ let _syncBlockedUntil = 0;
 const SYNC_BACKOFF_MS = 10 * 60 * 1000;
 
 function scheduleSkinSync() {
+  // Nothing an offline account does goes to the cloud. Without this, adding a
+  // skin to an offline account's library would still start a relay handshake
+  // it cannot complete, fail, and put the sync into its ten-minute backoff —
+  // so a premium account on the same machine would then stop syncing too.
+  if (selectedAccountIsOffline()) return;
   if (Date.now() < _syncBlockedUntil) return;
   clearTimeout(_syncTimer);
   // Coalesce a burst of changes (adding several skins at once) into one push.
@@ -9407,9 +9433,9 @@ function legacyDefaultModel(uuid) {
 // somebody opened a page with a 32px head on it — so this only ever reads the
 // cache, and warms it in the background when there isn't one. Until it is
 // there, heads fall back to the legacy pair.
-let _defaultSkinsWarming = false;
-let _defaultSkinsRetryAt = 0;
-const DEFAULT_SKINS_RETRY_GAP = 30 * 60 * 1000;
+// The list is built once, at startup (see app.whenReady), and cached per
+// Minecraft release, so by the time anything draws a head it is simply there.
+// Reading the cache is all this does.
 function cachedDefaultSkins() {
   try {
     const f = path.join(texturesDir, "defaultskins.json");
@@ -9417,20 +9443,58 @@ function cachedDefaultSkins() {
       const j = JSON.parse(fs.readFileSync(f, "utf8"));
       if (Array.isArray(j.skins) && j.skins.length) return j.skins;
     }
-  } catch { /* fall through */ }
-  // One attempt at a time, and not again for half an hour if it came back with
-  // nothing — the jar is a big download to keep retrying because a 32px head
-  // was drawn.
-  if (!_defaultSkinsWarming && Date.now() >= _defaultSkinsRetryAt) {
-    _defaultSkinsWarming = true;
-    _defaultSkinsRetryAt = Date.now() + DEFAULT_SKINS_RETRY_GAP;
-    buildDefaultSkins()
-      .then(list => { if (list && list.length) _defaultSkinsRetryAt = 0; })
-      .catch(err => devtoolsLog("could not warm the default skins:", err && err.message))
-      .finally(() => { _defaultSkinsWarming = false; });
+  } catch { /* the legacy pair covers the first run */ }
+  return null;
+}
+
+// An offline account's Minecraft identity. A server in offline mode computes it
+// from the name — UUID.nameUUIDFromBytes(("OfflinePlayer:" + name) in UTF-8),
+// an MD5 forced into a version 3 UUID — so that is the id the player actually
+// has in game, and the one their default skin should be chosen from. Without
+// this an offline account was keyed by a launcher-internal string, and the face
+// on the accounts page and the default on the skins page disagreed.
+function offlineUuid(name) {
+  const md5 = crypto.createHash("md5").update("OfflinePlayer:" + String(name || ""), "utf8").digest();
+  md5[6] = (md5[6] & 0x0f) | 0x30;   // version 3
+  md5[8] = (md5[8] & 0x3f) | 0x80;   // IETF variant
+  return md5.toString("hex");
+}
+
+// The identity to pick a default skin by: the real uuid for a premium account,
+// the offline one for an account that only has a name.
+function skinIdentity({ uuid, name, offline }) {
+  const id = String(uuid || "").replace(/-/g, "");
+  if (id.length === 32) return id;
+  if (offline && name) return offlineUuid(name);
+  return id || "";
+}
+
+// Which default skin an account gets, as data. ONE implementation, so the head
+// on the accounts page, the sidebar, and the skins page's "reset to default"
+// preview can never disagree about what an account's default looks like.
+function defaultSkinFor({ uuid, name, offline }) {
+  const list = cachedDefaultSkins();
+  const id = skinIdentity({ uuid, name, offline });
+  if (list && list.length) {
+    const pick = defaultSkinForUuid(id, list);
+    if (pick && pick.base64) return { name: pick.name, model: pick.model, base64: pick.base64 };
   }
   return null;
 }
+
+ipcMain.handle("mc:defaultSkinFor", async (event, opts = {}) => {
+  const pick = defaultSkinFor(opts);
+  if (pick) return pick;
+  // First run, before the list has been built: the legacy pair still gives the
+  // right ANSWER to "what does this account look like with no skin".
+  try {
+    const model = legacyDefaultModel(skinIdentity(opts));
+    const png = await skinByTextureHash(DEFAULT_SKIN_TEXTURE[model]);
+    return { name: model === "slim" ? "alex" : "steve", model: model === "slim" ? "slim" : "wide", base64: png.toString("base64") };
+  } catch (err) {
+    return { error: String(err && err.message || err) };
+  }
+});
 
 // A skin PNG by its texture hash, kept on disk forever — the hash IS the
 // content, so it can never go stale.
@@ -9548,16 +9612,13 @@ const contentKey = (buf) => "b" + crypto.createHash("sha1").update(buf).digest("
 // The default head for an account, by Minecraft's own rule over the nine
 // defaults the skins page shows. Falls back to the legacy pair while the
 // modern list is still being fetched.
-async function defaultHead(uuid, px) {
-  const list = cachedDefaultSkins();
-  if (list && list.length) {
-    const pick = defaultSkinForUuid(uuid, list);
-    if (pick && pick.base64) {
-      const png = Buffer.from(pick.base64, "base64");
-      return { url: await renderHeadPng(png, px, contentKey(png)), from: "default" };
-    }
+async function defaultHead(who, px) {
+  const pick = defaultSkinFor(who);
+  if (pick) {
+    const png = Buffer.from(pick.base64, "base64");
+    return { url: await renderHeadPng(png, px, contentKey(png)), from: "default" };
   }
-  const model = legacyDefaultModel(uuid || "");
+  const model = legacyDefaultModel(skinIdentity(who));
   return { url: await renderHead(DEFAULT_SKIN_TEXTURE[model], px), from: "default" };
 }
 
@@ -9600,7 +9661,7 @@ async function playerHead({ name, uuid, size, offline, playerId }) {
   }
 
   try {
-    return await defaultHead(id || name || "", px);
+    return await defaultHead({ uuid: id, name, offline }, px);
   } catch (err) {
     devtoolsLog("head: even the default failed:", err && err.message);
     return { url: null, from: "none" };
@@ -9641,13 +9702,10 @@ ipcMain.handle("head:skin", async (event, { name, uuid, offline, playerId } = {}
   }
   try {
     // The same nine defaults, picked the same way, as the head and the skins
-    // page use.
-    const list = cachedDefaultSkins();
-    const pick = list && list.length ? defaultSkinForUuid(id || name || "", list) : null;
-    if (pick && pick.base64) {
-      return { base64: pick.base64, slim: pick.model === "slim", from: "default" };
-    }
-    const model = legacyDefaultModel(id || "");
+    // page use — one implementation, in defaultSkinFor.
+    const pick = defaultSkinFor({ uuid: id, name, offline });
+    if (pick) return { base64: pick.base64, slim: pick.model === "slim", from: "default" };
+    const model = legacyDefaultModel(skinIdentity({ uuid: id, name, offline }));
     const png = await skinByTextureHash(DEFAULT_SKIN_TEXTURE[model]);
     return { base64: png.toString("base64"), slim: model === "slim", from: "default" };
   } catch (err) {

@@ -1693,7 +1693,13 @@
     let selectedplayer;
 
     // Skin-changer state.
+    // The key the SKIN LIBRARY is stored under. For an offline account that is
+    // a launcher-internal string ("offline-<id>"), not a Minecraft uuid, so it
+    // must not be used to work out anything about the player themselves.
     let currentUuid = null;
+    // Who the page is about, as Minecraft would know them. Kept separately
+    // from currentUuid for exactly the reason above.
+    let activePlayerName = null, activePlayerUuid = null;
     // Offline accounts apply skins as a resource pack rather than uploading them.
     let isCrackedAccount = false, crackedPlayerId = null;
     let activePixelHash = null;   // pixel hash of the skin currently applied on Mojang
@@ -1832,20 +1838,16 @@
         // api.capes.dev instead, and that service caches per username hard
         // enough that applying a cape left the OLD one on the render — across
         // an app restart, and regardless of what the cape list showed.
-        // capes.dev is still worth asking for offline accounts, which have no
-        // Mojang profile at all but may well have a cape from elsewhere.
-        const renderCape = pendingCape ? pendingCape.url
-          : (activeCape ? (activeCape.base64 ? "data:image/png;base64," + activeCape.base64 : activeCape.url) : null);
+        //
+        // An offline account never wears one. The capes section is hidden for
+        // them because they have no Mojang capes, so a cape on the render was
+        // one the page could neither explain nor take off — it came from a
+        // capes.dev lookup on the username, which is somebody else's cape.
+        const renderCape = isCrackedAccount ? null
+          : pendingCape ? pendingCape.url
+            : (activeCape ? (activeCape.base64 ? "data:image/png;base64," + activeCape.base64 : activeCape.url) : null);
         if (renderCape) {
           window.skinViewer.loadCape(renderCape);
-        } else if (isCrackedAccount) {
-          fetch(`https://api.capes.dev/load/${encodeURIComponent(name)}`)
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-              if (data && data.minecraft && data.minecraft.imageUrl) {
-                window.skinViewer.loadCape(data.minecraft.imageUrl);
-              }
-            }).catch(err => console.warn("Cape load failed", err));
         } else {
           // No cape on the account (or it was just turned off) — take it off
           // the render too rather than leaving whatever was there before.
@@ -1873,6 +1875,8 @@
 
       const uuid = profile.id || player.uuid || (player.auth && player.auth.uuid) || name;
       currentUuid = uuid;
+      activePlayerName = name;
+      activePlayerUuid = isCrackedAccount ? null : (player.auth?.uuid || player.uuid || null);
 
       // Remember the active skin's pixel hash so we can highlight the matching
       // library card. We do NOT auto-add the active skin to the library —
@@ -2242,47 +2246,30 @@
       }
     };
 
-    // Reset is now a pending action: it only takes effect when Apply is pressed,
-    // like selecting a skin. Previews the Mojang default skin meanwhile.
-    // Which default skin a player is assigned is derived from their UUID by
-    // Mojang. Mirror that so the reset preview shows THIS player's actual default
-    // (and uses the whole current default-skin list, including any new ones).
-    function defaultSkinForUuid(uuid, list) {
-      if (!list || !list.length) return null;
-      const hex = String(uuid || "").replace(/-/g, "");
-      if (hex.length >= 32) {
-        // Java UUID.hashCode() over the 128-bit value, then floorMod by count.
-        const hi = BigInt("0x" + hex.slice(0, 16));
-        const lo = BigInt("0x" + hex.slice(16, 32));
-        const mask = (1n << 64n) - 1n;
-        const hilo = (hi ^ lo) & mask;
-        const hash = Number(BigInt.asIntN(32, (hilo >> 32n) ^ hilo));
-        const idx = ((hash % list.length) + list.length) % list.length;
-        return list[idx];
-      }
-      let h = 0; for (let i = 0; i < hex.length; i++) h = (h * 31 + hex.charCodeAt(i)) >>> 0;
-      return list[h % list.length];
-    }
+    // Reset is a pending action: it only takes effect when Apply is pressed,
+    // like selecting a skin, and previews that account's default meanwhile.
+    //
+    // WHICH default is not worked out here any more. The main process decides
+    // it (mc:defaultSkinFor) and the heads on the accounts page and the sidebar
+    // ask the same function, so the face shown beside an account and the skin
+    // previewed when you reset it cannot drift apart. It also knows that an
+    // offline account's Minecraft identity is the offline uuid derived from its
+    // name, which this page could not have worked out from the internal id it
+    // uses to key the skin library.
     async function selectReset() {
       pendingSelection = { reset: true };
-      if (!defaultSkinsCache.length) { try { await defaultSkinsPromise; } catch { } }
-      const def = defaultSkinForUuid(currentUuid, defaultSkinsCache);
-      if (window.skinViewer) {
-        try {
-          if (def) window.skinViewer.loadSkin("data:image/png;base64," + def.base64, { model: def.model === 'slim' ? 'slim' : 'default' });
-          else {
-            // Mojang's own default skin, by uuid, through the main process.
-            ipcRenderer.invoke("head:skin", { uuid: currentUuid, offline: true })
-              .then(r => {
-                if (r && r.base64 && window.skinViewer) {
-                  window.skinViewer.loadSkin("data:image/png;base64," + r.base64,
-                    { model: r.slim ? 'slim' : 'default' });
-                }
-              }).catch(() => { });
-          }
-        } catch { }
-      }
       refreshSelectionUI();
+      try {
+        const def = await ipcRenderer.invoke("mc:defaultSkinFor", {
+          uuid: activePlayerUuid,
+          name: activePlayerName,
+          offline: isCrackedAccount,
+        });
+        if (def && def.base64 && window.skinViewer && pendingSelection && pendingSelection.reset) {
+          window.skinViewer.loadSkin("data:image/png;base64," + def.base64,
+            { model: def.model === 'slim' ? 'slim' : 'default' });
+        }
+      } catch { /* the preview just stays as it was */ }
     }
 
     // A WebGL canvas is cleared to white as the page tears down, and that lands
@@ -2311,6 +2298,9 @@
     // working.
     let _syncedThisLoad = false;
     async function pullSkinLibraryOnce() {
+      // An offline account has no Mojang session, so there is no cloud library
+      // for it and nothing of its ever leaves this machine.
+      if (isCrackedAccount) return;
       if (_syncedThisLoad) return;
       _syncedThisLoad = true;
       try {
@@ -2349,11 +2339,11 @@
       wire('capesResetBtn', () => selectCape({ id: null }));
     }
 
-    // Force the sidebar player head to re-fetch after a skin change (the URL is
-    // cached, so append a cache-busting query param).
+    // The face just changed, so every head on screen is out of date. Heads are
+    // data URLs built by the launcher now, so the old trick of appending a
+    // cache-busting query string to the sidebar's <img> did nothing at all.
     function bustPlayerHead() {
-      const img = document.getElementById('playerIconSiderbar');
-      if (img && img.src) img.src = img.src.split('?')[0] + '?t=' + Date.now();
+      if (window.PlayerHead && window.PlayerHead.refresh) window.PlayerHead.refresh();
     }
 
     // ---- Default skins modal (pick skin -> pick arm style -> save locally) ----

@@ -26,6 +26,10 @@ started.
       the same rule the skins page uses — not just one of the legacy two.
 - [x] An offline account that has a skin in this launcher shows THAT skin's
       face everywhere a head appears, and the heads redraw when it changes.
+- [x] Build the default skins once at startup rather than warming them lazily.
+- [x] Offline accounts get the same skins page as premium ones — same library,
+      same reset, same apply and undo — minus capes, cloud saving and syncing,
+      none of which they can have.
 
 ---
 
