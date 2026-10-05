@@ -9,6 +9,43 @@ started.
 
 ---
 
+## 0. Round 12 — current
+
+### Importing (stop guessing — read the actual source)
+- [ ] Modrinth App: find out how it REALLY stores profiles instead of guessing
+      at the schema. Version and loader are still wrong much of the time
+- [ ] No launcher's instance icons come through at all
+
+### Friends
+- [ ] Use the launcher's existing player-head rendering, not the sample's
+- [ ] The panel's names/icons are tiny next to the account rows
+- [ ] Switching accounts must mark the previous one offline
+- [ ] Switching to an offline account only blanks the list — changing tabs
+      brings the old account's data back
+- [ ] The list reorders a moment after presence arrives
+
+### Players page
+- [ ] "Add New Player" is sticky but sits OVER the scroll area — rows show
+      through above and below it, with the shadow of the row behind
+
+### Settings
+- [ ] Import skins / import accounts can't be started from anywhere
+- [ ] The font dropdown still spans the full width
+- [ ] The colour cards have no titles
+- [ ] A refresh that needs a fresh sign-in is swallowed — surface it
+
+### Layout
+- [ ] Pages are still cut off; it only corrects itself after visiting Settings
+      or resizing, so the fit isn't being applied everywhere on load
+
+### Icons
+- [ ] Panorama is still grey and NOTHING is logged, in either console
+
+### Skins
+- [ ] When "Add skin" is alone on its row it should take the whole row
+
+---
+
 ## 0. Round 11
 
 ### Importing
