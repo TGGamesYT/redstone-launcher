@@ -254,20 +254,13 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       </div>
 
       <h4 style="margin:0 0 6px;font-size:13px;">Between computers</h4>
-      <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:620px;">
-        Keep your skin library on the Redstone relay, against your Minecraft
-        account, so it is there on every computer you sign in on. Your account
-        is proved to the relay the same way a server proves it — nothing else
-        can read or write your library. Skins are merged, never replaced, so two
-        computers that each added some end up with both sets.
+      <p style="opacity:0.75;font-size:12px;margin:0 0 50px;max-width:620px;">
+        Skins you have uploaded to Mojang follow your account automatically, so
+        they are there on every computer you sign in on. Nothing else leaves
+        this machine — a skin you have only saved here stays here. Your account
+        is proved to the relay the same way a server proves it, so nothing else
+        can read or write your skins.
       </p>
-      <div style="margin-bottom: 50px;">
-        <label class="setting-toggle"><input type="checkbox" id="sync-skins"> Sync my skin library</label>
-        <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
-          <button id="syncSkinsNow" style="padding:6px 12px;">Sync now</button>
-          <span id="syncSkinsState" style="font-size:12px;opacity:0.75;"></span>
-        </div>
-      </div>
 
       <h3>Getting started</h3>
       <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:620px;">
@@ -1109,36 +1102,6 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       cb.onchange = async () => {
         const r = await ipcRenderer.invoke('skins:poolSetEnabled', { on: cb.checked });
         say(r);
-      };
-    }
-
-    // ── Skin library sync ──────────────────────────────────────────────────
-    {
-      const cb = document.getElementById('sync-skins');
-      const btn = document.getElementById('syncSkinsNow');
-      const state = document.getElementById('syncSkinsState');
-      const say = (t, bad) => { state.textContent = t; state.style.color = bad ? '#ff8b7d' : ''; };
-
-      ipcRenderer.invoke('skins:cloudEnabled')
-        .then(on => { cb.checked = !!on; btn.disabled = !on; })
-        .catch(() => { btn.disabled = true; });
-
-      cb.onchange = async () => {
-        btn.disabled = !cb.checked;
-        say(cb.checked ? 'Syncing…' : '');
-        const r = await ipcRenderer.invoke('skins:cloudSetEnabled', { on: cb.checked });
-        if (!cb.checked) return;
-        if (r && r.success) say(`${r.total} skins in sync`);
-        else say((r && r.error) || 'Could not sync', true);
-      };
-
-      btn.onclick = async () => {
-        btn.disabled = true;
-        say('Syncing…');
-        const r = await ipcRenderer.invoke('skins:cloudSync');
-        btn.disabled = false;
-        if (r && r.success) say(`${r.total} skins in sync (${r.remote} were already on the relay)`);
-        else say((r && r.error) || 'Could not sync', true);
       };
     }
 

@@ -2095,15 +2095,16 @@
     }
 
     // ---- Skin library sync ------------------------------------------------
-    // When it's on, pull the library from the relay as the page opens so a skin
-    // added on another computer is simply there. Quiet by design: the relay
-    // being down must never stop the page working.
+    // Pull from the relay as the page opens, so a skin uploaded to Mojang on
+    // another computer is simply here. There is no setting: only skins that are
+    // already on Mojang's servers travel, and those are public and permanent
+    // anyway. Quiet by design — the relay being down must never stop the page
+    // working.
     let _syncedThisLoad = false;
     async function pullSkinLibraryOnce() {
       if (_syncedThisLoad) return;
       _syncedThisLoad = true;
       try {
-        if (!await ipcRenderer.invoke('skins:cloudEnabled')) return;
         const r = await ipcRenderer.invoke('skins:cloudSync');
         // Only redraw when it actually brought something new in.
         if (r && r.success && r.total > r.local) await updateSKin();

@@ -3380,8 +3380,6 @@ ipcMain.handle("relay:domain", () => DOMAIN_BASE);
 // machines that each added skins while offline end up with both sets instead of
 // whichever synced last. A skin deleted on one machine comes back from the
 // other, which is the right trade for a library — losing one is worse.
-const SYNC_SKINS_SETTING = "syncSkinLibrary";
-
 function mergeSkinLists(mine, theirs) {
   const byHash = new Map();
   // Ours first, so local names and ordering win for anything on both sides.
@@ -3399,16 +3397,18 @@ function mergeSkinLists(mine, theirs) {
   return [...byHash.values()].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
 }
 
+// Null rather than a throw when there is nobody to sync for: an offline-only
+// account isn't a failure, it just has no Mojang library to carry anywhere, and
+// treating it as one would put the backoff on for ten minutes every time.
 async function relayAccountForSync() {
   const id = storage.get("selectedPlayerId", null);
-  const account = await accountCredsByIdFresh(id);
-  if (!account) throw new Error("Sign in with a Microsoft account to sync skins");
-  return account;
+  return (await accountCredsByIdFresh(id)) || null;
 }
 
 // Pull, merge, save, push back. One call keeps both ends in step.
 async function syncSkinLibraryNow() {
   const account = await relayAccountForSync();
+  if (!account) return { success: false, skipped: true, reason: "no Microsoft account signed in" };
   const uuid = String(account.uuid || "").replace(/-/g, "");
   const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
   const opts = { host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort, account, rejectUnauthorized };
@@ -3425,13 +3425,33 @@ async function syncSkinLibraryNow() {
   lib[uuid] = merged;
   saveSkinLib(lib);
 
-  await relayClient.syncRelay({ ...opts, op: "put", kind: "skins", data: { skins: merged } });
-  return { success: true, local: mine.length, remote: theirs.length, total: merged.length };
+  // ONLY skins that are on Mojang's servers leave this computer. A skin you
+  // uploaded is already public and permanent — its texture URL is content
+  // addressed and never expires — so carrying it between your computers tells
+  // nobody anything they couldn't already fetch. A local draft is a private
+  // file on your disk, and stays one.
+  const uploaded = merged.filter(s => s && s.mojangUrl);
+  await relayClient.syncRelay({ ...opts, op: "put", kind: "skins", data: { skins: uploaded } });
+  return {
+    success: true,
+    local: mine.length, remote: theirs.length,
+    total: merged.length, shared: uploaded.length,
+  };
 }
 
-ipcMain.handle("skins:cloudSync", async () => {
-  try { return await syncSkinLibraryNow(); }
-  catch (err) { return { success: false, error: String(err && err.message || err) }; }
+ipcMain.handle("skins:cloudSync", async (event, opts) => {
+  // A background pull respects the backoff; an explicit ask ignores it.
+  if (!(opts && opts.force) && Date.now() < _syncBlockedUntil) {
+    return { success: false, skipped: true };
+  }
+  try {
+    const r = await syncSkinLibraryNow();
+    if (r && r.success) _syncBlockedUntil = 0;
+    return r;
+  } catch (err) {
+    _syncBlockedUntil = Date.now() + SYNC_BACKOFF_MS;
+    return { success: false, error: String(err && err.message || err) };
+  }
 });
 
 // Share one skin library across the accounts on THIS machine. Separate from
@@ -3456,29 +3476,25 @@ ipcMain.handle("skins:poolSetEnabled", (event, { on }) => {
   };
 });
 
-ipcMain.handle("skins:cloudEnabled", () => settings.get(SYNC_SKINS_SETTING, false) === true);
-ipcMain.handle("skins:cloudSetEnabled", async (event, { on }) => {
-  settings.set(SYNC_SKINS_SETTING, !!on);
-  if (!on) return { success: true, enabled: false };
-  // Turning it on syncs straight away, so the library is in step immediately
-  // rather than at some unexplained later moment.
-  try {
-    const r = await syncSkinLibraryNow();
-    return { success: true, enabled: true, ...r };
-  } catch (err) {
-    return { success: false, enabled: true, error: String(err && err.message || err) };
-  }
-});
-
-// Called after the library changes. Quiet: syncing is a convenience, and a
-// relay that is down must never get in the way of using the launcher.
+// Called after the library changes. There is no setting: a skin that is on
+// Mojang's servers follows the account that uploaded it, always. Quiet, because
+// syncing is a convenience and a relay that is down must never get in the way
+// of using the launcher.
 let _syncTimer = null;
+// After a failure, stop trying for a while. Without this an unreachable relay
+// would be dialled again on every single library change.
+let _syncBlockedUntil = 0;
+const SYNC_BACKOFF_MS = 10 * 60 * 1000;
+
 function scheduleSkinSync() {
-  if (settings.get(SYNC_SKINS_SETTING, false) !== true) return;
+  if (Date.now() < _syncBlockedUntil) return;
   clearTimeout(_syncTimer);
   // Coalesce a burst of changes (adding several skins at once) into one push.
   _syncTimer = setTimeout(() => {
-    syncSkinLibraryNow().catch(err => devtoolsLog("skin sync failed:", err && err.message));
+    syncSkinLibraryNow().catch(err => {
+      _syncBlockedUntil = Date.now() + SYNC_BACKOFF_MS;
+      devtoolsLog("skin sync failed, pausing for 10 minutes:", err && err.message);
+    });
   }, 4000);
 }
 
@@ -8884,6 +8900,9 @@ function rememberMojangUrl(uuid, id, url) {
     hit.skin.mojangUrl = url;
     hit.skin.mojangAt = Date.now();
     saveSkinLib(lib);
+    // This is the moment a skin becomes shareable — it is on Mojang now — so
+    // it is also the moment it should start following the account around.
+    scheduleSkinSync();
     return true;
   } catch { return false; }
 }
@@ -8932,7 +8951,7 @@ ipcMain.handle("skins:reconcileMojang", async (event, { uuid }) => {
     }
     // `arr` holds the live objects out of lib, so the edits above are already
     // in place — just persist.
-    if (changed) saveSkinLib(lib);
+    if (changed) { saveSkinLib(lib); scheduleSkinSync(); }
     return { matched };
   } catch (err) {
     return { matched: 0, error: String(err && err.message || err) };
