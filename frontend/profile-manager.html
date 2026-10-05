@@ -1277,58 +1277,53 @@
       // camera shouldn't drift home while the pointer is still on the model.
       let dragging = false, hovering = false;
 
-      const toIdle = () => {
-        try { v.animation = (window.SkinAnimations && window.SkinAnimations.idle && window.SkinAnimations.idle(v)) || new S.IdleAnimation(); } catch { try { v.animation = new S.IdleAnimation(); } catch { } }
-      };
-
-      // Gestures a character can do while STANDING somewhere. Running and
-      // walking are gone: the model has nowhere to go, so it read as the
-      // character jogging on the spot for no reason. A wave or a look around is
-      // the most that belongs here.
-      //
-      // window.SkinAnimations supplies the Blockbench-authored ones when
-      // skin-clips.json is present: each plays ONCE and then the player goes
-      // back to the resting idle. These built-ins are the fallback when there
-      // are no converted clips. See skin-animations.js.
-      const BUILT_IN_GESTURES = [
-        () => new S.WaveAnimation("left"),
-        () => new S.WaveAnimation("right"),
-        () => { const a = new S.CrouchAnimation(); a.showProgress = true; a.speed = 0.35; return a; },
-      ];
-      const gestures = () => {
-        const custom = window.SkinAnimations && window.SkinAnimations.gestures;
-        const list = (typeof custom === "function" ? custom(v) : custom) || null;
-        return (Array.isArray(list) && list.length) ? list : BUILT_IN_GESTURES;
-      };
-      toIdle();
-
-      let gestureTimer = null, backTimer = null;
+      // ONE animation owns the player. skin-animations.js supplies a conductor
+      // that idles, eases into a clip when asked, plays it once and eases back
+      // into the idle at the point where the arms hang closest to the body.
+      // This page only decides WHEN a clip should happen. (Swapping
+      // viewer.animation per gesture, which is what this replaces, could only
+      // ever snap: each animation began from whatever the last left behind.)
+      const SA = window.SkinAnimations;
+      let gestureTimer = null;
       const rand = (lo, hi) => lo + Math.random() * (hi - lo);
-      // Rare enough to be a surprise rather than a tic. At the old 9–22s the
-      // character was doing something roughly a third of the time it was on
-      // screen, which is why it read as restless. The authored clips are only a
-      // couple of seconds each, so 35–80s was the other extreme — you could sit
-      // on the page and never see one.
+      // Rare enough to be a surprise rather than a tic, but the clips only run a
+      // couple of seconds each, so not so rare you never see one.
       const scheduleGesture = () => {
         clearTimeout(gestureTimer);
         gestureTimer = setTimeout(playGesture, rand(20000, 45000));
       };
-      const playGesture = () => {
-        // Don't interrupt someone who is busy turning the model around, and
-        // don't animate a tab nobody is looking at.
-        if (dragging || document.hidden) { scheduleGesture(); return; }
-        let hold = rand(2600, 5200);
-        try {
-          const list = gestures();
-          const anim = list[Math.floor(Math.random() * list.length)](v);
-          v.animation = anim;
-          // A converted clip knows how long it is, so let a one-shot finish
-          // rather than cutting it off (or sitting on its last frame).
-          if (anim && anim.clipLength && !anim.clipLoops) hold = anim.clipLength * 1000 + 150;
-        } catch { }
-        clearTimeout(backTimer);
-        backTimer = setTimeout(() => { toIdle(); scheduleGesture(); }, hold);
-      };
+
+      if (SA && SA.conductor) {
+        const cond = SA.conductor(() => scheduleGesture());
+        try { v.animation = cond.animation; } catch { }
+        var playGesture = () => {
+          // Don't interrupt someone busy turning the model around, and don't
+          // animate a tab nobody is looking at.
+          if (dragging || document.hidden || cond.busy) { scheduleGesture(); return; }
+          // The conductor holds this until the idle reaches its calm point, so
+          // the clip always begins from the same resting arms.
+          cond.play(SA.clips[SA.randomName()]);
+        };
+      } else {
+        // No converted clips: skinview3d's own idle and gestures, as before.
+        const toIdle = () => {
+          try { v.animation = new S.IdleAnimation(); } catch { }
+        };
+        const BUILT_IN_GESTURES = [
+          () => new S.WaveAnimation("left"),
+          () => new S.WaveAnimation("right"),
+          () => { const a = new S.CrouchAnimation(); a.showProgress = true; a.speed = 0.35; return a; },
+        ];
+        let backTimer = null;
+        toIdle();
+        var playGesture = () => {
+          if (dragging || document.hidden) { scheduleGesture(); return; }
+          try { v.animation = BUILT_IN_GESTURES[Math.floor(Math.random() * BUILT_IN_GESTURES.length)](); } catch { }
+          clearTimeout(backTimer);
+          backTimer = setTimeout(() => { toIdle(); scheduleGesture(); }, rand(2600, 5200));
+        };
+      }
+
       document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleGesture(); });
       scheduleGesture();
 

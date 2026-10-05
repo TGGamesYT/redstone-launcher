@@ -1,7 +1,7 @@
 {
   "source": "3442371b-player.bbmodel",
-  "generated": "2026-09-30T07:40:08.981Z",
-  "flipYZ": false,
+  "generated": "2026-10-05T06:56:43.290Z",
+  "flipYZ": true,
   "clips": {
     "animation": {
       "length": 2.5,

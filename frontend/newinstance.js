@@ -27,6 +27,7 @@
     s.id = 'ni-style';
     s.textContent = `
       .ni-overlay { position:fixed; inset:38px 0 0 70px; display:flex; align-items:center; justify-content:center;
+        border-top-left-radius:var(--border-radius, 8px);
         background:rgba(0,0,0,0.55); backdrop-filter:blur(4px); z-index:5400; }
       .ni-card { background:linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black));
         border:2px solid var(--border-dark); border-radius:var(--border-radius); padding:18px; width:560px; max-width:94%;

@@ -158,23 +158,193 @@
     };
   }
 
-  // The resting state between gestures: skinview3d's own idle, which sways the
-  // arms and the cape. It only ever writes rotations, so the rest pose is put
-  // back first — otherwise a gesture that moved or scaled anything would leave
-  // it that way until the page was reloaded.
-  function makeIdle() {
-    let inner = null;
-    try { inner = new skinview3d.IdleAnimation(); } catch { /* none available */ }
+  // ── The idle, evaluated rather than delegated ────────────────────────────
+  // skinview3d's IdleAnimation is three lines of trigonometry, and we need to
+  // know what it WOULD look like at an arbitrary moment -- to blend into it, and
+  // to find the point in its cycle where the arms hang closest to the body. So
+  // it is reproduced here exactly rather than called.
+  //
+  //   t = 2 * progress
+  //   leftArm.z  =  0.03*cos(t)   + 0.02*PI
+  //   rightArm.z =  0.03*cos(t+PI) - 0.02*PI
+  //   cape.x     =  0.01*sin(t)   + 0.06*PI
+  //
+  // Positive Z on the left arm swings it outward (and negative on the right),
+  // so the arms are NEAREST the body when cos(t) = -1, i.e. t = PI. In progress
+  // terms that is PI/2, repeating every PI seconds.
+  const IDLE_CALM = Math.PI / 2;      // progress at which the arms are nearest
+  const IDLE_PERIOD = Math.PI;        // and how often that comes round
+  const BLEND = 0.4;                  // seconds to ease in or out of a clip
+  const ease = (f) => f * f * (3 - 2 * f);
+
+  // A pose is one entry per bone, parallel to the rest pose.
+  const blankPose = (rest) => rest.map(r => ({
+    p: r.position.slice(), r: r.rotation.slice(), s: r.scale.slice(),
+  }));
+
+  function evalIdle(rest, progress) {
+    const pose = blankPose(rest);
+    const t = 2 * progress;
+    const lean = 0.02 * Math.PI;
+    const at = (name) => pose[rest.findIndex(r => r.name === name)];
+    const la = at('leftArm'), ra = at('rightArm'), cp = at('cape');
+    if (la) la.r[2] = 0.03 * Math.cos(t) + lean;
+    if (ra) ra.r[2] = 0.03 * Math.cos(t + Math.PI) - lean;
+    if (cp) cp.r[0] = 0.01 * Math.sin(t) + 0.06 * Math.PI;
+    return pose;
+  }
+
+  // The clip's pose at time t, as data, so it can be blended rather than only
+  // written straight to the model.
+  function evalClip(rest, clip, t) {
+    const pose = blankPose(rest);
+    const k = clip.degrees !== false ? DEG : 1;
+    const sy = flipYZ ? -1 : 1, sz = flipYZ ? -1 : 1;
+    rest.forEach((r, idx) => {
+      const tracks = (clip.bones || {})[r.name];
+      if (!tracks) return;
+      const e = pose[idx];
+      const rot = sampleTrack(tracks.rotation, t);
+      if (rot) {
+        e.r[0] = r.rotation[0] + rot[0] * k;
+        e.r[1] = r.rotation[1] + rot[1] * k * sy;
+        e.r[2] = r.rotation[2] + rot[2] * k * sz;
+      }
+      const pos = sampleTrack(tracks.position, t);
+      if (pos) for (let a = 0; a < 3; a++) e.p[a] = r.position[a] + pos[a];
+      const scl = sampleTrack(tracks.scale, t);
+      if (scl) for (let a = 0; a < 3; a++) e.s[a] = r.scale[a] * scl[a];
+    });
+    return pose;
+  }
+
+  const lerpPose = (a, b, f) => a.map((x, i) => ({
+    p: [0, 1, 2].map(n => x.p[n] + (b[i].p[n] - x.p[n]) * f),
+    r: [0, 1, 2].map(n => x.r[n] + (b[i].r[n] - x.r[n]) * f),
+    s: [0, 1, 2].map(n => x.s[n] + (b[i].s[n] - x.s[n]) * f),
+  }));
+
+  function applyPose(rest, pose) {
+    rest.forEach((r, i) => {
+      const e = pose[i];
+      r.part.position.set(e.p[0], e.p[1], e.p[2]);
+      r.part.rotation.set(e.r[0], e.r[1], e.r[2]);
+      r.part.scale.set(e.s[0], e.s[1], e.s[2]);
+    });
+  }
+
+  // ── The conductor ────────────────────────────────────────────────────────
+  // ONE animation owns the player for the whole page. It idles, and when a clip
+  // is requested it waits for the calm point of the idle, eases into the clip's
+  // opening pose, plays it once, and eases back to that same calm point before
+  // picking the idle up from there. Swapping viewer.animation per gesture (what
+  // this replaces) could only ever snap: each animation starts from whatever
+  // the last one left behind, with no way to blend between them.
+  function makeConductor(opts) {
+    opts = opts || {};
+    let phase = 'idle';
+    let idleProgress = IDLE_CALM;
+    let clip = null, looping = false, clipT = 0;
+    let blendT = 0, fromPose = null, pending = null, pendingImmediate = false;
+    // Set when play() interrupts something: the blend starts from the pose the
+    // model is actually in, not from the idle curve.
+    let cutIn = false;
+
     const anim = new skinview3d.PlayerAnimation();
-    anim.clipLength = 0;
-    anim.clipLoops = true;
-    anim.animate = function (player) {
-      resetToRest(player);
-      if (!inner) return;
-      inner.progress = this.progress;
-      try { inner.animate(player); } catch { /* leave it at rest */ }
+    anim.animate = function (player, delta) {
+      const rest = restPose(player);
+      // skinview3d hands the speed-scaled delta to animate(); guard the first
+      // frame, where it can be undefined.
+      const dt = Number.isFinite(delta) && delta > 0 ? Math.min(delta, 0.1) : 1 / 60;
+
+      // Interrupted mid-clip: blend out of exactly where the model stands.
+      if (cutIn) {
+        cutIn = false;
+        fromPose = rest.map(r => ({
+          p: [r.part.position.x, r.part.position.y, r.part.position.z],
+          r: [r.part.rotation.x, r.part.rotation.y, r.part.rotation.z],
+          s: [r.part.scale.x, r.part.scale.y, r.part.scale.z],
+        }));
+        clip = pending; pending = null; pendingImmediate = false;
+        blendT = 0; clipT = 0; phase = 'in';
+      }
+
+      if (phase === 'idle') {
+        const before = idleProgress;
+        idleProgress += dt;
+        if (pending) {
+          // Crossed the calm point since the last frame?
+          const cycle = (x) => Math.floor((x - IDLE_CALM) / IDLE_PERIOD);
+          if (pendingImmediate || cycle(idleProgress) > cycle(before)) {
+            fromPose = evalIdle(rest, idleProgress);
+            clip = pending; pending = null; pendingImmediate = false;
+            blendT = 0; clipT = 0; phase = 'in';
+          }
+        }
+        applyPose(rest, evalIdle(rest, idleProgress));
+        return;
+      }
+
+      if (phase === 'in') {
+        blendT += dt;
+        const f = Math.min(1, blendT / BLEND);
+        applyPose(rest, lerpPose(fromPose, evalClip(rest, clip, 0), ease(f)));
+        if (f >= 1) { phase = 'clip'; clipT = 0; }
+        return;
+      }
+
+      if (phase === 'clip') {
+        clipT += dt;
+        const len = clip.length || 0;
+        if (looping && len) {
+          applyPose(rest, evalClip(rest, clip, clipT % len));
+          return;
+        }
+        if (len && clipT >= len) {
+          fromPose = evalClip(rest, clip, len);
+          applyPose(rest, fromPose);
+          blendT = 0; phase = 'out';
+          return;
+        }
+        applyPose(rest, evalClip(rest, clip, clipT));
+        return;
+      }
+
+      // 'out': land exactly on the calm point, so the idle carries on from the
+      // position the arms are already in rather than jumping to meet it.
+      blendT += dt;
+      const f = Math.min(1, blendT / BLEND);
+      applyPose(rest, lerpPose(fromPose, evalIdle(rest, IDLE_CALM), ease(f)));
+      if (f >= 1) {
+        phase = 'idle';
+        idleProgress = IDLE_CALM;
+        clip = null; looping = false;
+        if (opts.onIdle) { try { opts.onIdle(); } catch { /* caller's problem */ } }
+      }
     };
-    return anim;
+
+    return {
+      animation: anim,
+      get busy() { return phase !== 'idle'; },
+      // immediate: don't wait for the calm point (devtools, where waiting up to
+      // PI seconds for something you just asked for reads as nothing happening).
+      play(c, o) {
+        o = o || {};
+        looping = !!o.loop;
+        if (phase === 'idle') { pending = c; pendingImmediate = !!o.immediate; return true; }
+        if (!o.immediate) return false;    // already doing something
+        // Cut in from wherever the model is right now, so even interrupting
+        // mid-clip blends rather than jumps. The next frame reads the live
+        // pose, so there is nothing to compute here.
+        pending = c; pendingImmediate = true; cutIn = true;
+        return true;
+      },
+      stop() {
+        if (phase === 'idle') return;
+        looping = false;
+        blendT = 0; phase = 'out';
+      },
+    };
   }
 
   window.SkinAnimationClip = playClip;
@@ -195,21 +365,24 @@
 
   const clips = (data && data.clips) || {};
   const names = Object.keys(clips);
+
+  // One conductor per page. The skins page hands it to the viewer once and then
+  // only ever ASKS for clips; it never swaps viewer.animation again.
+  let conductor = null;
+  function getConductor(onIdle) {
+    if (!conductor) conductor = makeConductor({ onIdle });
+    else if (onIdle) conductor.onIdle = onIdle;
+    return conductor;
+  }
+
   if (names.length) {
     window.SkinAnimations = {
-      // Between gestures the player just stands there breathing. The authored
-      // clips are things it DOES, not what it does the rest of the time --
-      // running one of them as the idle meant whichever clip was picked looped
-      // forever and the others never got a turn.
-      idle: () => makeIdle(),
-      // Every converted clip, played ONCE when its turn comes round. A clip
-      // marked "loop" in Blockbench is still played once here: that flag is
-      // about previewing it in the editor, not about how often the launcher
-      // should show it.
-      gestures: names.map(n => playClip(clips[n], { loop: false })),
       clips,
       names,
       resetPose: resetToRest,
+      conductor: getConductor,
+      // A clip at random, for whoever is doing the scheduling.
+      randomName: () => names[Math.floor(Math.random() * names.length)],
     };
   }
 
@@ -234,9 +407,11 @@
   window.playerRenderAnimPlay = function (name, loop) {
     const v = viewer();
     if (!v) { console.warn('No skin render on this page.'); return false; }
+    const c = conductor;
+    if (!c) { console.warn('The skin render has no animation conductor yet.'); return false; }
     if (name == null) {
-      v.animation = makeIdle();
-      console.log('Back to the resting idle.');
+      c.stop();
+      console.log('Easing back to the resting idle.');
       return true;
     }
     const clip = clips[name];
@@ -244,8 +419,11 @@
       console.warn(`No animation called "${name}". Try playerRenderAnimList().`);
       return false;
     }
-    v.animation = playClip(clip, { loop: !!loop })();
-    console.log(`Playing "${name}" (${clip.length}s, ${loop ? 'looping' : 'once'}).`);
+    // Through the conductor, so it eases in and -- the part that was missing --
+    // eases back into the idle afterwards instead of freezing on the last frame.
+    c.play(clip, { loop: !!loop, immediate: true });
+    console.log(`Playing "${name}" (${clip.length}s, ${loop ? 'looping' : 'once'}).`
+      + (loop ? ' playerRenderAnimPlay(null) to stop.' : ''));
     return true;
   };
 

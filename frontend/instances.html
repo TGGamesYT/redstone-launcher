@@ -3598,19 +3598,15 @@
       const urlParams = new URLSearchParams(window.location.search);
       const instanceId = urlParams.get('i');
       if (instanceId === 'NEWINSTANCE') {
-        // Reset and open the modal
-        instanceName.value = "";
-        instanceLoader.value = "vanilla";
-        pickedInstanceIcon = null;
-        setInstancePreview(null);
-        delete modalCreateBtn.dataset.editingId;
-        delete modalCreateBtn._originalProfile;
-        if (typeof setModalMode === 'function') setModalMode('create');
-        addInstanceModal.classList.add('active');
-        // Remove NEWINSTANCE from URL
+        // Remove NEWINSTANCE from URL first, so a refresh doesn't reopen this.
         const url = new URL(window.location);
         url.searchParams.delete('i');
         window.history.replaceState({}, '', url);
+        // Go through the same chooser the "+" uses when we're already on this
+        // page. This branch opened the full creator directly, which is why the
+        // sidebar "+" skipped the chooser from every OTHER page -- those have
+        // no openNewInstanceInPage, so they navigate here with ?i=NEWINSTANCE.
+        openNewInstance();
       }
     }, { once: true });
 

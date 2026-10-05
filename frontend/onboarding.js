@@ -53,8 +53,12 @@
       .ob-pop button.primary { background:var(--base-color); }
       .ob-step { font-size:11px; opacity:0.6; }
 
+      /* Stops where the chrome starts (38px top bar, 70px sidebar). The square
+         corner cut straight across the joint between the two bars, so it is
+         rounded to follow it. */
       .imp-overlay { position:fixed; inset:38px 0 0 70px; display:flex; align-items:center; justify-content:center;
-        background:rgba(0,0,0,0.55); backdrop-filter:blur(4px); z-index:8500; }
+        background:rgba(0,0,0,0.55); backdrop-filter:blur(4px); z-index:7900;
+        border-top-left-radius:var(--border-radius, 8px); }
       .imp-card { background:linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black));
         border:2px solid var(--border-dark); border-radius:var(--border-radius); padding:18px; width:660px; max-width:94%;
         max-height:86vh; display:flex; flex-direction:column; box-shadow:0 18px 60px rgba(0,0,0,0.7); }
@@ -347,9 +351,11 @@
       if (!el) return false;
       armed = el;
       armedHandler = () => {
-        writeState({ i: i + 1, andImport: !!openOnboarding._andImport });
-        // Tell the beforeunload handler this one is already accounted for, so
-        // it doesn't overwrite the advance with the current step.
+        // Stay on THIS step. Clicking the tab is how you see what it opens --
+        // being thrown onto the next step the instant you did meant you never
+        // got to look at the page you had just been asked to open. Next is how
+        // you move on.
+        writeState({ i, andImport: !!openOnboarding._andImport });
         writeState._armedFired = true;
       };
       // Capture, so the state is saved even if something else handles the
@@ -403,7 +409,7 @@
           <span style="display:flex;gap:6px;">
             <button class="ob-skip">Skip</button>
             ${i > 0 ? '<button class="ob-back">Back</button>' : ''}
-            <button class="ob-next ${asking ? '' : 'primary'}">${i === STEPS.length - 1 ? 'Finish' : asking ? 'Skip this' : 'Next'}</button>
+            <button class="ob-next primary">${i === STEPS.length - 1 ? 'Finish' : 'Next'}</button>
           </span>
         </div>`;
       pop.querySelector('h3').textContent = s.title;
