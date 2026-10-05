@@ -266,7 +266,25 @@
           desc: 'Copy an instance out of Prism, MultiMC, CurseForge, the Modrinth App or the vanilla launcher.',
           onClick: () => {
             close();
-            if (window.Onboarding) window.Onboarding.openImport();
+            // One instance, picked by clicking it — not the bulk importer from
+            // Settings. You came here to make ONE instance.
+            if (!window.Onboarding) return;
+            window.Onboarding.openImport(null, {
+              single: true,
+              onPick: async (entry) => {
+                if (!entry) return;
+                if (!entry.version) {
+                  return uiAlert('That instance does not say which Minecraft version it is. Type one in and pick it again.',
+                    'Version needed');
+                }
+                const res = await ipcRenderer.invoke('import:instance', { entry });
+                if (!res || !res.success) {
+                  return uiAlert('Could not import it: ' + ((res && res.error) || 'unknown error'), 'Import failed');
+                }
+                if (window.notify) window.notify(`Imported ${entry.name}`, 'success');
+                window.location.href = 'instances.html?i=' + encodeURIComponent(res.profileId);
+              },
+            });
           },
         });
       }

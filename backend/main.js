@@ -5334,19 +5334,23 @@ function scanLauncher(kind, root, dbProfiles) {
           continue;
         }
         const fromDb = (dbProfiles && (dbProfiles[d.name] || dbProfiles[dir])) || null;
-        // A folder with no metadata anywhere is still a real instance; list it
-        // with the version unknown so it can be imported and set by hand,
-        // rather than dropping it silently.
         const looksLikeAnInstance = ["mods", "config", "saves", "options.txt", "resourcepacks"]
           .some(n => fs.existsSync(path.join(dir, n)));
         if (!fromDb && !looksLikeAnInstance) continue;
+        // No database row either? The instance still knows what it is — its own
+        // log says which Minecraft and which loader it last ran, and any world
+        // records the version that wrote it. Giving up here is what produced a
+        // list of instances that couldn't be selected.
+        const sniffed = (fromDb && fromDb.version) ? null : sniffInstanceVersion(dir);
+        const version = (fromDb && fromDb.version) || (sniffed && sniffed.version) || null;
         out.push({
           kind, dir, gameDir: dir,
           name: (fromDb && fromDb.name) || d.name,
-          version: fromDb ? fromDb.version : null,
-          loader: (fromDb && fromDb.loader) || "vanilla",
-          loaderVersion: (fromDb && fromDb.loaderVersion) || "",
-          versionUnknown: !(fromDb && fromDb.version),
+          version,
+          loader: (fromDb && fromDb.loader) || (sniffed && sniffed.loader) || "vanilla",
+          loaderVersion: (fromDb && fromDb.loaderVersion) || (sniffed && sniffed.loaderVersion) || "",
+          versionUnknown: !version,
+          versionFrom: sniffed ? sniffed.from : (fromDb ? "database" : null),
         });
       }
     } catch { /* an unreadable instance is skipped, not fatal */ }
@@ -5355,6 +5359,166 @@ function scanLauncher(kind, root, dbProfiles) {
   // asks for it rather than pretending the instance isn't there.
   return out.filter(i => i.version || i.versionUnknown);
 }
+
+// Work out an instance's Minecraft version from the instance itself, for
+// launchers that don't record it anywhere we can read. Cheapest first.
+function sniffInstanceVersion(dir) {
+  // 1. The game writes what it is into the first lines of its own log.
+  for (const rel of ["logs/latest.log", "logs/debug.log"]) {
+    try {
+      const f = path.join(dir, rel);
+      if (!fs.existsSync(f)) continue;
+      const head = fs.readFileSync(f, "utf8").slice(0, 20000);
+      // "Loading Minecraft 1.20.1 with Fabric Loader 0.16.14"
+      let m = /Loading Minecraft (\S+) with (\w+) Loader (\S+)/i.exec(head);
+      if (m) return { version: m[1], loader: m[2].toLowerCase(), loaderVersion: m[3], from: "log" };
+      // "Minecraft Version: 1.20.1" / "--version, 1.20.1"
+      m = /Minecraft Version: (\S+)/i.exec(head) || /--version,\s*(\S+?),/.exec(head);
+      if (m) return { version: m[1], from: "log" };
+    } catch { /* unreadable: try the next source */ }
+  }
+  // 2. Any world records the exact version that last wrote it.
+  try {
+    const saves = path.join(dir, "saves");
+    if (fs.existsSync(saves)) {
+      for (const w of fs.readdirSync(saves).slice(0, 12)) {
+        const lvl = path.join(saves, w, "level.dat");
+        if (!fs.existsSync(lvl)) continue;
+        const buf = fs.readFileSync(lvl);
+        // Read the Name string out of the Version compound without a full NBT
+        // parse: level.dat is gzipped, so inflate and scan.
+        let raw;
+        try { raw = zlib.gunzipSync(buf); } catch { raw = buf; }
+        const txt = raw.toString("latin1");
+        const i = txt.indexOf("Name");
+        if (i < 0) continue;
+        const m = /(\d+\.\d+(?:\.\d+)?|\d{2}w\d{2}[a-z])/.exec(txt.slice(i, i + 64));
+        if (m) return { version: m[1], from: "world" };
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+// ── The vanilla launcher's installations ────────────────────────────────────
+// `lastVersionId` is the name of a folder under versions/, NOT a Minecraft
+// version. It is "1.20.1" for a plain install but
+// "fabric-loader-0.16.14-1.20.1", "1.12.2-forge-14.23.5.2860",
+// "1.19.2-forge-43.1.1", "neoforge-21.1.169" or
+// "vivecraft-1.19.2-jrbudda-VR-2-b8" for anything modded. Importing that string
+// as the Minecraft version produced an instance that could not launch.
+//
+// The version's own JSON answers this properly: `inheritsFrom` is the real
+// Minecraft version, and the libraries say which loader it is. The id is only
+// parsed when that file is missing.
+function loaderFromVersionJson(json) {
+  const libs = (json.libraries || []).map(l => String(l.name || ""));
+  const find = (prefix) => libs.find(n => n.startsWith(prefix));
+  const verOf = (n) => (n ? String(n).split(":")[2] || "" : "");
+  let hit;
+  if ((hit = find("net.fabricmc:fabric-loader"))) return { loader: "fabric", loaderVersion: verOf(hit) };
+  if ((hit = find("org.quiltmc:quilt-loader"))) return { loader: "quilt", loaderVersion: verOf(hit) };
+  if ((hit = find("net.neoforged:neoforge")) || (hit = find("net.neoforged.fancymodloader"))) {
+    return { loader: "neoforge", loaderVersion: verOf(hit) };
+  }
+  if ((hit = find("net.minecraftforge:forge")) || (hit = find("net.minecraftforge:fmlloader"))) {
+    // Forge's maven version is "<mc>-<forge>"; the instance stores the Forge part.
+    const v = verOf(hit);
+    const dash = v.indexOf("-");
+    return { loader: "forge", loaderVersion: dash > 0 ? v.slice(dash + 1) : v };
+  }
+  return { loader: "vanilla", loaderVersion: "" };
+}
+
+// A Minecraft version number: 1.20.1, 1.21, 24w14a, 1.21-rc1, 25w03b…
+const MC_VERSION_RE = /(\d+\.\d+(?:\.\d+)?(?:-(?:pre|rc)\d+)?|\d{2}w\d{2}[a-z])/;
+
+function parseVanillaVersionId(id) {
+  const raw = String(id || "");
+  // "fabric-loader-<loader>-<mc>" / "quilt-loader-<loader>-<mc>"
+  let m = /^(fabric|quilt)-loader-(.+?)-(.+)$/.exec(raw);
+  if (m) return { version: m[3], loader: m[1], loaderVersion: m[2] };
+  // "<mc>-forge-<forge>" and the older "<mc>-forge<mc>-<forge>"
+  m = /^(.+?)-forge-?(.*)$/i.exec(raw);
+  if (m && MC_VERSION_RE.test(m[1])) {
+    return { version: m[1], loader: "forge", loaderVersion: (m[2] || "").replace(/^.*?-/, "") || m[2] || "" };
+  }
+  // "neoforge-21.1.169" — the id carries no Minecraft version at all, so this
+  // one really does need the version JSON; 21.1.x means 1.21.1.
+  m = /^neoforge-(\d+)\.(\d+)\./.exec(raw);
+  if (m) return { version: `1.${m[1]}.${m[2]}`, loader: "neoforge", loaderVersion: raw.slice("neoforge-".length) };
+  // Anything else with a version in it — vivecraft, optifine, a custom build.
+  const any = MC_VERSION_RE.exec(raw);
+  if (any && any[1] !== raw) return { version: any[1], loader: "vanilla", loaderVersion: "", approximate: true };
+  return { version: raw, loader: "vanilla", loaderVersion: "" };
+}
+
+function readVanillaVersion(root, id) {
+  const file = path.join(root, "versions", String(id), `${id}.json`);
+  try {
+    if (fs.existsSync(file)) {
+      const j = JSON.parse(fs.readFileSync(file, "utf8"));
+      const { loader, loaderVersion } = loaderFromVersionJson(j);
+      // inheritsFrom is set on every modded version; a plain one IS the version.
+      const version = j.inheritsFrom || j.id || id;
+      if (MC_VERSION_RE.test(version)) return { version, loader, loaderVersion, jarId: id };
+    }
+  } catch { /* fall through to parsing the id */ }
+  return { ...parseVanillaVersionId(id), jarId: id };
+}
+
+async function vanillaProfiles(root) {
+  let j;
+  try { j = JSON.parse(fs.readFileSync(path.join(root, "launcher_profiles.json"), "utf8")); }
+  catch { return []; }
+
+  // "Latest Release" and "Latest Snapshot" are real installations people use —
+  // they were being dropped, which is why snapshot installs never appeared.
+  let latest = null;
+  const needLatest = Object.values(j.profiles || {}).some(p => /^latest-/.test(String(p.lastVersionId || "")));
+  if (needLatest) {
+    try {
+      const r = await fetch("https://launchermeta.mojang.com/mc/game/version_manifest_v2.json");
+      if (r.ok) latest = (await r.json()).latest || null;
+    } catch { /* offline: those rows are skipped below */ }
+  }
+
+  const out = [];
+  for (const [id, p] of Object.entries(j.profiles || {})) {
+    const vid = String(p.lastVersionId || "");
+    if (!vid) continue;
+    let info;
+    if (/^latest-/.test(vid)) {
+      const want = vid === "latest-snapshot" ? (latest && latest.snapshot) : (latest && latest.release);
+      if (!want) continue;   // couldn't resolve it
+      info = { version: want, loader: "vanilla", loaderVersion: "", jarId: want };
+    } else {
+      info = readVanillaVersion(root, vid);
+    }
+    // An unnamed installation falls back to the key of the profiles object,
+    // which is a 32-character hash. Describe it instead.
+    const auto = vid === "latest-release" ? "Latest Release"
+      : vid === "latest-snapshot" ? "Latest Snapshot"
+        : `${info.loader !== "vanilla" ? titleOfLoader(info.loader) + " " : ""}${info.version}`;
+    out.push({
+      kind: "vanilla",
+      dir: root,
+      gameDir: p.gameDir || root,
+      name: (p.name || "").trim() || auto,
+      version: info.version,
+      loader: info.loader,
+      loaderVersion: info.loaderVersion || "",
+      // So the import can bring the version folder across rather than making
+      // the launcher download what is already on this machine.
+      versionId: info.jarId,
+      versionRoot: root,
+      approximate: !!info.approximate,
+    });
+  }
+  return out.filter(p => p.version);
+}
+
+const titleOfLoader = (l) => ({ fabric: "Fabric", quilt: "Quilt", forge: "Forge", neoforge: "NeoForge" })[l] || "";
 
 // What's on this machine. Nothing is copied here — this only looks.
 ipcMain.handle("import:scan", async () => {
@@ -5365,16 +5529,7 @@ ipcMain.handle("import:scan", async () => {
       const root = roots.find(r => r && fs.existsSync(r));
       if (!root) continue;
       // The vanilla launcher has profiles, not instance folders.
-      let profiles = [];
-      try {
-        const j = JSON.parse(fs.readFileSync(path.join(root, "launcher_profiles.json"), "utf8"));
-        profiles = Object.entries(j.profiles || {}).map(([id, p]) => ({
-          kind: "vanilla", dir: root, gameDir: p.gameDir || root,
-          name: p.name || id,
-          version: p.lastVersionId,
-          loader: "vanilla", loaderVersion: "",
-        })).filter(p => p.version && !/^latest-/.test(p.version));
-      } catch { /* no profiles file */ }
+      const profiles = await vanillaProfiles(root);
       if (profiles.length) found.vanilla = { root, instances: profiles };
       continue;
     }
@@ -5483,6 +5638,133 @@ function accountsFromModrinth(profilesRoot) {
   }
 }
 
+// The account the skin library belongs to right now.
+async function currentAccountUuid() {
+  try {
+    const id = storage.get("selectedPlayerId", null);
+    const players = await loadPlayers();
+    const p = players.find(x => String(x.id) === String(id)) || players[0];
+    if (!p) return null;
+    return String((p.auth && p.auth.uuid) || p.uuid || p.id || "").replace(/-/g, "") || null;
+  } catch { return null; }
+}
+
+// Same bookkeeping as the skins:add handler, callable from inside the main
+// process rather than only over IPC.
+async function addSkinToLibrary(uuid, { base64, variant, name }) {
+  const b = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
+  if (!b || !uuid) return false;
+  const pixelHash = await skinPixelHash(b);
+  const lib = loadSkinLib();
+  const arr = lib[uuid] || [];
+  if (arr.some(x => x.pixelHash === pixelHash)) return false;   // already there
+  arr.unshift({
+    id: Date.now() + arr.length, pixelHash, name: name || "Skin", base64: b,
+    variant: variant || "classic", addedAt: Date.now(), editorType: "advanced",
+    creatorState: null, layerState: null,
+  });
+  lib[uuid] = arr;
+  saveSkinLib(lib);
+  return true;
+}
+
+// ── Skins from other launchers ──────────────────────────────────────────────
+// Most launchers keep a local skin library, and re-adding every skin by hand
+// after importing the account is exactly the kind of busywork importing is
+// supposed to remove. These are plain PNG files on disk; the texture they came
+// from is not recorded, so they arrive as ordinary library skins.
+function skinsFromDir(dir, source, limit = 200) {
+  const out = [];
+  if (!dir || !fs.existsSync(dir)) return out;
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return out; }
+  for (const n of names.slice(0, limit)) {
+    if (!/\.png$/i.test(n)) continue;
+    const f = path.join(dir, n);
+    try {
+      const st = fs.statSync(f);
+      // A skin is 64x64 (or the old 64x32) and tiny. Anything big is a
+      // screenshot or a cached avatar sheet that wandered in.
+      if (!st.isFile() || st.size > 200 * 1024) continue;
+      const buf = fs.readFileSync(f);
+      if (buf.length < 8 || buf[0] !== 0x89 || buf[1] !== 0x50) continue;
+      // PNG dimensions live at bytes 16..24.
+      const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
+      if (w !== 64 || (h !== 64 && h !== 32)) continue;
+      out.push({
+        source,
+        name: n.replace(/\.png$/i, ""),
+        base64: buf.toString("base64"),
+      });
+    } catch { /* skip this file */ }
+  }
+  return out;
+}
+
+ipcMain.handle("import:skins", async () => {
+  const { home, appData } = launcherSearchRoots();
+  const paths = knownLauncherPaths();
+  const firstExisting = (roots) => (roots || []).find(r => r && fs.existsSync(r)) || null;
+  const found = [];
+
+  // The Modrinth App keeps saved skins beside its profiles.
+  const mr = firstExisting(paths.modrinth);
+  if (mr) {
+    for (const sub of ["skins", "caches/skins", "skin_cache"]) {
+      found.push(...skinsFromDir(path.join(path.dirname(mr), sub), "modrinth"));
+    }
+  }
+  // The vanilla launcher caches the skins you have uploaded.
+  const vanilla = firstExisting(paths.vanilla);
+  if (vanilla) {
+    found.push(...skinsFromDir(path.join(vanilla, "skins"), "vanilla"));
+    found.push(...skinsFromDir(path.join(vanilla, "assets", "skins"), "vanilla"));
+  }
+  // Prism and MultiMC keep them next to the instances folder.
+  for (const kind of ["prism", "multimc"]) {
+    const root = firstExisting(paths[kind]);
+    if (root) found.push(...skinsFromDir(path.join(path.dirname(root), "skins"), kind));
+  }
+
+  // Two launchers often hold the same skin; key by pixels so it only appears
+  // once, and leave out anything already in the library.
+  const uuid = (await currentAccountUuid()) || null;
+  const mine = uuid ? (loadSkinLib()[uuid] || []) : [];
+  const haveHashes = new Set(mine.map(x => x.pixelHash).filter(Boolean));
+  const seen = new Set();
+  const out = [];
+  for (const sk of found) {
+    let hash = null;
+    try { hash = await skinPixelHash(sk.base64); } catch { /* keep it anyway */ }
+    const key = hash || sk.base64.slice(0, 64);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...sk, pixelHash: hash, already: !!(hash && haveHashes.has(hash)) });
+  }
+  return out;
+});
+
+// Add chosen skins to the current account's library.
+ipcMain.handle("import:skinsAdd", async (event, { skins }) => {
+  try {
+    const uuid = await currentAccountUuid();
+    if (!uuid) return { success: false, error: "no account selected" };
+    let added = 0;
+    for (const sk of skins || []) {
+      if (!sk || !sk.base64) continue;
+      await addSkinToLibrary(uuid, {
+        base64: "data:image/png;base64," + sk.base64,
+        variant: sk.variant || "classic",
+        name: sk.name || "Imported skin",
+      });
+      added++;
+    }
+    return { success: true, added };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
 // What accounts are sitting in the other launchers on this machine. Nothing is
 // written; this only looks. Accounts already in this launcher are marked so the
 // modal can skip them by default.
@@ -5583,11 +5865,38 @@ ipcMain.handle("import:instance", async (event, { entry }) => {
     };
     copyDir(entry.gameDir, dest);
 
+    // Bring the base Minecraft version across when the source launcher already
+    // has it. versions/ is in SKIP above because the other launchers' loader
+    // folders are laid out differently and this launcher provisions its own —
+    // but the plain <mc>/<mc>.jar is the same file everywhere, so copying it
+    // saves re-downloading what is already on this machine.
+    try {
+      const srcVersions = path.join(entry.versionRoot || entry.dir, "versions");
+      const mc = String(entry.version);
+      const from = path.join(srcVersions, mc);
+      if (fs.existsSync(path.join(from, `${mc}.jar`))) {
+        const to = path.join(dest, "versions", mc);
+        fs.mkdirSync(to, { recursive: true });
+        for (const n of [`${mc}.jar`, `${mc}.json`]) {
+          const f = path.join(from, n);
+          if (fs.existsSync(f)) fs.copyFileSync(f, path.join(to, n));
+        }
+      }
+    } catch (err) {
+      devtoolsLog("Couldn't copy the version jar across:", err && err.message);
+    }
+
     // An icon, if the source launcher kept one.
     let icon = null;
-    for (const n of ["icon.png", "instance.png", "pack.png"]) {
-      const p = path.join(entry.dir, n);
-      if (fs.existsSync(p)) { try { icon = "data:image/png;base64," + fs.readFileSync(p).toString("base64"); } catch { } break; }
+    outer: for (const base of [entry.gameDir, entry.dir]) {
+      if (!base) continue;
+      for (const n of ["icon.png", "instance.png", "pack.png"]) {
+        const p = path.join(base, n);
+        if (fs.existsSync(p)) {
+          try { icon = "data:image/png;base64," + fs.readFileSync(p).toString("base64"); } catch { }
+          if (icon) break outer;
+        }
+      }
     }
 
     const profiles = await loadProfiles();

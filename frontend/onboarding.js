@@ -65,12 +65,28 @@
       .imp-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
       .imp-head h2 { margin:0; font-size:1.1em; }
       .imp-list { overflow-y:auto; flex:1; min-height:120px; margin-top:10px; }
-      .imp-group { font-size:11px; text-transform:uppercase; opacity:0.65; margin:12px 0 4px; }
-      .imp-row { display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-dark);
-        border-radius:var(--border-radius); margin-bottom:6px; background:var(--menu-bg); }
-      .imp-row .n { font-size:13px; }
-      .imp-row .m { font-size:11px; opacity:0.7; }
-      .imp-row input { width:18px; height:18px; margin:0; flex:0 0 18px; }
+      .imp-group { font-size:11px; text-transform:uppercase; letter-spacing:0.04em; opacity:0.65; margin:14px 0 6px; }
+      .imp-group:first-child { margin-top:4px; }
+      .imp-empty { opacity:0.72; padding:22px 4px; font-size:13px; line-height:1.6; }
+      /* Same shape as the mod/modpack search rows: art, title, a line under it. */
+      .imp-row { display:flex; align-items:center; gap:12px; padding:10px 12px; border:2px solid var(--border-dark);
+        border-radius:var(--border-radius); margin-bottom:8px; transition:var(--smooth-transition);
+        background:linear-gradient(135deg, color-mix(in srgb, var(--secondary-color) 50%, black) 0%, var(--menu-bg) 100%); }
+      .imp-row.imp-click { cursor:pointer; }
+      .imp-row.imp-click:hover, .imp-row:hover { border-color:var(--base-color); }
+      .imp-art { width:40px; height:40px; flex:0 0 40px; border-radius:8px; overflow:hidden; background:var(--very-dark);
+        display:flex; align-items:center; justify-content:center; }
+      .imp-art img { width:100%; height:100%; object-fit:cover; display:block; }
+      .imp-art i { font-size:22px; opacity:0.75; }
+      .imp-row .n { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .imp-row .m { font-size:11px; opacity:0.72; margin-top:2px; line-height:1.4;
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .imp-tag { font-size:10px; text-transform:uppercase; letter-spacing:0.04em; opacity:0.7; flex:0 0 auto;
+        border:1px solid var(--border-dark); border-radius:6px; padding:2px 6px; }
+      .imp-row input[type=checkbox] { width:18px; height:18px; margin:0; flex:0 0 18px; }
+      .imp-ver { width:92px; flex:0 0 92px; padding:5px 7px; font-size:11px;
+        border:1px solid var(--border-dark); border-radius:var(--border-radius);
+        background:var(--very-dark); color:var(--text-color); font-family:var(--text-font); }
       .imp-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
       .imp-actions button { padding:8px 16px; border:1px solid var(--border-dark); background:var(--menu-bg);
         color:var(--text-color); border-radius:var(--border-radius); cursor:pointer; font-family:var(--text-font); }
@@ -88,26 +104,30 @@
   };
 
   // ── Import ────────────────────────────────────────────────────────────────
-  async function openImport(onClose) {
+  // opts.single: pick ONE instance and hand it back, for "new instance → from
+  // another launcher". Without it this is the bulk importer from Settings and
+  // the end of the tour, which also offers accounts and skins.
+  async function openImport(onClose, opts) {
+    opts = opts || {};
+    const single = !!opts.single;
     ensureStyle();
     const ov = document.createElement('div');
     ov.className = 'imp-overlay';
     ov.innerHTML = `
       <div class="imp-card">
         <div class="imp-head">
-          <h2>Import from another launcher</h2>
+          <h2>${single ? 'Import an instance' : 'Import from another launcher'}</h2>
           <button class="imp-x" style="background:none;border:none;color:var(--text-color);cursor:pointer;font-size:16px;">✕</button>
         </div>
         <p style="margin:0;font-size:12px;opacity:0.8;line-height:1.5;">
-          Instances are copied, never moved — whichever launcher they came from keeps
-          working exactly as it does now. Shared caches (assets, libraries, version
-          jars) are left behind; this launcher fetches its own. Signed-in accounts
-          come across too, so you don't have to sign in again.
+          ${single
+      ? 'Everything is copied, never moved — the launcher it came from keeps working exactly as it does now.'
+      : 'Instances are copied, never moved — whichever launcher they came from keeps working exactly as it does now. Signed-in accounts and saved skins come across too.'}
         </p>
-        <div class="imp-list"><div style="opacity:0.7;padding:20px 0;">Looking for other launchers…</div></div>
+        <div class="imp-list"><div class="imp-empty">Looking for other launchers…</div></div>
         <div class="imp-actions">
-          <button class="imp-cancel">Close</button>
-          <button class="imp-go primary" disabled>Import</button>
+          <button class="imp-cancel">${single ? 'Back' : 'Close'}</button>
+          ${single ? '' : '<button class="imp-go primary" disabled>Import</button>'}
         </div>
       </div>`;
     document.body.appendChild(ov);
@@ -118,91 +138,175 @@
     ov.querySelector('.imp-x').onclick = close;
     ov.querySelector('.imp-cancel').onclick = close;
 
-    let found = {}, accounts = [];
+    let found = {}, accounts = [], skins = [];
     try { found = await ipcRenderer.invoke('import:scan') || {}; } catch { }
-    try { accounts = await ipcRenderer.invoke('import:accounts') || []; } catch { }
+    if (!single) {
+      try { accounts = await ipcRenderer.invoke('import:accounts') || []; } catch { }
+      try { skins = await ipcRenderer.invoke('import:skins') || []; } catch { }
+    }
     const kinds = Object.keys(found);
     listEl.innerHTML = '';
 
-    // Accounts first: signing in again for every launcher you have is busywork
-    // when the tokens are already on disk.
-    const accountRows = [];
-    const newAccounts = accounts.filter(a => !a.already);
-    if (newAccounts.length) {
+    const group = (text) => {
       const g = document.createElement('div');
       g.className = 'imp-group';
-      g.textContent = `Accounts — ${newAccounts.length} found`;
+      g.textContent = text;
       listEl.appendChild(g);
-      newAccounts.forEach(acc => {
-        const row = document.createElement('div');
-        row.className = 'imp-row';
-        const cb = document.createElement('input');
+    };
+    // A row in the same shape as the mod/modpack search: icon, title, a line of
+    // detail under it, and the whole row is the click target.
+    const row = ({ icon, img, title, detail, tag, checkbox, onClick }) => {
+      const el = document.createElement('div');
+      el.className = 'imp-row' + (onClick ? ' imp-click' : '');
+      let cb = null;
+      if (checkbox) {
+        cb = document.createElement('input');
         cb.type = 'checkbox'; cb.checked = true;
-        const info = document.createElement('div');
-        info.style.flex = '1';
-        info.innerHTML = `<div class="n"></div><div class="m"></div>`;
-        info.querySelector('.n').textContent = acc.username;
-        info.querySelector('.m').textContent = acc.offline
-          ? `offline account · from ${LAUNCHER_LABELS[acc.source] || acc.source}`
-          : acc.refreshToken
-            ? `signed in · from ${LAUNCHER_LABELS[acc.source] || acc.source}`
-            : `from ${LAUNCHER_LABELS[acc.source] || acc.source} — will need signing in again soon`;
-        row.append(cb, info);
-        listEl.appendChild(row);
-        accountRows.push({ cb, acc, row });
+        cb.onclick = (e) => e.stopPropagation();
+        el.appendChild(cb);
+      }
+      const art = document.createElement('div');
+      art.className = 'imp-art';
+      if (img) {
+        const i = document.createElement('img');
+        i.src = img;
+        i.onerror = () => { art.innerHTML = `<i class="material-icons">${icon || 'widgets'}</i>`; };
+        art.appendChild(i);
+      } else {
+        art.innerHTML = `<i class="material-icons">${icon || 'widgets'}</i>`;
+      }
+      el.appendChild(art);
+      const body = document.createElement('div');
+      body.style.cssText = 'flex:1;min-width:0;';
+      const t = document.createElement('div'); t.className = 'n'; t.textContent = title;
+      const d = document.createElement('div'); d.className = 'm'; d.textContent = detail || '';
+      body.append(t, d);
+      el.appendChild(body);
+      if (tag) {
+        const g = document.createElement('div');
+        g.className = 'imp-tag'; g.textContent = tag;
+        el.appendChild(g);
+      }
+      if (onClick) el.onclick = onClick;
+      else if (cb) el.onclick = () => { cb.checked = !cb.checked; };
+      listEl.appendChild(el);
+      return { el, cb };
+    };
+
+    const accountRows = [], skinRows = [], rows = [];
+
+    // ── Accounts first: not having to sign in again is the best part of this.
+    const newAccounts = accounts.filter(a => !a.already);
+    if (newAccounts.length) {
+      group(`Accounts — ${newAccounts.length} found`);
+      newAccounts.forEach(acc => {
+        const r = row({
+          icon: 'person',
+          img: `https://mc-heads.net/avatar/${encodeURIComponent(acc.username)}/40`,
+          title: acc.username,
+          detail: acc.offline ? 'offline account'
+            : acc.refreshToken ? 'signed in — comes across ready to play'
+              : 'will need signing in again before long',
+          tag: LAUNCHER_LABELS[acc.source] || acc.source,
+          checkbox: true,
+        });
+        accountRows.push({ cb: r.cb, acc, row: r.el });
       });
     }
 
-    if (!kinds.length && !accountRows.length) {
-      listEl.innerHTML = `<div style="opacity:0.75;padding:20px 0;line-height:1.6;">
+    const newSkins = skins.filter(sk => !sk.already);
+    if (newSkins.length) {
+      group(`Skins — ${newSkins.length} found`);
+      newSkins.forEach(sk => {
+        const r = row({
+          icon: 'face',
+          img: 'data:image/png;base64,' + sk.base64,
+          title: sk.name,
+          detail: 'adds to your skin library',
+          tag: LAUNCHER_LABELS[sk.source] || sk.source,
+          checkbox: true,
+        });
+        // A skin PNG is 64x64 of flat colour; let it show as pixels.
+        const i = r.el.querySelector('img');
+        if (i) i.style.imageRendering = 'pixelated';
+        skinRows.push({ cb: r.cb, sk });
+      });
+    }
+
+    if (!kinds.length && !accountRows.length && !skinRows.length) {
+      listEl.innerHTML = `<div class="imp-empty">
         No other launchers found in the usual places. If yours keeps its instances
-        somewhere unusual, you can still add an instance by hand, or import a pack
+        somewhere unusual, you can still add an instance by hand, or install a pack
         from the Modrinth tab.</div>`;
+      if (goBtn) goBtn.disabled = true;
       return;
     }
 
-    const rows = [];
     kinds.forEach(kind => {
-      const g = document.createElement('div');
-      g.className = 'imp-group';
-      g.textContent = `${LAUNCHER_LABELS[kind] || kind} — ${found[kind].instances.length} found`;
-      listEl.appendChild(g);
-      found[kind].instances.forEach(inst => {
-        const row = document.createElement('div');
-        row.className = 'imp-row';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.checked = true;
-        const info = document.createElement('div');
-        info.style.flex = '1';
-        info.innerHTML = `<div class="n"></div><div class="m"></div>`;
-        info.querySelector('.n').textContent = inst.name;
-        info.querySelector('.m').textContent = inst.versionUnknown
-          ? "this launcher doesn't record the Minecraft version — set it after importing"
-          : `${inst.version}${inst.loader && inst.loader !== 'vanilla' ? ' · ' + inst.loader : ''}`;
-        // Nothing to copy a version from, so importing it would just fail.
-        if (inst.versionUnknown) { cb.checked = false; cb.disabled = true; row.style.opacity = '0.55'; }
-        row.append(cb, info);
-        listEl.appendChild(row);
-        rows.push({ cb, inst, row });
+      const list = found[kind].instances;
+      group(`${LAUNCHER_LABELS[kind] || kind} — ${list.length} found`);
+      list.forEach(inst => {
+        const detail = inst.versionUnknown
+          ? 'Minecraft version unknown — choose one below'
+          : `${inst.version}${inst.loader && inst.loader !== 'vanilla' ? ' · ' + inst.loader : ''}`
+          + (inst.approximate ? ' (best guess)' : '');
+        const r = row({
+          icon: 'inventory_2',
+          title: inst.name,
+          detail,
+          tag: inst.loader && inst.loader !== 'vanilla' ? inst.loader : 'vanilla',
+          checkbox: !single,
+          onClick: single ? () => { ov.remove(); if (opts.onPick) opts.onPick(withVersion(inst, r)); } : null,
+        });
+        // An unknown version is no longer a reason to refuse the instance: ask
+        // for it instead. Disabling the row left the user with nothing to do.
+        if (inst.versionUnknown) {
+          const pick = document.createElement('input');
+          pick.type = 'text';
+          pick.placeholder = 'e.g. 1.20.1';
+          pick.className = 'imp-ver';
+          pick.onclick = (e) => e.stopPropagation();
+          r.el.appendChild(pick);
+          r._ver = pick;
+          if (r.cb) r.cb.checked = false;
+        }
+        rows.push({ cb: r.cb, inst, row: r.el, ver: r._ver || null });
       });
     });
-    goBtn.disabled = !rows.length && !accountRows.length;
 
+    // Pair a row with whatever version the user typed into it.
+    function withVersion(inst, r) {
+      const typed = r && r._ver ? r._ver.value.trim() : '';
+      return typed ? { ...inst, version: typed, versionUnknown: false } : inst;
+    }
+
+    if (single) return;   // one click picks; there is nothing to submit
+
+    goBtn.disabled = !rows.length && !accountRows.length && !skinRows.length;
     goBtn.onclick = async () => {
       const chosenAccounts = accountRows.filter(r => r.cb.checked).map(r => r.acc);
-      const chosen = rows.filter(r => r.cb.checked);
-      if (!chosen.length && !chosenAccounts.length) return;
+      const chosenSkins = skinRows.filter(r => r.cb.checked).map(r => r.sk);
+      const chosen = rows.filter(r => r.cb && r.cb.checked);
+      if (!chosen.length && !chosenAccounts.length && !chosenSkins.length) return;
       goBtn.disabled = true;
+
       if (chosenAccounts.length) {
         goBtn.textContent = 'Adding accounts…';
         try { await ipcRenderer.invoke('import:accountsAdd', { accounts: chosenAccounts }); } catch { }
       }
+      if (chosenSkins.length) {
+        goBtn.textContent = 'Adding skins…';
+        try { await ipcRenderer.invoke('import:skinsAdd', { skins: chosenSkins }); } catch { }
+      }
+
       let done = 0, failed = 0;
       for (const r of chosen) {
         goBtn.textContent = `Importing ${done + 1}/${chosen.length}…`;
         r.row.style.opacity = '0.5';
+        const entry = r.ver && r.ver.value.trim()
+          ? { ...r.inst, version: r.ver.value.trim() } : r.inst;
         try {
-          const res = await ipcRenderer.invoke('import:instance', { entry: r.inst });
+          const res = await ipcRenderer.invoke('import:instance', { entry });
           if (!res || !res.success) failed++;
         } catch { failed++; }
         done++;
@@ -210,9 +314,10 @@
       goBtn.textContent = 'Import';
       if (window.notify) {
         const bits = [];
-        if (done || failed) bits.push(`${done} instance${done === 1 ? '' : 's'}`);
+        if (chosen.length) bits.push(`${done - failed} instance${done - failed === 1 ? '' : 's'}`);
         if (chosenAccounts.length) bits.push(`${chosenAccounts.length} account${chosenAccounts.length === 1 ? '' : 's'}`);
-        window.notify(failed ? `${failed} of ${chosen.length} could not be imported` : `Imported ${bits.join(' and ')}`,
+        if (chosenSkins.length) bits.push(`${chosenSkins.length} skin${chosenSkins.length === 1 ? '' : 's'}`);
+        window.notify(failed ? `${failed} of ${chosen.length} could not be imported` : `Imported ${bits.join(', ')}`,
           failed ? 'error' : 'success');
       }
       close();
@@ -433,6 +538,68 @@
     render();
   }
 
+  // ── Welcome ───────────────────────────────────────────────────────────────
+  // Shown before the tour, on first launch and whenever the tour is started
+  // from Settings. Then the accounts found in other launchers, so nobody has to
+  // sign in again — and when there are none, the ordinary sign-in instead,
+  // because an empty "we found nothing" panel helps nobody.
+  function showWelcome(onContinue) {
+    ensureStyle();
+    const ov = document.createElement('div');
+    ov.className = 'imp-overlay';
+    ov.style.zIndex = 9100;
+    ov.innerHTML = `
+      <div class="imp-card" style="width:460px;text-align:center;">
+        <img src="icon.png" alt="" style="width:72px;height:72px;margin:4px auto 12px;display:block;
+          image-rendering:pixelated;filter:drop-shadow(0 6px 16px rgba(0,0,0,0.5));">
+        <h2 style="margin:0 0 10px;font-size:1.3em;">Welcome to Redstone Launcher</h2>
+        <p style="margin:0 0 20px;font-size:13px;opacity:0.86;line-height:1.65;">
+          Instances, modpacks, servers, skins and accounts in one place — and
+          most of it set up for you. Let's get you playing.
+        </p>
+        <div class="imp-actions" style="justify-content:center;">
+          <button class="ob-welcome-skip">Skip setup</button>
+          <button class="ob-welcome-go primary">Get started</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    const done = (go) => { ov.remove(); if (onContinue) onContinue(go); };
+    ov.querySelector('.ob-welcome-go').onclick = () => done(true);
+    ov.querySelector('.ob-welcome-skip').onclick = () => done(false);
+  }
+
+  // Accounts from other launchers, or the sign-in page when there are none.
+  async function offerAccounts(onDone) {
+    let accounts = [];
+    try { accounts = await ipcRenderer.invoke('import:accounts') || []; } catch { }
+    const fresh = accounts.filter(a => !a.already);
+    if (!fresh.length) {
+      // Nothing to import: send them to the sign-in rather than showing an
+      // empty importer.
+      ensureStyle();
+      const ov = document.createElement('div');
+      ov.className = 'imp-overlay';
+      ov.style.zIndex = 9100;
+      ov.innerHTML = `
+        <div class="imp-card" style="width:440px;text-align:center;">
+          <h2 style="margin:0 0 10px;font-size:1.15em;">Sign in to Minecraft</h2>
+          <p style="margin:0 0 18px;font-size:13px;opacity:0.85;line-height:1.6;">
+            No signed-in accounts were found in any other launcher on this
+            computer, so you'll need to sign in once with Microsoft.
+          </p>
+          <div class="imp-actions" style="justify-content:center;">
+            <button class="ob-login-later">Later</button>
+            <button class="ob-login-go primary">Sign in</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      ov.querySelector('.ob-login-later').onclick = () => { ov.remove(); if (onDone) onDone(); };
+      ov.querySelector('.ob-login-go').onclick = () => { ov.remove(); location.href = 'players.html'; };
+      return;
+    }
+    openImport(onDone);
+  }
+
   // The end of the tour. Finishing on the Settings page with the panel simply
   // vanishing gave no sense that it was over -- and left the user parked on
   // Settings, which is not where anyone wants to start. Say it's done, then go
@@ -493,17 +660,27 @@
     openImport,
     openTour(onFinish) {
       openOnboarding._andImport = false;
-      openOnboarding((skipped) => {
-        if (!skipped) showFinished();
-        if (onFinish) onFinish(skipped);
+      showWelcome((go) => {
+        if (!go) { if (onFinish) onFinish(true); return; }
+        openOnboarding((skipped) => {
+          if (!skipped) showFinished();
+          if (onFinish) onFinish(skipped);
+        });
       });
     },
-    // The whole first-run flow: the tour, then the import modal either way, and
-    // a send-off back to the home page when it wasn't skipped.
+    // The whole first-run flow: welcome, then the accounts sitting in other
+    // launchers (or the sign-in when there are none), then the tour, then the
+    // importer, then a send-off home.
     start() {
-      openOnboarding._andImport = true;
-      openOnboarding((skipped) => openImport(() => { if (!skipped) showFinished(); }));
+      showWelcome((go) => {
+        if (!go) { try { localStorage.setItem(SEEN_KEY, '1'); } catch { } return; }
+        offerAccounts(() => {
+          openOnboarding._andImport = true;
+          openOnboarding((skipped) => openImport(() => { if (!skipped) showFinished(); }));
+        });
+      });
     },
+    welcome: showWelcome,
     hasRun() { try { return !!localStorage.getItem(SEEN_KEY); } catch { return true; } },
     resume: resumeTour,
     // Called on the home page; runs once ever.
