@@ -1819,7 +1819,7 @@
           // Straight from Mojang, through the main process, rather than from
           // an avatar service that answers a rate limit with a default skin
           // and no indication that is what happened.
-          ipcRenderer.invoke("head:skin", { name, uuid: player.auth?.uuid || player.uuid, offline: isCrackedAccount })
+          ipcRenderer.invoke("head:skin", { name, uuid: player.auth?.uuid || player.uuid, offline: isCrackedAccount, playerId: isCrackedAccount ? player.id : null })
             .then(r => {
               if (!r || !r.base64 || !window.skinViewer) return;
               window.skinViewer.loadSkin("data:image/png;base64," + r.base64,
@@ -1857,7 +1857,7 @@
         // player once it starts throttling.
         let canvas = document.getElementById('skin_container');
         const ctx = canvas.getContext('2d');
-        ipcRenderer.invoke("head:skin", { name, uuid: player.auth?.uuid || player.uuid, offline: isCrackedAccount })
+        ipcRenderer.invoke("head:skin", { name, uuid: player.auth?.uuid || player.uuid, offline: isCrackedAccount, playerId: isCrackedAccount ? player.id : null })
           .then(r => {
             if (!r || !r.base64) return;
             const img = new Image();

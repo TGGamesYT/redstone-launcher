@@ -179,6 +179,8 @@ async function updateLoginIcon() {
       name: username,
       size: 24,
       offline: player.type !== 'microsoft',
+      // An offline account with a skin in this launcher shows that skin.
+      playerId: player.type !== 'microsoft' ? player.id : null,
     });
     img.style.width = '24px';
     img.style.height = '24px';

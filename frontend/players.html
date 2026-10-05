@@ -809,6 +809,9 @@
           name: p.auth?.name || p.username,
           size: 32,
           offline: p.type !== "microsoft",
+          // An offline account can have a skin in this launcher; that skin is
+          // its face, so hand over the account id to look it up by.
+          playerId: p.type !== "microsoft" ? p.id : null,
         });
         li.appendChild(img);
 

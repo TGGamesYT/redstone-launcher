@@ -161,6 +161,7 @@
               name: player.auth?.name || player.name || player.username,
               size: 32,
               offline: player.type !== 'microsoft',
+              playerId: player.type !== 'microsoft' ? player.id : null,
             });
           }
 

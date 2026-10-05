@@ -21,6 +21,11 @@ started.
       Steve, so the lists quietly filled with the wrong faces. Composite the
       face at (8,8) with the hat layer at (40,8) from the skin Mojang is
       actually serving, and cache by texture hash.
+- [x] Offline accounts get their calculated default out of the full modern set
+      (Ari, Efe, Kai, Makena, Noor, Sunny, Zuri as well as Steve and Alex), by
+      the same rule the skins page uses — not just one of the legacy two.
+- [x] An offline account that has a skin in this launcher shows THAT skin's
+      face everywhere a head appears, and the heads redraw when it changes.
 
 ---
 

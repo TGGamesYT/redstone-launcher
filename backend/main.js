@@ -9348,7 +9348,10 @@ ipcMain.handle("skins:similarityOrder", async (event, { uuid }) => {
 const HEADS_DIR = path.join(texturesDir, "heads");
 const FACE_RECT = { left: 8, top: 8, width: 8, height: 8 };
 const HAT_RECT = { left: 40, top: 8, width: 8, height: 8 };
-// Mojang's own default skins, verified to be 64x64 PNGs of Steve and Alex.
+// The last resort, if the modern default skins cannot be had at all: Mojang's
+// legacy Steve and Alex, verified to be 64x64 PNGs. Everything prefers the
+// nine defaults pulled out of the client jar (Ari, Efe, Kai, Makena, Noor,
+// Sunny, Zuri and the two old ones), which is what the skins page shows.
 const DEFAULT_SKIN_TEXTURE = {
   classic: "1a4af718455d4aab528e7a61f86fa25e6a369d1768dcb13f7df319a713eb810b",
   slim: "83cee5ca6afcdb171285aa00e8049c297b2dbeba0efb8ff970a5677a1b644032",
@@ -9367,16 +9370,66 @@ const _headFresh = (e, ttl) => !!e && (Date.now() - e.at) < ttl;
 const _headCooling = (k) => Date.now() < (_headFail.get(k) || 0);
 const _headCool = (k) => _headFail.set(k, Date.now() + HEAD_FAIL_TTL);
 
-// Which default skin a UUID gets, by Minecraft's own rule: the Java hashCode
-// of the 128-bit value, odd means the slim model.
-function defaultModelFor(uuid) {
+// Which default skin a UUID gets. Identical to the rule the skins page uses
+// when it shows an account's default, so the head and the render agree: Java's
+// UUID.hashCode() over the 128-bit value, floor-modded by however many defaults
+// there are. There are nine of them now, in two models each, not just Steve
+// and Alex.
+function defaultSkinForUuid(uuid, list) {
+  if (!list || !list.length) return null;
+  const hex = String(uuid || "").replace(/-/g, "");
+  if (hex.length >= 32) {
+    const hi = BigInt("0x" + hex.slice(0, 16));
+    const lo = BigInt("0x" + hex.slice(16, 32));
+    const mask = (1n << 64n) - 1n;
+    const hilo = (hi ^ lo) & mask;
+    const hash = Number(BigInt.asIntN(32, (hilo >> 32n) ^ hilo));
+    return list[((hash % list.length) + list.length) % list.length];
+  }
+  // Not a uuid at all (an offline account that never got one): hash the string
+  // so at least the same name always gets the same face.
+  let h = 0;
+  for (let i = 0; i < hex.length; i++) h = (h * 31 + hex.charCodeAt(i)) >>> 0;
+  return list[h % list.length];
+}
+
+// The legacy pair, for when the modern list is not available yet.
+function legacyDefaultModel(uuid) {
   const hex = String(uuid || "").replace(/-/g, "");
   if (hex.length !== 32) return "classic";
   let h = 0;
-  for (let i = 0; i < 32; i += 8) {
-    h ^= parseInt(hex.slice(i, i + 8), 16) | 0;
-  }
+  for (let i = 0; i < 32; i += 8) h ^= parseInt(hex.slice(i, i + 8), 16) | 0;
   return (h & 1) ? "slim" : "classic";
+}
+
+// The nine default skins, straight out of the client jar. Building that list
+// means downloading a client jar, which is far too much work to do because
+// somebody opened a page with a 32px head on it — so this only ever reads the
+// cache, and warms it in the background when there isn't one. Until it is
+// there, heads fall back to the legacy pair.
+let _defaultSkinsWarming = false;
+let _defaultSkinsRetryAt = 0;
+const DEFAULT_SKINS_RETRY_GAP = 30 * 60 * 1000;
+function cachedDefaultSkins() {
+  try {
+    const f = path.join(texturesDir, "defaultskins.json");
+    if (fs.existsSync(f)) {
+      const j = JSON.parse(fs.readFileSync(f, "utf8"));
+      if (Array.isArray(j.skins) && j.skins.length) return j.skins;
+    }
+  } catch { /* fall through */ }
+  // One attempt at a time, and not again for half an hour if it came back with
+  // nothing — the jar is a big download to keep retrying because a 32px head
+  // was drawn.
+  if (!_defaultSkinsWarming && Date.now() >= _defaultSkinsRetryAt) {
+    _defaultSkinsWarming = true;
+    _defaultSkinsRetryAt = Date.now() + DEFAULT_SKINS_RETRY_GAP;
+    buildDefaultSkins()
+      .then(list => { if (list && list.length) _defaultSkinsRetryAt = 0; })
+      .catch(err => devtoolsLog("could not warm the default skins:", err && err.message))
+      .finally(() => { _defaultSkinsWarming = false; });
+  }
+  return null;
 }
 
 // A skin PNG by its texture hash, kept on disk forever — the hash IS the
@@ -9465,11 +9518,14 @@ async function headUuidForName(name) {
   }
 }
 
-async function renderHead(hash, size) {
-  const key = `${hash}|${size}`;
+// A head out of a skin PNG already in hand. `id` keys the cache and must be a
+// property of the CONTENT, so that changing an account's skin produces a
+// different key and the old head cannot be served for the new skin.
+async function renderHeadPng(png, size, id) {
+  const key = `${id}|${size}`;
   const cached = _headRendered.get(key);
   if (cached) return cached;
-  const file = path.join(HEADS_DIR, `${hash}-${size}.png`);
+  const file = path.join(HEADS_DIR, `${id}-${size}.png`);
   try {
     if (fs.existsSync(file)) {
       const url = "data:image/png;base64," + fs.readFileSync(file).toString("base64");
@@ -9477,21 +9533,58 @@ async function renderHead(hash, size) {
       return url;
     }
   } catch { /* render it again */ }
-  const png = await headFromSkin(await skinByTextureHash(hash), size);
-  const url = "data:image/png;base64," + png.toString("base64");
-  try { fs.mkdirSync(HEADS_DIR, { recursive: true }); fs.writeFileSync(file, png); } catch { /* optional */ }
+  const out = await headFromSkin(png, size);
+  const url = "data:image/png;base64," + out.toString("base64");
+  try { fs.mkdirSync(HEADS_DIR, { recursive: true }); fs.writeFileSync(file, out); } catch { /* optional */ }
   if (_headRendered.size >= HEAD_RENDER_MAX) _headRendered.delete(_headRendered.keys().next().value);
   _headRendered.set(key, url);
   return url;
 }
 
+// A texture hash IS a content key, so it needs no hashing of its own.
+const renderHead = async (hash, size) => renderHeadPng(await skinByTextureHash(hash), size, hash);
+const contentKey = (buf) => "b" + crypto.createHash("sha1").update(buf).digest("hex").slice(0, 16);
+
+// The default head for an account, by Minecraft's own rule over the nine
+// defaults the skins page shows. Falls back to the legacy pair while the
+// modern list is still being fetched.
+async function defaultHead(uuid, px) {
+  const list = cachedDefaultSkins();
+  if (list && list.length) {
+    const pick = defaultSkinForUuid(uuid, list);
+    if (pick && pick.base64) {
+      const png = Buffer.from(pick.base64, "base64");
+      return { url: await renderHeadPng(png, px, contentKey(png)), from: "default" };
+    }
+  }
+  const model = legacyDefaultModel(uuid || "");
+  return { url: await renderHead(DEFAULT_SKIN_TEXTURE[model], px), from: "default" };
+}
+
 // The head for a player. `offline` skips Mojang entirely — an offline account
 // is a username nobody owns, and showing the real owner's face for it would be
-// a lie. Answers { url, from } where `from` is "skin" or "default", so the
-// caller can tell a real head from a stand-in.
-async function playerHead({ name, uuid, size, offline }) {
+// a lie — but it does NOT mean no skin: an offline account can have one in this
+// launcher, applied in game through a resource pack, and that is its face.
+// Answers { url, from } where `from` is "skin", "offline-skin" or "default",
+// so the caller can tell a real head from a stand-in.
+async function playerHead({ name, uuid, size, offline, playerId }) {
   const px = Math.max(8, Math.min(512, Number(size) || 32));
   let id = String(uuid || "").replace(/-/g, "") || null;
+
+  // The skin this launcher holds for an offline account wins over everything:
+  // it is what that account looks like in game.
+  if (playerId != null) {
+    try {
+      const entry = loadCrackedSkins()[String(playerId)];
+      if (entry && entry.base64) {
+        const png = Buffer.from(String(entry.base64).replace(/^data:image\/\w+;base64,/, ""), "base64");
+        return { url: await renderHeadPng(png, px, contentKey(png)), from: "offline-skin" };
+      }
+    } catch (err) {
+      devtoolsLog("head: could not read the offline skin:", err && err.message);
+    }
+  }
+
   try {
     if (!offline) {
       if (!id && name) id = await headUuidForName(name);
@@ -9505,10 +9598,9 @@ async function playerHead({ name, uuid, size, offline }) {
   } catch (err) {
     devtoolsLog("head: falling back to the default:", err && err.message);
   }
-  // No skin to be had. A default head, chosen the way Minecraft chooses one.
+
   try {
-    const model = defaultModelFor(id || "");
-    return { url: await renderHead(DEFAULT_SKIN_TEXTURE[model], px), from: "default" };
+    return await defaultHead(id || name || "", px);
   } catch (err) {
     devtoolsLog("head: even the default failed:", err && err.message);
     return { url: null, from: "none" };
@@ -9519,8 +9611,20 @@ async function playerHead({ name, uuid, size, offline }) {
 // heads use. The render on the skins page used to ask an avatar service for
 // this, which has the same problem: throttled, it answers 200 with a default
 // skin and the page shows the wrong character without saying so.
-ipcMain.handle("head:skin", async (event, { name, uuid, offline } = {}) => {
+ipcMain.handle("head:skin", async (event, { name, uuid, offline, playerId } = {}) => {
   let id = String(uuid || "").replace(/-/g, "") || null;
+  if (playerId != null) {
+    try {
+      const entry = loadCrackedSkins()[String(playerId)];
+      if (entry && entry.base64) {
+        return {
+          base64: String(entry.base64).replace(/^data:image\/\w+;base64,/, ""),
+          slim: entry.variant === "slim",
+          from: "offline-skin",
+        };
+      }
+    } catch { /* fall through to the default */ }
+  }
   try {
     if (!offline) {
       if (!id && name) id = await headUuidForName(name);
@@ -9536,7 +9640,14 @@ ipcMain.handle("head:skin", async (event, { name, uuid, offline } = {}) => {
     devtoolsLog("skin: falling back to the default:", err && err.message);
   }
   try {
-    const model = defaultModelFor(id || "");
+    // The same nine defaults, picked the same way, as the head and the skins
+    // page use.
+    const list = cachedDefaultSkins();
+    const pick = list && list.length ? defaultSkinForUuid(id || name || "", list) : null;
+    if (pick && pick.base64) {
+      return { base64: pick.base64, slim: pick.model === "slim", from: "default" };
+    }
+    const model = legacyDefaultModel(id || "");
     const png = await skinByTextureHash(DEFAULT_SKIN_TEXTURE[model]);
     return { base64: png.toString("base64"), slim: model === "slim", from: "default" };
   } catch (err) {
@@ -10382,6 +10493,14 @@ ipcMain.handle("skins:setCracked", async (event, { playerId, base64, variant, na
     if (base64) store[String(playerId)] = { base64: String(base64).replace(/^data:image\/\w+;base64,/, ""), variant: variant || "classic", name: name || "Skin", pixelHash: pixelHash || null };
     else delete store[String(playerId)];
     saveCrackedSkins(store);
+    // This account's face just changed, and it is drawn on the accounts page,
+    // the sidebar and anywhere else a head appears. Those pages cache heads, so
+    // tell them to drop what they have rather than leaving the old face up
+    // until something else happens to redraw.
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.webContents.send("heads-changed", { playerId: String(playerId) }); }
+      catch { /* window gone */ }
+    }
     // Nothing is written to any instance here. The pack is refreshed at launch,
     // from the skin the account has at that moment — rewriting every instance now
     // would also mean writing into packs a running game is holding.
@@ -10392,7 +10511,7 @@ ipcMain.handle("skins:setCracked", async (event, { playerId, base64, variant, na
 // Extract the vanilla default player skins straight from the latest client jar
 // (the resources.download.minecraft.net URLs derived from file hashes don't
 // serve jar contents). Returns [{ name, model, base64 }]; cached per version.
-ipcMain.handle("mc:getDefaultSkins", async () => {
+async function buildDefaultSkins() {
   const cacheFile = path.join(texturesDir, "defaultskins.json");
   let latest = null;
   try {
@@ -10436,7 +10555,9 @@ ipcMain.handle("mc:getDefaultSkins", async () => {
     }
     return [];
   }
-});
+}
+
+ipcMain.handle("mc:getDefaultSkins", async () => buildDefaultSkins());
 
 // ---- LOCAL SKIN LIBRARY (per account uuid) ----
 // So a player's previously-used skins persist even if their active skin is
