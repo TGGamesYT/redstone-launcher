@@ -9,6 +9,38 @@ started.
 
 ---
 
+## 0. Round 15
+
+### The player render
+- [x] **The cape sits inside the head while idling.** Fine during clips, wrong
+      in the idle — so the reparenting onto the body is landing the cape at the
+      wrong local offset somewhere the idle path goes through.
+- [x] **The spin physics is far too forceful**, and the arms fly OUTWARD when
+      they should be trailing: spinning one way should drag the hands the other
+      way, like actually spinning on the spot. Cut the outward component right
+      down and let the trail lead.
+- [x] **Hovering a card preview starts in the wrong pose**, then slides back —
+      the first frames read a huge turn rate, so the arms jump out and settle.
+
+### Importing
+- [x] Show imported skins as the skins page shows them: proper cards.
+
+### Players page
+- [x] The page still ends short, and now only re-fits when an account is added.
+      Resizing or arriving on the page should re-fit it.
+- [x] Offline accounts try to refresh and then report "sign-in expired" — they
+      have nothing to refresh.
+- [x] A strip above the sticky "Add New Player" bar still shows the rows
+      scrolling behind it.
+
+### Friends panel
+- [x] A player head beside "Add by username", updating as the name is typed.
+- [x] Adding a friend reloads the whole panel.
+- [x] The username field should be the same height as the Add button.
+- [x] A status filter dropdown after the "Friends" title.
+
+---
+
 ## 0. Round 14 — player render feel, and the skins grid
 
 - [x] **Clamp the skin render's vertical rotation.** The card previews (NOT the

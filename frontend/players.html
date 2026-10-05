@@ -177,16 +177,42 @@
     }
     .fr-dot.on { display: block; }
 
-    .fr-add { display: flex; gap: 6px; padding: 10px 10px 6px; }
+    /* One height for the whole row. The field and the button were each left to
+       work their own height out from padding and line-height, and an <input>
+       and a <button> do not arrive at the same answer from the same numbers —
+       so the field sat a couple of pixels shorter than the button beside it. */
+    .fr-add { display: flex; gap: 6px; padding: 10px 10px 6px; align-items: center; }
+    .fr-add > * { height: 34px; }
+    .fr-add img {
+      width: 34px; flex: 0 0 34px; border-radius: 6px; image-rendering: pixelated;
+      background: var(--very-dark);
+    }
+    /* margin:0 is load-bearing: server.css styles every input on every page
+       with margin-bottom:15px, and a flex row centring its items then sat the
+       field 7.5px higher than the head and the button beside it. */
     .fr-add input {
-      flex: 1; min-width: 0; padding: 8px 10px; font-size: 13px;
+      flex: 1; min-width: 0; width: auto; margin: 0;
+      padding: 0 10px; font-size: 13px; line-height: 1;
       border: 1px solid var(--border-dark); border-radius: var(--border-radius);
       background: var(--very-dark); color: var(--text-color); font-family: var(--text-font);
+      box-shadow: none;
     }
     .fr-add button {
-      padding: 8px 12px; font-size: 13px; border: 1px solid var(--border-dark);
+      padding: 0 14px; font-size: 13px; line-height: 1; border: 1px solid var(--border-dark);
       background: var(--base-color); color: var(--text-color);
       border-radius: var(--border-radius); cursor: pointer; font-family: var(--text-font);
+    }
+
+    /* Same story as the field above: server.css gives every select width:100%
+       and a bottom margin, which made this one span the header and sit on top
+       of the refresh button. */
+    .fr-filter {
+      width: auto; margin: 0 auto 0 10px;
+      padding: 3px 22px 3px 7px; height: 24px; font-size: 12px; line-height: 1;
+      font-family: var(--text-font);
+      color: var(--text-color); background: var(--very-dark);
+      border: 1px solid var(--border-dark); border-radius: var(--border-radius);
+      box-shadow: none; cursor: pointer;
     }
 
     .fr-list { overflow-y: auto; padding: 4px 8px 10px; flex: 1 1 auto; min-height: 0; }
@@ -212,9 +238,15 @@
        padding — a transparent strip either side let the rows behind show
        through, shadow and all. The negative margins pull it out to the
        scroller's edges and the padding puts the text back where it was. */
+    /* `top` matches the negative top margin, and that is not a fudge: a sticky
+       element is held by its MARGIN box, so a -10px top margin parks the
+       border box 10px below the scrollport's top edge and leaves a 10px strip
+       above it with the rows scrolling past behind. Pulling `top` up by the
+       same 10px puts the border box flush against the top, and the strip is
+       gone. (The 10px is the scroller's own padding, set in script.) */
     #addPlayerLine {
       position: sticky;
-      top: 0;
+      top: -10px;
       z-index: 4;
       display: block;          /* sticky needs a block, not inline-block */
       margin: -10px -10px 8px;
@@ -300,6 +332,14 @@
     <aside id="friendsPanel" data-fit-height>
       <div class="fr-head">
         <span class="fr-title">Friends</span>
+        <!-- Which statuses to show. Nine friends with one online is the normal
+             case, and scrolling past eight offline rows to find them is not. -->
+        <select id="frFilter" class="fr-filter" title="Show">
+          <option value="all">All</option>
+          <option value="online">Online</option>
+          <option value="ingame">In a game</option>
+          <option value="offline">Offline</option>
+        </select>
         <button id="frRefresh" class="fr-icon" title="Refresh"><i class="material-icons">refresh</i></button>
       </div>
       <div class="fr-tabs">
@@ -308,6 +348,9 @@
         <button class="fr-tab" data-tab="outgoing">Outgoing</button>
       </div>
       <div class="fr-add">
+        <!-- Whose head you are about to send a request to. Steve until you
+             type something that resolves. -->
+        <img id="frAddFace" alt="" src="https://minotar.net/helm/MHF_Steve/32">
         <input type="text" id="frAddInput" placeholder="Add by username…" autocomplete="off">
         <button id="frAddBtn">Add</button>
       </div>
@@ -452,7 +495,12 @@
     // it means POSTing presence — the service has no GET for that, and the same
     // call answers with every online friend's status — so opening this page
     // also tells your friends you are around, which is what the game does too.
-    const FR = { friends: [], incoming: [], outgoing: [], presence: {}, tab: 'friends', busy: false };
+    const FR = {
+      friends: [], incoming: [], outgoing: [], presence: {}, tab: 'friends', busy: false,
+      // Which statuses the friends tab shows. Remembered, because whoever
+      // narrows it to "Online" wants it narrowed next time too.
+      filter: (() => { try { return localStorage.getItem('frFilter') || 'all'; } catch { return 'all'; } })(),
+    };
     const frList = () => document.getElementById('frList');
     const undash = (id) => String(id || '').replace(/-/g, '');
     // The same heads the account rows use, by name, rather than a second
@@ -523,39 +571,65 @@
 
       if (FR.tab === 'friends') {
         if (!FR.friends.length) return empty('No friends yet. Add someone by their username above.');
+        const keep = (f) => {
+          const st = FR.presence[undash(f.profileId)] || 'OFFLINE';
+          if (FR.filter === 'online') return st !== 'OFFLINE';
+          if (FR.filter === 'ingame') return /PLAYING/.test(st);
+          if (FR.filter === 'offline') return st === 'OFFLINE';
+          return true;
+        };
         // Online first — that is the only reason to look at this list.
-        const order = [...FR.friends].sort((a, b) => {
+        const order = FR.friends.filter(keep).sort((a, b) => {
           const sa = (FR.presence[undash(a.profileId)] || 'OFFLINE') !== 'OFFLINE';
           const sb = (FR.presence[undash(b.profileId)] || 'OFFLINE') !== 'OFFLINE';
           if (sa !== sb) return sa ? -1 : 1;
           return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
         });
+        if (!order.length) {
+          return empty(FR.filter === 'online' ? 'Nobody is online right now.'
+            : FR.filter === 'ingame' ? 'Nobody is in a game right now.'
+              : FR.filter === 'offline' ? 'Everyone is online.'
+                : 'No friends to show.');
+        }
         order.forEach(f => el.appendChild(frRow({ ...f, showStatus: true }, [
-          { label: 'Remove', run: (p) => frAction(p.profileId, 'REMOVE', `Removed ${p.name}`) },
+          { label: 'Remove', run: (p) => frAction(p.profileId, 'REMOVE', `Removed ${p.name}`, { drop: p.profileId }) },
         ])));
         return;
       }
       if (FR.tab === 'incoming') {
         if (!FR.incoming.length) return empty('No incoming requests.');
         FR.incoming.forEach(f => el.appendChild(frRow(f, [
-          { label: 'Accept', run: (p) => frAction(p.profileId, 'ADD', `Accepted ${p.name}`) },
-          { label: 'Deny', run: (p) => frAction(p.profileId, 'REMOVE', `Denied ${p.name}`) },
+          { label: 'Accept', run: (p) => frAction(p.profileId, 'ADD', `Accepted ${p.name}`, { drop: p.profileId }) },
+          { label: 'Deny', run: (p) => frAction(p.profileId, 'REMOVE', `Denied ${p.name}`, { drop: p.profileId }) },
         ])));
         return;
       }
       if (!FR.outgoing.length) return empty('No outgoing requests.');
       FR.outgoing.forEach(f => el.appendChild(frRow(f, [
-        { label: 'Cancel', run: (p) => frAction(p.profileId, 'REMOVE', `Cancelled the request to ${p.name}`) },
+        { label: 'Cancel', run: (p) => frAction(p.profileId, 'REMOVE', `Cancelled the request to ${p.name}`, { drop: p.profileId }) },
       ])));
     }
 
-    async function frAction(player, type, okMessage) {
+    // One friend changed, so one row changes. This used to call loadFriends(),
+    // which blanks all three lists and rebuilds them from two network calls —
+    // so adding somebody made the whole panel disappear and come back. The row
+    // goes now, and the authoritative lists are fetched behind it without
+    // anything being emptied in the meantime.
+    async function frAction(player, type, okMessage, opts) {
       const r = await ipcRenderer.invoke('friends:update', { accountId: selectedPlayerId, player, type });
       if (!r || !r.success) {
         return uiAlert((r && r.error) || 'That did not work.', 'Friends');
       }
       if (window.notify) window.notify(okMessage, 'success');
-      loadFriends();
+      const drop = opts && opts.drop;
+      if (drop) {
+        const gone = (list) => list.filter(f => undash(f.profileId) !== undash(drop));
+        FR.friends = gone(FR.friends);
+        FR.incoming = gone(FR.incoming);
+        FR.outgoing = gone(FR.outgoing);
+        paintFriends();
+      }
+      loadFriends({ quiet: true });
     }
 
     // Everything the previous account had, gone. Blanking only the visible tab
@@ -571,7 +645,12 @@
       }
     }
 
-    async function loadFriends() {
+    // `quiet` reloads WITHOUT emptying anything first: the lists on screen stay
+    // exactly as they are until the new ones have arrived. Use it for a
+    // refresh after an action; the full clear is for switching account, where
+    // what is on screen belongs to somebody else.
+    async function loadFriends(opts) {
+      const quiet = !!(opts && opts.quiet);
       const panel = document.getElementById('friendsPanel');
       if (!panel) return;
       // Leaving an account: tell Mojang it is offline before switching, or it
@@ -585,7 +664,7 @@
         clearFriends('Select an account to see its friends.');
         return;
       }
-      clearFriends();
+      if (!quiet) clearFriends();
       if (FR.busy) return;
       FR.busy = true;
       const btn = document.getElementById('frRefresh');
@@ -596,6 +675,10 @@
         if (String(want) !== String(selectedPlayerId)) return;   // switched mid-flight
         if (!r || !r.success) {
           const err = (r && r.error) || 'unknown error';
+          // A quiet refresh that fails keeps what is on screen: the action
+          // itself succeeded, so throwing the list away over a follow-up
+          // network hiccup would be the wrong half to believe.
+          if (quiet) return;
           // An offline account has no friends list at all, which is not an
           // error; a session that has actually expired is, and says so.
           clearFriends(/sign in again|no valid session|not found|invalid_grant|expired/i.test(err)
@@ -624,18 +707,54 @@
       });
       const refresh = document.getElementById('frRefresh');
       if (refresh) refresh.onclick = () => loadFriends();
+
+      const filter = document.getElementById('frFilter');
+      if (filter) {
+        filter.value = FR.filter;
+        filter.onchange = () => {
+          FR.filter = filter.value;
+          try { localStorage.setItem('frFilter', FR.filter); } catch { /* fine without */ }
+          paintFriends();
+        };
+      }
+
       const addBtn = document.getElementById('frAddBtn');
       const addInput = document.getElementById('frAddInput');
+      const addFace = document.getElementById('frAddFace');
+      const STEVE = 'https://minotar.net/helm/MHF_Steve/32';
+
+      // The head beside the field follows what is typed. Debounced, because
+      // every keystroke would otherwise be a request for a head that is one
+      // letter into a name nobody has; and a name that does not exist falls
+      // back to Steve rather than a broken image.
+      let faceTimer = null;
+      const showFace = () => {
+        if (!addFace) return;
+        const who = (addInput.value || '').trim();
+        // Minecraft names are 3-16 of [A-Za-z0-9_]; anything else is still
+        // being typed, so there is nothing to look up yet.
+        const url = /^\w{3,16}$/.test(who) ? faceUrl(who) : STEVE;
+        if (addFace.getAttribute('src') !== url) addFace.src = url;
+      };
+      if (addFace) addFace.onerror = () => { if (addFace.src !== STEVE) addFace.src = STEVE; };
+
       const doAdd = async () => {
         const who = (addInput.value || '').trim();
         if (!who) return;
         addBtn.disabled = true;
         await frAction(who, 'ADD', `Sent a friend request to ${who}`);
         addInput.value = '';
+        showFace();
         addBtn.disabled = false;
       };
       if (addBtn) addBtn.onclick = doAdd;
-      if (addInput) addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAdd(); });
+      if (addInput) {
+        addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAdd(); });
+        addInput.addEventListener('input', () => {
+          clearTimeout(faceTimer);
+          faceTimer = setTimeout(showFace, 250);
+        });
+      }
     }
 
     // Load players from backend
@@ -689,7 +808,11 @@
 
         const info = document.createElement("div");
         info.className = "profile-info";
-        if (p.needsReauth) {
+        // An offline account has no sign-in to expire, so it never carries this
+        // warning however it got flagged.
+        const offline = p.type !== "microsoft";
+        const expired = p.needsReauth && !offline;
+        if (expired) {
           li.style.borderColor = '#b3392f';
           li.title = 'This account needs signing in again';
         }
@@ -701,8 +824,8 @@
 
         const details = document.createElement("div");
         details.className = "profile-details";
-        const typeLabel = p.needsReauth ? "Sign-in expired — sign in again"
-          : p.type === "microsoft" ? "Premium Account" : "Offline Account";
+        const typeLabel = expired ? "Sign-in expired — sign in again"
+          : offline ? "Offline Account" : "Premium Account";
         details.textContent = typeLabel;
         info.appendChild(details);
 
@@ -746,13 +869,14 @@
       addPlayerLine.addEventListener('click', () => openAddPlayerModal());
       playersList.insertBefore(addPlayerLine, playersList.firstChild);
 
-      // Fit the list to the remaining viewport so the last account + add line
-      // aren't cut off.
-      requestAnimationFrame(() => {
-        const top = playersList.getBoundingClientRect().top;
-        playersList.style.maxHeight = Math.max(120, window.innerHeight - top - 16) + "px";
-        playersList.style.overflowY = "auto";
-      });
+      // Sizing the list is fitheight.js's job (the list carries
+      // data-fit-height). It used to ALSO be done by hand here, which is why
+      // the page only ever ended up the right height after an account was
+      // added — this ran on render and nothing else, left a stale max-height
+      // behind that clamped whatever fitheight.js then set, and took 16px off
+      // the bottom for no reason. Ask for a re-fit and let the one
+      // implementation do it; it re-runs on resize and on arrival too.
+      if (window.fitHeights) window.fitHeights();
     }
 
     // Update UI when the account type changes.

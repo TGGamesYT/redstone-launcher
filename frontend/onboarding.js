@@ -87,12 +87,88 @@
       .imp-ver { width:92px; flex:0 0 92px; padding:5px 7px; font-size:11px;
         border:1px solid var(--border-dark); border-radius:var(--border-radius);
         background:var(--very-dark); color:var(--text-color); font-family:var(--text-font); }
+      /* Skins get the skins page's cards rather than a list row: a 40px square
+         crop of a skin texture shows you a shoulder and nothing else, and
+         picking between four variations of the same character out of that is
+         guesswork. Same proportions and same 3D still as that page. */
+      .imp-cards { display:grid; grid-template-columns:repeat(auto-fill, 120px); gap:10px; margin-bottom:8px; }
+      .imp-skin { position:relative; border:2px solid var(--border-dark); border-radius:var(--border-radius);
+        background:linear-gradient(135deg, color-mix(in srgb, var(--secondary-color) 50%, black) 0%, var(--menu-bg) 100%);
+        padding:8px; cursor:pointer; text-align:center; transition:var(--smooth-transition); }
+      .imp-skin:hover { border-color:var(--base-color); }
+      .imp-skin .sh { width:100%; aspect-ratio:1/2; display:flex; align-items:center; justify-content:center;
+        background:var(--very-dark); border-radius:8px; overflow:hidden; }
+      .imp-skin .sh img { width:100%; height:100%; object-fit:contain; display:block; }
+      .imp-skin .n { font-size:12px; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .imp-skin .m { font-size:10px; opacity:0.7; letter-spacing:0.02em;
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .imp-skin input[type=checkbox] { position:absolute; top:6px; left:6px; width:17px; height:17px; margin:0; z-index:2;
+        accent-color:var(--base-color); }
+      .imp-skin.taken { opacity:0.55; cursor:default; }
       .imp-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
       .imp-actions button { padding:8px 16px; border:1px solid var(--border-dark); background:var(--menu-bg);
         color:var(--text-color); border-radius:var(--border-radius); cursor:pointer; font-family:var(--text-font); }
       .imp-actions button.primary { background:var(--base-color); }
       .imp-actions button:disabled { opacity:0.5; cursor:not-allowed; }`;
     document.head.appendChild(s);
+  }
+
+  // ── Skin stills, the way the skins page draws them ────────────────────────
+  // That page keeps ONE offscreen SkinViewer and renders each card's still
+  // frame into an <img>, because a browser only allows about sixteen live
+  // WebGL contexts. The same trick here, except skinview3d is not loaded on
+  // the pages this modal opens from (the home page, the instances page,
+  // settings), so the bundle is fetched the first time there is a skin to
+  // show and never otherwise. If it will not load, or there is no WebGL, the
+  // flat texture is shown instead — which is still the whole skin, just not
+  // wrapped round a body.
+  let _s3dLoad = null;
+  function ensureSkinview3d() {
+    if (typeof skinview3d !== 'undefined') return Promise.resolve(true);
+    if (_s3dLoad) return _s3dLoad;
+    _s3dLoad = new Promise((resolve) => {
+      const tag = document.createElement('script');
+      tag.src = 'skinview3d.bundle.js';
+      tag.onload = () => resolve(typeof skinview3d !== 'undefined');
+      tag.onerror = () => resolve(false);
+      document.head.appendChild(tag);
+    });
+    return _s3dLoad;
+  }
+
+  let _impStill;                 // undefined = untried, null = unavailable
+  let _impQueue = Promise.resolve();
+  const _impCache = new Map();
+  async function skinStill(base64, variant) {
+    const key = (variant || 'classic') + '|' + base64;
+    if (_impCache.has(key)) return _impCache.get(key);
+    if (!(await ensureSkinview3d())) return null;
+    const run = async () => {
+      if (_impStill === undefined) {
+        try {
+          const canvas = document.createElement('canvas');
+          _impStill = new skinview3d.SkinViewer({
+            canvas, width: 220, height: 440, preserveDrawingBuffer: true,
+          });
+          _impStill.zoom = 0.9;
+          _impStill.autoRotate = false;
+          _impStill.renderPaused = true;
+          _impStill._canvas = canvas;
+        } catch { _impStill = null; }
+      }
+      if (!_impStill) return null;
+      try {
+        await _impStill.loadSkin('data:image/png;base64,' + base64,
+          { model: variant === 'slim' ? 'slim' : 'default' });
+        _impStill.render();
+        const url = _impStill._canvas.toDataURL();
+        if (url) _impCache.set(key, url);
+        return url;
+      } catch { return null; }
+    };
+    // One viewer, so one render at a time.
+    _impQueue = _impQueue.then(run, run);
+    return _impQueue;
   }
 
   const LAUNCHER_LABELS = {
@@ -237,23 +313,58 @@
 
     const newSkins = skins.filter(sk => !sk.already);
     if (!single) group(countLabel('Skins', skins, newSkins));
-    const skinRow = (sk, already) => {
-      const r = row({
-        icon: 'face',
-        img: 'data:image/png;base64,' + sk.base64,
-        title: sk.name,
-        detail: already ? 'already in your skin library' : 'adds to your skin library',
-        tag: LAUNCHER_LABELS[sk.source] || sk.source,
-        checkbox: !already,
-      });
-      // A skin PNG is 64x64 of flat colour; let it show as pixels.
-      const i = r.el.querySelector('img');
-      if (i) i.style.imageRendering = 'pixelated';
-      if (already) r.el.style.opacity = '0.55';
-      return r;
+
+    // A card per skin, in a grid, exactly as the skins page shows them: a
+    // full-body still, the name under it, and the model it uses. The whole
+    // card is the toggle.
+    const skinCard = (sk, already, into) => {
+      const el = document.createElement('div');
+      el.className = 'imp-skin' + (already ? ' taken' : '');
+      let cb = null;
+      if (!already) {
+        cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = true;
+        cb.onclick = (e) => e.stopPropagation();
+        el.appendChild(cb);
+        el.onclick = () => { cb.checked = !cb.checked; };
+      }
+      const shot = document.createElement('div');
+      shot.className = 'sh';
+      const img = document.createElement('img');
+      // The flat texture first so the card is never blank, then the rendered
+      // body over it once that is ready.
+      img.src = 'data:image/png;base64,' + sk.base64;
+      img.style.imageRendering = 'pixelated';
+      shot.appendChild(img);
+      el.appendChild(shot);
+      skinStill(sk.base64, sk.variant).then(url => {
+        if (url) { img.src = url; img.style.imageRendering = ''; }
+      }).catch(() => { /* the flat texture stays */ });
+
+      const n = document.createElement('div');
+      n.className = 'n'; n.textContent = sk.name;
+      n.title = sk.name;
+      // Where it came from and which model it uses, on one line. As a corner
+      // badge the launcher name was wider than the card and landed on top of
+      // the checkbox.
+      const m = document.createElement('div');
+      m.className = 'm';
+      const where = LAUNCHER_LABELS[sk.source] || sk.source;
+      m.textContent = already ? 'already here'
+        : `${where} · ${sk.variant === 'slim' ? 'slim' : 'wide'}`;
+      m.title = m.textContent;
+      el.append(n, m);
+      into.appendChild(el);
+      return cb;
     };
-    newSkins.forEach(sk => skinRows.push({ cb: skinRow(sk, false).cb, sk }));
-    if (!single) skins.filter(sk => sk.already).forEach(sk => skinRow(sk, true));
+
+    if (skins.length) {
+      const grid = document.createElement('div');
+      grid.className = 'imp-cards';
+      listEl.appendChild(grid);
+      newSkins.forEach(sk => skinRows.push({ cb: skinCard(sk, false, grid), sk }));
+      if (!single) skins.filter(sk => sk.already).forEach(sk => skinCard(sk, true, grid));
+    }
 
     // Only wipe the list when there is genuinely nothing on the machine.
     // Accounts and skins that are already here count as "found" — they are

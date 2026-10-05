@@ -1302,6 +1302,10 @@
     function detachLive(L) {
       if (L.raf) { cancelAnimationFrame(L.raf); L.raf = null; }
       L.easing = false;
+      // These viewers are pooled. Without this the spin physics carries the
+      // last card's angle and sprung-out limbs into the next one, which is
+      // what made a freshly hovered card start in the wrong pose and slide.
+      try { if (L.v.animation && L.v.animation.resetSpin) L.v.animation.resetSpin(); } catch { }
       if (L.host.parentNode) L.host.parentNode.removeChild(L.host);
       if (L.owner) {
         if (L.owner._still) L.owner._still.style.visibility = "";
@@ -1461,14 +1465,25 @@
 
       // Orbiting the camera one way around a still model looks exactly like
       // spinning the model the other way, so that is what the limbs are told
-      // is happening: velTheta is radians per FRAME, and the physics wants
-      // radians per second. The sign is flipped because the apparent spin of
-      // the model is the opposite of the camera's travel.
-      const FRAMES_PER_SEC = 60;
-      const reportSpin = () => {
+      // is happening. The sign is flipped for that reason.
+      //
+      // The rate is measured against the clock rather than assumed to be one
+      // frame: the animation loop runs at the display's rate, but a drag
+      // reports through OrbitControls' "change" event, which fires per pointer
+      // move. Calling either one 1/60s would make the same drag read as a
+      // different speed depending on which path saw it.
+      const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      let lastSpinAt = 0;
+      const MAX_OMEGA = 14;            // rad/s; past this nothing looks any different
+      const reportSpin = (dTheta) => {
+        const t = now();
+        const dt = lastSpinAt ? Math.min(0.25, Math.max(1 / 240, (t - lastSpinAt) / 1000)) : 1 / 60;
+        lastSpinAt = t;
         try {
           const SA = window.SkinAnimations;
-          if (SA && SA.setSpin) SA.setSpin(-velTheta * FRAMES_PER_SEC);
+          if (!SA || !SA.setSpin) return;
+          const w = -(Number.isFinite(dTheta) ? dTheta : 0) / dt;
+          SA.setSpin(Math.max(-MAX_OMEGA, Math.min(MAX_OMEGA, w)));
         } catch { }
       };
 
@@ -1480,10 +1495,10 @@
           if (lastTheta !== null) {
             velTheta = norm(cur.theta - lastTheta);
             velPhi = cur.phi - lastPhi;
+            reportSpin(velTheta);
           }
           lastTheta = cur.theta; lastPhi = cur.phi;
         } catch { }
-        reportSpin();
       };
 
       const step = () => {
@@ -1514,7 +1529,7 @@
 
           if (tgt.lengthSq() > 0.0001) tgt.multiplyScalar(0.9); else tgt.set(0, 0, 0);
           v.controls.update();
-          reportSpin();
+          reportSpin(velTheta);
 
           const offT = Math.abs(norm(0 - cur.theta)), offP = Math.abs(HOME_PHI - cur.phi);
           const speed = Math.abs(velTheta) + Math.abs(velPhi);

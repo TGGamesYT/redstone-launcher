@@ -1240,7 +1240,20 @@ const _refreshInFlight = new Map();  // account id -> the chain currently runnin
 
 const _refreshKey = (player) => String((player && (player.id ?? player.auth?.uuid)) ?? "default");
 
+// An offline account is a username and nothing else: no Microsoft sign-in, no
+// tokens, nothing to refresh. Putting one through the chain below found no
+// refresh token, decided the grant was dead, and marked the account as needing
+// a sign-in — so the players page sat there telling people their OFFLINE
+// accounts had expired sign-ins and to sign in again, which they cannot do and
+// would not help if they could.
+const isOfflineAccount = (p) => !!p && (p.type === "cracked" || p.offline === true);
+
 async function refreshPlayer(player, opts = {}) {
+  if (isOfflineAccount(player)) {
+    // Clear the flag if an earlier version of this set it.
+    if (player.needsReauth) { delete player.needsReauth; persistPlayer(player); }
+    return player;
+  }
   const key = _refreshKey(player);
   // The persisted stamp matters too, or restarting the launcher would refresh
   // every account again immediately.

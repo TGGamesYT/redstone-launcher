@@ -56,21 +56,28 @@
   // torso -- reparent it there once and every body transform carries it along
   // for free, stretch included.
   //
-  // attach() (as opposed to add()) keeps the cape exactly where it already is
-  // while changing whose child it is, so this is invisible on the frame it
-  // happens. The rest pose is captured AFTER it, so the cape's rest position is
-  // recorded in body space -- which is what every later frame writes back.
+  // Only the POSITION changes: the cape keeps the rotation it was authored
+  // with. three.js's attach() would do this in one call, but it rebuilds the
+  // rotation by decomposing a matrix, and skinview3d builds the cape with
+  // rotation (x 10.8deg, y 180deg, z 0) -- which comes back out of a matrix as
+  // the equivalent but differently spelled (x -169.2deg, y 0, z 180deg). The
+  // same rotation, so nothing moves on that frame; but the idle writes
+  // cape.rotation.x by itself, and 10.8deg against that second spelling is a
+  // different rotation entirely, which swings the cape up over the head.
+  //
+  // Between the cape and the body there is nothing but plain offsets (the skin
+  // group at y=8, the body at y=-6 inside it) and resetJoints() has just run,
+  // so subtracting those offsets is the whole conversion into body space.
   function capeToBody(player) {
     try {
       const cape = player.cape, body = player.skin && player.skin.body;
       if (!cape || !body || cape.parent === body) return;
-      player.updateMatrixWorld(true);
-      if (typeof body.attach === 'function') body.attach(cape);
-      else {
-        // Pre-r109 three.js has no attach(); the offset is a constant anyway.
-        body.add(cape);
-        cape.position.set(cape.position.x, cape.position.y - 2, cape.position.z);
+      let dx = 0, dy = 0, dz = 0;
+      for (let n = body; n && n !== player; n = n.parent) {
+        dx += n.position.x; dy += n.position.y; dz += n.position.z;
       }
+      cape.position.set(cape.position.x - dx, cape.position.y - dy, cape.position.z - dz);
+      body.add(cape);
     } catch { /* leave it where skinview3d put it */ }
   }
 
@@ -209,15 +216,23 @@
     p: r.position.slice(), r: r.rotation.slice(), s: r.scale.slice(),
   }));
 
+  // Everything here is written as rest PLUS an offset, never as an absolute
+  // angle. skinview3d's own IdleAnimation writes absolutes, which works only
+  // because it knows the rest values it is overwriting -- the arms at 0 and the
+  // cape at 0.06*PI. Spelling the cape's rest rotation differently (as
+  // reparenting it onto the body used to) is then enough to flip it over the
+  // head, and a rig whose arms do not rest at zero would be wrong from the
+  // first frame. Offsets cannot go wrong that way.
   function evalIdle(rest, progress) {
     const pose = blankPose(rest);
     const t = 2 * progress;
     const lean = 0.02 * Math.PI;
-    const at = (name) => pose[rest.findIndex(r => r.name === name)];
+    const idx = (name) => rest.findIndex(r => r.name === name);
+    const at = (name) => { const i = idx(name); return i < 0 ? null : pose[i]; };
     const la = at('leftArm'), ra = at('rightArm'), cp = at('cape');
-    if (la) la.r[2] = 0.03 * Math.cos(t) + lean;
-    if (ra) ra.r[2] = 0.03 * Math.cos(t + Math.PI) - lean;
-    if (cp) cp.r[0] = 0.01 * Math.sin(t) + 0.06 * Math.PI;
+    if (la) la.r[2] = rest[idx('leftArm')].rotation[2] + 0.03 * Math.cos(t) + lean;
+    if (ra) ra.r[2] = rest[idx('rightArm')].rotation[2] + 0.03 * Math.cos(t + Math.PI) - lean;
+    if (cp) cp.r[0] = rest[idx('cape')].rotation[0] + 0.01 * Math.sin(t);
     return pose;
   }
 
@@ -276,16 +291,21 @@
   // written straight on, so the limbs take a moment to fly out and swing past
   // centre once on the way back instead of snapping.
   const SPIN = {
-    stiffness: 55,       // how hard it pulls toward the target
-    damping: 9,          // < 2*sqrt(stiffness) leaves some overshoot
-    // How much of each effect, and how far it is ever allowed to go. The
-    // outward ones go with omega SQUARED -- that is what centrifugal force
-    // does, and it is why a slow turn barely moves anything and a fast one
-    // throws the arms right out.
-    armOut: [0.055, 0.90], armLag: [0.080, 0.50],
-    capeLift: [0.050, 0.80], capeSway: [0.070, 0.45],
-    headLag: [0.060, 0.45], bodyTwist: [0.022, 0.18],
-    legLag: [0.030, 0.25],
+    stiffness: 34,       // how hard it pulls toward the target
+    damping: 7.6,        // < 2*sqrt(stiffness) leaves some overshoot
+    // How much of each effect, and how far it is ever allowed to go.
+    //
+    // The TRAIL leads, not the fly-out. Spinning on the spot drags your hands
+    // round behind you — they are left where the turn started and catch up —
+    // and that is the part you actually feel. Throwing them straight out
+    // sideways is a much smaller thing on top of it, so armOut is a tenth of
+    // what it was and armLag is now the bigger of the two at any realistic
+    // speed. (armOut goes with omega SQUARED because centrifugal force does;
+    // the trailing ones are linear in omega, like drag.)
+    armOut: [0.0085, 0.26], armLag: [0.105, 0.62],
+    capeLift: [0.012, 0.30], capeSway: [0.095, 0.55],
+    headLag: [0.055, 0.40], bodyTwist: [0.020, 0.16],
+    legLag: [0.038, 0.30],
   };
   const clamp = (v, m) => Math.max(-m, Math.min(m, v));
 
@@ -378,13 +398,28 @@
     const anim = new skinview3d.PlayerAnimation();
     const state = newSpinState();
     let lastYaw = null;
+    // A turn bigger than this in one frame is not a turn, it is a jump: these
+    // viewers are pooled, so the same animation sees one card's final angle
+    // and then the next card's starting angle back to back, and the snap home
+    // at the end of an ease-out is another. Reading those as motion is what
+    // flung the arms out the moment a card was hovered and then let them slide
+    // back. 0.35 rad in a frame is already 21 rad/s -- far past anything a
+    // pointer produces.
+    const JUMP = 0.35;
+    anim.resetSpin = function () {
+      lastYaw = null;
+      for (const k of Object.keys(state)) { state[k].x = 0; state[k].v = 0; }
+    };
     anim.animate = function (player, delta) {
       const rest = restPose(player);
       const dt = Number.isFinite(delta) && delta > 0 ? Math.min(delta, 0.1) : 1 / 60;
       let yaw = 0;
       try { yaw = (player.parent || player).rotation.y; } catch { }
       let w = 0;
-      if (lastYaw !== null) w = Math.atan2(Math.sin(yaw - lastYaw), Math.cos(yaw - lastYaw)) / dt;
+      if (lastYaw !== null) {
+        const d = Math.atan2(Math.sin(yaw - lastYaw), Math.cos(yaw - lastYaw));
+        if (Math.abs(d) <= JUMP) w = d / dt;
+      }
       lastYaw = yaw;
       applyPose(rest, blankPose(rest));
       applySpin(state, rest, w, dt);
