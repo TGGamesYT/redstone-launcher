@@ -3369,6 +3369,94 @@ ipcMain.handle("relay:adminInfo", async (event, { accountId }) => {
 });
 ipcMain.handle("relay:domain", () => DOMAIN_BASE);
 
+// ── Skin library sync ───────────────────────────────────────────────────────
+// The skin library is a local file, so it never followed an account between
+// computers. The relay already proves who you are — Mojang's join/hasJoined
+// challenge against a per-connection serverId, with the resulting profile id as
+// the only identity it trusts — so it can keep a per-account blob, and that is
+// what this stores the library in.
+//
+// Merge rather than overwrite: both sides are keyed by pixel hash, so two
+// machines that each added skins while offline end up with both sets instead of
+// whichever synced last. A skin deleted on one machine comes back from the
+// other, which is the right trade for a library — losing one is worse.
+const SYNC_SKINS_SETTING = "syncSkinLibrary";
+
+function mergeSkinLists(mine, theirs) {
+  const byHash = new Map();
+  // Ours first, so local names and ordering win for anything on both sides.
+  for (const s of [...(mine || []), ...(theirs || [])]) {
+    if (!s) continue;
+    const key = s.pixelHash || `id:${s.id}`;
+    if (byHash.has(key)) {
+      // Keep whichever knows where it lives on Mojang.
+      const have = byHash.get(key);
+      if (!have.mojangUrl && s.mojangUrl) { have.mojangUrl = s.mojangUrl; have.mojangAt = s.mojangAt; }
+      continue;
+    }
+    byHash.set(key, { ...s });
+  }
+  return [...byHash.values()].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+}
+
+async function relayAccountForSync() {
+  const id = storage.get("selectedPlayerId", null);
+  const account = await accountCredsByIdFresh(id);
+  if (!account) throw new Error("Sign in with a Microsoft account to sync skins");
+  return account;
+}
+
+// Pull, merge, save, push back. One call keeps both ends in step.
+async function syncSkinLibraryNow() {
+  const account = await relayAccountForSync();
+  const uuid = String(account.uuid || "").replace(/-/g, "");
+  const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
+  const opts = { host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort, account, rejectUnauthorized };
+
+  const remote = await relayClient.syncRelay({ ...opts, op: "get", kind: "skins" });
+  const lib = loadSkinLib();
+  const mine = lib[uuid] || [];
+  const theirs = (remote && remote.data && Array.isArray(remote.data.skins)) ? remote.data.skins : [];
+  const merged = mergeSkinLists(mine, theirs);
+
+  lib[uuid] = merged;
+  saveSkinLib(lib);
+
+  await relayClient.syncRelay({ ...opts, op: "put", kind: "skins", data: { skins: merged } });
+  return { success: true, local: mine.length, remote: theirs.length, total: merged.length };
+}
+
+ipcMain.handle("skins:cloudSync", async () => {
+  try { return await syncSkinLibraryNow(); }
+  catch (err) { return { success: false, error: String(err && err.message || err) }; }
+});
+
+ipcMain.handle("skins:cloudEnabled", () => settings.get(SYNC_SKINS_SETTING, false) === true);
+ipcMain.handle("skins:cloudSetEnabled", async (event, { on }) => {
+  settings.set(SYNC_SKINS_SETTING, !!on);
+  if (!on) return { success: true, enabled: false };
+  // Turning it on syncs straight away, so the library is in step immediately
+  // rather than at some unexplained later moment.
+  try {
+    const r = await syncSkinLibraryNow();
+    return { success: true, enabled: true, ...r };
+  } catch (err) {
+    return { success: false, enabled: true, error: String(err && err.message || err) };
+  }
+});
+
+// Called after the library changes. Quiet: syncing is a convenience, and a
+// relay that is down must never get in the way of using the launcher.
+let _syncTimer = null;
+function scheduleSkinSync() {
+  if (settings.get(SYNC_SKINS_SETTING, false) !== true) return;
+  clearTimeout(_syncTimer);
+  // Coalesce a burst of changes (adding several skins at once) into one push.
+  _syncTimer = setTimeout(() => {
+    syncSkinLibraryNow().catch(err => devtoolsLog("skin sync failed:", err && err.message));
+  }, 4000);
+}
+
 // Sanitize a label for use as a subdomain component.
 function subLabel(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40); }
 
@@ -5665,6 +5753,7 @@ async function addSkinToLibrary(uuid, { base64, variant, name }) {
   });
   lib[uuid] = arr;
   saveSkinLib(lib);
+  scheduleSkinSync();
   return true;
 }
 
@@ -9458,6 +9547,7 @@ ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name, editorT
   arr.unshift({ id: Date.now(), pixelHash, name: name || "Skin", base64: b, variant: (variant || "classic"), addedAt: Date.now(), editorType: editorType || "advanced", creatorState: creatorState || null, layerState: layerState || null });
   lib[uuid] = arr;
   saveSkinLib(lib);
+  scheduleSkinSync();
   return arr;
 });
 
@@ -9479,6 +9569,7 @@ ipcMain.handle("skins:remove", (event, { uuid, id }) => {
   const lib = loadSkinLib();
   lib[uuid] = (lib[uuid] || []).filter(s => String(s.id) !== String(id));
   saveSkinLib(lib);
+  scheduleSkinSync();
   return lib[uuid];
 });
 
@@ -9498,6 +9589,7 @@ ipcMain.handle("skins:reorder", (event, { uuid, order }) => {
   for (const s of arr) if (byId.has(String(s.id))) ordered.push(s);   // preserve leftovers
   lib[uuid] = ordered;
   saveSkinLib(lib);
+  scheduleSkinSync();
   return ordered;
 });
 
@@ -9519,7 +9611,7 @@ ipcMain.handle("skins:rename", (event, { uuid, id, name }) => {
   const lib = loadSkinLib();
   const arr = lib[uuid] || [];
   const s = arr.find(x => String(x.id) === String(id));
-  if (s && name) { s.name = name; lib[uuid] = arr; saveSkinLib(lib); }
+  if (s && name) { s.name = name; lib[uuid] = arr; saveSkinLib(lib); scheduleSkinSync(); }
   return arr;
 });
 
@@ -9530,7 +9622,7 @@ ipcMain.handle("skins:setVariant", (event, { uuid, id, variant }) => {
   const lib = loadSkinLib();
   const arr = lib[uuid] || [];
   const s = arr.find(x => String(x.id) === String(id));
-  if (s) { s.variant = variant === "slim" ? "slim" : "classic"; lib[uuid] = arr; saveSkinLib(lib); }
+  if (s) { s.variant = variant === "slim" ? "slim" : "classic"; lib[uuid] = arr; saveSkinLib(lib); scheduleSkinSync(); }
   return arr;
 });
 
@@ -9555,6 +9647,7 @@ ipcMain.handle("skins:update", async (event, { uuid, id, base64, variant, name, 
   s.updatedAt = Date.now();
   lib[uuid] = arr;
   saveSkinLib(lib);
+  scheduleSkinSync();
   return arr;
 });
 

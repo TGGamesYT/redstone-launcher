@@ -48,7 +48,7 @@ process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.
 // served on the SAME public port as Minecraft (25565) — a Minecraft handshake
 // never begins with an HTTP method, so we can tell the two apart from the first
 // bytes and route by the token in the request URL. No extra port to open.
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15 };
 
 // URL token (the "random safety token" in the pack path) -> the host serving it.
 const packRoutes = new Map();
@@ -295,6 +295,41 @@ catch (e) {
 }
 
 const secureContext = tls.createSecureContext(tlsOptions);
+// ── Per-account storage ─────────────────────────────────────────────────────
+// A place for a signed-in account to keep things that should follow it between
+// computers — its skin library, to begin with. Keyed by the Mojang UUID that
+// hasJoined verified on THIS connection, so an account can only ever read and
+// write its own blob; nothing the client claims about its identity is used.
+const SYNC_DIR = process.env.RELAY_SYNC_DIR || path.join(__dirname, "sync");
+const SYNC_MAX_BYTES = parseInt(process.env.RELAY_SYNC_MAX || String(4 * 1024 * 1024), 10);
+const SYNC_KINDS = new Set(["skins"]);
+
+// The UUID comes from Mojang's sessionserver so it is always 32 hex
+// characters, but it ends up in a filename — check it rather than trust it.
+const syncPath = (uuid, kind) => {
+  const id = String(uuid || "").toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(id)) throw new Error("bad account id");
+  if (!SYNC_KINDS.has(kind)) throw new Error("bad sync kind");
+  return path.join(SYNC_DIR, `${id}.${kind}.json`);
+};
+
+function syncRead(uuid, kind) {
+  try { return JSON.parse(fs.readFileSync(syncPath(uuid, kind), "utf8")); }
+  catch { return null; }
+}
+
+function syncWrite(uuid, kind, value) {
+  const body = JSON.stringify(value);
+  if (Buffer.byteLength(body) > SYNC_MAX_BYTES) {
+    throw new Error(`Too large (limit ${Math.round(SYNC_MAX_BYTES / 1024)} KB)`);
+  }
+  fs.mkdirSync(SYNC_DIR, { recursive: true });
+  // Write-then-rename, so a crash mid-write can't leave a truncated library.
+  const tmp = syncPath(uuid, kind) + ".tmp";
+  fs.writeFileSync(tmp, body);
+  fs.renameSync(tmp, syncPath(uuid, kind));
+}
+
 // The control-channel handler, run on a TLS socket (see the demuxing listener
 // below — the same port also serves plain-HTTP resource-pack requests).
 function handleControl(sock) {
@@ -310,6 +345,9 @@ function handleControl(sock) {
       state.wantDomain = String(info.domain || DOMAIN).toLowerCase().trim();
       state.localPort = info.localPort;
       state.queryDomains = !!info.queryDomains;
+      // A sync session authenticates and then does nothing but read/write this
+      // account's own stored data — it never registers an address.
+      state.syncOnly = !!info.sync;
       state.serverId = crypto.randomBytes(16).toString("hex");
       send(T.CHALLENGE, 0, Buffer.from(JSON.stringify({ serverId: state.serverId })));
       return;
@@ -324,6 +362,15 @@ function handleControl(sock) {
       if (!profile || !profile.id) { send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: "Premium verification failed" }))); return sock.destroy(); }
       const uuid = String(profile.id).replace(/-/g, "").toLowerCase();
       const isAdmin = adminUuids.has(uuid);
+
+      // Sync-only: the verified UUID is all this needs. No address is claimed,
+      // so none of the domain rules below apply.
+      if (state.syncOnly) {
+        state.authed = true;
+        state.syncUuid = uuid;
+        send(T.WELCOME, 0, Buffer.from(JSON.stringify({ sync: true })));
+        return;
+      }
 
       // Admin-only: just querying which domains they may use (for the dropdown).
       if (state.queryDomains) {
@@ -354,6 +401,32 @@ function handleControl(sock) {
       return;
     }
     if (!state.authed) return sock.destroy();
+    if (type === T.SYNC) {
+      // Only ever this connection's own verified account.
+      if (!state.syncUuid) return sock.destroy();
+      let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      const kind = String(req.kind || "skins");
+      if (!SYNC_KINDS.has(kind)) {
+        send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: `Unknown sync kind "${kind}"` })));
+        return;
+      }
+      if (req.op === "put") {
+        try {
+          syncWrite(state.syncUuid, kind, { updated: Date.now(), data: req.data ?? null });
+          send(T.SYNC_DATA, 0, Buffer.from(JSON.stringify({ ok: true, updated: Date.now() })));
+        } catch (e) {
+          send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: e.message })));
+        }
+        return;
+      }
+      const stored = syncRead(state.syncUuid, kind);
+      send(T.SYNC_DATA, 0, Buffer.from(JSON.stringify({
+        ok: true,
+        updated: stored ? stored.updated : 0,
+        data: stored ? stored.data : null,
+      })));
+      return;
+    }
     if (type === T.DATA) { const p = state.streams.get(streamId); if (p) { try { p.write(payload); } catch { /* ignore */ } } }
     else if (type === T.CLOSE) { const p = state.streams.get(streamId); if (p) { state.streams.delete(streamId); try { p.end(); } catch { /* ignore */ } } }
     else if (type === T.PING) send(T.PONG, 0, null);

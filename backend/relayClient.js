@@ -5,7 +5,7 @@ import net from "net";
 import tls from "tls";
 import https from "https";
 
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15 };
 
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
@@ -68,6 +68,40 @@ export function queryRelay({ host, controlPort, account, rejectUnauthorized = tr
     sock.on("data", decode);
     sock.on("error", (e) => { if (!done) { done = true; reject(e); } });
     sock.setTimeout(20000, () => { if (!done) { done = true; sock.destroy(); reject(new Error("Relay timed out")); } });
+  });
+}
+
+// Read or write this account's own stored data on the relay. Same shape as
+// queryRelay: connect, prove the account with Mojang's join/hasJoined
+// challenge, do one thing, disconnect. The relay keys the blob by the UUID it
+// verified on this connection, so an account can only touch its own.
+//   op: "get" | "put"   kind: "skins"
+export function syncRelay({ host, controlPort, account, op = "get", kind = "skins", data = null, rejectUnauthorized = true }) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (fn, v) => { if (done) return; done = true; fn(v); try { sock.end(); } catch { /* ignore */ } };
+    const sock = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () =>
+      sock.write(encodeFrame(T.HELLO, 0, Buffer.from(JSON.stringify({ sync: true })))));
+    const send = (t, s2, p) => { try { sock.write(encodeFrame(t, s2, p)); } catch { /* ignore */ } };
+    const decode = createDecoder(async (type, streamId, payload) => {
+      if (type === T.CHALLENGE) {
+        let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        const ok = await mojangJoin(account.accessToken, account.uuid, info.serverId);
+        if (!ok) return finish(reject, new Error("Could not verify your Minecraft account"));
+        send(T.AUTH, 0, Buffer.from(JSON.stringify({ username: account.name })));
+      } else if (type === T.WELCOME) {
+        send(T.SYNC, 0, Buffer.from(JSON.stringify({ op, kind, data })));
+      } else if (type === T.SYNC_DATA) {
+        let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        finish(resolve, info);
+      } else if (type === T.ERROR) {
+        let m = "relay error"; try { m = JSON.parse(payload.toString()).message; } catch { /* ignore */ }
+        finish(reject, new Error(m));
+      }
+    });
+    sock.on("data", decode);
+    sock.on("error", (e) => { if (!done) { done = true; reject(e); } });
+    sock.setTimeout(30000, () => { if (!done) { done = true; sock.destroy(); reject(new Error("Relay timed out")); } });
   });
 }
 
@@ -144,4 +178,4 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
   });
 }
 
-export default { openRelay, queryRelay };
+export default { openRelay, queryRelay, syncRelay };

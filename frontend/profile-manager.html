@@ -1912,6 +1912,8 @@
       commitLists();
       refreshSelectionUI();
       refreshCapeUI();
+      // After the page is up, not before: the sync is a background nicety.
+      pullSkinLibraryOnce();
     }
 
     let pendingCape = null;   // { id, url } chosen but not applied; id null = disable
@@ -2090,6 +2092,22 @@
         } catch { }
       }
       refreshSelectionUI();
+    }
+
+    // ---- Skin library sync ------------------------------------------------
+    // When it's on, pull the library from the relay as the page opens so a skin
+    // added on another computer is simply there. Quiet by design: the relay
+    // being down must never stop the page working.
+    let _syncedThisLoad = false;
+    async function pullSkinLibraryOnce() {
+      if (_syncedThisLoad) return;
+      _syncedThisLoad = true;
+      try {
+        if (!await ipcRenderer.invoke('skins:cloudEnabled')) return;
+        const r = await ipcRenderer.invoke('skins:cloudSync');
+        // Only redraw when it actually brought something new in.
+        if (r && r.success && r.total > r.local) await updateSKin();
+      } catch { /* offline, or the relay is down */ }
     }
 
     // ---- Section heading buttons ------------------------------------------
