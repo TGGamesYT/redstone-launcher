@@ -343,6 +343,9 @@
           <label>Loader version</label>
           <select id="instanceLoaderVersion"></select>
         </div>
+        <!-- Shown when this instance is being built for a particular mod. -->
+        <div class="modal-section" id="modConstraintNote"
+          style="display:none; font-size:11px; opacity:0.75; line-height:1.5;"></div>
         <div class="modal-section">
           <label>Instance Icon</label>
           <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
@@ -931,6 +934,7 @@
     // The hand-built creator, optionally pre-filled from something the user
     // already chose (a mod, say). prefill: { name, icon, version, loader }.
     function openCustomCreator(prefill) {
+      modConstraint = null;   // reset; set from the prefill below
       instanceName.value = (prefill && prefill.name) || "";
       instanceLoader.value = (prefill && prefill.loader) || "vanilla";
       pickedInstanceIcon = (prefill && prefill.icon) || null;
@@ -939,6 +943,21 @@
       delete modalCreateBtn._originalProfile;
       if (typeof setModalMode === 'function') setModalMode('create');
       addInstanceModal.classList.add('active');
+
+      // Lock the version/loader lists to what this mod supports before the
+      // version list is rebuilt below.
+      modConstraint = (prefill && prefill.supportedVersions && prefill.supportedVersions.length)
+        ? {
+          versions: new Set(prefill.supportedVersions),
+          // Modrinth lists datapack/plugin "loaders" too, so keep only the ones
+          // this creator can actually build an instance for.
+          loaders: new Set((prefill.supportedLoaders || [])
+            .filter(l => ['vanilla', 'fabric', 'quilt', 'forge', 'neoforge'].includes(l))),
+          title: prefill.projectTitle || prefill.name || 'that mod',
+        }
+        : null;
+      if (modConstraint && !modConstraint.loaders.size) modConstraint = null;
+      if (typeof applyVersionMode === 'function') applyVersionMode();
 
       if (prefill && prefill.version) {
         // The mod's newest supported version may be a snapshot, which isn't in
@@ -1130,6 +1149,7 @@
     }
 
     async function openEditModal(profile) {
+      modConstraint = null;   // editing an existing instance is unconstrained
       instanceName.value = profile.name;
       instanceLoader.value = profile.loader;
       updateInstanceLoaderVersion(profile.loaderVersion);
@@ -3638,15 +3658,23 @@
       const optLatest = document.createElement('option');
       optLatest.value = '__latest_release__';
       optLatest.textContent = `Latest release${rel ? ` (${rel})` : ''}`;
-      select.appendChild(optLatest);
-      if (showAll) {
+      // Pinning to "latest" under a mod constraint would silently move the
+      // instance off the versions that mod supports.
+      if (!modConstraint) select.appendChild(optLatest);
+      if (showAll && !modConstraint) {
         const optSnap = document.createElement('option');
         optSnap.value = '__latest_snapshot__';
         optSnap.textContent = `Latest snapshot${snap ? ` (${snap})` : ''}`;
         select.appendChild(optSnap);
       }
 
-      const filtered = showAll ? versions : versions.filter(v => v.type === 'release');
+      let filtered = showAll ? versions : versions.filter(v => v.type === 'release');
+      // Started from a mod: drop everything it has no build for. A snapshot the
+      // mod supports stays in the list even with "Show all" off, since hiding
+      // it would leave nothing to pick.
+      if (modConstraint) {
+        filtered = versions.filter(v => modConstraint.versions.has(v.id));
+      }
       filtered.forEach(v => {
         const opt = document.createElement('option');
         opt.value = v.id;
@@ -3660,11 +3688,39 @@
       else if (rel) select.value = rel;
     }
 
+    // When the instance is being created FOR a mod, only the versions and
+    // loaders that mod actually has builds for are worth offering — picking
+    // anything else produces an instance the mod cannot run in.
+    // { versions: Set, loaders: Set, title } or null for no constraint.
+    let modConstraint = null;
+
+    function applyModConstraint() {
+      const loaderSel = document.getElementById('instanceLoader');
+      const note = document.getElementById('modConstraintNote');
+      if (!loaderSel) return;
+      [...loaderSel.options].forEach(o => {
+        const allowed = !modConstraint || modConstraint.loaders.has(o.value);
+        o.disabled = !allowed;
+        o.hidden = !allowed;
+      });
+      if (modConstraint && !modConstraint.loaders.has(loaderSel.value)) {
+        const first = [...loaderSel.options].find(o => !o.disabled);
+        if (first) loaderSel.value = first.value;
+      }
+      if (note) {
+        note.style.display = modConstraint ? '' : 'none';
+        if (modConstraint) {
+          note.textContent = `Only the versions and loaders ${modConstraint.title} supports are listed.`;
+        }
+      }
+    }
+
     // Repopulate the version list to reflect the "Show all" toggle.
     function applyVersionMode() {
       if (!versionManifest) return;
       const showAll = document.getElementById('showAllVersions').checked;
       populateSelect(versionManifest.versions, showAll);
+      applyModConstraint();
     }
 
     // Resolve the version dropdown selection into a concrete version + whether

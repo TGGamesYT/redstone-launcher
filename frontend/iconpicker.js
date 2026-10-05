@@ -111,7 +111,13 @@
       const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = p.faces[i];
     }))).then(imgs => {
       const good = imgs.filter(Boolean);
-      if (!good.length) { ov.remove(); return; }
+      if (!good.length) {
+        // Say so rather than leaving an empty grey box behind.
+        const box = ov.querySelector('#ipPanScroll');
+        if (box) box.innerHTML = '<div style="padding:28px 12px;opacity:0.75;font-size:13px;">'
+          + "Couldn't read this version's panorama.</div>";
+        return;
+      }
       const fh = good[0].naturalHeight, fw = good[0].naturalWidth;
       cv.width = fw * good.length; cv.height = fh;
       cv.style.width = (cv.width * (220 / fh)) + 'px';

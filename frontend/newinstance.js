@@ -206,24 +206,39 @@
         return;
       }
 
-      // A mod: work out the newest Minecraft version and loader it supports,
-      // and hand the creator a filled-in instance to make for it.
+      // A mod: the creator should only offer what this mod actually has builds
+      // for, so collect EVERY version and loader it supports, not just the
+      // newest — picking anything outside that set makes an instance the mod
+      // cannot run in.
       let versions = [];
       try {
         const res = await fetch(`https://api.modrinth.com/v2/project/${project.project_id || project.slug}/version`);
         versions = res.ok ? await res.json() : [];
       } catch { /* handled below */ }
-      const newest = versions[0] || null;
-      const gameVersion = newest && (newest.game_versions || []).slice(-1)[0];
-      const loader = newest && (newest.loaders || [])[0];
+      if (!versions.length) {
+        close();
+        return uiAlert('That mod has no published versions to build an instance around.', 'Nothing to install');
+      }
+      const supportedVersions = new Set();
+      const supportedLoaders = new Set();
+      for (const v of versions) {
+        (v.game_versions || []).forEach(g => supportedVersions.add(g));
+        (v.loaders || []).forEach(l => supportedLoaders.add(String(l).toLowerCase()));
+      }
+      // Default to the newest build's newest game version and first loader.
+      const newest = versions[0];
+      const gameVersion = (newest.game_versions || []).slice(-1)[0] || null;
+      const loader = (newest.loaders || [])[0] || 'vanilla';
       close();
       opts.onCustom && opts.onCustom({
         name: project.title,
         icon: project.icon_url || null,
-        version: gameVersion || null,
-        loader: loader || 'vanilla',
+        version: gameVersion,
+        loader,
         projectId: project.project_id || project.slug,
         projectTitle: project.title,
+        supportedVersions: [...supportedVersions],
+        supportedLoaders: [...supportedLoaders],
       });
     }
 

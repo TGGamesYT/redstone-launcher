@@ -9,55 +9,55 @@ started.
 
 ---
 
-## 0. Round 10 — current
+## 0. Round 10
 
 ### Instance creation
-- [ ] The sidebar "+" opens the OLD creator from any page other than Instances
-- [ ] Starting an instance from a mod must limit the version AND loader lists to
+- [x] The sidebar "+" opens the OLD creator from any page other than Instances
+- [x] Starting an instance from a mod must limit the version AND loader lists to
       what that mod actually supports
-- [ ] "Import from another launcher" opened from the creation chooser should pick
+- [x] "Import from another launcher" opened from the creation chooser should pick
       ONE instance, not mass-import like the Settings/tour one
 
 ### Importing
-- [ ] Rebuild the import UI to look like the mod/modpack search — icons, rows,
+- [x] Rebuild the import UI to look like the mod/modpack search — icons, rows,
       the same styling
-- [ ] Modrinth App: "doesn't record the Minecraft version" DISABLES the row
+- [x] Modrinth App: "doesn't record the Minecraft version" DISABLES the row
       entirely. Find where the version really lives instead of giving up
-- [ ] Vanilla launcher versions are ids, not versions:
+- [x] Vanilla launcher versions are ids, not versions:
       `fabric-loader-0.16.14-1.20.1`, `1.12.2-forge-14.23.5.2860`,
       `1.19.2-forge-43.1.1`, `vivecraft-1.19.2-jrbudda-VR-2-b8`. Parse the real
       MC version + loader out of them, and carry the version jar across so the
       imported instance can actually launch
-- [ ] Vanilla snapshot installations are not listed at all
-- [ ] Unnamed installations show a 32-char hash as their name
-- [ ] Player profiles / accounts still can't be imported in practice — check the
+- [x] Vanilla snapshot installations are not listed at all
+- [x] Unnamed installations show a 32-char hash as their name
+- [x] Player profiles / accounts still can't be imported in practice — check the
       path end to end
-- [ ] Import skins too, after the account (Modrinth, vanilla and others keep them)
+- [x] Import skins too, after the account (Modrinth, vanilla and others keep them)
 
 ### Onboarding
-- [ ] First launch: a welcome panel ("Welcome to Redstone Launcher…") before the
+- [x] First launch: a welcome panel ("Welcome to Redstone Launcher…") before the
       tour, and before it when started from Settings too
-- [ ] After the welcome: offer account import; if no accounts were found in any
+- [x] After the welcome: offer account import; if no accounts were found in any
       launcher, show the sign-in from the Accounts page instead
-- [ ] Clicking the highlighted item must NOT auto-advance the tour
-- [ ] "Skip this" should read "Next"
-- [ ] The import modal's blur covers the corner where the top bar meets the
+- [x] Clicking the highlighted item must NOT auto-advance the tour
+- [x] "Skip this" should read "Next"
+- [x] The import modal's blur covers the corner where the top bar meets the
       sidebar — same for the tour-end modal
 
 ### Mod browser / project pages
-- [ ] Opening a project page from an instance doesn't load downloads, followers,
+- [x] Opening a project page from an instance doesn't load downloads, followers,
       creator or summary
-- [ ] Project title is too big (see screenshot)
+- [x] Project title is too big (see screenshot)
 
 ### Icons
-- [ ] The version panorama icon source just shows grey
+- [x] The version panorama icon source just shows grey
 
 ### Skin animations
-- [ ] `--flip` is the right way round — regenerate with it
-- [ ] After a devtools-played animation the hand idle never resumes
-- [ ] Returning to idle snaps. It should ease the hands to the point in the idle
+- [x] `--flip` is the right way round — regenerate with it
+- [x] After a devtools-played animation the hand idle never resumes
+- [x] Returning to idle snaps. It should ease the hands to the point in the idle
       where they are closest to the body, then carry on from there
-- [ ] Only start a random animation when the idle has the hands closest to the
+- [x] Only start a random animation when the idle has the hands closest to the
       body, ease into the clip's first pose, then play it
 
 ---

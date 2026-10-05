@@ -5973,12 +5973,36 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
     if (!jarPath) return null;
 
     const zip = new AdmZip(jarPath);
-    const base = "assets/minecraft/textures/gui/title/background/";
+    // Where the faces live has moved around between versions.
+    const BASES = [
+      "assets/minecraft/textures/gui/title/background/",
+      "assets/minecraft/textures/gui/title/background/panorama/",
+      "assets/minecraft/textures/gui/background/",
+    ];
+    let entries = null;
+    for (const base of BASES) {
+      const found = [];
+      for (let i = 0; i < 6; i++) {
+        const e = zip.getEntry(`${base}panorama_${i}.png`);
+        if (!e) break;
+        found.push(e);
+      }
+      if (found.length === 6) { entries = found; break; }   // a partial one is no use
+    }
+    if (!entries) return null;
+
+    // Downscale before sending. A panorama face is 1024x1024, and six of them
+    // as base64 is tens of megabytes over IPC for a picture that ends up in a
+    // 56px cell and a 220px-tall strip — which is what left the picker showing
+    // nothing but grey.
     const faces = [];
-    for (let i = 0; i < 6; i++) {
-      const e = zip.getEntry(`${base}panorama_${i}.png`);
-      if (!e) return null;                       // a partial panorama is no use
-      faces.push("data:image/png;base64," + e.getData().toString("base64"));
+    for (const e of entries) {
+      const raw = e.getData();
+      let out = raw;
+      try {
+        out = await sharp(raw).resize(512, 512, { fit: "fill" }).png({ compressionLevel: 9 }).toBuffer();
+      } catch { /* sharp unavailable for this image: send it as it is */ }
+      faces.push("data:image/png;base64," + out.toString("base64"));
     }
     // Face 0 is the one the title screen starts on, i.e. "facing forward".
     return { faces, forward: faces[0] };

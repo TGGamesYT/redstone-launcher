@@ -42,16 +42,23 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   }
   .project-header h1 {
     margin: 0;
-    font-size: 1.8em;
+    /* The launcher's base font is a pixel face, which reads a good deal larger
+       than a normal UI font at the same size — 1.8em was overwhelming the
+       header next to the icon. */
+    font-size: 1.35em;
+    line-height: 1.25;
   }
   .project-header p.summary {
-    margin: 4px 0;
-    font-size: 1em;
+    margin: 6px 0;
+    font-size: 0.85em;
     opacity: 0.8;
+    line-height: 1.5;
   }
   .project-meta {
     display: flex;
-    gap: 15px;
+    flex-wrap: wrap;
+    gap: 6px 15px;
+    font-size: 0.8em;
     opacity: 0.8;
   }
   .download-btn {
@@ -236,8 +243,43 @@ async function loadProjectDetails() {
 
   // Fetch long description
 try {
-    const res = await fetch(`https://api.modrinth.com/v2/project/${mod.project_id}`);
+    // Opening a project from an INSTANCE stores a stub — the mod row only knows
+    // an id and a title — so downloads, followers, the summary and the author
+    // all came out blank. The full project is fetched here anyway for its
+    // description, so use it to fill the header in too.
+    const projectId = mod.project_id || mod.id || mod.slug;
+    const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}`);
     const full = await res.json();
+    if (full && full.id) {
+      const icon = full.icon_url || mod.icon_url || '';
+      const img = header.querySelector('img');
+      if (img && icon) img.src = icon;
+      const h1 = header.querySelector('h1');
+      if (h1) h1.textContent = full.title || mod.title || '';
+      const sum = header.querySelector('p.summary');
+      if (sum) sum.textContent = full.description || mod.description || '';
+      // Modrinth's project endpoint has no author field; the team does.
+      let author = mod.author || null;
+      if (!author && full.team) {
+        try {
+          const tm = await fetch(`https://api.modrinth.com/v2/team/${full.team}/members`);
+          if (tm.ok) {
+            const members = await tm.json();
+            const owner = members.find(m => m.role === 'Owner') || members[0];
+            author = owner && owner.user ? (owner.user.username || owner.user.name) : null;
+          }
+        } catch { /* leave it unknown */ }
+      }
+      const meta = header.querySelector('.project-meta');
+      if (meta) {
+        meta.innerHTML = '';
+        const add = (t) => { const e = document.createElement('span'); e.textContent = t; meta.appendChild(e); };
+        add(`${formatNumber(full.downloads ?? mod.downloads ?? 0)} downloads`);
+        add(`${formatNumber(full.followers ?? mod.follows ?? 0)} followers`);
+        if (author) add(`by ${author}`);
+      }
+      document.title = `${full.title || mod.title} - Modrinth`;
+    }
     const bodyHtml = full.body || full.description || "<p>No description available.</p>";
 
     // render markdown using marked. The <script> that provides it loads at the
