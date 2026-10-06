@@ -10464,7 +10464,7 @@ ipcMain.handle("skins:setCracked", async (event, { playerId, base64, variant, na
 // second worker and a second 25 MB download.
 let _buildingDefaultSkins = null;
 
-function extractDefaultSkinsInWorker(jarUrl, version) {
+function extractDefaultSkinsInWorker(jarUrl, version, keepAt) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
@@ -10484,14 +10484,14 @@ function extractDefaultSkinsInWorker(jarUrl, version) {
     const timer = setTimeout(() => done(reject, new Error("timed out")), 5 * 60 * 1000);
     worker.on("message", (m) => {
       clearTimeout(timer);
-      if (m && m.ok) done(resolve, m.skins);
+      if (m && m.ok) done(resolve, m);
       else done(reject, new Error((m && m.error) || "the worker said nothing useful"));
     });
     worker.on("exit", (code) => {
       clearTimeout(timer);
       done(reject, new Error(`default-skins worker exited (${code})`));
     });
-    worker.postMessage({ type: "build", jarUrl, version });
+    worker.postMessage({ type: "build", jarUrl, version, keepAt });
   });
 }
 
@@ -10508,8 +10508,14 @@ async function buildDefaultSkins() {
 
       const ver = manifest.versions.find(v => v.id === latest);
       const vj = await (await fetch(ver.url)).json();
-      const skins = await extractDefaultSkinsInWorker(vj.downloads.client.url, latest);
+      // The jar is kept rather than discarded: the version icons are rendered
+      // from the block and item models in the same file, so this download
+      // serves both and the icon code has a local jar for the latest release
+      // from the first run onwards.
+      const r = await extractDefaultSkinsInWorker(vj.downloads.client.url, latest, cachedJarPath(latest));
+      const skins = (r && r.skins) || [];
       if (!skins.length) throw new Error("no player textures in the client jar");
+      if (r && r.jar) devtoolsLog(`client jar: kept ${latest} at ${r.jar}`);
 
       await fsp.mkdir(texturesDir, { recursive: true });
       await fsp.writeFile(cacheFile, JSON.stringify({ version: latest, skins }));

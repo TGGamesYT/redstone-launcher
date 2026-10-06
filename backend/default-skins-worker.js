@@ -17,17 +17,38 @@
 // worker_thread, because the app is packed into an asar and utilityProcess is
 // the path Electron supports for that.
 //
-// Receives { jarUrl, version }, posts { ok: true, version, skins } or
-// { ok: false, error }.
+// Receives { jarUrl, version, keepAt }, posts { ok: true, version, skins, jar }
+// or { ok: false, error }.
+//
+// `keepAt` is where to save the jar once it is here. The whole 40 MB is
+// downloaded either way, and the block and item models the version icons are
+// rendered from live in the same file — so throwing it away only meant
+// downloading it again. `jar` in the reply is the path it was saved to, or null
+// if saving failed (which is not a reason to fail the skins).
 import AdmZip from "adm-zip";
+import fs from "fs";
+import path from "path";
 
 const PLAYER_TEXTURES = "assets/minecraft/textures/entity/player/";
 const post = (m) => { try { process.parentPort.postMessage(m); } catch { /* parent gone */ } };
 
-async function run({ jarUrl, version }) {
+async function run({ jarUrl, version, keepAt }) {
   const res = await fetch(jarUrl);
   if (!res.ok) throw new Error(`client jar: HTTP ${res.status}`);
   const jar = Buffer.from(await res.arrayBuffer());
+
+  // Written to a temporary name and renamed, so a half-written jar can never be
+  // read as a complete one by whatever picks it up next.
+  let kept = null;
+  if (keepAt) {
+    try {
+      fs.mkdirSync(path.dirname(keepAt), { recursive: true });
+      const tmp = keepAt + ".part";
+      fs.writeFileSync(tmp, jar);
+      fs.renameSync(tmp, keepAt);
+      kept = keepAt;
+    } catch { /* the cache is a bonus; the skins are the job */ }
+  }
 
   const zip = new AdmZip(jar);
   const skins = [];
@@ -46,7 +67,7 @@ async function run({ jarUrl, version }) {
   // By name then model, which is the order the default picker indexes into —
   // so it has to be stable, or every account's default would move about.
   skins.sort((a, b) => a.name.localeCompare(b.name) || a.model.localeCompare(b.model));
-  return { ok: true, version, skins };
+  return { ok: true, version, skins, jar: kept };
 }
 
 process.parentPort.on("message", (e) => {
