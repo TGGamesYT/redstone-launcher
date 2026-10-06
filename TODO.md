@@ -32,14 +32,31 @@ started.
 - [x] **Hold right-click on an icon to preview it larger**, so you can tell what
       it is.
 
-### Version-based default icons (written up only — not to be built yet)
-Deliberately parked at the user's request: *"actually just write all these up
-about the version default icon things but dont implement them yet, they can
-wait."* Spelled out in full so nothing is lost; see §Round 20 Appendix below.
+### Version-based default icons
+Unparked — *"Do the icons and the block / item model rendering aswell. Maybe get
+the jar when getting it anyway for the default skins."* The full spec is in
+§Round 20 Appendix below; this is the work list.
+
+- [ ] **Keep the client jar that the default-skins build already downloads**,
+      instead of throwing it away, so the icon renderer has one to read.
+- [ ] **A ranged zip reader**, so a version whose jar is not on disk costs a few
+      hundred kilobytes of range requests rather than a 40 MB download.
+- [ ] **Resolve a version to an icon**: fetch `versions.json`, order the entries,
+      apply the carry-forward rule, the half-year staleness guard, the snapshot
+      rule and the too-old-release rule.
+- [ ] **Flatten a model out of the jar**: walk the `parent` chain, merge
+      `textures` and `elements`, resolve `#refs`, and read the texture PNGs —
+      from the 1.13 jar when the version is below 1.14.
+- [ ] **Render it**: an isometric cube for a block (top lit, right shaded),
+      the flat texture for an item.
+- [ ] **Bundle the three fallback icons** (release, snapshot, old launcher)
+      rather than hot-linking the wiki.
+- [ ] **A new instance with no icon gets its version's icon.**
+- [ ] **The icon picker offers it too.**
 
 ---
 
-## Round 20 Appendix — version-based default instance icons (parked)
+## Round 20 Appendix — version-based default instance icons
 
 A manually created instance currently gets the generic launcher icon. Instead
 its default should say which version it is.
