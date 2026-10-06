@@ -87,60 +87,192 @@
     } catch { return false; }   // a tainted canvas is not worth guessing about
   }
 
-  // The six faces stitched back into the strip they came from, so an icon can
-  // be cropped out of any part of the scene rather than only the forward view.
-  // Panorama faces are a cube: 0 front, 1 right, 2 back, 3 left (4/5 are up and
-  // down, which don't belong in a horizontal strip).
+  // ── The version panorama, as a panorama ───────────────────────────────────
+  // It used to be the six faces laid out flat in a horizontal strip you
+  // scrolled sideways, which is not what a panorama looks like: the cube is
+  // unfolded, the corners are wrong, and the up and down faces are missing
+  // entirely. This puts the camera inside the cube, exactly where the title
+  // screen puts it, and lets you drag to look around.
+  //
+  // three.js is loaded on demand — it is already vendored for the skin editor,
+  // and the icon picker has no other use for it.
+  let _threePromise = null;
+  function loadThree() {
+    if (!_threePromise) _threePromise = import('./three.module.js');
+    return _threePromise;
+  }
+
+  // Minecraft's panorama faces are 0 north, 1 east, 2 south, 3 west, 4 up,
+  // 5 down. three's BoxGeometry wants its materials as +X, -X, +Y, -Y, +Z, -Z,
+  // and the game faces north along -Z.
+  //
+  // East and west are the other way round here because the cube is turned
+  // inside out by scaling X by -1 (so the faces are not mirrored), and that
+  // swaps which side of the box the +X and -X materials land on. Checked by
+  // rendering six labelled faces and looking in each direction.
+  const FACE_ORDER = [3, 1, 4, 5, 2, 0];
+  // The same inside-out cube leaves the up and down faces turned through half a
+  // turn, so those two textures are rotated back.
+  const FACE_SPIN = { 2: Math.PI, 3: Math.PI };
+
   function openPanorama(p, onCrop) {
     const ov = document.createElement('div');
     ov.className = 'modal-overlay active';
     ov.style.zIndex = 6100;
     ov.innerHTML = `<div class="modal-content" style="max-width:900px; width:94%;">
       <div class="modal-header"><h2>Pick a spot</h2><button class="modal-close" id="ipPanX">✕</button></div>
-      <p style="margin:0 0 8px; font-size:12px; opacity:0.75;">Scroll sideways to look around, then click to crop an icon from there.</p>
-      <div id="ipPanScroll" style="overflow-x:auto; overflow-y:hidden; border:1px solid var(--border-dark); border-radius:var(--border-radius);">
-        <canvas id="ipPanCv" style="display:block; height:220px; cursor:crosshair;"></canvas>
+      <p style="margin:0 0 8px; font-size:12px; opacity:0.75;">Drag to look around · scroll to zoom · the square is what gets cropped.</p>
+      <div id="ipPanStage" style="position:relative; border:1px solid var(--border-dark);
+        border-radius:var(--border-radius); overflow:hidden; background:var(--menu-bg); cursor:grab;">
+        <canvas id="ipPanCv" style="display:block; width:100%; height:360px;"></canvas>
+        <div id="ipPanFrame" style="position:absolute; pointer-events:none; border:2px solid #fff;
+          box-shadow:0 0 0 9999px rgba(0,0,0,0.45); border-radius:6px;"></div>
       </div>
-      <div class="modal-actions"><button id="ipPanCancel">Cancel</button></div>
+      <div class="modal-actions">
+        <button id="ipPanCancel">Cancel</button>
+        <button id="ipPanUse" class="primary">Use this view</button>
+      </div>
     </div>`;
     document.body.appendChild(ov);
+
+    const stage = ov.querySelector('#ipPanStage');
     const cv = ov.querySelector('#ipPanCv');
-    const cx = cv.getContext('2d');
-    const order = [0, 1, 2, 3];
-    Promise.all(order.map(i => new Promise(res => {
-      const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = p.faces[i];
-    }))).then(imgs => {
-      const good = imgs.filter(Boolean);
-      if (!good.length) {
-        // Say so rather than leaving an empty grey box behind.
-        const box = ov.querySelector('#ipPanScroll');
-        if (box) box.innerHTML = '<div style="padding:28px 12px;opacity:0.75;font-size:13px;">'
-          + "Couldn't read this version's panorama.</div>";
-        return;
-      }
-      const fh = good[0].naturalHeight, fw = good[0].naturalWidth;
-      cv.width = fw * good.length; cv.height = fh;
-      cv.style.width = (cv.width * (220 / fh)) + 'px';
-      good.forEach((im, i) => cx.drawImage(im, i * fw, 0, fw, fh));
-      cv.onclick = (e) => {
-        // Cut a square the height of the strip, centred where they clicked.
-        const r = cv.getBoundingClientRect();
-        const x = (e.clientX - r.left) * (cv.width / r.width);
-        const side = cv.height;
-        const sx = Math.max(0, Math.min(cv.width - side, x - side / 2));
-        const out = document.createElement('canvas');
-        out.width = side; out.height = side;
-        out.getContext('2d').drawImage(cv, sx, 0, side, side, 0, 0, side, side);
-        let url = null;
-        try { url = out.toDataURL('image/png'); } catch { }
-        ov.remove();
-        if (url) onCrop(url);
-      };
-    });
-    const close = () => ov.remove();
+    const frame = ov.querySelector('#ipPanFrame');
+    let disposed = false, raf = null, renderer = null;
+    const close = () => {
+      disposed = true;
+      if (raf) cancelAnimationFrame(raf);
+      try { renderer && renderer.dispose(); } catch { }
+      try { renderer && renderer.forceContextLoss(); } catch { }
+      ov.remove();
+    };
     ov.querySelector('#ipPanX').onclick = close;
     ov.querySelector('#ipPanCancel').onclick = close;
     ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
+
+    const fail = (why) => {
+      const box = ov.querySelector('#ipPanStage');
+      if (box) box.innerHTML = '<div style="padding:28px 12px;opacity:0.75;font-size:13px;">'
+        + (why || "Couldn't read this version's panorama.") + '</div>';
+    };
+
+    // The crop square: the biggest square that fits, centred — so what you
+    // frame is what you get.
+    const sizeFrame = () => {
+      const r = stage.getBoundingClientRect();
+      const side = Math.min(r.width, r.height);
+      frame.style.width = frame.style.height = side + 'px';
+      frame.style.left = ((r.width - side) / 2) + 'px';
+      frame.style.top = ((r.height - side) / 2) + 'px';
+    };
+
+    loadThree().then(async (THREE) => {
+      if (disposed) return;
+      const faces = p.faces || [];
+      if (faces.length < 6) return fail("This version's panorama is incomplete.");
+
+      const loader = new THREE.TextureLoader();
+      const load = (src) => new Promise(res => loader.load(src, res, undefined, () => res(null)));
+      const textures = await Promise.all(FACE_ORDER.map(i => load(faces[i])));
+      if (disposed) return;
+      if (textures.some(t => !t)) return fail("Couldn't read this version's panorama.");
+
+      try {
+        renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, preserveDrawingBuffer: true });
+      } catch { return fail('This machine cannot render 3D.'); }
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(80, 1, 0.1, 100);
+      textures.forEach((t, slot) => {
+        t.colorSpace = THREE.SRGBColorSpace;
+        // No mipmaps. A face is 512px shown at roughly that size, so there is
+        // nothing to gain, and the mip path is what collapsed a face to its
+        // average colour when the view landed square on a cube corner.
+        t.generateMipmaps = false;
+        t.minFilter = THREE.LinearFilter;
+        t.magFilter = THREE.LinearFilter;
+        if (FACE_SPIN[slot]) { t.center.set(0.5, 0.5); t.rotation = FACE_SPIN[slot]; }
+      });
+      // A cube seen from the inside. Scaling X by -1 turns it inside out, which
+      // keeps the faces the right way round rather than mirrored.
+      const geo = new THREE.BoxGeometry(2, 2, 2);
+      geo.scale(-1, 1, 1);
+      scene.add(new THREE.Mesh(geo, textures.map(map => new THREE.MeshBasicMaterial({ map }))));
+
+      let yaw = 0, pitch = 0, fov = 80;
+      const resize = () => {
+        const r = stage.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        renderer.setSize(r.width, r.height, false);
+        camera.aspect = r.width / r.height;
+        camera.updateProjectionMatrix();
+        sizeFrame();
+      };
+
+      const draw = () => {
+        camera.fov = fov;
+        camera.updateProjectionMatrix();
+        camera.rotation.set(0, 0, 0);
+        camera.rotateY(yaw);
+        camera.rotateX(pitch);
+        renderer.render(scene, camera);
+      };
+      const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = null; draw(); }); };
+
+      // Drag to look. Pitch is clamped short of straight up and down, where
+      // there is nothing to see and the view rolls over.
+      let dragging = false, lx = 0, ly = 0;
+      stage.addEventListener('pointerdown', (e) => {
+        dragging = true; lx = e.clientX; ly = e.clientY;
+        stage.style.cursor = 'grabbing';
+        stage.setPointerCapture(e.pointerId);
+      });
+      stage.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const r = stage.getBoundingClientRect();
+        const perPx = (fov * Math.PI / 180) / Math.max(1, r.height);
+        yaw -= (e.clientX - lx) * perPx;
+        pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, pitch - (e.clientY - ly) * perPx));
+        lx = e.clientX; ly = e.clientY;
+        schedule();
+      });
+      const stop = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        stage.style.cursor = 'grab';
+        try { stage.releasePointerCapture(e.pointerId); } catch { }
+      };
+      stage.addEventListener('pointerup', stop);
+      stage.addEventListener('pointercancel', stop);
+      stage.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        fov = Math.max(30, Math.min(100, fov + Math.sign(e.deltaY) * 4));
+        schedule();
+      }, { passive: false });
+      window.addEventListener('resize', resize);
+
+      resize();
+      draw();
+
+      ov.querySelector('#ipPanUse').onclick = () => {
+        // Crop the square that was framed on screen, out of the frame that is
+        // on screen — render first so the buffer is guaranteed current.
+        draw();
+        const r = stage.getBoundingClientRect();
+        const dpr = renderer.getPixelRatio();
+        const side = Math.round(Math.min(r.width, r.height) * dpr);
+        const sx = Math.round((r.width * dpr - side) / 2);
+        const sy = Math.round((r.height * dpr - side) / 2);
+        const out = document.createElement('canvas');
+        out.width = out.height = side;
+        out.getContext('2d').drawImage(cv, sx, sy, side, side, 0, 0, side, side);
+        let url = null;
+        try { url = out.toDataURL('image/png'); } catch { }
+        close();
+        if (url) onCrop(url);
+      };
+    }).catch((e) => fail('Could not load the 3D view: ' + (e && e.message)));
   }
 
   // Crop + optional circle mask. Everything reaching this is already a data:
