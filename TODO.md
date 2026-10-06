@@ -54,6 +54,25 @@ the jar when getting it anyway for the default skins."* The full spec is in
 - [ ] **A new instance with no icon gets its version's icon.**
 - [ ] **The icon picker offers it too.**
 
+### A blocks-and-items section in the icon picker
+Asked for once the renderer existed anyway: *"expand it to its own section at the
+icons too (list all the models and add a search bar. And also support different
+block states etc) And support per instance modded / resourcepacked item/block
+models aswell."*
+
+- [ ] **An asset layer that stacks sources the way the game does**: enabled
+      resource packs first (in their own order), then mods, then the client jar,
+      so a pack or mod that replaces a model wins.
+- [ ] **Index every model** in those sources — `models/block/*.json` and
+      `models/item/*.json`, across namespaces, not just `minecraft`.
+- [ ] **A searchable grid** of them in the picker, rendered lazily: a jar holds
+      thousands of models and they cannot all be rendered up front.
+- [ ] **Block states**: read `blockstates/*.json` so a block with variants
+      (axis, half, facing, age…) can be picked in the state you want, with the
+      variant's own `x`/`y` rotation and `uvlock` applied.
+- [ ] **Arbitrary models, not just cubes** — the renderer has to draw whatever
+      `elements` the model declares, with per-face textures, UVs and rotations.
+
 ---
 
 ## Round 20 Appendix — version-based default instance icons
