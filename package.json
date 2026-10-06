@@ -34,7 +34,6 @@
     "qrcode": "^1.5.4",
     "sharp": "^0.34.5",
     "ssim.js": "^3.5.0",
-    "tar-fs": "^3.1.2",
     "tomate-loaders": "^2.0.2",
     "unzipper": "^0.12.3",
     "xml2js": "^0.6.2"
