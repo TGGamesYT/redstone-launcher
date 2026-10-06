@@ -348,8 +348,8 @@
       </div>
       <div class="fr-tabs">
         <button class="fr-tab active" data-tab="friends">Friends<span class="fr-count"></span></button>
-        <button class="fr-tab" data-tab="incoming">Incoming<span class="fr-dot"></span></button>
-        <button class="fr-tab" data-tab="outgoing">Outgoing</button>
+        <button class="fr-tab" data-tab="incoming">Incoming<span class="fr-count"></span><span class="fr-dot"></span></button>
+        <button class="fr-tab" data-tab="outgoing">Outgoing<span class="fr-count"></span></button>
       </div>
       <div class="fr-add">
         <!-- Whose head you are about to send a request to. Steve until you
@@ -563,8 +563,14 @@
       const el = frList();
       if (!el) return;
       document.querySelectorAll('.fr-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === FR.tab));
-      const count = document.querySelector('.fr-tab[data-tab="friends"] .fr-count');
-      if (count) count.textContent = FR.friends.length ? String(FR.friends.length) : '';
+      // A count on every tab, not just Friends: sending a request changed the
+      // Outgoing list with nothing on screen to show for it unless you happened
+      // to be looking at that tab.
+      const counts = { friends: FR.friends.length, incoming: FR.incoming.length, outgoing: FR.outgoing.length };
+      for (const [tab, n] of Object.entries(counts)) {
+        const el = document.querySelector(`.fr-tab[data-tab="${tab}"] .fr-count`);
+        if (el) el.textContent = n ? String(n) : '';
+      }
       const dot = document.querySelector('.fr-tab[data-tab="incoming"] .fr-dot');
       if (dot) dot.classList.toggle('on', FR.incoming.length > 0);
 
@@ -622,10 +628,14 @@
     // so adding somebody made the whole panel disappear and come back. The row
     // goes now, and the authoritative lists are fetched behind it without
     // anything being emptied in the meantime.
+    // Returns whether it worked, so a caller can leave what the user typed
+    // alone when it didn't. The refresh is awaited too: without that the
+    // Outgoing tab was still showing the old list by the time anyone looked.
     async function frAction(player, type, okMessage, opts) {
       const r = await ipcRenderer.invoke('friends:update', { accountId: selectedPlayerId, player, type });
       if (!r || !r.success) {
-        return uiAlert((r && r.error) || 'That did not work.', 'Friends');
+        await uiAlert((r && r.error) || 'That did not work.', 'Friends');
+        return false;
       }
       if (window.notify) window.notify(okMessage, 'success');
       const drop = opts && opts.drop;
@@ -636,7 +646,8 @@
         FR.outgoing = gone(FR.outgoing);
         paintFriends();
       }
-      loadFriends({ quiet: true });
+      await loadFriends({ quiet: true });
+      return true;
     }
 
     // Everything the previous account had, gone. Blanking only the visible tab
@@ -660,6 +671,10 @@
       const quiet = !!(opts && opts.quiet);
       const panel = document.getElementById('friendsPanel');
       if (!panel) return;
+      // The panel belongs to whichever account is selected, and so does the
+      // head beside the username box. Before the early returns below, so it is
+      // right even when there is no account to load friends for.
+      if (window.__frShowFace) window.__frShowFace();
       // Leaving an account: tell Mojang it is offline before switching, or it
       // sits there showing as online to its friends.
       if (FR.presenceFor && String(FR.presenceFor) !== String(selectedPlayerId)) {
@@ -729,29 +744,63 @@
       const addInput = document.getElementById('frAddInput');
       const addFace = document.getElementById('frAddFace');
 
-      // The head beside the field follows what is typed. Debounced, because
-      // every keystroke would otherwise be a name lookup for something one
-      // letter into a name nobody has; a name that does not exist gets the
-      // default head, which the main process returns on its own.
+      // The head beside the field follows what is typed, and with nothing typed
+      // it is the account whose friends list this is — the panel belongs to
+      // that account, so that is who the empty state should show rather than a
+      // stand-in Steve.
+      //
+      // Debounced, because every keystroke would otherwise be a name lookup for
+      // something one letter into a name nobody has; a name that does not exist
+      // gets the default head, which the main process returns on its own.
       let faceTimer = null;
       const showFace = () => {
         if (!addFace) return;
         const who = (addInput.value || '').trim();
         // Minecraft names are 3-16 of [A-Za-z0-9_]; anything else is still
         // being typed, so there is nothing to look up yet.
-        const named = /^\w{3,16}$/.test(who);
-        setFace(addFace, { name: named ? who : null, size: 34, offline: !named });
+        if (/^\w{3,16}$/.test(who)) {
+          setFace(addFace, { name: who, size: 34 });
+          return;
+        }
+        const me = (players || []).find(p => String(p.id) === String(selectedPlayerId));
+        setFace(addFace, me ? {
+          uuid: me.auth?.uuid || me.uuid,
+          name: me.auth?.name || me.username,
+          size: 34,
+          offline: me.type !== 'microsoft',
+          playerId: me.type !== 'microsoft' ? me.id : null,
+        } : { size: 34, offline: true });
       };
-      if (addFace) showFace();
+      // Exposed so switching account updates it too. Not called here: at parse
+      // time the account list has not arrived yet, so it would draw a default
+      // head and then replace it a moment later. loadFriends calls it once the
+      // account is actually known.
+      window.__frShowFace = showFace;
 
       const doAdd = async () => {
         const who = (addInput.value || '').trim();
         if (!who) return;
         addBtn.disabled = true;
-        await frAction(who, 'ADD', `Sent a friend request to ${who}`);
-        addInput.value = '';
-        showFace();
-        addBtn.disabled = false;
+        const prev = addBtn.textContent;
+        addBtn.textContent = '…';
+        try {
+          const ok = await frAction(who, 'ADD', `Sent a friend request to ${who}`);
+          // Only on success. Clearing it either way was why a request that
+          // Mojang refused looked like it had gone through: the box emptied
+          // and nothing else changed.
+          if (ok) {
+            addInput.value = '';
+            showFace();
+            // A sent request lands in Outgoing, which is not the tab you are
+            // looking at — so go there. Otherwise the only sign anything
+            // happened was a toast.
+            FR.tab = 'outgoing';
+            paintFriends();
+          }
+        } finally {
+          addBtn.textContent = prev;
+          addBtn.disabled = false;
+        }
       };
       if (addBtn) addBtn.onclick = doAdd;
       if (addInput) {

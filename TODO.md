@@ -9,6 +9,24 @@ started.
 
 ---
 
+## 0. Round 17
+
+- [x] **The whole launcher freezes the first time skins load.** Building the
+      default-skin set unzips a ~25 MB client jar with AdmZip, which is
+      synchronous — on the main process that stops every window. Move it to a
+      worker thread, and stop re-reading/re-parsing the cache file on every
+      single head.
+- [x] **The hat layer comes out the wrong size.** sharp applies `composite`
+      AFTER `resize` whatever order you call them in, so the 8×8 overlay was
+      pasted at native size into the corner of the resized face.
+- [x] **Adding a friend empties the box and nothing appears in Outgoing.**
+      The input is cleared whether or not it worked, and there is no visible
+      sign of the request landing.
+- [x] The head beside the username box should be the selected account's until
+      you type something.
+
+---
+
 ## 0. Round 16
 
 - [x] **Import from Lunar Client.** Its accounts live in

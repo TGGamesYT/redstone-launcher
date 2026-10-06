@@ -9071,16 +9071,30 @@ function legacyDefaultModel(uuid) {
 // there, heads fall back to the legacy pair.
 // The list is built once, at startup (see app.whenReady), and cached per
 // Minecraft release, so by the time anything draws a head it is simply there.
-// Reading the cache is all this does.
-function cachedDefaultSkins() {
+//
+// Held in memory as well as on disk. It is about 200 KB of JSON and EVERY head
+// without a skin needs it, so re-reading and re-parsing the file per head —
+// which is what this used to do — was a synchronous chunk of work per face on
+// a page that draws a dozen of them.
+let _defaultSkinsCache = null;        // { version, skins, mtime }
+
+function readDefaultSkinsCache() {
+  const f = path.join(texturesDir, "defaultskins.json");
+  let mtime = 0;
+  try { mtime = fs.statSync(f).mtimeMs; } catch { return _defaultSkinsCache = null; }
+  if (_defaultSkinsCache && _defaultSkinsCache.mtime === mtime) return _defaultSkinsCache;
   try {
-    const f = path.join(texturesDir, "defaultskins.json");
-    if (fs.existsSync(f)) {
-      const j = JSON.parse(fs.readFileSync(f, "utf8"));
-      if (Array.isArray(j.skins) && j.skins.length) return j.skins;
+    const j = JSON.parse(fs.readFileSync(f, "utf8"));
+    if (Array.isArray(j.skins) && j.skins.length) {
+      return _defaultSkinsCache = { version: j.version || null, skins: j.skins, mtime };
     }
   } catch { /* the legacy pair covers the first run */ }
-  return null;
+  return _defaultSkinsCache = null;
+}
+
+function cachedDefaultSkins() {
+  const c = readDefaultSkinsCache();
+  return c ? c.skins : null;
 }
 
 // An offline account's Minecraft identity. A server in offline mode computes it
@@ -9136,33 +9150,75 @@ ipcMain.handle("mc:defaultSkinFor", async (event, opts = {}) => {
 // content, so it can never go stale.
 async function skinByTextureHash(hash) {
   const file = path.join(HEADS_DIR, `tex-${hash}.png`);
-  try { if (fs.existsSync(file)) return fs.readFileSync(file); } catch { /* re-fetch */ }
+  try { return await fsp.readFile(file); } catch { /* not cached — fetch it */ }
   const res = await fetch(TEXTURES_BASE + hash);
   if (!res.ok) throw new Error(`textures.minecraft.net says ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length < 24 || buf[0] !== 0x89 || buf[1] !== 0x50) throw new Error("not a PNG");
-  try { fs.mkdirSync(HEADS_DIR, { recursive: true }); fs.writeFileSync(file, buf); } catch { /* cache is optional */ }
+  try {
+    await fsp.mkdir(HEADS_DIR, { recursive: true });
+    await fsp.writeFile(file, buf);
+  } catch { /* the cache is optional */ }
   return buf;
 }
 
 // Face + hat, composited and scaled with nearest-neighbour so it stays the
 // crisp block of pixels it is meant to be.
+//
+// The compositing and the resizing are two SEPARATE pipelines, and that is not
+// a stylistic choice: sharp runs composite after resize whichever order you
+// call them in. Chained, the 8x8 hat layer was therefore pasted at its native
+// size into the top-left corner of the already-enlarged face — covering 11% of
+// a 24px head and 1.6% of a 64px one, which is exactly the mismatched square
+// that showed up on every head with a hat.
+//
+// An HD skin (128x128, 256x256 and so on) is the same layout at a multiple of
+// the scale, so the rectangles are scaled to the sheet rather than the sheet
+// being rejected for not being 64 wide.
 async function headFromSkin(skinPng, size) {
   const src = sharp(skinPng).ensureAlpha();
   const meta = await src.metadata();
-  if (meta.width !== 64) throw new Error(`not a skin sheet (${meta.width}x${meta.height})`);
-  const face = await src.clone().extract(FACE_RECT).png().toBuffer();
-  let out = sharp(face);
+  const scale = (meta.width || 0) / 64;
+  if (!scale || scale !== Math.floor(scale)) {
+    throw new Error(`not a skin sheet (${meta.width}x${meta.height})`);
+  }
+  const at = (r) => ({
+    left: r.left * scale, top: r.top * scale,
+    width: r.width * scale, height: r.height * scale,
+  });
+
+  const face = await src.clone().extract(at(FACE_RECT)).png().toBuffer();
+  let merged = face;
   // The hat layer is optional in practice — plenty of skins leave it empty —
   // and on a 64x32 sheet it is still inside the image, so this is safe either
   // way. A failure to read it just means a bare face.
   try {
-    const hat = await sharp(skinPng).ensureAlpha().extract(HAT_RECT).png().toBuffer();
-    out = out.composite([{ input: hat, blend: "over" }]);
+    if (await hasUsableOverlay(skinPng, meta, scale)) {
+      const hat = await sharp(skinPng).ensureAlpha().extract(at(HAT_RECT)).png().toBuffer();
+      merged = await sharp(face).composite([{ input: hat, blend: "over" }]).png().toBuffer();
+    }
   } catch { /* no hat layer */ }
-  return await out
+
+  return await sharp(merged)
     .resize(size, size, { kernel: sharp.kernel.nearest })
     .png().toBuffer();
+}
+
+// Old 64x32 skins left the whole second layer opaque, which is why Minecraft
+// itself throws it away: ImageBufferDownload does setAreaTransparent(32,0,64,32)
+// — "if that region has no transparency anywhere, clear it". Without the same
+// rule, Notch's head (and every other skin of that vintage) renders as a solid
+// block of whatever colour sits over the face.
+//
+// It applies to legacy sheets only. A modern 64x64 skin with a fully opaque
+// overlay meant it.
+async function hasUsableOverlay(skinPng, meta, scale) {
+  if ((meta.height || 0) / scale !== 32) return true;      // not a legacy sheet
+  const px = await sharp(skinPng).ensureAlpha()
+    .extract({ left: 32 * scale, top: 0, width: 32 * scale, height: 32 * scale })
+    .raw().toBuffer();
+  for (let i = 3; i < px.length; i += 4) if (px[i] < 255) return true;
+  return false;
 }
 
 // uuid -> the texture hash of the skin Mojang is serving for it.
@@ -9221,21 +9277,25 @@ async function headUuidForName(name) {
 // A head out of a skin PNG already in hand. `id` keys the cache and must be a
 // property of the CONTENT, so that changing an account's skin produces a
 // different key and the old head cannot be served for the new skin.
+// Every read and write here is async. A page can want twenty of these at once,
+// and twenty synchronous round trips to the disk is twenty pauses of the whole
+// main process — small each, plainly visible together.
 async function renderHeadPng(png, size, id) {
   const key = `${id}|${size}`;
   const cached = _headRendered.get(key);
   if (cached) return cached;
   const file = path.join(HEADS_DIR, `${id}-${size}.png`);
   try {
-    if (fs.existsSync(file)) {
-      const url = "data:image/png;base64," + fs.readFileSync(file).toString("base64");
-      _headRendered.set(key, url);
-      return url;
-    }
-  } catch { /* render it again */ }
+    const url = "data:image/png;base64," + (await fsp.readFile(file)).toString("base64");
+    _headRendered.set(key, url);
+    return url;
+  } catch { /* not cached yet — render it */ }
   const out = await headFromSkin(png, size);
   const url = "data:image/png;base64," + out.toString("base64");
-  try { fs.mkdirSync(HEADS_DIR, { recursive: true }); fs.writeFileSync(file, out); } catch { /* optional */ }
+  try {
+    await fsp.mkdir(HEADS_DIR, { recursive: true });
+    await fsp.writeFile(file, out);
+  } catch { /* the cache is optional */ }
   if (_headRendered.size >= HEAD_RENDER_MAX) _headRendered.delete(_headRendered.keys().next().value);
   _headRendered.set(key, url);
   return url;
@@ -10205,50 +10265,77 @@ ipcMain.handle("skins:setCracked", async (event, { playerId, base64, variant, na
 // Extract the vanilla default player skins straight from the latest client jar
 // (the resources.download.minecraft.net URLs derived from file hashes don't
 // serve jar contents). Returns [{ name, model, base64 }]; cached per version.
+// The download and the unzip happen in a worker thread. AdmZip is synchronous,
+// and a client jar is ~25 MB with around twenty thousand entries, so doing it
+// here stopped every window for as long as it took — which is what the launcher
+// did on its first run, right when it also wanted to draw its first heads.
+//
+// Only one build ever runs: a second caller gets the same promise rather than a
+// second worker and a second 25 MB download.
+let _buildingDefaultSkins = null;
+
+function extractDefaultSkinsInWorker(jarUrl, version) {
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = utilityProcess.fork(
+        path.join(app.getAppPath(), "backend", "default-skins-worker.js"),
+        [], { serviceName: "mc-default-skins" });
+    } catch (err) { reject(err); return; }
+
+    let settled = false;
+    const done = (fn, v) => {
+      if (settled) return;
+      settled = true;
+      try { worker.kill(); } catch { /* already gone */ }
+      fn(v);
+    };
+    // A 40 MB download on a bad connection should not hold a promise forever.
+    const timer = setTimeout(() => done(reject, new Error("timed out")), 5 * 60 * 1000);
+    worker.on("message", (m) => {
+      clearTimeout(timer);
+      if (m && m.ok) done(resolve, m.skins);
+      else done(reject, new Error((m && m.error) || "the worker said nothing useful"));
+    });
+    worker.on("exit", (code) => {
+      clearTimeout(timer);
+      done(reject, new Error(`default-skins worker exited (${code})`));
+    });
+    worker.postMessage({ type: "build", jarUrl, version });
+  });
+}
+
 async function buildDefaultSkins() {
+  if (_buildingDefaultSkins) return _buildingDefaultSkins;
   const cacheFile = path.join(texturesDir, "defaultskins.json");
-  let latest = null;
-  try {
-    const manifest = await (await fetch("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")).json();
-    latest = manifest?.latest?.release || null;
+  _buildingDefaultSkins = (async () => {
+    try {
+      const manifest = await (await fetch("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")).json();
+      const latest = manifest?.latest?.release || null;
 
-    if (fs.existsSync(cacheFile)) {
-      try {
-        const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
-        if (cached.version === latest && Array.isArray(cached.skins) && cached.skins.length) return cached.skins;
-      } catch { /* rebuild */ }
+      const cached = readDefaultSkinsCache();
+      if (cached && cached.version === latest && cached.skins.length) return cached.skins;
+
+      const ver = manifest.versions.find(v => v.id === latest);
+      const vj = await (await fetch(ver.url)).json();
+      const skins = await extractDefaultSkinsInWorker(vj.downloads.client.url, latest);
+      if (!skins.length) throw new Error("no player textures in the client jar");
+
+      await fsp.mkdir(texturesDir, { recursive: true });
+      await fsp.writeFile(cacheFile, JSON.stringify({ version: latest, skins }));
+      _defaultSkinsCache = { version: latest, skins, mtime: Date.now() };
+      devtoolsLog(`default skins: built ${skins.length} from ${latest}`);
+      return skins;
+    } catch (err) {
+      devtoolsLog("Failed to get default skins:", err && err.message);
+      // A stale cache is still the right answer for every account.
+      const cached = readDefaultSkinsCache();
+      return (cached && cached.skins) || [];
+    } finally {
+      _buildingDefaultSkins = null;
     }
-
-    const ver = manifest.versions.find(v => v.id === latest);
-    const vj = await (await fetch(ver.url)).json();
-    const jarUrl = vj.downloads.client.url;
-    const jarBuf = Buffer.from(await (await fetch(jarUrl)).arrayBuffer());
-    const zip = new AdmZip(jarBuf);
-
-    const skins = [];
-    for (const e of zip.getEntries()) {
-      const p = e.entryName;
-      if (!p.startsWith("assets/minecraft/textures/entity/player/") || !p.endsWith(".png")) continue;
-      const parts = p.split("/");
-      const model = parts[parts.length - 2];        // wide | slim
-      const name = parts[parts.length - 1].replace(/\.png$/, "");
-      if (model !== "wide" && model !== "slim") continue;
-      skins.push({ name, model, base64: e.getData().toString("base64") });
-    }
-    // Sort by name then model for a stable gallery order.
-    skins.sort((a, b) => a.name.localeCompare(b.name) || a.model.localeCompare(b.model));
-
-    fs.mkdirSync(texturesDir, { recursive: true });
-    fs.writeFileSync(cacheFile, JSON.stringify({ version: latest, skins }));
-    return skins;
-  } catch (err) {
-    devtoolsLog("Failed to get default skins:", err);
-    // Serve a stale cache if we have one.
-    if (fs.existsSync(cacheFile)) {
-      try { return JSON.parse(fs.readFileSync(cacheFile, "utf8")).skins || []; } catch { /* ignore */ }
-    }
-    return [];
-  }
+  })();
+  return _buildingDefaultSkins;
 }
 
 ipcMain.handle("mc:getDefaultSkins", async () => buildDefaultSkins());
