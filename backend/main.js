@@ -1082,6 +1082,9 @@ if (!gotTheLock) {
     // release, so this is a no-op on every run but the first.
     buildDefaultSkins().catch(err => devtoolsLog("default skins:", err && err.message));
 
+    // Throw away the per-size head files an older build left behind.
+    pruneSizedHeads().catch(err => devtoolsLog("head cache:", err && err.message));
+
     // Quietly stage the next update in the background (no install this run).
     stageUpdateInBackground();
   });
@@ -9002,7 +9005,9 @@ ipcMain.handle("skins:similarityOrder", async (event, { uuid }) => {
 // faces, with nothing to tell you it had happened.
 //
 // A head is two 8x8 squares out of the skin sheet: the face at (8,8) and the
-// hat layer at (40,8) on top of it. Mojang serves the skin itself from
+// hat layer at (40,8) on top of it. That composite, at 8x8, IS the head — it
+// is cached once per skin and drawn at whatever size by the page, unsmoothed.
+// Mojang serves the skin itself from
 // textures.minecraft.net, which is a CDN for immutable content rather than a
 // per-request rendering service, so this does the compositing here and keeps
 // the result. When a lookup genuinely fails the answer is the DEFAULT head,
@@ -9025,7 +9030,7 @@ const HEAD_FAIL_TTL = 10 * 60 * 1000;          // don't hammer a lookup that jus
 const _headProfile = new Map();   // uuid  -> { hash, slim, at }
 const _headUuid = new Map();      // name  -> { uuid, at }  (null uuid = no such player)
 const _headFail = new Map();      // key   -> when to try again
-const _headRendered = new Map();  // hash|size -> data URL
+const _headRendered = new Map();  // content key -> data URL of the head texture
 const HEAD_RENDER_MAX = 600;
 
 const _headFresh = (e, ttl) => !!e && (Date.now() - e.at) < ttl;
@@ -9162,20 +9167,25 @@ async function skinByTextureHash(hash) {
   return buf;
 }
 
-// Face + hat, composited and scaled with nearest-neighbour so it stays the
-// crisp block of pixels it is meant to be.
+// Face + hat, composited — and left at the size the skin sheet draws them.
 //
-// The compositing and the resizing are two SEPARATE pipelines, and that is not
-// a stylistic choice: sharp runs composite after resize whichever order you
-// call them in. Chained, the 8x8 hat layer was therefore pasted at its native
-// size into the top-left corner of the already-enlarged face — covering 11% of
-// a 24px head and 1.6% of a 64px one, which is exactly the mismatched square
-// that showed up on every head with a hat.
+// That is the whole point: a head is an 8x8 texture (16x16 on a 128px HD
+// sheet, and so on). This used to enlarge it to whatever pixel size the caller
+// happened to want and cache THAT, so the same player ended up with a 38x38, a
+// 34x34, a 32x32 and a 24x24 file on disk — four copies of eight-by-eight
+// pixels, blown up four different ways, none of them the texture. Now there is
+// one file per skin, at the resolution the texture actually has, and the page
+// scales it with image-rendering: pixelated. Growing an image in CSS costs
+// nothing, and the result is identical to a nearest-neighbour resize here.
 //
-// An HD skin (128x128, 256x256 and so on) is the same layout at a multiple of
-// the scale, so the rectangles are scaled to the sheet rather than the sheet
-// being rejected for not being 64 wide.
-async function headFromSkin(skinPng, size) {
+// The compositing stays its own pipeline. sharp runs composite after resize
+// whichever order you call them in, so when this did resize, chaining the two
+// pasted the 8x8 hat at its native size into the top-left corner of the
+// already-enlarged face — 11% of a 24px head, 1.6% of a 64px one, exactly the
+// mismatched square that showed up on every head with a hat. Nothing resizes
+// here any more, but the hat is still composited on its own so that stays true
+// if anything ever does.
+async function headFromSkin(skinPng) {
   const src = sharp(skinPng).ensureAlpha();
   const meta = await src.metadata();
   const scale = (meta.width || 0) / 64;
@@ -9199,9 +9209,7 @@ async function headFromSkin(skinPng, size) {
     }
   } catch { /* no hat layer */ }
 
-  return await sharp(merged)
-    .resize(size, size, { kernel: sharp.kernel.nearest })
-    .png().toBuffer();
+  return merged;
 }
 
 // Old 64x32 skins left the whole second layer opaque, which is why Minecraft
@@ -9276,46 +9284,67 @@ async function headUuidForName(name) {
 
 // A head out of a skin PNG already in hand. `id` keys the cache and must be a
 // property of the CONTENT, so that changing an account's skin produces a
-// different key and the old head cannot be served for the new skin.
+// different key and the old head cannot be served for the new skin. The size
+// is deliberately NOT part of the key — one head texture per skin, drawn at
+// whatever size by whoever asks.
 // Every read and write here is async. A page can want twenty of these at once,
 // and twenty synchronous round trips to the disk is twenty pauses of the whole
 // main process — small each, plainly visible together.
-async function renderHeadPng(png, size, id) {
-  const key = `${id}|${size}`;
-  const cached = _headRendered.get(key);
+async function renderHeadPng(png, id) {
+  const cached = _headRendered.get(id);
   if (cached) return cached;
-  const file = path.join(HEADS_DIR, `${id}-${size}.png`);
+  const file = path.join(HEADS_DIR, `${id}.png`);
   try {
     const url = "data:image/png;base64," + (await fsp.readFile(file)).toString("base64");
-    _headRendered.set(key, url);
+    _headRendered.set(id, url);
     return url;
   } catch { /* not cached yet — render it */ }
-  const out = await headFromSkin(png, size);
+  const out = await headFromSkin(png);
   const url = "data:image/png;base64," + out.toString("base64");
   try {
     await fsp.mkdir(HEADS_DIR, { recursive: true });
     await fsp.writeFile(file, out);
   } catch { /* the cache is optional */ }
   if (_headRendered.size >= HEAD_RENDER_MAX) _headRendered.delete(_headRendered.keys().next().value);
-  _headRendered.set(key, url);
+  _headRendered.set(id, url);
   return url;
 }
 
 // A texture hash IS a content key, so it needs no hashing of its own.
-const renderHead = async (hash, size) => renderHeadPng(await skinByTextureHash(hash), size, hash);
+const renderHead = async (hash) => renderHeadPng(await skinByTextureHash(hash), hash);
+
+// Heads used to be cached per pixel size, so an upgraded launcher starts with a
+// directory full of "<id>-38.png", "<id>-34.png", "<id>-32.png", "<id>-24.png"
+// files that nothing will ever read again. Delete them once, on startup.
+//
+// The pattern is specific on purpose: a head file is now "<id>.png" and a
+// cached skin sheet is "tex-<hash>.png", and neither ends in a dash followed by
+// digits, so nothing still in use can match. Anything that does not match is
+// left strictly alone.
+async function pruneSizedHeads() {
+  let names;
+  try { names = await fsp.readdir(HEADS_DIR); } catch { return; }   // nothing cached yet
+  const sized = names.filter(n => /-\d+\.png$/.test(n));
+  if (!sized.length) return;
+  let gone = 0;
+  for (const n of sized) {
+    try { await fsp.unlink(path.join(HEADS_DIR, n)); gone++; } catch { /* already gone */ }
+  }
+  devtoolsLog(`head cache: dropped ${gone} per-size head file(s)`);
+}
 const contentKey = (buf) => "b" + crypto.createHash("sha1").update(buf).digest("hex").slice(0, 16);
 
 // The default head for an account, by Minecraft's own rule over the nine
 // defaults the skins page shows. Falls back to the legacy pair while the
 // modern list is still being fetched.
-async function defaultHead(who, px) {
+async function defaultHead(who) {
   const pick = defaultSkinFor(who);
   if (pick) {
     const png = Buffer.from(pick.base64, "base64");
-    return { url: await renderHeadPng(png, px, contentKey(png)), from: "default" };
+    return { url: await renderHeadPng(png, contentKey(png)), from: "default" };
   }
   const model = legacyDefaultModel(skinIdentity(who));
-  return { url: await renderHead(DEFAULT_SKIN_TEXTURE[model], px), from: "default" };
+  return { url: await renderHead(DEFAULT_SKIN_TEXTURE[model]), from: "default" };
 }
 
 // The head for a player. `offline` skips Mojang entirely — an offline account
@@ -9324,8 +9353,10 @@ async function defaultHead(who, px) {
 // launcher, applied in game through a resource pack, and that is its face.
 // Answers { url, from } where `from` is "skin", "offline-skin" or "default",
 // so the caller can tell a real head from a stand-in.
-async function playerHead({ name, uuid, size, offline, playerId }) {
-  const px = Math.max(8, Math.min(512, Number(size) || 32));
+//
+// There is no size: the answer is the head TEXTURE, at its own resolution. A
+// `size` is still accepted and ignored so older callers keep working.
+async function playerHead({ name, uuid, offline, playerId }) {
   let id = String(uuid || "").replace(/-/g, "") || null;
 
   // The skin this launcher holds for an offline account wins over everything:
@@ -9335,7 +9366,7 @@ async function playerHead({ name, uuid, size, offline, playerId }) {
       const entry = loadCrackedSkins()[String(playerId)];
       if (entry && entry.base64) {
         const png = Buffer.from(String(entry.base64).replace(/^data:image\/\w+;base64,/, ""), "base64");
-        return { url: await renderHeadPng(png, px, contentKey(png)), from: "offline-skin" };
+        return { url: await renderHeadPng(png, contentKey(png)), from: "offline-skin" };
       }
     } catch (err) {
       devtoolsLog("head: could not read the offline skin:", err && err.message);
@@ -9348,7 +9379,7 @@ async function playerHead({ name, uuid, size, offline, playerId }) {
       if (id) {
         const prof = await headTextureForUuid(id);
         if (prof && prof.hash) {
-          return { url: await renderHead(prof.hash, px), from: "skin" };
+          return { url: await renderHead(prof.hash), from: "skin" };
         }
       }
     }
@@ -9357,7 +9388,7 @@ async function playerHead({ name, uuid, size, offline, playerId }) {
   }
 
   try {
-    return await defaultHead({ uuid: id, name, offline }, px);
+    return await defaultHead({ uuid: id, name, offline });
   } catch (err) {
     devtoolsLog("head: even the default failed:", err && err.message);
     return { url: null, from: "none" };
@@ -9412,10 +9443,10 @@ ipcMain.handle("head:skin", async (event, { name, uuid, offline, playerId } = {}
 ipcMain.handle("head:get", async (event, opts) => playerHead(opts || {}));
 // Several at once, so a list of twenty accounts is one round trip rather than
 // twenty. Each entry answers independently; one failure does not sink the rest.
-ipcMain.handle("head:many", async (event, { players, size }) => {
+ipcMain.handle("head:many", async (event, { players } = {}) => {
   const list = Array.isArray(players) ? players.slice(0, 200) : [];
   return Promise.all(list.map(async (p) => {
-    try { return await playerHead({ ...p, size: p.size || size }); }
+    try { return await playerHead(p || {}); }
     catch { return { url: null, from: "none" }; }
   }));
 });

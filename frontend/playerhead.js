@@ -13,6 +13,12 @@
  *   PlayerHead.set(img, { name, uuid, size, offline, playerId })
  *   await PlayerHead.url({ ... })  -> { url, from } or { url: null }
  *
+ * What comes back is the head TEXTURE — 8x8 for an ordinary skin sheet, more
+ * for an HD one — not a render at some pixel size. It is drawn with
+ * image-rendering: pixelated, so any size looks like the block of pixels it is,
+ * and one cache entry serves every size. `size` is only a default for an
+ * element the stylesheet does not size itself.
+ *
  * `offline: true` skips Mojang entirely: an offline account's name belongs to
  * nobody, and showing the real owner's face for it would be a lie. It does NOT
  * mean no skin — pass `playerId` (this launcher's own account id) and an
@@ -30,13 +36,17 @@
 
   // A head is wanted many times over for the same player (an account row, the
   // sidebar, a friend). One request each.
+  // The size is NOT part of the key. What comes back is the head texture at
+  // its own resolution — 8x8 for an ordinary skin — and CSS draws it at
+  // whatever size the element is. A head asked for at 24px and the same head
+  // asked for at 38px are therefore one request and one cache entry, where
+  // they used to be two of each (and two files on disk).
   let inFlight = new Map();
   const key = (o) => [
     o.offline ? 'off' : 'on',
     o.playerId == null ? '' : String(o.playerId),
     String(o.uuid || '').replace(/-/g, '').toLowerCase(),
     String(o.name || '').toLowerCase(),
-    o.size || 32,
   ].join('|');
 
   async function url(opts) {
@@ -46,7 +56,7 @@
     if (inFlight.has(k)) return inFlight.get(k);
     const p = ipcRenderer
       .invoke('head:get', {
-        name: o.name, uuid: o.uuid, size: o.size || 32,
+        name: o.name, uuid: o.uuid,
         offline: !!o.offline, playerId: o.playerId,
       })
       .then(r => (r && r.url) ? r : { url: null, from: 'none' })
@@ -71,6 +81,14 @@
     live.add(img);
     const token = (img.__headToken = (img.__headToken || 0) + 1);
     img.style.imageRendering = 'pixelated';
+    // What arrives is the 8x8 head texture, so an <img> with nothing else
+    // sizing it would now draw at eight pixels across. `size` becomes the
+    // width/height ATTRIBUTES rather than inline styles on purpose: a
+    // presentational attribute loses to any CSS rule, so a head the stylesheet
+    // already sizes keeps that size, and one that relied on the old render
+    // being 32px wide still gets 32px.
+    const px = Number(o.size);
+    if (px > 0 && !img.hasAttribute('width')) { img.width = px; img.height = px; }
     url(o).then(r => {
       if (img.__headToken !== token || !img.isConnected) return;
       if (r && r.url) {
