@@ -1041,7 +1041,10 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         manageBtn.onclick = () => openDevModsModal('server', selectedServer.name, () => loadServerMods());
       }
       const ul = $('srvModsList');
-      ul.innerHTML = '<li style="opacity:0.6;padding:10px;">Loading…</li>';
+      // Only on a FIRST load. On a refresh the rows already on screen stay
+      // until the new ones replace them, instead of the list emptying to
+      // "Loading…" and filling back in every time you come back to it.
+      if (!ul.children.length) ul.innerHTML = '<li style="opacity:0.6;padding:10px;">Loading…</li>';
       const res = await ipcRenderer.invoke('server-fs:list', { name: selectedServer.name, path: 'mods' });
       ul.innerHTML = '';
       const jars = (res.entries || []).filter(e => !e.isDir && /\.jar(\.disabled)?$/i.test(e.name));
@@ -1137,7 +1140,10 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     async function loadServerPacks() {
       if (!selectedServer) return;
       const ul = $('srvPackList');
-      ul.innerHTML = '<li style="opacity:0.6;padding:10px;">Loading…</li>';
+      // Only on a FIRST load. On a refresh the rows already on screen stay
+      // until the new ones replace them, instead of the list emptying to
+      // "Loading…" and filling back in every time you come back to it.
+      if (!ul.children.length) ul.innerHTML = '<li style="opacity:0.6;padding:10px;">Loading…</li>';
       const res = await ipcRenderer.invoke('server-rp:list', { name: selectedServer.name });
       const packs = (res && res.packs) || [];
       $('srvPackRequired').checked = !!(res && res.required);
@@ -1216,7 +1222,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       if (!url) { $('srvLoaderVerSection').style.display = 'none'; return; }
       $('srvLoaderVerSection').style.display = '';
       const sel = $('srvLoaderVersion');
-      sel.innerHTML = '<option value="">Loading…</option>';
+      if (!sel.options.length) sel.innerHTML = '<option value="">Loading…</option>';
       try {
         const list = await (await fetch(url)).json();
         const versions = (Array.isArray(list) ? list : []).map(v => v.version).filter(Boolean);

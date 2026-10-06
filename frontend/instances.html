@@ -1048,6 +1048,9 @@
     // back/forward buttons can switch TABS in place without re-rendering the view.
     let currentDetailId = null;
     let currentTabButtons = null;
+    // Which tab's contents are on screen, so re-opening the same one can be
+    // treated as a refresh rather than a switch.
+    let currentTabName = null;
     let suppressTabPush = false;
     // Keep the browser back/forward buttons working with the in-page switches.
     window.addEventListener('popstate', () => {
@@ -2827,15 +2830,27 @@
             Object.values(tabButtons).forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
 
-            // Restart the fade-in animation so the new tab's contents cross-fade.
-            tabContent.classList.remove("tab-fade-in");
-            void tabContent.offsetWidth; // force reflow to re-trigger the animation
-            tabContent.classList.add("tab-fade-in");
+            // Re-opening the tab you are already on is a REFRESH, not a switch:
+            // every renderer below clears and rebuilds in one synchronous go at
+            // the end of its own async work, so leaving what is on screen alone
+            // until then means the new contents simply replace the old ones.
+            // Fading out and dropping to "Loading..." first is what made coming
+            // back to the window look like a reload of something you were
+            // already looking at.
+            const refreshing = (currentTabName === tabName);
+            currentTabName = tabName;
+
+            if (!refreshing) {
+              // Restart the fade-in animation so the new tab's contents cross-fade.
+              tabContent.classList.remove("tab-fade-in");
+              void tabContent.offsetWidth; // force reflow to re-trigger the animation
+              tabContent.classList.add("tab-fade-in");
+            }
 
             tabContent.classList.remove("logs-active");
             tabContent.style.height = ""; // reset (the Files tab sets its own)
             clearInterval(window.__logTailTimer); // stop log tailing from a prior Logs view
-            tabContent.innerHTML = "Loading...";
+            if (!refreshing) tabContent.innerHTML = "Loading...";
             logsEl.style.display = "none";
 
             if (tab.toLowerCase() === "logs") {
@@ -3399,7 +3414,7 @@
 
 
       // LIST VIEW
-      currentDetailId = null; currentTabButtons = null;
+      currentDetailId = null; currentTabButtons = null; currentTabName = null;
       searchsort.style.display = "block";
       const heading = document.getElementById("instancesHeading");
       const topBr = document.getElementById("instancesTopBr");
