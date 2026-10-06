@@ -9,6 +9,86 @@ started.
 
 ---
 
+## 0. Round 20
+
+### Heads
+- [ ] **Store one 8×8 head texture, not a cache per size.** Right now a 38×38,
+      a 34×34, a 32×32, a 24×24 and so on get written for the same player. Build
+      the 8×8 face+hat composite once and let the page draw it at whatever size,
+      unsmoothed — the texture itself never changes size.
+
+### Pixel art
+- [ ] **Low-resolution icons should render sharp everywhere**, not just player
+      heads: mod icons, resource-pack icons, and the same image when it has been
+      set as an instance's icon.
+
+### The icon picker
+- [ ] **The panorama drags the wrong way** — grabbing and pulling turns it in
+      the opposite direction (or by the wrong amount).
+- [ ] **A server added after the picker was opened doesn't appear.** Pick an
+      icon, add and ping a server, and that server's icon still isn't offered.
+- [ ] **Allow zooming out in the cropper** when part of the image is outside the
+      crop area.
+- [ ] **Hold right-click on an icon to preview it larger**, so you can tell what
+      it is.
+
+### Version-based default icons (written up only — not to be built yet)
+Deliberately parked at the user's request: *"actually just write all these up
+about the version default icon things but dont implement them yet, they can
+wait."* Spelled out in full so nothing is lost; see §Round 20 Appendix below.
+
+---
+
+## Round 20 Appendix — version-based default instance icons (parked)
+
+A manually created instance currently gets the generic launcher icon. Instead
+its default should say which version it is.
+
+**Where the mapping comes from.** A JSON file in this repository lists a block
+or item per Minecraft version. It is fetched at runtime (so the list can be
+updated without shipping a launcher build).
+
+**Resolution rules.**
+- A version listed in the JSON applies to **every later version** until another
+  entry takes over. So if the JSON names `1.21.9` but not `1.21.10`, then
+  `1.21.10` uses `1.21.9`'s icon.
+- **Staleness guard:** if the newest applicable entry was released more than
+  roughly half a year before the version being resolved, fall back to the plain
+  release icon rather than showing something that is clearly from an older era.
+- **Snapshots** get the snapshot icon, not a per-version block.
+- **Old releases** (older than the first JSON entry) get the old launcher icon.
+
+**Rendering the icon.** Produce an isometric render in the style of the wiki's
+block renders (see <https://minecraft.wiki/w/Help:Isometric_renders>, e.g.
+<https://minecraft.wiki/images/Sulfur_JE1_BE1.png>): a cube drawn in isometric
+projection with the top face lit, the left face at base brightness, and the
+right face shaded.
+- **Blocks:** load the block model from the jar and render it — which means
+  honouring custom models and walking `parent` chains, not assuming every block
+  is a full cube with one texture on all six faces.
+- **Items:** render the item texture / item model flat, with no isometric cube.
+- **Texture source:** take textures from the version's own jar, except **below
+  1.14**, where the 1.13 jar supplies the textures while the models still come
+  from the version itself.
+
+**Picker integration.** The resolved version icon should also be selectable from
+the icon picker, like the panorama and server icons are.
+
+---
+
+## Round 19
+
+- [ ] **A pack's own panorama.** If an instance has resource packs or mods that
+      replace the title-screen panorama, offer that one in the icon picker too.
+- [x] **Re-hovering the same card still cuts the ease short.** Unhover then
+      hover the same skin again and it snaps instead of carrying on.
+- [x] **The cards should come back the same way the big render does** rather
+      than with their own ease.
+- [x] **The big render sometimes fails to settle facing forward**, ending up
+      slightly turned.
+
+---
+
 ## 0. Round 18
 
 ### Instances

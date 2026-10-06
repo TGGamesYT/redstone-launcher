@@ -1180,6 +1180,14 @@
       return LEVEL_PULL * Math.min(1, Math.abs(yawRate) / LEVEL_FULL);
     }
 
+    // ── Settling back to the front ──────────────────────────────────────────
+    // Shared by the big render and the card renders so a skin coming home
+    // moves the same way whichever one you let go of. Damped rather than
+    // critically damped on purpose: it runs past centre and settles back with
+    // a couple of diminishing swings, which reads as weight.
+    const HOME_SPRING = 0.022;    // pull toward home, per frame
+    const HOME_DAMP = 0.94;       // <1 leaves overshoot; lower = stiffer
+
     function killViewer(v) {
       // dispose() alone does NOT release the WebGL context — that leaks a context
       // per recreation until the browser starts dropping them.
@@ -1329,7 +1337,11 @@
         // Every one is busy, so an ease has to be cut short. Take the one with
         // the LEAST left to do, so the jump it causes is the smallest one
         // available rather than whichever happened to be found first.
-        const easing = _livePool.filter(L => L.easing);
+        // A viewer only coasting after a release counts as abandoned too — but
+        // only if its card has actually let go of it. A hovered card coasts
+        // after a drag as well, and that one is still in use.
+        const abandoned = (L) => L.freeRaf && (!L.owner || L.owner._live !== L);
+        const easing = _livePool.filter(L => L.easing || abandoned(L));
         if (easing.length) {
           const left = (L) => {
             try {
@@ -1460,17 +1472,27 @@
           settled = false;
         } else { r.x = 0; r.y = 0; r.z = 0; }
 
-        // The camera orbit the pointer dragged, eased as two angles so it swings
-        // back along its arc at a constant distance.
+        // The camera orbit the pointer dragged, sprung back the same way the
+        // big render does — pulled proportionally to how far out it is and
+        // damped rather than critically damped, so it runs past centre and
+        // settles with a couple of diminishing swings. A flat fraction per
+        // frame (what this used to do) crawls in at the same lifeless rate
+        // whatever it is coming back from.
         if (L.home) {
           try {
             const cam = L.v.camera, tgt = L.v.controls.target;
             const cur = camSpherical(cam.position);
-            let dT = norm(L.home.theta - cur.theta);
+            const dT = norm(L.home.theta - cur.theta);
             const dP = L.home.phi - cur.phi;
-            if (Math.abs(dT) > 0.01 || Math.abs(dP) > 0.01) {
-              camFromSpherical(cam.position, cur.theta + dT * 0.25, cur.phi + dP * 0.25, L.home.dist);
+            L.velTheta = (L.velTheta + dT * HOME_SPRING) * HOME_DAMP;
+            L.velPhi = (L.velPhi + dP * HOME_SPRING) * HOME_DAMP;
+            const speed = Math.abs(L.velTheta) + Math.abs(L.velPhi);
+            if (speed > 0.0015 || Math.abs(dT) > 0.01 || Math.abs(dP) > 0.01) {
+              camFromSpherical(cam.position, cur.theta + L.velTheta, cur.phi + L.velPhi, L.home.dist);
               settled = false;
+            } else {
+              camFromSpherical(cam.position, L.home.theta, L.home.phi, L.home.dist);
+              L.velTheta = L.velPhi = 0;
             }
             if (tgt.distanceTo(L.home.target) > 0.01) { tgt.lerp(L.home.target, 0.25); settled = false; }
             L.v.controls.update();
@@ -1568,8 +1590,6 @@
       let homing = false;
       const norm = (a) => Math.atan2(Math.sin(a), Math.cos(a));
       const HOME_PHI = Math.PI / 2;
-      const SPRING = 0.022;               // pull toward home
-      const DAMP = 0.94;                   // <1 leaves overshoot; lower = stiffer
       const SPIN_DAMP = 0.97;             // free-spin decay after a flick
       const MAX_VEL = 0.35;
       // How long the player stays where it was left before drifting back. Long
@@ -1626,9 +1646,9 @@
 
           if (homing) {
             // Spring toward the front, phi included so a drag upwards settles too.
-            velTheta += norm(0 - cur.theta) * SPRING;
-            velPhi += (HOME_PHI - cur.phi) * SPRING;
-            velTheta *= DAMP; velPhi *= DAMP;
+            velTheta += norm(0 - cur.theta) * HOME_SPRING;
+            velPhi += (HOME_PHI - cur.phi) * HOME_SPRING;
+            velTheta *= HOME_DAMP; velPhi *= HOME_DAMP;
           } else {
             // Free spin after a flick: bleed the speed away — but keep pulling
             // the pitch back to level the whole time, harder the faster it is
@@ -1667,7 +1687,15 @@
           // The pitch is the exception: the loop keeps running until it IS
           // level, otherwise a fast spin stops the instant the yaw dies and
           // leaves the figure tipped where the flick left it.
-          if (!homing && speed < 0.002 && offP < 0.01) { velTheta = velPhi = 0; return; }
+          if (!homing && speed < 0.002 && offP < 0.01) {
+            velTheta = velPhi = 0;
+            // Never stop off-centre with nothing left to bring it back. If the
+            // figure is turned and no return is pending, schedule one — the
+            // loop is allowed to pause, but the render is not allowed to be
+            // stranded.
+            if (offT > 0.01 && !idleTimer) armReturn();
+            return;
+          }
         } catch { return; }
         raf = requestAnimationFrame(step);
       };
@@ -1678,15 +1706,24 @@
         // Let the flick play out first; the wait is before it decides to come
         // back, not before it is allowed to move.
         startLoop();
-        idleTimer = setTimeout(() => { homing = true; startLoop(); }, RETURN_AFTER);
+        // Nulled when it fires, so "is a return pending?" is answerable.
+        idleTimer = setTimeout(() => { idleTimer = null; homing = true; startLoop(); }, RETURN_AFTER);
       };
-      const cancelReturn = () => { clearTimeout(idleTimer); homing = false; };
+      // Only the PENDING return is cancelled. A return already under way is
+      // left to finish: this used to clear `homing` as well, so moving the
+      // pointer over the render while it was swinging back dropped it into the
+      // free-spin branch, which — slow and already level — stopped the loop on
+      // the spot and left the figure sitting at whatever angle it had reached,
+      // with no timer left to bring it home. That is the "sometimes it ends up
+      // a bit rotated". Starting a DRAG still clears it, which is the one place
+      // abandoning the return is right.
+      const cancelReturn = () => { clearTimeout(idleTimer); idleTimer = null; };
 
       canvas.addEventListener("pointerenter", () => { hovering = true; cancelReturn(); });
       canvas.addEventListener("pointerleave", () => { hovering = false; armReturn(); });
       try {
         v.controls.addEventListener("start", () => {
-          dragging = true; cancelReturn(); stopLoop();
+          dragging = true; cancelReturn(); homing = false; stopLoop();
           velTheta = velPhi = 0; lastTheta = lastPhi = null;
         });
         v.controls.addEventListener("change", () => { if (dragging) sampleDrag(); });
@@ -1760,14 +1797,23 @@
       hoverEl.addEventListener("mouseenter", () => {
         if (holder._dead) return;            // nothing rendered for this one
 
-        // A viewer may still be easing out of THIS card. Reusing it avoids
-        // pointing two viewers at one card, which used to end with the first
-        // one finishing its ease and un-hiding the still while the second was
-        // still spinning -- the flat image reappearing behind the spin.
-        const easing = _livePool.find(P => P.owner === holder && P.easing);
+        // A viewer may still be settling on THIS card — carrying a flick, or
+        // easing back. Reusing it avoids pointing two viewers at one card,
+        // which used to end with the first one finishing its ease and
+        // un-hiding the still while the second was still spinning (the flat
+        // image reappearing behind the spin). The `easing` test alone missed
+        // the free-spin phase, so re-hovering during it built a second viewer
+        // from scratch at the home pose — the snap. The viewer is already
+        // here and already has the right skin: take it back, leave the model
+        // where it is, and let the auto-rotate pick up from that angle.
+        const easing = _livePool.find(P => P.owner === holder && (P.easing || P.freeRaf));
         if (easing) {
           if (easing.raf) { cancelAnimationFrame(easing.raf); easing.raf = null; }
+          if (easing.freeRaf) { cancelAnimationFrame(easing.freeRaf); easing.freeRaf = null; }
           easing.easing = false;
+          easing.velTheta = easing.velPhi = 0;
+          easing.lastTheta = easing.lastPhi = null;
+          if (easing.spin) easing.spin.camRate = 0;
           holder._live = easing;
           try {
             easing.v.renderPaused = false;
