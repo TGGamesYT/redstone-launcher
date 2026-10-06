@@ -87,6 +87,65 @@
     } catch { return false; }   // a tainted canvas is not worth guessing about
   }
 
+  // ── Hold right-click on a cell to see it big ──────────────────────────────
+  // A 56px cell is too small to tell one grey block render from another, or to
+  // see which of forty screenshots this one is. Holding the right button blows
+  // the cell up over the middle of the screen for as long as it is held; let go
+  // and it is gone. Nothing is picked by it — the left click still does that —
+  // so it is safe to go through the whole grid this way.
+  //
+  // It is wired on the modal, not on each cell, so cells that arrive later (the
+  // panorama, the screenshots, a server that was still being pinged) are
+  // covered without anyone remembering to opt them in.
+  let _peek = null;
+  function hidePeek() {
+    if (!_peek) return;
+    _peek.remove();
+    _peek = null;
+  }
+  function showPeek(src, label) {
+    hidePeek();
+    _peek = document.createElement('div');
+    _peek.style.cssText = 'position:fixed; inset:0; z-index:6300; display:flex;'
+      + 'flex-direction:column; align-items:center; justify-content:center; gap:10px;'
+      + 'background:rgba(0,0,0,0.55); pointer-events:none;';
+    const im = document.createElement('img');
+    im.src = src;
+    // A short side of 320px: big enough to read a 16px texture, small enough
+    // that a 4K screenshot still fits on a laptop screen.
+    im.style.cssText = 'max-width:min(70vw,520px); max-height:70vh; min-width:120px;'
+      + 'border-radius:8px; box-shadow:0 10px 40px rgba(0,0,0,0.6); background:#0006;';
+    // pixelart.js decides whether this wants smoothing, from the size it
+    // actually is against the size it is being drawn at.
+    _peek.appendChild(im);
+    if (label) {
+      const cap = document.createElement('div');
+      cap.textContent = label;
+      cap.style.cssText = 'font-size:13px; color:#fff; text-shadow:0 1px 3px #000; max-width:70vw; text-align:center;';
+      _peek.appendChild(cap);
+    }
+    document.body.appendChild(_peek);
+  }
+  function wirePeek(root) {
+    const cellAt = (e) => (e.target && e.target.closest) ? e.target.closest('.ip-cell') : null;
+    // Suppress the context menu over a cell only, so right-clicking the rest of
+    // the modal behaves normally.
+    root.addEventListener('contextmenu', (e) => { if (cellAt(e)) e.preventDefault(); });
+    root.addEventListener('pointerdown', (e) => {
+      if (e.button !== 2) return;
+      const cell = cellAt(e);
+      const img = cell && cell.querySelector('img');
+      if (!img || !img.getAttribute('src')) return;
+      e.preventDefault();
+      showPeek(img.src, cell.title || '');
+    });
+    // Let go anywhere — including outside the modal, which is where the pointer
+    // ends up if the preview is big — and it closes. Losing the window counts.
+    for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, hidePeek);
+    window.addEventListener('blur', hidePeek);
+    root.addEventListener('scroll', hidePeek, true);
+  }
+
   // ── The version panorama, as a panorama ───────────────────────────────────
   // It used to be the six faces laid out flat in a horizontal strip you
   // scrolled sideways, which is not what a panorama looks like: the cube is
@@ -220,8 +279,22 @@
       };
       const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = null; draw(); }); };
 
-      // Drag to look. Pitch is clamped short of straight up and down, where
-      // there is nothing to see and the view rolls over.
+      // Drag to look, as though the view itself were being pulled: drag right
+      // and the scene follows the cursor to the right, which means the camera
+      // turns left. Both axes used to be the other way round, so a drag pushed
+      // the world away from the pointer.
+      //
+      // The rate is the real radians-per-pixel at the centre of the view,
+      // 2*tan(fov/2)/height, not fov/height. Those differ by about 17% at the
+      // default 80 degrees, which is why a grabbed point used to drift behind
+      // the cursor. It is the SAME figure for both axes: the aspect ratio only
+      // widens the frustum, it does not change the scale of the image plane,
+      // so a horizontal pixel and a vertical pixel are worth the same angle.
+      //
+      // Pitch is clamped short of straight up and down, where there is nothing
+      // to see and the view rolls over.
+      const PITCH_STOP = Math.PI / 2 - 0.05;
+      const radPerPx = (height) => 2 * Math.tan((fov * Math.PI / 180) / 2) / Math.max(1, height);
       let dragging = false, lx = 0, ly = 0;
       stage.addEventListener('pointerdown', (e) => {
         dragging = true; lx = e.clientX; ly = e.clientY;
@@ -231,9 +304,9 @@
       stage.addEventListener('pointermove', (e) => {
         if (!dragging) return;
         const r = stage.getBoundingClientRect();
-        const perPx = (fov * Math.PI / 180) / Math.max(1, r.height);
-        yaw -= (e.clientX - lx) * perPx;
-        pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, pitch - (e.clientY - ly) * perPx));
+        const perPx = radPerPx(r.height);
+        yaw += (e.clientX - lx) * perPx;
+        pitch = Math.max(-PITCH_STOP, Math.min(PITCH_STOP, pitch + (e.clientY - ly) * perPx));
         lx = e.clientX; ly = e.clientY;
         schedule();
       });
@@ -313,7 +386,19 @@
     cv.width = OUT; cv.height = OUT;
     const cx = cv.getContext('2d');
     const im = new Image();
-    let zoom = 1, ox = 0, oy = 0, drag = null;
+    // 1 is "cover": the square is filled, and for anything that is not already
+    // square part of the image is outside it. Below 1 the image shrinks toward
+    // "contain", where all of it is in frame with transparent bars either side
+    // — which is the only way to get a wide banner in whole. minZoom is exactly
+    // the contain-to-cover ratio, so a 16:9 screenshot zooms out to 56% and a
+    // square image cannot zoom out at all, because it has nothing outside the
+    // frame to go and find.
+    let zoom = 1, minZoom = 1, ox = 0, oy = 0, drag = null;
+    const fitZoom = () => {
+      const w = im.naturalWidth, h = im.naturalHeight;
+      if (!w || !h) return 1;
+      return Math.min(1, Math.min(w, h) / Math.max(w, h));
+    };
 
     const draw = () => {
       cx.clearRect(0, 0, OUT, OUT);
@@ -355,7 +440,9 @@
       if (hint) {
         hint.textContent = (maxX > 0.5 || maxY > 0.5)
           ? "Drag to choose what's in frame · scroll to zoom"
-          : 'Zoom in to choose what\'s in frame';
+          : minZoom < 1
+            ? 'Scroll to zoom in, or out to fit the whole image'
+            : 'Zoom in to choose what\'s in frame';
       }
     };
 
@@ -364,19 +451,21 @@
       // rounding, and usually wants it; one that is already a cut-out shape
       // would just have its corners eaten.
       roundEl.value = isFullyOpaque(im) ? '50' : '0';
+      minZoom = fitZoom();
+      zoomEl.min = String(Math.floor(minZoom * 100));
       draw();
     };
     im.onerror = () => { ov.remove(); onDone(null); };
     im.src = src;
 
-    zoomEl.oninput = () => { zoom = zoomEl.value / 100; draw(); };
+    zoomEl.oninput = () => { zoom = Math.max(minZoom, zoomEl.value / 100); draw(); };
     roundEl.oninput = draw;
 
     // Zooming with the wheel, which is what anyone tries first on a crop box.
     // Keeps the slider in step so the two never disagree.
     stage.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const next = Math.max(1, Math.min(4, zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      const next = Math.max(minZoom, Math.min(4, zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
       zoom = next;
       zoomEl.value = String(Math.round(zoom * 100));
       draw();
@@ -452,7 +541,8 @@
         <input type="file" id="ipFile" accept="image/*" style="display:none;" />
       </div>`;
       document.body.appendChild(ov);
-      const close = () => ov.remove();
+      const close = () => { hidePeek(); ov.remove(); };
+      wirePeek(ov);
       const pick = (dataUrl) => { close(); opts.onPick && opts.onPick(dataUrl); };
       // EVERYTHING goes through the cropper. It used to be only the wide
       // sources (banner, panorama, screenshots) — so a mod icon, a world icon
@@ -594,16 +684,36 @@
           });
         }).catch(() => {});
         ipcRenderer.invoke('get-instance-servers', { profileId: opts.instanceId }).then(servers => {
-          const withIcons = (servers || []).filter(s => s.icon);
-          if (!withIcons.length) return;
-          ov.querySelector('#ipServersWrap').style.display = '';
+          const list = servers || [];
           const sc = ov.querySelector('#ipServers');
-          withIcons.forEach(s => {
-            const url = toUrl(s.icon);
-            const cell = document.createElement('div'); cell.className = 'ip-cell'; cell.title = (s.name || s.ip || '') + (s.ip ? ` (${s.ip})` : '');
-            cell.innerHTML = `<img src="${url}" />`;
+          const addServerCell = (s, url) => {
+            ov.querySelector('#ipServersWrap').style.display = '';
+            const cell = document.createElement('div'); cell.className = 'ip-cell';
+            cell.title = (s.name || s.ip || '') + (s.ip ? ` (${s.ip})` : '');
+            const img = document.createElement('img');
+            img.src = url;
+            img.onerror = () => cell.remove();
+            cell.appendChild(img);
             cell.onclick = () => editThenPick(url);
             sc.appendChild(cell);
+          };
+          list.filter(s => s.icon).forEach(s => addServerCell(s, toUrl(s.icon)));
+          // A server added and pinged in the launcher has its favicon stored
+          // now, but one added before that change — or added and never looked
+          // at — has nothing in servers.dat. Ask those servers directly, so the
+          // picker is not quietly missing an icon the launcher could see.
+          // Capped, because each one is a socket to somewhere on the internet.
+          const PING_LIMIT = 12;
+          list.filter(s => !s.icon && s.ip).slice(0, PING_LIMIT).forEach(s => {
+            ipcRenderer.invoke('get-server-status', { ip: s.ip }).then(st => {
+              if (!st || !st.online || !st.icon || !ov.isConnected) return;
+              addServerCell(s, st.icon);
+              // And remember it, so next time it comes straight out of
+              // servers.dat and no ping is needed at all.
+              ipcRenderer.invoke('remember-server-icon', {
+                profileId: opts.instanceId, ip: s.ip, icon: st.icon,
+              }).catch(() => { });
+            }).catch(() => { });
           });
         }).catch(() => {});
         // Anything installed in the instance has an icon of its own — a mod's,

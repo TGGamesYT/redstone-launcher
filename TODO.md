@@ -12,24 +12,24 @@ started.
 ## 0. Round 20
 
 ### Heads
-- [ ] **Store one 8×8 head texture, not a cache per size.** Right now a 38×38,
+- [x] **Store one 8×8 head texture, not a cache per size.** Right now a 38×38,
       a 34×34, a 32×32, a 24×24 and so on get written for the same player. Build
       the 8×8 face+hat composite once and let the page draw it at whatever size,
       unsmoothed — the texture itself never changes size.
 
 ### Pixel art
-- [ ] **Low-resolution icons should render sharp everywhere**, not just player
+- [x] **Low-resolution icons should render sharp everywhere**, not just player
       heads: mod icons, resource-pack icons, and the same image when it has been
       set as an instance's icon.
 
 ### The icon picker
-- [ ] **The panorama drags the wrong way** — grabbing and pulling turns it in
+- [x] **The panorama drags the wrong way** — grabbing and pulling turns it in
       the opposite direction (or by the wrong amount).
-- [ ] **A server added after the picker was opened doesn't appear.** Pick an
+- [x] **A server added after the picker was opened doesn't appear.** Pick an
       icon, add and ping a server, and that server's icon still isn't offered.
-- [ ] **Allow zooming out in the cropper** when part of the image is outside the
+- [x] **Allow zooming out in the cropper** when part of the image is outside the
       crop area.
-- [ ] **Hold right-click on an icon to preview it larger**, so you can tell what
+- [x] **Hold right-click on an icon to preview it larger**, so you can tell what
       it is.
 
 ### Version-based default icons (written up only — not to be built yet)
@@ -44,9 +44,15 @@ wait."* Spelled out in full so nothing is lost; see §Round 20 Appendix below.
 A manually created instance currently gets the generic launcher icon. Instead
 its default should say which version it is.
 
-**Where the mapping comes from.** A JSON file in this repository lists a block
-or item per Minecraft version. It is fetched at runtime (so the list can be
-updated without shipping a launcher build).
+**Where the mapping comes from.** `versions.json` at the root of this
+repository, fetched at runtime so the list can be updated without shipping a
+launcher build. It maps a version to a model path, with the kind in the prefix:
+
+```json
+{ "26.2": "block/sulfur", "1.21.11": "item/diamond_nautilus_armor", … }
+```
+
+Entries currently run from `1.3.1` up to `26.4`.
 
 **Resolution rules.**
 - A version listed in the JSON applies to **every later version** until another

@@ -7853,6 +7853,45 @@ ipcMain.handle("edit-instance-server", async (event, { profileId, index, name, i
   return { success: true };
 });
 
+// Remember a favicon a ping just produced, the way the game remembers it.
+//
+// servers.dat has an `icon` field, and Minecraft fills it in when it pings a
+// server in the multiplayer list. The launcher pinged too but kept the favicon
+// on screen only, so a server you had added and pinged here still had no icon
+// stored — and the icon picker, which reads servers.dat, had nothing to offer
+// for it.
+//
+// Writes are queued per instance. readServersList awaits, so two servers
+// finishing their pings at the same time would otherwise both read the old
+// list and the second write would lose the first one's icon.
+const _serversWriteQueue = new Map();   // profileId -> tail of the write chain
+function queueServersWrite(profileId, fn) {
+  const key = String(profileId);
+  const prev = _serversWriteQueue.get(key) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  _serversWriteQueue.set(key, next.then(() => { }, () => { }));
+  return next;
+}
+ipcMain.handle("remember-server-icon", async (event, { profileId, ip, icon }) => {
+  const ic = normalizeServerIcon(icon);
+  if (!ic || !ip || profileId == null) return { success: false };
+  return queueServersWrite(profileId, async () => {
+    try {
+      const list = await readServersList(profileId);
+      // By address, not by index: the list can have been reordered between the
+      // ping going out and the answer coming back.
+      const hit = list.find(s => String(s.ip || "").trim() === String(ip).trim());
+      if (!hit) return { success: false, error: "no such server" };
+      if (hit.icon) return { success: false, error: "already has an icon" };
+      hit.icon = ic;
+      await writeServersList(profileId, list);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: String(err && err.message || err) };
+    }
+  });
+});
+
 // delete server (by index)
 ipcMain.handle("delete-instance-server", async (event, { profileId, index }) => {
   const serversList = await readServersList(profileId);

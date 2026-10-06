@@ -3347,7 +3347,17 @@
                         li._playersEl.textContent = `${st.players.online}/${st.players.max}`;
                         li._playersEl.title = "Players online";
                       }
-                      if (st.icon && !s.icon) img.src = st.icon;
+                      if (st.icon && !s.icon) {
+                        img.src = st.icon;
+                        // Keep it, the way the game does: servers.dat has an
+                        // icon field and Minecraft fills it in on a ping. This
+                        // only ever drew the favicon on screen, so the icon
+                        // picker — which reads servers.dat — had nothing for a
+                        // server you had added and pinged here.
+                        ipcRenderer.invoke("remember-server-icon", {
+                          profileId: profile.id, ip: s.ip, icon: st.icon,
+                        }).catch(() => { });
+                      }
                     }).catch(() => { details.textContent = s.ip; });
                   } else {
                     details.textContent = s.ip;
