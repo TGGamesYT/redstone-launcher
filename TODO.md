@@ -9,6 +9,32 @@ started.
 
 ---
 
+## 0. Round 18
+
+### Instances
+- [ ] **Grid view rows overlap.** Cards in the second row and below are cut off
+      — the rows aren't given enough height.
+- [ ] **Play and folder should sit side by side** on a card, not stacked.
+- [ ] **Some places still show the old remote default icon**, e.g. the icon
+      section in an instance's settings.
+
+### Refreshing
+- [ ] **Rebuild in the background and swap in one go.** A refresh currently
+      fades out, comes back empty, and then fills in — most visibly when
+      tabbing away and back. Instance list, server list and both detail views.
+
+### The player render
+- [ ] **Panorama icons aren't rendered as panoramas** and can't be spun.
+- [ ] **Hovering a second card cuts the first one's ease-out short** instead of
+      letting it finish.
+- [ ] **Keep the figure vertically centred when spinning fast** — it should
+      pull its own pitch back toward level rather than drifting up or down.
+- [ ] **The small card renders need the same treatment**: the spin physics, the
+      arms going out, and the pitch stabilising — spinning freely first and
+      only then settling.
+
+---
+
 ## 0. Round 17
 
 - [x] **The whole launcher freezes the first time skins load.** Building the

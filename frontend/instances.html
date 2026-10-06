@@ -1195,7 +1195,10 @@
 
       // Reset icon selection to the instance's current icon.
       pickedInstanceIcon = null;
-      setInstancePreview((profile.icon && /^(data:|https?:)/.test(profile.icon)) ? profile.icon : null);
+      // instanceIcon maps "no icon" and the old remote URL onto the one
+      // shipped with the launcher, so this section shows what the lists show
+      // rather than nothing or a fetched image.
+      setInstancePreview(instanceIcon(profile.icon));
 
       // Java & Launch fields.
       document.getElementById('instanceLaunchArgs').value = profile.launchArgs || '';
@@ -2706,7 +2709,7 @@
 
           let scMode = "start";
           let iconSource = null; // set when the icon mirrors a saved server (auto-updates)
-          let scIconData = (profile.icon && /^(data:|https?:)/.test(profile.icon)) ? profile.icon : DEFAULT_ICON;
+          let scIconData = instanceIcon(profile.icon);
           const scIcon = overlay.querySelector("#scIcon");
           scIcon.src = scIconData;
           scIcon.onerror = () => { scIcon.src = DEFAULT_ICON; };
@@ -3455,7 +3458,12 @@
           e.stopPropagation();
           ipcRenderer.send("open-folder", { id: p.id, isClient: true });
         };
-        li.appendChild(openFolderBtn);
+        // Both buttons share a row of their own. As direct children of the
+        // tile they inherited its flex-direction, which in grid view is a
+        // column — so Play sat under the folder button instead of beside it.
+        const actions = document.createElement("div");
+        actions.className = "profile-actions";
+        actions.appendChild(openFolderBtn);
 
         const launchBtn = document.createElement("button");
         launchBtn.className = "play-button";
@@ -3498,7 +3506,8 @@
             launchBtn.style.cursor = "pointer";
           }, 30000);
         };
-        li.appendChild(launchBtn);
+        actions.appendChild(launchBtn);
+        li.appendChild(actions);
         li.onclick = () => {
           // Instance ids come from the instance NAME, so a pack called
           // "Create+" gives the id "Create+" — and interpolating that straight

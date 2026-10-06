@@ -1241,6 +1241,13 @@ a:hover {
      its centred content drifts away from the others. */
   align-items: start;
   align-content: start;
+  /* Rows sized by what is IN them. This list is a scroller with a height set on
+     it (fitheight.js), and against a definite height Chromium sizes `auto` rows
+     by dividing that height between them instead of by content: with four rows
+     in a 658px box it gave every row 147.5px while the tiles were ~300px, so
+     each row of tiles ran 162px into the row below. align-content: start does
+     not prevent that; sizing the rows to their content does. */
+  grid-auto-rows: min-content;
   gap: 16px;
   padding: 10px 0;
   width: 100%;
@@ -1263,11 +1270,30 @@ a:hover {
   box-sizing: border-box;
 }
 
+/* Both buttons live in a row of their own, so they stay side by side whichever
+   direction the tile itself runs in. */
+.profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-left: 12px;
+}
+
+.profile-actions button {
+  margin-left: 0;
+}
+
 /* The row layout pushes its buttons away from the text with a left margin.
    In a column that just shoves them off-centre. */
 #profiles-list.grid-mode .profile-item button {
   margin-left: 0;
   margin-right: 0;
+}
+
+#profiles-list.grid-mode .profile-actions {
+  margin-left: 0;
+  justify-content: center;
 }
 
 #profiles-list.grid-mode .profile-item img {
