@@ -394,7 +394,12 @@
   // A standalone animation for the card previews: no idle, no clips, just the
   // rest pose plus the physics, with the turn rate measured from the model's
   // own rotation (those cards spin the model itself rather than the camera).
-  function spinOnlyAnimation() {
+  // `getExtra` adds a turn rate the model itself cannot show. A card preview
+  // spins the MODEL, which this reads off directly — but DRAGGING one orbits
+  // the camera instead, and from the figure's point of view being orbited is
+  // the same as being spun. Without that, the arms only reacted to the idle
+  // auto-spin and did nothing at all while the card was being dragged.
+  function spinOnlyAnimation(getExtra) {
     const anim = new skinview3d.PlayerAnimation();
     const state = newSpinState();
     let lastYaw = null;
@@ -421,8 +426,12 @@
         if (Math.abs(d) <= JUMP) w = d / dt;
       }
       lastYaw = yaw;
+      let extra = 0;
+      if (typeof getExtra === 'function') {
+        try { const e = getExtra(); if (Number.isFinite(e)) extra = e; } catch { /* ignore */ }
+      }
       applyPose(rest, blankPose(rest));
-      applySpin(state, rest, w, dt);
+      applySpin(state, rest, w + extra, dt);
     };
     return anim;
   }

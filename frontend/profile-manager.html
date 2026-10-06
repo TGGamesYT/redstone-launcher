@@ -1162,6 +1162,24 @@
       } catch { /* no controls on this viewer */ }
     }
 
+    // ── Keeping the figure level while it spins ─────────────────────────────
+    // Spinning hard and ending up looking at the top of a head is not what
+    // spinning something does: a thing being turned fast settles into the plane
+    // it is turning in. So the pitch is always pulled back toward level, and
+    // the harder it is spinning the harder that pull is — a slow look around
+    // stays where you put it, a fast flick levels itself out while it runs
+    // down. HOME_PHI (PI/2) is level.
+    const LEVEL_PULL = 0.045;     // the pull at full spin
+    const LEVEL_FULL = 0.14;      // radians/frame of yaw that counts as "fast"
+    const LEVEL_DAMP = 0.84;      // heavy enough that it barely overshoots
+    // Zero when it is not turning, deliberately: looking at the top of a head
+    // and letting go has to STAY there, or the whole point of being able to
+    // tilt at all is gone. Settling back to the front is the job of the
+    // return-after-a-while homing, not of this.
+    function levelPull(yawRate) {
+      return LEVEL_PULL * Math.min(1, Math.abs(yawRate) / LEVEL_FULL);
+    }
+
     function killViewer(v) {
       // dispose() alone does NOT release the WebGL context — that leaks a context
       // per recreation until the browser starts dropping them.
@@ -1226,10 +1244,17 @@
     // ── A tiny pool of live viewers, mounted into hovered cards ─────────────
     // TWO of them, not one: with a single viewer, hovering a second card had to
     // rip it away from the first, which snapped that card straight back to
-    // forward-facing. A second viewer lets the card you just left finish easing
-    // round while the new one starts spinning. Still only 3 WebGL contexts in
-    // total (these two plus the offscreen still renderer), well under the cap.
-    const LIVE_POOL_SIZE = 2;
+    // forward-facing. More than one viewer lets the card you just left finish
+    // easing round while the new one starts spinning.
+    //
+    // Four, not two. Taking a viewer away from a card that is still easing back
+    // cuts that ease dead — the card jumps to its still frame mid-swing — and
+    // with two viewers that happened on the third card of any quick sweep
+    // across the grid. Four means a sweep has to get five cards ahead of the
+    // eases before anything is interrupted, and it is still only five WebGL
+    // contexts in total (these plus the offscreen still renderer), well under
+    // the ~16 a browser allows.
+    const LIVE_POOL_SIZE = 4;
     const _livePool = [];
     let _liveBroken = false;
     function makeLive() {
@@ -1246,9 +1271,16 @@
       // to the spin straight off it: arms thrown outward, the cape caught by
       // the air, the head coming round last. No clips here, just the rest pose
       // and the physics on top of it.
+      //
+      // Dragging a card orbits the CAMERA rather than turning the model, and
+      // from the figure's point of view those are the same thing — so the
+      // camera's own turn rate is handed to the physics as well. Without it the
+      // arms reacted to the slow auto-spin and did nothing at all while a card
+      // was being dragged, which is exactly when there is most to react to.
+      const spin = { camRate: 0 };
       try {
         const SA = window.SkinAnimations;
-        if (SA && SA.spinOnly) v.animation = SA.spinOnly();
+        if (SA && SA.spinOnly) v.animation = SA.spinOnly(() => spin.camRate);
       } catch { /* a card that doesn't react is only duller, not broken */ }
       // Dragging a card orbits the CAMERA (skinview3d uses OrbitControls); only
       // the auto-spin turns the model. Resetting the model's rotation alone
@@ -1261,7 +1293,8 @@
         const p = v.camera.position;
         home = { dist: p.length(), ...camSpherical(p), target: v.controls.target.clone() };
       } catch { }
-      return { v, host, home, raf: null, easing: false, owner: null, seq: 0 };
+      return { v, host, home, spin, raf: null, easing: false, owner: null, seq: 0,
+               velTheta: 0, velPhi: 0, lastTheta: null, lastPhi: null, freeRaf: null };
     }
 
     // The camera orbits at a fixed distance, so its pose is two angles. Easing in
@@ -1293,7 +1326,21 @@
         const free = _livePool.find(L => !L.owner);
         if (free) return free;
         if (_livePool.length < LIVE_POOL_SIZE) { const L = makeLive(); _livePool.push(L); return L; }
-        return _livePool.find(L => L.easing) || _livePool[0];
+        // Every one is busy, so an ease has to be cut short. Take the one with
+        // the LEAST left to do, so the jump it causes is the smallest one
+        // available rather than whichever happened to be found first.
+        const easing = _livePool.filter(L => L.easing);
+        if (easing.length) {
+          const left = (L) => {
+            try {
+              const r = spinTarget(L.v).rotation;
+              const norm = (a) => Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
+              return norm(r.x) + norm(r.y) + norm(r.z);
+            } catch { return 0; }
+          };
+          return easing.reduce((a, b) => (left(a) <= left(b) ? a : b));
+        }
+        return _livePool[0];
       } catch { _liveBroken = true; return null; }
     }
 
@@ -1303,7 +1350,10 @@
     // underneath showed both at once.
     function detachLive(L) {
       if (L.raf) { cancelAnimationFrame(L.raf); L.raf = null; }
+      if (L.freeRaf) { cancelAnimationFrame(L.freeRaf); L.freeRaf = null; }
       L.easing = false;
+      L.velTheta = L.velPhi = 0; L.lastTheta = L.lastPhi = null;
+      if (L.spin) L.spin.camRate = 0;
       // These viewers are pooled. Without this the spin physics carries the
       // last card's angle and sprung-out limbs into the next one, which is
       // what made a freshly hovered card start in the wrong pose and slide.
@@ -1322,9 +1372,72 @@
     // rotation (what the auto-spin turns) and the camera orbit (what dragging
     // moves). Either one left alone means the card settles somewhere other than
     // where it began.
+    // ── A card's own spin, before it comes home ──────────────────────────────
+    // Dragging a card and letting go used to stop dead and ease straight back.
+    // Now it keeps turning on what the drag gave it, bleeding off and pulling
+    // its own pitch level as it goes — the same as the big render — and only
+    // then does it ease home.
+    const CARD_SPIN_DAMP = 0.96;
+    const CARD_MAX_VEL = 0.35;
+    const CARD_FPS = 60;
+
+    function sampleCardDrag(L) {
+      try {
+        const cur = camSpherical(L.v.camera.position);
+        if (L.lastTheta !== null) {
+          const n = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+          L.velTheta = n(cur.theta - L.lastTheta);
+          L.velPhi = cur.phi - L.lastPhi;
+          // Orbiting the camera one way looks like the figure spinning the
+          // other, which is what its arms should react to.
+          L.spin.camRate = -L.velTheta * CARD_FPS;
+        }
+        L.lastTheta = cur.theta; L.lastPhi = cur.phi;
+      } catch { }
+    }
+
+    // Carry the flick, level the pitch, then hand over to easeHome.
+    function cardFreeSpin(L, holder, done) {
+      const stop = () => { if (L.freeRaf) { cancelAnimationFrame(L.freeRaf); L.freeRaf = null; } };
+      stop();
+      const step = () => {
+        L.freeRaf = null;
+        if (L.owner !== holder) return;            // the card lost its viewer
+        try {
+          const cam = L.v.camera;
+          const r = cam.position.length() || 1;
+          const cur = camSpherical(cam.position);
+          const home = L.home ? L.home.phi : Math.PI / 2;
+          L.velTheta *= CARD_SPIN_DAMP;
+          L.velPhi += (home - cur.phi) * levelPull(L.velTheta);
+          L.velPhi *= LEVEL_DAMP;
+          L.velTheta = Math.max(-CARD_MAX_VEL, Math.min(CARD_MAX_VEL, L.velTheta));
+          L.velPhi = Math.max(-CARD_MAX_VEL, Math.min(CARD_MAX_VEL, L.velPhi));
+          const nextPhi = Math.max(MIN_POLAR, Math.min(MAX_POLAR, cur.phi + L.velPhi));
+          if (nextPhi !== cur.phi + L.velPhi) L.velPhi = 0;
+          camFromSpherical(cam.position, cur.theta + L.velTheta, nextPhi, r);
+          L.v.controls.update();
+          L.spin.camRate = -L.velTheta * CARD_FPS;
+
+          const offP = Math.abs(home - cur.phi);
+          if (Math.abs(L.velTheta) + Math.abs(L.velPhi) < 0.004 && offP < 0.02) {
+            L.spin.camRate = 0;
+            done();
+            return;
+          }
+        } catch { L.spin.camRate = 0; done(); return; }
+        L.freeRaf = requestAnimationFrame(step);
+      };
+      // Nothing to carry: go straight home.
+      if (Math.abs(L.velTheta) < 0.004 && Math.abs(L.velPhi) < 0.004) { done(); return; }
+      L.freeRaf = requestAnimationFrame(step);
+    }
+
     function easeHome(L, holder) {
       const norm = (a) => Math.atan2(Math.sin(a), Math.cos(a));   // to [-PI, PI]
       L.easing = true;
+      if (L.freeRaf) { cancelAnimationFrame(L.freeRaf); L.freeRaf = null; }
+      L.spin.camRate = 0;
       const finish = () => {
         try {
           const r = spinTarget(L.v).rotation; r.x = 0; r.y = 0; r.z = 0;
@@ -1517,8 +1630,13 @@
             velPhi += (HOME_PHI - cur.phi) * SPRING;
             velTheta *= DAMP; velPhi *= DAMP;
           } else {
-            // Free spin after a flick: just bleed the speed away.
-            velTheta *= SPIN_DAMP; velPhi *= SPIN_DAMP;
+            // Free spin after a flick: bleed the speed away — but keep pulling
+            // the pitch back to level the whole time, harder the faster it is
+            // going, so a hard spin does not leave the figure tipped up or
+            // down. The yaw is left alone; only the pitch self-corrects.
+            velTheta *= SPIN_DAMP;
+            velPhi += (HOME_PHI - cur.phi) * levelPull(velTheta);
+            velPhi *= LEVEL_DAMP;
           }
           velTheta = Math.max(-MAX_VEL, Math.min(MAX_VEL, velTheta));
           velPhi = Math.max(-MAX_VEL, Math.min(MAX_VEL, velPhi));
@@ -1545,7 +1663,11 @@
           // used to start homing the moment it slowed down, which meant a plain
           // drag-and-release (no flick, so no speed to bleed off) snapped back
           // immediately and the wait below never got a say.
-          if (!homing && speed < 0.002) { velTheta = velPhi = 0; return; }
+          //
+          // The pitch is the exception: the loop keeps running until it IS
+          // level, otherwise a fast spin stops the instant the yaw dies and
+          // leaves the figure tipped where the flick left it.
+          if (!homing && speed < 0.002 && offP < 0.01) { velTheta = velPhi = 0; return; }
         } catch { return; }
         raf = requestAnimationFrame(step);
       };
@@ -1678,6 +1800,25 @@
             } catch { }
             holder.appendChild(L.host);
             if (holder._still) holder._still.style.visibility = "hidden";
+            // Measure the drag so the arms react to it and the release has
+            // something to carry. Wired once per viewer.
+            if (!L._dragWired) {
+              L._dragWired = true;
+              try {
+                L.v.controls.addEventListener("start", () => {
+                  if (L.freeRaf) { cancelAnimationFrame(L.freeRaf); L.freeRaf = null; }
+                  L.easing = false;
+                  L.velTheta = L.velPhi = 0; L.lastTheta = L.lastPhi = null;
+                  try { L.v.autoRotate = false; } catch { }
+                });
+                L.v.controls.addEventListener("change", () => { if (L.owner) sampleCardDrag(L); });
+                L.v.controls.addEventListener("end", () => {
+                  // Still hovered: spin on from the flick and level out, but
+                  // stay where it is rather than going home.
+                  if (L.owner && L.owner._live === L) cardFreeSpin(L, L.owner, () => { });
+                });
+              } catch { }
+            }
           }).catch(() => { if (L.owner === holder) detachLive(L); });
         } catch { }
       });
@@ -1685,7 +1826,9 @@
         const L = holder._live; if (!L || L.owner !== holder) return;
         holder._live = null;
         try { L.v.autoRotate = false; } catch { }
-        easeHome(L, holder);
+        // Let whatever the drag gave it play out — turning on, slowing down and
+        // levelling its own pitch — and only then ease back to the front.
+        cardFreeSpin(L, holder, () => easeHome(L, holder));
       });
     }
 
