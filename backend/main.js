@@ -6844,6 +6844,153 @@ function pngSize(buf) {
   } catch { return null; }
 }
 
+// Every path a panorama's six faces are known to live at inside a jar or a
+// resource pack. The first one is where modern versions keep them; the other
+// two are where older ones did, and a pack written against an older version
+// still uses its layout.
+const PANORAMA_BASES = [
+  "assets/minecraft/textures/gui/title/background/",
+  "assets/minecraft/textures/gui/title/background/panorama/",
+  "assets/minecraft/textures/gui/background/",
+];
+// All six, or nothing. Five faces and a hole is not a panorama, and a 1x1 is
+// the placeholder some jars ship rather than a face.
+const usableFace = (data) => {
+  const size = pngSize(data);
+  return !!(size && size.width >= 16 && size.height >= 16);
+};
+
+// A pack that was extracted into a folder rather than left as a zip.
+function panoramaFromDir(root) {
+  for (const base of PANORAMA_BASES) {
+    const found = [];
+    for (let i = 0; i < 6; i++) {
+      try {
+        const f = path.join(root, ...base.split("/").filter(Boolean), `panorama_${i}.png`);
+        if (!fs.existsSync(f)) break;
+        const data = fs.readFileSync(f);
+        if (!usableFace(data)) break;
+        found.push(data);
+      } catch { break; }
+    }
+    if (found.length === 6) return found;
+  }
+  return null;
+}
+
+// A zip or jar, read through unzipper rather than AdmZip on purpose: AdmZip
+// pulls the whole archive into memory to get at its index, and this runs over
+// every mod in an instance. unzipper reads the central directory alone, so a
+// 40MB jar with no panorama in it costs a few reads instead of 40MB.
+async function panoramaFromArchive(file) {
+  let dir = null;
+  try { dir = await unzipper.Open.file(file); } catch { return null; }
+  const byPath = new Map();
+  for (const e of (dir.files || [])) byPath.set(e.path.replace(/\\/g, "/"), e);
+  for (const base of PANORAMA_BASES) {
+    const entries = [];
+    for (let i = 0; i < 6; i++) {
+      const e = byPath.get(`${base}panorama_${i}.png`);
+      if (!e) break;
+      entries.push(e);
+    }
+    if (entries.length !== 6) continue;
+    const found = [];
+    for (const e of entries) {
+      let data = null;
+      try { data = await e.buffer(); } catch { break; }
+      if (!usableFace(data)) break;
+      found.push(data);
+    }
+    if (found.length === 6) return found;
+  }
+  return null;
+}
+
+// Six face buffers -> six data URLs, downscaled. A face is 1024x1024 and six of
+// those as base64 is tens of megabytes over IPC for a picture that ends up
+// 220px tall.
+async function panoramaToDataUrls(faces) {
+  const out = [];
+  for (const raw of faces) {
+    let buf = raw;
+    try {
+      buf = await sharp(raw).resize(512, 512, { fit: "fill" }).png({ compressionLevel: 9 }).toBuffer();
+    } catch (e) {
+      devtoolsLog("panorama: could not resize a face:", e && e.message);
+    }
+    out.push("data:image/png;base64," + buf.toString("base64"));
+  }
+  return out;
+}
+
+// Panoramas that a resource pack or a mod in this instance replaces the title
+// screen's with. A pack that changes the panorama is one of the first things
+// anyone would want their instance's icon taken from, and the picker only
+// offered the vanilla one.
+//
+// Enabled resource packs come first, because that is what the title screen
+// actually shows — then the rest of the packs, then mods. Capped, since this
+// opens every archive in the instance.
+const PANORAMA_SCAN_LIMIT = 150;
+const PANORAMA_RESULT_LIMIT = 6;
+ipcMain.handle("icon:packPanoramas", async (event, { profileId } = {}) => {
+  if (profileId == null) return { panoramas: [] };
+  const root = path.join(dataDir, "client", String(profileId));
+  const list = (dir) => { try { return fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; } };
+
+  const enabled = new Set(
+    readEnabledResourcePacks(profileId).map(p => String(p).replace(/^file\//, ""))
+  );
+  const packsDir = path.join(root, "resourcepacks");
+  const modsDir = path.join(root, "mods");
+
+  // { file, name, kind, dir, on } — ordered so the most likely answer is first
+  // and the cap bites the least interesting entries.
+  const candidates = [];
+  for (const e of list(packsDir)) {
+    const full = path.join(packsDir, e.name);
+    if (e.isDirectory()) candidates.push({ full, name: e.name, kind: "pack", isDir: true, on: enabled.has(e.name) });
+    else if (/\.zip$/i.test(e.name)) candidates.push({ full, name: e.name, kind: "pack", isDir: false, on: enabled.has(e.name) });
+  }
+  for (const e of list(modsDir)) {
+    if (!e.isFile() || !/\.jar$/i.test(e.name)) continue;   // .disabled is skipped by this
+    candidates.push({ full: path.join(modsDir, e.name), name: e.name, kind: "mod", isDir: false, on: false });
+  }
+  candidates.sort((a, b) => {
+    if (a.on !== b.on) return a.on ? -1 : 1;
+    if (a.kind !== b.kind) return a.kind === "pack" ? -1 : 1;
+    return 0;
+  });
+
+  const panoramas = [];
+  let scanned = 0;
+  for (const c of candidates) {
+    if (panoramas.length >= PANORAMA_RESULT_LIMIT) break;
+    if (scanned++ >= PANORAMA_SCAN_LIMIT) break;
+    let faces = null;
+    try {
+      faces = c.isDir ? panoramaFromDir(c.full) : await panoramaFromArchive(c.full);
+    } catch (e) {
+      devtoolsLog(`panorama: could not read ${c.name}:`, e && e.message);
+    }
+    if (!faces) continue;
+    try {
+      const urls = await panoramaToDataUrls(faces);
+      panoramas.push({
+        name: c.name.replace(/\.(zip|jar)$/i, ""),
+        kind: c.kind,
+        enabled: c.on,
+        faces: urls,
+        forward: urls[0],
+      });
+    } catch (e) {
+      devtoolsLog(`panorama: could not prepare ${c.name}:`, e && e.message);
+    }
+  }
+  return { panoramas, scanned, truncated: scanned >= PANORAMA_SCAN_LIMIT };
+});
+
 ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
   try {
     const v = String(version || "").trim();
@@ -6871,29 +7018,13 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
       }
     }
 
-    // 2. Older versions keep real images in the jar.
+    // 2. Older versions keep real images in the jar. No jar is not an answer,
+    //    it just means nothing local to read — which is what step 3 is for.
+    //    This used to return "not downloaded in any instance yet" here and so
+    //    never reached the download at all, contradicting the comment below it.
     if (!faces) {
       const jarPath = findClientJar(v);
-      if (!jarPath) return { error: `${v} is not downloaded in any instance yet` };
-      const zip = new AdmZip(jarPath);
-      const BASES = [
-        "assets/minecraft/textures/gui/title/background/",
-        "assets/minecraft/textures/gui/title/background/panorama/",
-        "assets/minecraft/textures/gui/background/",
-      ];
-      for (const base of BASES) {
-        const found = [];
-        for (let i = 0; i < 6; i++) {
-          const e = zip.getEntry(`${base}panorama_${i}.png`);
-          if (!e) break;
-          const data = e.getData();
-          const size = pngSize(data);
-          // The placeholder is 1x1; anything that small is not a panorama.
-          if (!size || size.width < 16 || size.height < 16) break;
-          found.push(data);
-        }
-        if (found.length === 6) { faces = found; break; }
-      }
+      if (jarPath) faces = await panoramaFromArchive(jarPath);
     }
 
     // 3. Not on disk anywhere: fetch it. These are public, content-addressed
@@ -6908,18 +7039,7 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
       }
     }
 
-    // Downscale before sending: a face is 1024x1024 and six of them as base64
-    // is tens of megabytes over IPC for a picture that ends up 220px tall.
-    const out = [];
-    for (const raw of faces) {
-      let buf = raw;
-      try {
-        buf = await sharp(raw).resize(512, 512, { fit: "fill" }).png({ compressionLevel: 9 }).toBuffer();
-      } catch (e) {
-        devtoolsLog("panorama: could not resize a face:", e && e.message);
-      }
-      out.push("data:image/png;base64," + buf.toString("base64"));
-    }
+    const out = await panoramaToDataUrls(faces);
     // Face 0 is the one the title screen starts on, i.e. "facing forward".
     return { faces: out, forward: out[0] };
   } catch (err) {

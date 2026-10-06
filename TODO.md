@@ -84,7 +84,7 @@ the icon picker, like the panorama and server icons are.
 
 ## Round 19
 
-- [ ] **A pack's own panorama.** If an instance has resource packs or mods that
+- [x] **A pack's own panorama.** If an instance has resource packs or mods that
       replace the title-screen panorama, offer that one in the icon picker too.
 - [x] **Re-hovering the same card still cuts the ease short.** Unhover then
       hover the same skin again and it snaps instead of carrying on.

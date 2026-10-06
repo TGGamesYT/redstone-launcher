@@ -576,22 +576,44 @@
       });
 
       // ── This version: the wiki's banner, and the in-game panorama. ────────
+      const versionWrap = ov.querySelector('#ipVersionWrap');
+      const versionGrid = ov.querySelector('#ipVersion');
+      const addVersionCell = (title, src, onClick, wide) => {
+        versionWrap.style.display = '';
+        const cell = document.createElement('div');
+        cell.className = 'ip-cell' + (wide ? ' ip-wide' : '');
+        cell.title = title;
+        const img = document.createElement('img');
+        img.src = src;
+        img.style.cssText = 'padding:0;object-fit:cover;';
+        cell.appendChild(img);
+        cell.onclick = onClick;
+        versionGrid.appendChild(cell);
+        return cell;
+      };
+
+      // A resource pack or a mod in this instance may replace the title
+      // screen's panorama, and that is one of the first things anyone would
+      // want their instance's icon taken from. Offered alongside the vanilla
+      // one, labelled with the pack it came from, enabled packs first.
+      if (opts.instanceId) {
+        ipcRenderer.invoke('icon:packPanoramas', { profileId: opts.instanceId }).then(r => {
+          for (const p of (r && r.panoramas) || []) {
+            if (!p || !p.forward) continue;
+            const label = `${p.name} panorama` + (p.enabled ? ' (on)' : p.kind === 'mod' ? ' (mod)' : '');
+            const cell = addVersionCell(label, p.forward, () => openPanorama(p, editThenPick), true);
+            const img = cell && cell.querySelector('img');
+            if (img) img.onerror = () => cell.remove();
+            // The heading says "This version", which stops being the whole
+            // truth as soon as a pack's own panorama is in there.
+            const title = versionWrap.querySelector('.ip-section-title');
+            if (title) title.textContent = 'This version & its packs';
+          }
+        }).catch((e) => console.info('[icon picker] pack panorama lookup failed:', e && e.message));
+      }
+
       if (opts.version) {
-        const wrap = ov.querySelector('#ipVersionWrap');
-        const grid = ov.querySelector('#ipVersion');
-        const addCell = (title, src, onClick, wide) => {
-          wrap.style.display = '';
-          const cell = document.createElement('div');
-          cell.className = 'ip-cell' + (wide ? ' ip-wide' : '');
-          cell.title = title;
-          const img = document.createElement('img');
-          img.src = src;
-          img.style.cssText = 'padding:0;object-fit:cover;';
-          cell.appendChild(img);
-          cell.onclick = onClick;
-          grid.appendChild(cell);
-          return cell;
-        };
+        const addCell = addVersionCell;
         ipcRenderer.invoke('icon:versionBanner', { version: opts.version }).then(b => {
           // Plenty of versions have no banner at all; that's simply nothing to show.
           if (b && b.dataUrl) {
