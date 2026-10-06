@@ -25,6 +25,8 @@
   <link rel="stylesheet" href="server.css">
   <link rel="stylesheet" href="instanceview.css">
   <link rel="stylesheet" href="material-icons.css">
+  <!-- The local fallback icon, before anything renders a list with one. -->
+  <script src="defaults.js"></script>
   <style>
     /* Modpack install progress, shown on the instance being built. */
     .mp-install-bar {
@@ -1722,7 +1724,7 @@
         topRow.appendChild(left);
 
         const icon = document.createElement("img");
-        icon.src = profile.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+        icon.src = instanceIcon(profile.icon);
         icon.style.width = "64px";
         icon.style.height = "64px";
         icon.style.marginRight = "10px";
@@ -2095,7 +2097,7 @@
           li.className = "profile-item";
 
           const img = document.createElement("img");
-          img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+          img.src = instanceIcon(p.icon);
           li.appendChild(img);
 
           const info = document.createElement("div");
@@ -2120,7 +2122,7 @@
         }
         // map content tabs -> the modrinth project type used by the install browser
         const installTypeForTab = { mods: "mod", resourcepacks: "resourcepack", shaderpacks: "shader" };
-        const DEFAULT_ICON = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+        const DEFAULT_ICON = window.DEFAULT_ICON;
 
         // Is the instance's MC version >= target (for quick-play support)?
         function versionAtLeast(version, target) {
@@ -3425,7 +3427,7 @@
         li.className = "profile-item";
 
         const img = document.createElement("img");
-        img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+        img.src = instanceIcon(p.icon);
         li.appendChild(img);
 
         const info = document.createElement("div");

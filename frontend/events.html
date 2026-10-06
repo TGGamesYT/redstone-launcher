@@ -22,6 +22,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 </script>  <link rel="stylesheet" href="server.css">
   <link rel="stylesheet" href="material-icons.css">
 
+  <!-- The local fallback icon, before anything renders a list with one. -->
+  <script src="defaults.js"></script>
   <script src="uimodal.js"></script>
 </head>
 <div id="toolbar">
@@ -37,7 +39,10 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <ul class="menu top">
     <li><a href="index.html"><i class="material-icons">home</i></a><span>Home</span></li>
     <li><a href="instances.html"><i class="material-icons">play_arrow</i></a><span>Play</span></li>
-    <li><a href="modrinth.html"><img src="https://tggamesyt.dev/assets/modrinth_icon.png" style="width: 24px;"></a><span>Modrinth</span></li>
+    <!-- class="modrinth" so sidebar.js swaps in the provider's inline SVG, the
+         same as every other page. This was the one place still fetching the
+         logo as an image from a website. -->
+    <li><a href="modrinth.html" class="modrinth"></a><span>Modrinth</span></li>
     <li><a href="server.html"><i class="material-icons">storage</i></a><span>Server Manager</span></li>
     <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
     <li><a href="players.html"><i class="material-icons">person</i></a><span>Profiles</span></li>

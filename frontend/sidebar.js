@@ -231,7 +231,7 @@ function renderInstances(instances) {
         }
       });
       const img = document.createElement("img");
-      img.src = instance.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      img.src = instanceIcon(instance.icon);
       img.alt = instance.name;
       img.style.width = "24px";
       a.appendChild(img);
@@ -279,8 +279,16 @@ window.PROVIDER_SVG = {
 function applyModProviderIcon() {
   const provider = localStorage.getItem('modProvider') === 'curseforge' ? 'curseforge' : 'modrinth';
   const svg = (window.PROVIDER_SVG && window.PROVIDER_SVG[provider]) || '';
-  document.querySelectorAll('.sidebar a.modrinth > li').forEach(li => {
-    li.innerHTML = `<span class="provider-icon">${svg}</span><span>Mod Browser</span>`;
+  document.querySelectorAll('.sidebar a.modrinth').forEach(a => {
+    const li = a.querySelector(':scope > li');
+    if (li) {
+      li.innerHTML = `<span class="provider-icon">${svg}</span><span>Mod Browser</span>`;
+    } else {
+      // The events page's sidebar is an older shape — the link holds the icon
+      // and the label sits beside it rather than inside. It was the last place
+      // still loading this logo as an image from a website.
+      a.innerHTML = `<span class="provider-icon" style="display:inline-block;width:24px;height:24px;">${svg}</span>`;
+    }
   });
 }
 applyModProviderIcon();

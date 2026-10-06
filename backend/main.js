@@ -1714,7 +1714,10 @@ ipcMain.on('create-profile', async (event, profile) => {
     version: profile.version || "1.20.1",
     loader: profile.loader || "vanilla",
     loaderVersion: profile.loaderVersion || "",
-    icon: profile.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png",
+    // No icon means no icon. The pages fall back to the one shipped with the
+    // launcher (frontend/defaults.js); storing a URL here instead meant every
+    // instance made this way carried a remote address around forever.
+    icon: profile.icon || null,
     alwaysUpdate: !!profile.alwaysUpdate,
     autoUpdateVersion: !!profile.alwaysUpdate,
     launchArgs: profile.launchArgs || "",
@@ -3033,6 +3036,14 @@ async function iconUrlToPng(icon) {
     if (/^https?:/.test(icon)) {
       const res = await fetch(icon);
       if (res.ok) return Buffer.from(await res.arrayBuffer());
+      return null;
+    }
+    // A path relative to the launcher's own frontend — which is what the
+    // default icon is now. Without this a shortcut for an instance that never
+    // got its own icon came out with no icon at all.
+    if (!path.isAbsolute(icon)) {
+      const f = path.join(app.getAppPath(), "frontend", icon);
+      if (fs.existsSync(f)) return fs.readFileSync(f);
     }
   } catch { /* ignore */ }
   return null;
@@ -4071,8 +4082,11 @@ ipcMain.handle("setup-server-instance", async (event, { projectId, name, address
       profiles[idx].serverProjectId = projectId;
       profiles[idx].serverAddress = address || null;
       profiles[idx].lastUsed = Date.now();
-      const defIcon = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
-      if (iconUrl && (!profiles[idx].icon || profiles[idx].icon === defIcon)) profiles[idx].icon = iconUrl;
+      // "Still the default" is now an absent icon, but instances made before
+      // that stored the old remote URL, so both count.
+      const LEGACY_DEFAULT = "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      const isDefault = !profiles[idx].icon || profiles[idx].icon === LEGACY_DEFAULT;
+      if (iconUrl && isDefault) profiles[idx].icon = iconUrl;
       saveProfiles(profiles);
     }
     broadcastProgress(SETUP_ID, { done: true, label: "Ready" });

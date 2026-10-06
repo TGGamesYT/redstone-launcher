@@ -25,6 +25,8 @@
   <link rel="stylesheet" href="modrinth.css" />
   <link rel="stylesheet" href="server.css" />
   <link rel="stylesheet" href="material-icons.css">
+  <!-- The local fallback icon, before anything renders a list with one. -->
+  <script src="defaults.js"></script>
   <script src="uimodal.js"></script>
 </head>
 
@@ -1192,7 +1194,7 @@
           li.className = "profile-item";
 
           const img = document.createElement("img");
-          img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+          img.src = instanceIcon(p.icon);
           li.appendChild(img);
 
           const info = document.createElement("div");
@@ -1273,7 +1275,7 @@
           li.className = "profile-item";
 
           const img = document.createElement("img");
-          img.src = s.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+          img.src = instanceIcon(s.icon);
           li.appendChild(img);
 
           const info = document.createElement("div");

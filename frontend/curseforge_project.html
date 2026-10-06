@@ -23,6 +23,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 <link rel="stylesheet" href="modrinth.css" />
 <link rel="stylesheet" href="server.css" />
 <link rel="stylesheet" href="material-icons.css">
+  <!-- The local fallback icon, before anything renders a list with one. -->
+  <script src="defaults.js"></script>
 <style>
 .project-header { display: flex; align-items: flex-start; gap: 20px; padding-right: 20px; margin-bottom: 20px; padding-top: 20px; }
 .project-header img { width: 96px; height: 96px; border-radius: var(--border-radius); }
@@ -336,7 +338,7 @@ async function openInstallScreenCF(mod) {
       li.className = "profile-item";
 
       const img = document.createElement("img");
-      img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      img.src = instanceIcon(p.icon);
       li.appendChild(img);
 
       const info = document.createElement("div");
@@ -449,7 +451,7 @@ async function openInstallScreenCF(mod) {
       li.className = "profile-item";
 
       const img = document.createElement("img");
-      img.src = s.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      img.src = instanceIcon(s.icon);
       li.appendChild(img);
 
       const info = document.createElement("div");

@@ -23,6 +23,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <link rel="stylesheet" href="common.css" />
   <link rel="stylesheet" href="server.css" />
   <link rel="stylesheet" href="material-icons.css">
+  <!-- The local fallback icon, before anything renders a list with one. -->
+  <script src="defaults.js"></script>
   <style>
     .promain { display: flex; gap: 16px; padding: 0 20px 0 0; }
     #serverListView { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -213,7 +215,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <div class="srv-top-row">
         <div class="srv-identity">
           <span class="icon-with-dot">
-            <img id="srvDetailIcon" src="https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png" />
+            <img id="srvDetailIcon" src="assets/icons/Redstone_Ore_JE4_BE3.png" />
             <span id="srvDetailDot" class="status-dot offline"></span>
           </span>
           <div>
@@ -480,7 +482,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         const iconWrap = document.createElement('span');
         iconWrap.className = 'icon-with-dot';
         const img = document.createElement('img');
-        img.src = s.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
+        img.src = instanceIcon(s.icon);
         const dot = document.createElement('span');
         dot.className = 'status-dot ' + (running ? 'online' : 'offline');
         dot.title = running ? 'Online' : 'Offline';
@@ -532,7 +534,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       if (!fromHistory) history.pushState({ srvDetail: server.name }, '', location.pathname + '?srv=' + encodeURIComponent(server.name));
       $('serverListView').style.display = 'none';
       $('serverDetail').style.display = 'flex';
-      $('srvDetailIcon').src = server.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
+      $('srvDetailIcon').src = instanceIcon(server.icon);
       $('srvDetailName').textContent = server.name;
       $('srvDetailInfo').textContent = `${server.type} ${server.version} • port ${server.port || 25565}`;
       // Modded server types (Fabric/Forge/Quilt) get a Mods tab automatically.
@@ -741,7 +743,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     document.addEventListener('click', () => $('dMenu').classList.remove('open'));
     $('dFolder').onclick = () => { $('dMenu').classList.remove('open'); ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false }); };
     // ---------- Desktop shortcut ----------
-    const DEFAULT_SRV_ICON = 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
+    const DEFAULT_SRV_ICON = instanceIcon(null);
     let scIconData = null;
     $('dShortcut').onclick = () => {
       $('dMenu').classList.remove('open');

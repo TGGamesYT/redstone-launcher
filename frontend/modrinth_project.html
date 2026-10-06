@@ -23,6 +23,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
 <link rel="stylesheet" href="modrinth.css" />
 <link rel="stylesheet" href="server.css" />
 <link rel="stylesheet" href="material-icons.css">
+  <!-- The local fallback icon, before anything renders a list with one. -->
+  <script src="defaults.js"></script>
 <style>
   .project-header {
     display: flex;
@@ -177,7 +179,7 @@ function ensureMarked() {
     const existing = document.querySelector('script[data-marked]');
     if (existing) { existing.addEventListener('load', () => resolve()); existing.addEventListener('error', () => resolve()); return; }
     const s = document.createElement('script');
-    s.src = "https://cdn.jsdelivr.net/npm/marked/marked.min.js";
+    s.src = "marked.min.js";
     s.dataset.marked = "1";
     s.onload = () => resolve();
     s.onerror = () => resolve();
@@ -623,7 +625,7 @@ if (downloadBtn.textContent == "Back") {
       }
 
       const img = document.createElement("img");
-      img.src = p.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      img.src = instanceIcon(p.icon);
       li.appendChild(img);
 
       const info = document.createElement("div");
@@ -718,7 +720,7 @@ installArea.appendChild(li);
       li.className = "profile-item";
 
       const img = document.createElement("img");
-      img.src = s.icon || "https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png";
+      img.src = instanceIcon(s.icon);
       li.appendChild(img);
 
       const info = document.createElement("div");
@@ -762,7 +764,7 @@ installArea.appendChild(li);
 }
 loadProjectDetails();
 </script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="marked.min.js"></script>
   <script src="modpack-install.js"></script>
   <script src="fitheight.js"></script>
   <script src="sidebar.js"></script>

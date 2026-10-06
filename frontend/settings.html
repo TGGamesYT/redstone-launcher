@@ -21,9 +21,11 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   document.documentElement.classList.add('gradient-enabled');
 }
 </script>
-  <link href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css" rel="stylesheet">
+  <link href="nouislider.min.css" rel="stylesheet">
   <link rel="stylesheet" href="server.css" />
   <link rel="stylesheet" href="material-icons.css">
+  <!-- The local fallback icon, before anything renders a list with one. -->
+  <script src="defaults.js"></script>
   <style>
     .settings-container {
       margin-right: 20px;
@@ -455,7 +457,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     </div>
   </div>
 <p class="app-version">Version <span id="appVersion">…</span></p>
-  <script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.js"></script>
+  <script src="nouislider.min.js"></script>
   <script>
     const { ipcRenderer } = require('electron');
 
@@ -1076,7 +1078,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
             li.className = 'profile-item';
             li.style.cursor = 'pointer';
             const img = document.createElement('img');
-            img.src = p.icon || 'https://tggamesyt.dev/assets/redstone_launcher_defaulticon.png';
+            img.src = instanceIcon(p.icon);
             const info = document.createElement('div');
             info.className = 'profile-info';
             info.innerHTML = `<div class="profile-name">${p.name}</div><div class="profile-details">v${p.version} • ${p.loader}</div>`;
