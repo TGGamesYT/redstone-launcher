@@ -324,8 +324,16 @@
     // right.
     const box = new THREE.Box3().setFromObject(root);
     const centre = box.getCenter(new THREE.Vector3());
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
-    camera.position.copy(centre).add(new THREE.Vector3(40, 40, 40));
+    // Far enough out to be outside the model, whatever size it is. A fixed 40
+    // units is comfortably outside a 16-unit block and comfortably INSIDE the
+    // ender dragon, which is 256 across — the camera ended up in its head, and
+    // the near plane cut a hole in the head and the near wing. The frustum is
+    // sized from the model too, since an orthographic camera's near and far
+    // have to straddle it.
+    const radius = Math.max(8, box.getSize(new THREE.Vector3()).length() / 2);
+    const dist = radius * 4 + 40;
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, dist * 2 + radius * 4);
+    camera.position.copy(centre).add(new THREE.Vector3(dist, dist, dist).multiplyScalar(1 / Math.sqrt(3)));
     camera.up.set(0, 1, 0);
     camera.lookAt(centre);
     camera.updateMatrixWorld();

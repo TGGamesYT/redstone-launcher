@@ -34,6 +34,7 @@ import QRCode from "qrcode";
 import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { screenSkinPixels } from './skinFilter.js';
+import * as iconModels from './icon-models.js';
 
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
@@ -7058,6 +7059,69 @@ ipcMain.handle("icon:dataUrl", async (event, { filePath }) => {
     const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "image/png";
     return `data:${mime};base64,` + buf.toString("base64");
   } catch { return null; }
+});
+
+// ── Block, item and entity models as icons ─────────────────────────────────
+// The reading lives in backend/icon-models.js and the drawing in
+// frontend/blockrender.js; this is the wiring between them. The handlers hand
+// the renderer a description — boxes, textures, UVs — rather than a picture,
+// because the only place with a GPU is the renderer process.
+iconModels.configure({
+  dataDir,
+  log: devtoolsLog,
+  findClientJar,
+  instanceRoot: (profileId) => path.join(dataDir, "client", String(profileId)),
+  enabledResourcePacks: readEnabledResourcePacks,
+  // How colourful a texture is, which is what decides whether a face with a
+  // `tintindex` really wants tinting. See model-assets.js.
+  measureSaturation: async (buf) => {
+    try {
+      const { data } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      let n = 0, s = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] < 200) continue;
+        const mx = Math.max(data[i], data[i + 1], data[i + 2]);
+        const mn = Math.min(data[i], data[i + 1], data[i + 2]);
+        s += mx ? (mx - mn) / mx : 0; n++;
+      }
+      return n ? s / n : 0;
+    } catch { return null; }
+  },
+});
+
+ipcMain.handle("model:list", async (event, opts = {}) => {
+  try { return await iconModels.listModels(opts); }
+  catch (err) { return { items: [], total: 0, error: String(err && err.message || err) }; }
+});
+ipcMain.handle("model:describe", async (event, opts = {}) => {
+  try { return await iconModels.describeModel(opts); }
+  catch (err) { return { error: String(err && err.message || err) }; }
+});
+ipcMain.handle("model:states", async (event, opts = {}) => {
+  try { return await iconModels.modelStates(opts); }
+  catch { return []; }
+});
+ipcMain.handle("model:entity", async (event, opts = {}) => {
+  try { return await iconModels.describeEntity(opts); }
+  catch (err) { return { error: String(err && err.message || err) }; }
+});
+ipcMain.handle("icon:versionIcon", async (event, opts = {}) => {
+  try { return await iconModels.versionIcon(opts); }
+  catch (err) { return { kind: "release", reason: String(err && err.message || err) }; }
+});
+ipcMain.handle("icon:storeVersionIcon", async (event, opts = {}) => {
+  try { return await iconModels.storeVersionIcon(opts); }
+  catch { return { success: false }; }
+});
+// Thumbnails the renderer drew, kept so the picker does not have to draw the
+// same grid again every time it is opened.
+ipcMain.handle("model:thumbs", async (event, { keys } = {}) => {
+  try { return await iconModels.thumbMany({ keys }); }
+  catch { return {}; }
+});
+ipcMain.handle("model:thumbPut", async (event, opts = {}) => {
+  try { return await iconModels.thumbPut(opts); }
+  catch { return { success: false }; }
 });
 
 // Read a resource pack's pack.mcmeta "description" (from a folder or a .zip),

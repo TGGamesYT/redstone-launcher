@@ -537,6 +537,8 @@
         <div id="ipServersWrap" style="display:none;"><div class="ip-section-title">Servers</div><div class="ip-grid" id="ipServers"></div></div>
         <div id="ipModsWrap" style="display:none;"><div class="ip-section-title">Mods</div><div class="ip-grid" id="ipMods"></div></div>
         <div id="ipPacksWrap" style="display:none;"><div class="ip-section-title">Resource packs</div><div class="ip-grid" id="ipPacks"></div></div>
+        <div class="ip-section-title">Blocks, items &amp; mobs</div>
+        <div id="ipModels"></div>
         <div class="modal-actions"><button id="ipCustom">Custom image…</button><button id="ipCancel">Cancel</button></div>
         <input type="file" id="ipFile" accept="image/*" style="display:none;" />
       </div>`;
@@ -575,6 +577,20 @@
         editions.appendChild(cell);
       });
 
+      // ── Every block, item and mob the instance has ───────────────────────
+      // Its own section with a search box, because there are thousands of them
+      // and a flat grid of thousands is not a thing anyone can use.
+      try {
+        if (window.ModelPicker) {
+          window.ModelPicker.ensureStyle();
+          window.ModelPicker.mount(ov.querySelector('#ipModels'), {
+            instanceId: opts.instanceId ?? null,
+            version: opts.version || null,
+            onPick: (url) => editThenPick(url),
+          });
+        }
+      } catch (e) { console.info('[icon picker] models unavailable:', e && e.message); }
+
       // ── This version: the wiki's banner, and the in-game panorama. ────────
       const versionWrap = ov.querySelector('#ipVersionWrap');
       const versionGrid = ov.querySelector('#ipVersion');
@@ -610,6 +626,18 @@
             if (title) title.textContent = 'This version & its packs';
           }
         }).catch((e) => console.info('[icon picker] pack panorama lookup failed:', e && e.message));
+      }
+
+      // The block this version is remembered for, drawn the way a new
+      // instance's default icon is drawn — so what the picker offers and what
+      // an instance starts with are the same picture.
+      if (opts.version && window.VersionIcon) {
+        window.VersionIcon.get(opts.version, opts.instanceId ?? null).then(url => {
+          if (!url || !ov.isConnected) return;
+          const cell = addVersionCell(`${opts.version} icon`, url, () => editThenPick(url));
+          const img = cell && cell.querySelector('img');
+          if (img) { img.style.cssText = 'padding:4px;object-fit:contain;'; img.onerror = () => cell.remove(); }
+        }).catch(() => { });
       }
 
       if (opts.version) {

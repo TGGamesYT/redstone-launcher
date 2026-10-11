@@ -309,7 +309,16 @@ async function entityLayers(version) {
   return p;
 }
 
-/** An entity layer, ready to render. */
+/**
+ * An entity layer, ready to render.
+ *
+ * A mob is often more than one layer. A drowned is its body plus a
+ * `drowned/outer` overlay — a slightly larger copy of the same shape wearing a
+ * texture that is mostly transparent, which is where its clothes and the
+ * seaweed come from. Drawing only the body loses all of that and the mob comes
+ * out looking flat and wrong. So any `<name>/outer` layer is drawn on top,
+ * with its own texture, as a second set of elements.
+ */
 export async function describeEntity({ profileId, version, name }) {
   const layers = await entityLayers(version);
   const L = layers.get(name);
@@ -317,12 +326,24 @@ export async function describeEntity({ profileId, version, name }) {
   const st = await stackFor({ profileId, version });
   const tex = await entityTexture(st ? st.textures : null, name);
   if (!tex) return { error: `no texture for ${name}` };
-  return {
-    kind: 'elements', space: 'entity',
-    elements: L.elements,
-    textures: { 0: { url: tex, width: L.texWidth, height: L.texHeight, frames: 1 } },
-    rotY: 180,
-  };
+
+  const elements = L.elements.slice();
+  const textures = { 0: { url: tex, width: L.texWidth, height: L.texHeight, frames: 1 } };
+
+  const outer = layers.get(`${name}/outer`);
+  if (outer) {
+    const outerTex = await entityTexture(st ? st.textures : null, `${name}_outer_layer`)
+      || await entityTexture(st ? st.textures : null, `${name}/outer`);
+    if (outerTex) {
+      textures[1] = { url: outerTex, width: outer.texWidth, height: outer.texHeight, frames: 1 };
+      for (const el of outer.elements) {
+        elements.push({ ...el, faces: Object.fromEntries(
+          Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: '#1' }])) });
+      }
+    }
+  }
+
+  return { kind: 'elements', space: 'entity', elements, textures, rotY: 180 };
 }
 
 // A layer name -> its texture. The names line up with the texture paths most
@@ -386,6 +407,36 @@ export async function versionIcon({ version, profileId = null }) {
   }
   if (desc.error) return { ...r, kind: 'release', reason: desc.error };
   return { ...r, draw: desc };
+}
+
+// ── Thumbnails ──────────────────────────────────────────────────────────────
+// Rendering a grid of models costs a WebGL pass each, and the picker is opened
+// over and over. The renderer hands back what it drew and gets it straight
+// from disk next time, which is what stops the picker filling in slowly every
+// single time it is opened.
+const thumbFile = (key) =>
+  path.join(DEPS.dataDir, 'cache', 'model-thumbs', String(key).replace(/[^\w.\-]/g, '_').slice(0, 180) + '.png');
+
+export async function thumbGet({ key }) {
+  try {
+    const buf = await fsp.readFile(thumbFile(key));
+    return 'data:image/png;base64,' + buf.toString('base64');
+  } catch { return null; }
+}
+export async function thumbMany({ keys }) {
+  const out = {};
+  await Promise.all((keys || []).slice(0, 400).map(async (k) => { out[k] = await thumbGet({ key: k }); }));
+  return out;
+}
+export async function thumbPut({ key, dataUrl }) {
+  const m = /^data:image\/png;base64,(.+)$/.exec(String(dataUrl || ''));
+  if (!m || !key) return { success: false };
+  try {
+    const f = thumbFile(key);
+    await fsp.mkdir(path.dirname(f), { recursive: true });
+    await fsp.writeFile(f, Buffer.from(m[1], 'base64'));
+    return { success: true };
+  } catch { return { success: false }; }
 }
 
 export async function storeVersionIcon({ version, dataUrl }) {

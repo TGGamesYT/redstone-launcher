@@ -785,11 +785,19 @@ function boxUv(b) {
   };
 }
 
-// A few mobs are never seen at rest. A zombie is always drawn with its arms
-// out in front — it is how anyone would draw one — but the model tree holds
-// the rest pose, and the arms are swung by the animation code at render time
-// rather than by anything in the layer. Rather than interpret the animations
-// too, these put the one pose that makes the mob recognisable back on.
+// A few mobs are never seen at rest.
+//
+// The model tree holds the REST pose; what the game shows is that pose after
+// the mob's own setupAnim has run. There is no data to read for this: of the
+// animated mobs only seventeen have an AnimationDefinition class in 26.4, and
+// an allay — whose wings are swung open by arithmetic in AllayModel — is not
+// one of them. Every other mob's pose is imperative Java against a live render
+// state, so there is nothing general to interpret.
+//
+// This is therefore a short, deliberate list rather than a mechanism: the
+// mobs whose rest pose is actively misleading. A zombie with its arms by its
+// sides is not a zombie. Anything not listed is shown exactly as its model
+// defines it, which is the honest default.
 const ARMS_OUT = { right_arm: { xRot: -Math.PI / 2 }, left_arm: { xRot: -Math.PI / 2 } };
 const ZOMBIE_FAMILY = /^(zombie|husk|drowned|frostbite|parched|giant|zombie_villager)(_baby|_no_hat|_baby_no_hat)?(\/|$)/;
 export function poseFor(layerName) {

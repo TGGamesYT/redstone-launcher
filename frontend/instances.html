@@ -28,6 +28,9 @@
   <!-- The local fallback icon, before anything renders a list with one. -->
   <script src="defaults.js"></script>
   <script src="pixelart.js"></script>
+  <script src="blockrender.js"></script>
+  <script src="modelpicker.js"></script>
+  <script src="versionicon.js"></script>
   <style>
     /* Modpack install progress, shown on the instance being built. */
     .mp-install-bar {
@@ -3653,6 +3656,14 @@
 
             if (pickedInstanceIcon) {
               newProfile.icon = pickedInstanceIcon;
+            } else if (window.VersionIcon) {
+              // No icon chosen: give it the block its Minecraft version is
+              // remembered for, drawn as an isometric render — or the snapshot
+              // mark, the release mark or the old launcher icon, whichever the
+              // version calls for. A generic icon on every instance tells you
+              // nothing about which one you are looking at.
+              try { newProfile.icon = await window.VersionIcon.forNewInstance(sel.version); }
+              catch { /* the generic icon is still there to fall back on */ }
             }
 
             ipcRenderer.send("create-profile", newProfile);
