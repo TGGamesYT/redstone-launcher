@@ -6735,6 +6735,28 @@ ipcMain.handle("import:instance", async (event, { entry }) => {
   }
 });
 
+// ── A small cache on disk, for the answers the picker asks for every time ──
+// The picker is opened over and over and used to rebuild everything from
+// scratch each time: two requests to the wiki for a banner, six 1024px
+// panorama faces resized, every mod jar in the instance opened, every
+// screenshot re-thumbnailed. None of that changes between opens, so none of it
+// should happen twice.
+function iconCacheDir(bucket) { return path.join(dataDir, "cache", bucket); }
+function iconCacheFile(bucket, key, ext) {
+  const safe = String(key).replace(/[^\w.\-]/g, "_").slice(0, 160);
+  return path.join(iconCacheDir(bucket), safe + ext);
+}
+async function iconCacheRead(bucket, key, ext) {
+  try { return await fsp.readFile(iconCacheFile(bucket, key, ext)); } catch { return null; }
+}
+async function iconCacheWrite(bucket, key, ext, buf) {
+  try {
+    const f = iconCacheFile(bucket, key, ext);
+    await fsp.mkdir(path.dirname(f), { recursive: true });
+    await fsp.writeFile(f, buf);
+  } catch { /* a cache that cannot be written is still only a cache */ }
+}
+
 ipcMain.handle("icon:thumb", async (event, { filePath, size }) => {
   try {
     const p = path.resolve(String(filePath || ""));
@@ -6743,8 +6765,15 @@ ipcMain.handle("icon:thumb", async (event, { filePath, size }) => {
     const st = fs.statSync(p);
     const key = `${p}:${px}:${st.mtimeMs}:${st.size}`;
     if (_iconThumbCache.has(key)) return _iconThumbCache.get(key);
+    const onDisk = await iconCacheRead("icon-thumbs", key, ".png");
+    if (onDisk) {
+      const url = "data:image/png;base64," + onDisk.toString("base64");
+      _iconThumbCache.set(key, url);
+      return url;
+    }
     const buf = await sharp(p).resize(px, px, { fit: "cover", position: "centre" }).png().toBuffer();
     const out = "data:image/png;base64," + buf.toString("base64");
+    iconCacheWrite("icon-thumbs", key, ".png", buf);
     // A few hundred small thumbs is nothing; an unbounded map isn't.
     if (_iconThumbCache.size > 400) _iconThumbCache.clear();
     _iconThumbCache.set(key, out);
@@ -6755,9 +6784,22 @@ ipcMain.handle("icon:thumb", async (event, { filePath, size }) => {
 // The wiki publishes a banner per version at a predictable path, but the
 // extension varies by version and plenty of versions have neither. Try png,
 // then jpg, and say so honestly when there is nothing.
+const _bannerMemo = new Map();
 ipcMain.handle("icon:versionBanner", async (event, { version }) => {
   const v = String(version || "").trim();
   if (!v) return null;
+  if (_bannerMemo.has(v)) return _bannerMemo.get(v);
+  // A version's banner is published once and never changes, so once it has
+  // been fetched it never needs fetching again — not on the next open, not
+  // after a restart.
+  const cached = await iconCacheRead("version-banners", v, ".bin");
+  if (cached) {
+    const nl = cached.indexOf(10);
+    const ct = cached.subarray(0, nl).toString("utf8");
+    const out = { url: null, dataUrl: `data:${ct};base64,` + cached.subarray(nl + 1).toString("base64") };
+    _bannerMemo.set(v, out);
+    return out;
+  }
   for (const ext of ["png", "jpg"]) {
     const url = `https://minecraft.wiki/images/${encodeURIComponent(v)}_banner.${ext}`;
     try {
@@ -6766,9 +6808,16 @@ ipcMain.handle("icon:versionBanner", async (event, { version }) => {
       const ct = r.headers.get("content-type") || "";
       if (!ct.startsWith("image/")) continue;
       const buf = Buffer.from(await r.arrayBuffer());
-      return { url, dataUrl: `data:${ct};base64,` + buf.toString("base64") };
+      await iconCacheWrite("version-banners", v, ".bin",
+        Buffer.concat([Buffer.from(ct.split(";")[0] + "\n", "utf8"), buf]));
+      const out = { url, dataUrl: `data:${ct};base64,` + buf.toString("base64") };
+      _bannerMemo.set(v, out);
+      return out;
     } catch { /* try the next extension */ }
   }
+  // Remember that there ISN'T one too; plenty of versions have no banner and
+  // asking the wiki twice per open for all of them is the slow part.
+  _bannerMemo.set(v, null);
   return null;
 });
 
@@ -7032,9 +7081,37 @@ async function panoramaToDataUrls(faces) {
 // opens every archive in the instance.
 const PANORAMA_SCAN_LIMIT = 150;
 const PANORAMA_RESULT_LIMIT = 6;
+// Opening every mod and pack in an instance is the slowest thing the picker
+// does. The answer only changes when those folders do, so it is kept against a
+// signature of their contents rather than redone on every open.
+const _packPanoMemo = new Map();
+function packFolderSignature(root) {
+  const parts = [];
+  for (const sub of ["resourcepacks", "mods"]) {
+    const dir = path.join(root, sub);
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      try {
+        const st = fs.statSync(path.join(dir, e.name));
+        parts.push(`${sub}/${e.name}:${Math.round(st.mtimeMs)}:${st.size}`);
+      } catch { parts.push(`${sub}/${e.name}`); }
+    }
+  }
+  // options.txt decides which packs are ON, which decides the order.
+  try {
+    const st = fs.statSync(path.join(root, "options.txt"));
+    parts.push(`options:${Math.round(st.mtimeMs)}`);
+  } catch { /* none yet */ }
+  return parts.sort().join("|");
+}
+
 ipcMain.handle("icon:packPanoramas", async (event, { profileId } = {}) => {
   if (profileId == null) return { panoramas: [] };
   const root = path.join(dataDir, "client", String(profileId));
+  const sig = packFolderSignature(root);
+  const seen = _packPanoMemo.get(String(profileId));
+  if (seen && seen.sig === sig) return seen.value;
   const list = (dir) => { try { return fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; } };
 
   const enabled = new Set(
@@ -7087,13 +7164,28 @@ ipcMain.handle("icon:packPanoramas", async (event, { profileId } = {}) => {
       devtoolsLog(`panorama: could not prepare ${c.name}:`, e && e.message);
     }
   }
-  return { panoramas, scanned, truncated: scanned >= PANORAMA_SCAN_LIMIT };
+  const value = { panoramas, scanned, truncated: scanned >= PANORAMA_SCAN_LIMIT };
+  if (_packPanoMemo.size > 12) _packPanoMemo.clear();
+  _packPanoMemo.set(String(profileId), { sig, value });
+  return value;
 });
 
+const _panoMemo = new Map();
 ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
   try {
     const v = String(version || "").trim();
     if (!v) return { error: "no version given" };
+    if (_panoMemo.has(v)) return _panoMemo.get(v);
+    // Six 1024px faces resized to 512 is the better part of a second, every
+    // time the picker is opened. The result is the same every time.
+    try {
+      const cached = await iconCacheRead("version-panoramas", v, ".json");
+      if (cached) {
+        const out = JSON.parse(cached.toString("utf8"));
+        _panoMemo.set(v, out);
+        return out;
+      }
+    } catch { /* fall through and build it */ }
 
     let faces = null;
 
@@ -7148,7 +7240,10 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
 
     const out = await panoramaToDataUrls(faces);
     // Face 0 is the one the title screen starts on, i.e. "facing forward".
-    return { faces: out, forward: out[0], overlay: out.overlay || null };
+    const answer = { faces: [...out], forward: out[0], overlay: out.overlay || null };
+    _panoMemo.set(v, answer);
+    iconCacheWrite("version-panoramas", v, ".json", Buffer.from(JSON.stringify(answer), "utf8"));
+    return answer;
   } catch (err) {
     devtoolsLog("panorama failed:", err && err.message);
     return { error: String(err && err.message || err) };

@@ -34,7 +34,7 @@ the order it is being built in.
       — can have still images laid over it in game; those are not being drawn.
 - [x] **New-instance modals: cancel/back closes everything** instead of going
       back to the modal it came from.
-- [ ] **The icon picker takes a while to fill in** every time it is opened.
+- [x] **The icon picker takes a while to fill in** every time it is opened.
 - [x] **Censor the access token, the xuid and the like in the logs** as `****`.
 - [x] **An imported modpack should show the modpack's icon.**
 
