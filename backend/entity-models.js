@@ -210,7 +210,8 @@ export class EntityModels {
 
     for (const [k, v] of entries) {
       if (!(k instanceof JLoc) || !(v instanceof JLayer)) continue;
-      try { out.set(String(k), { ...flatten(v), name: String(k) }); } catch { /* skip */ }
+      const name = String(k);
+      try { out.set(name, { ...flatten(v, poseFor(name)), name }); } catch { /* skip */ }
     }
     this._layers = out;
     return out;
@@ -784,7 +785,18 @@ function boxUv(b) {
   };
 }
 
-function flatten(layer) {
+// A few mobs are never seen at rest. A zombie is always drawn with its arms
+// out in front — it is how anyone would draw one — but the model tree holds
+// the rest pose, and the arms are swung by the animation code at render time
+// rather than by anything in the layer. Rather than interpret the animations
+// too, these put the one pose that makes the mob recognisable back on.
+const ARMS_OUT = { right_arm: { xRot: -Math.PI / 2 }, left_arm: { xRot: -Math.PI / 2 } };
+const ZOMBIE_FAMILY = /^(zombie|husk|drowned|frostbite|parched|giant|zombie_villager)(_baby|_no_hat|_baby_no_hat)?(\/|$)/;
+export function poseFor(layerName) {
+  return ZOMBIE_FAMILY.test(String(layerName || '')) ? ARMS_OUT : null;
+}
+
+function flatten(layer, poses) {
   const elements = [];
   const texW = layer.texW || 64, texH = layer.texH || 32;
   // Minecraft renders a model under scale(-1, -1, 1), whose determinant is +1:
@@ -792,24 +804,45 @@ function flatten(layer) {
   // way up, since it is built with +Y pointing down.
   const ROOT = mRotZ(Math.PI);
 
-  const walk = (part, parent) => {
+  const walk = (part, parent, name) => {
     // A pose that came out of a call the interpreter did not model is not a
     // pose; treat it as no offset rather than letting undefined spread.
     const p = (part.pose instanceof JPose) ? part.pose : JPose.ZERO;
+    const extra = (poses && name && poses[name]) || null;
     let m = mMul(parent, mTranslate(p.x, p.y, p.z));
     // The game's own order: translate, then z, then y, then x.
-    if (p.zRot) m = mMul(m, mRotZ(p.zRot));
-    if (p.yRot) m = mMul(m, mRotY(p.yRot));
-    if (p.xRot) m = mMul(m, mRotX(p.xRot));
+    const zR = p.zRot + (extra && extra.zRot || 0);
+    const yR = p.yRot + (extra && extra.yRot || 0);
+    const xR = p.xRot + (extra && extra.xRot || 0);
+    if (zR) m = mMul(m, mRotZ(zR));
+    if (yR) m = mMul(m, mRotY(yR));
+    if (xR) m = mMul(m, mRotX(xR));
     if (p.sx !== 1 || p.sy !== 1 || p.sz !== 1) m = mMul(m, mScale(p.sx, p.sy, p.sz));
 
     for (const b of part.cubes) {
       const g = b.grow || JDeform.NONE;
       const uv = boxUv(b);
       const faces = {};
+      // Which of the box's quads goes on which of the renderer's faces.
+      //
+      // The renderer labels a face by the direction it points in the element's
+      // OWN space, and an element's own space here is Minecraft's, where +Y is
+      // DOWN. So the quad the unwrap calls "up" — the one at the smallest y,
+      // which is the top of the head — sits on what the renderer calls `down`.
+      // Up and down swap; the other four axes agree.
+      const SLOT = { up: 'down', down: 'up', north: 'north', south: 'south', east: 'east', west: 'west' };
+      // The four SIDE quads are also turned through half a turn: the half turn
+      // about Z that puts the model the right way up carries their textures
+      // round with it, so they have to be laid on backwards to come out
+      // forwards. Swapping both ends of u and both ends of v is that half
+      // turn. The top and bottom quads do not get it — the same rotation is a
+      // mirror in their plane, and swapping which of them is which already
+      // undoes it.
+      const TURN = new Set(['north', 'south', 'east', 'west']);
       for (const dir of ['up', 'down', 'north', 'south', 'east', 'west']) {
-        const [u0, v0, u1, v1] = uv[dir];
-        faces[dir] = {
+        let [u0, v0, u1, v1] = uv[dir];
+        if (TURN.has(dir)) { [u0, v0, u1, v1] = [u1, v1, u0, v0]; }
+        faces[SLOT[dir]] = {
           texture: '#0',
           // The renderer's uv is in sixteenths of the texture; an entity's is
           // in pixels of it, so this is the one place they have to be bridged.
@@ -832,9 +865,9 @@ function flatten(layer) {
         transform: mMul(ROOT, m),
       });
     }
-    for (const child of part.children.values()) walk(child, m);
+    for (const [childName, child] of part.children) walk(child, m, childName);
   };
-  walk(layer.mesh.root, mIdent());
+  walk(layer.mesh.root, mIdent(), null);
 
   return { elements, texWidth: texW, texHeight: texH };
 }
