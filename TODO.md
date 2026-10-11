@@ -9,6 +9,113 @@ started.
 
 ---
 
+## 0. Round 21
+
+Everything asked for across this round, **in the order it was asked**, which is
+the order it is being built in.
+
+### A. The block/item renderer, as reported from the test sheet
+- [ ] **Some models render turned half a turn** from the angle they should be
+      seen at — dried ghast and bee nest definitely; stairs face the right way.
+- [ ] **A transparent render shows what is behind it.** By default nothing
+      should be visible through a face.
+- [ ] **Cherry leaves are already pink and must not be tinted**, the same as
+      orange poplar leaves.
+
+### B. Entities
+- [ ] **An entity renderer**: read/simulate the entity renderer classes and,
+      with the entity texture, render entities too.
+
+### C. After the rendering work
+- [ ] **Panorama overlays are missed.** A version's panorama — and a modded one
+      — can have still images laid over it in game; those are not being drawn.
+- [ ] **New-instance modals: cancel/back closes everything** instead of going
+      back to the modal it came from.
+- [ ] **The icon picker takes a while to fill in** every time it is opened.
+- [ ] **Censor the access token, the xuid and the like in the logs** as `****`.
+- [ ] **An imported modpack should show the modpack's icon.**
+
+### D. The friends panel
+- [ ] **The status dropdown is MY OWN status** — the one reported through the
+      API — not a filter over the list.
+- [ ] **"Search or add by username"**: the box searches the list it is over; the
+      Add button (or Enter) does not add straight away — it opens the player's
+      details first.
+- [ ] **A player details modal**: on the left their skin as a player render,
+      the same as the skins page's main render, with their cape and no random
+      animations. On the right, the same head/name/status line the list shows,
+      and under it a remove-friend button, a NameMC button (their uuid's page),
+      and a label saying whether they have used Redstone Launcher before and on
+      what day — detected on the server.
+- [ ] **The list's remove button becomes an info button** that opens that page.
+
+### E. Suggestions
+- [ ] **A Suggestions tab in settings**, with a form icon, the blurb about not
+      needing sketchy websites for things a launcher should include, an input
+      section and a submit button.
+- [ ] **A confirm modal** on submit, and a premium account is required — the
+      server verifies it.
+- [ ] **`viewSuggestions("password")` in devtools** for admins, against a
+      password the server holds in a file that is not in git.
+- [ ] **An admin page** listing suggestions like the accounts page: the
+      submitter's name, their face, the title; clicking one shows the body.
+- [ ] **Admin actions**: time out the submitter (and every account of theirs)
+      from submitting for a set period; accept or deny with a reason.
+- [ ] **A submitter sees their own suggestions and their status.**
+
+### F. Icons for a project
+- [ ] **Mods, resource packs and the rest should offer their Modrinth or
+      CurseForge icon and banner, and their gallery images** — clicking the icon
+      first shows a choice between the in-file icon, the site icon, the banner
+      and the gallery, and only then the cropper.
+- [ ] **Creating an instance from a mod or modpack only shows Modrinth results.**
+- [ ] **The + button can open more than one new-instance modal.**
+
+### G. The new-instance flow
+- [ ] **Keep the per-version banners.**
+- [ ] **"Set it up myself" starts with a version picker**: a card per version
+      with the wiki banner behind it and the rendered version icon above the
+      name.
+- [ ] **A "latest snapshot" card**: the icon of the newest version named in the
+      JSON even if it is not out yet, over the newest snapshot's banner
+      (`.../26.4-snapshot-2.jpg`, `.../26.3-pre1.jpg`, `.../26.3-rc1.jpg`).
+- [ ] **A "select snapshot" button** bottom-left, beside Continue bottom-right
+      and outside the scrolling area, opening the same modal listing every
+      snapshot with no icons or banners.
+- [ ] **Continue goes to the same kind of page for loaders**, their icons being
+      the loaders' icons and the backgrounds their logos' edge pixels stretched.
+
+### H. The skin editor
+- [ ] **The colour picker takes no hex** and forgets the colours just used.
+- [ ] **The fill tool has no tolerance** for nearly-equal colours.
+- [ ] **Delete does nothing to a selected area.**
+- [ ] **No copy or paste of a selection.**
+- [ ] **Moving a selection leaves the original behind** until the button is
+      released; the original should be shown in place while it moves.
+
+### I. Cloud skins
+- [ ] **A cloud-synced skin cannot be deleted at all.**
+- [ ] **Editing a cloud-saved skin saves a new one** instead of changing it.
+
+### J. The loading indicator
+- [ ] **Replace every page's spinner** with a 4×4 grid of blocks that loops
+      round: `#RP# / P##R / R##P / #PR#`, where `#` is empty, `R` is a redstone
+      block and `P` a piston facing the redstone block beside it. The top piston
+      extends — swapped for the headless piston with its head sliding along
+      ahead of the redstone block — giving `RHP# / P##R / R##P / #PR#`, then the
+      next one fires while the first retracts, round and round. Real textures.
+
+### K. The skin renders
+- [ ] **Not every skin render has the physics** — the skin editor's does not.
+- [ ] **Stabilising a fling eats its momentum.** It should keep spinning and be
+      levelled separately.
+- [ ] **A random animation must not start while the render is being moved.**
+      Only after it has been left alone in the default position for a while, and
+      then at random intervals; playing one by hand from devtools resets the
+      timer.
+
+---
+
 ## 0. Round 20
 
 ### Heads
