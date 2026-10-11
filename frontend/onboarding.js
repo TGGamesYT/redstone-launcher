@@ -216,8 +216,11 @@
     const listEl = ov.querySelector('.imp-list');
     const goBtn = ov.querySelector('.imp-go');
     const close = () => { ov.remove(); if (onClose) onClose(); };
+    // In the single-instance flow the button already SAYS Back; make it go
+    // back, to whatever opened this, rather than just closing.
+    const back = () => { ov.remove(); if (typeof opts.onBack === 'function') opts.onBack(); else if (onClose) onClose(); };
     ov.querySelector('.imp-x').onclick = close;
-    ov.querySelector('.imp-cancel').onclick = close;
+    ov.querySelector('.imp-cancel').onclick = (single && opts.onBack) ? back : close;
 
     let found = {}, accounts = [], skins = [];
     try { found = await ipcRenderer.invoke('import:scan') || {}; } catch { }

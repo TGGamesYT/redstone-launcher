@@ -32,7 +32,7 @@ the order it is being built in.
 ### C. After the rendering work
 - [ ] **Panorama overlays are missed.** A version's panorama — and a modded one
       — can have still images laid over it in game; those are not being drawn.
-- [ ] **New-instance modals: cancel/back closes everything** instead of going
+- [x] **New-instance modals: cancel/back closes everything** instead of going
       back to the modal it came from.
 - [ ] **The icon picker takes a while to fill in** every time it is opened.
 - [x] **Censor the access token, the xuid and the like in the logs** as `****`.

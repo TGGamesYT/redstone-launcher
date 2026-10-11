@@ -50,33 +50,63 @@
       .ni-search { width:100%; box-sizing:border-box; padding:9px 12px; margin-bottom:10px;
         border:1px solid var(--border-dark); border-radius:var(--border-radius);
         background:var(--very-dark); color:var(--text-color); font-family:var(--text-font); }
+      .ni-head .ni-title { display:flex; align-items:center; gap:6px; }
+      .ni-head .ni-back { font-size:22px; line-height:1; padding:0 4px; opacity:0.8; }
+      .ni-head .ni-back:hover { opacity:1; }
       .ni-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
+      .ni-actions .ni-backBtn { margin-right:auto; }
       .ni-actions button { padding:8px 16px; border:1px solid var(--border-dark); background:var(--menu-bg);
         color:var(--text-color); border-radius:var(--border-radius); cursor:pointer; font-family:var(--text-font); }
       .ni-empty { opacity:0.7; padding:24px 4px; font-size:13px; line-height:1.6; }`;
     document.head.appendChild(s);
   }
 
-  const shell = (title, sub) => {
+  /**
+   * One screen of the chooser.
+   *
+   * `onBack` makes this screen a step in a sequence rather than a dead end:
+   * Back returns to the screen that opened it, while ✕ and clicking away
+   * still mean "I have changed my mind about the whole thing" and close
+   * everything. Without it, picking "a modpack or a mod" and then deciding
+   * against it dropped you all the way out and you had to start again.
+   */
+  const shell = (title, sub, opts = {}) => {
     ensureStyle();
     const ov = document.createElement('div');
     ov.className = 'ni-overlay';
     const card = document.createElement('div');
     card.className = 'ni-card';
     card.innerHTML = `
-      <div class="ni-head"><h2></h2><button class="ni-x">✕</button></div>
+      <div class="ni-head">
+        <div class="ni-title"><button class="ni-back" style="display:none" title="Back">‹</button><h2></h2></div>
+        <button class="ni-x" title="Close">✕</button>
+      </div>
       <p class="ni-sub"></p>
       <div class="ni-list"></div>
-      <div class="ni-actions"><button class="ni-cancel">Cancel</button></div>`;
+      <div class="ni-actions"><button class="ni-backBtn" style="display:none">Back</button><button class="ni-cancel">Cancel</button></div>`;
     card.querySelector('h2').textContent = title;
     card.querySelector('.ni-sub').textContent = sub;
     ov.appendChild(card);
     document.body.appendChild(ov);
     const close = () => ov.remove();
+    const back = typeof opts.onBack === 'function'
+      ? () => { close(); opts.onBack(); }
+      : null;
     card.querySelector('.ni-x').onclick = close;
-    card.querySelector('.ni-cancel').onclick = close;
     ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
-    return { ov, card, list: card.querySelector('.ni-list'), close };
+    if (back) {
+      for (const sel of ['.ni-back', '.ni-backBtn']) {
+        const b = card.querySelector(sel);
+        b.style.display = '';
+        b.onclick = back;
+      }
+      // Cancel on a step means "not this one", which is the same as Back.
+      card.querySelector('.ni-cancel').textContent = 'Cancel';
+      card.querySelector('.ni-cancel').onclick = close;
+    } else {
+      card.querySelector('.ni-cancel').onclick = close;
+    }
+    return { ov, card, list: card.querySelector('.ni-list'), close, back };
   };
 
   function row(list, { icon, img, title, desc, tag, onClick }) {
@@ -138,7 +168,8 @@
   async function openSearch(opts) {
     const { ov, card, list, close } = shell(
       opts.target === 'server' ? 'Find a modpack or mod for the server' : 'Find a modpack or mod',
-      'Modpacks first, then mods, each sorted by downloads. Picking a mod sets an instance up for it.'
+      'Modpacks first, then mods, each sorted by downloads. Picking a mod sets an instance up for it.',
+      { onBack: opts.onBack }
     );
     const input = document.createElement('input');
     input.className = 'ni-search';
@@ -255,6 +286,8 @@
     choose(opts) {
       opts = opts || {};
       const server = opts.target === 'server';
+      // Every step below can come back here.
+      const reopen = () => window.NewInstance.choose(opts);
       const { list, close } = shell(
         server ? 'New server' : 'New instance',
         server
@@ -266,13 +299,13 @@
         icon: 'travel_explore',
         title: 'A modpack or a mod',
         desc: 'Search Modrinth and install a modpack, or set an instance up for a single mod.',
-        onClick: () => { close(); openSearch(opts); },
+        onClick: () => { close(); openSearch({ ...opts, onBack: reopen }); },
       });
       row(list, {
         icon: 'folder_zip',
         title: 'A modpack file',
         desc: 'A .mrpack or a CurseForge .zip you already have.',
-        onClick: () => { close(); opts.onImportFile && opts.onImportFile(); },
+        onClick: () => { close(); opts.onImportFile && opts.onImportFile(reopen); },
       });
       if (!server) {
         row(list, {
@@ -286,6 +319,7 @@
             if (!window.Onboarding) return;
             window.Onboarding.openImport(null, {
               single: true,
+              onBack: reopen,
               onPick: async (entry) => {
                 if (!entry) return;
                 if (!entry.version) {
@@ -309,7 +343,7 @@
         desc: server
           ? 'Pick the version, the loader and the rest by hand.'
           : 'Pick the version, the loader, the icon and the rest by hand.',
-        onClick: () => { close(); opts.onCustom && opts.onCustom(null); },
+        onClick: () => { close(); opts.onCustom && opts.onCustom(null, reopen); },
       });
     },
   };

@@ -954,7 +954,10 @@
     }
     // The hand-built creator, optionally pre-filled from something the user
     // already chose (a mod, say). prefill: { name, icon, version, loader }.
-    function openCustomCreator(prefill) {
+    // Where Cancel should go when the creator was opened from the chooser.
+    let creatorBack = null;
+    function openCustomCreator(prefill, onBack) {
+      creatorBack = typeof onBack === 'function' ? onBack : null;
       modConstraint = null;   // reset; set from the prefill below
       instanceName.value = (prefill && prefill.name) || "";
       instanceLoader.value = (prefill && prefill.loader) || "vanilla";
@@ -1015,10 +1018,14 @@
       if (window.NewInstance) {
         window.NewInstance.choose({
           target: 'instance',
-          onCustom: (prefill) => openCustomCreator(prefill),
-          onImportFile: () => {
+          onCustom: (prefill, onBack) => openCustomCreator(prefill, onBack),
+          onImportFile: (onBack) => {
             const btn = document.getElementById('importPackBtn') || { innerHTML: '', disabled: false };
-            runImport(btn);
+            // The file dialog is the OS's, so there is no modal to put a Back
+            // button on; cancelling it comes back to the chooser instead.
+            Promise.resolve(runImport(btn)).then((picked) => {
+              if (picked === false && typeof onBack === 'function') onBack();
+            }).catch(() => { });
           },
         });
         return;
@@ -1295,7 +1302,11 @@
             if (newId) window.openInstanceInPage(newId); else renderListOrDetail();
           });
           ipcRenderer.send("get-profiles");
-        } else if (res && res.error && res.error !== "No file selected") {
+        } else if (res && res.error === "No file selected") {
+          // The OS dialog was dismissed. Say so, so the caller can put the
+          // chooser back rather than leaving you with nothing.
+          return false;
+        } else if (res && res.error) {
           alert("Import failed: " + res.error);
         }
       } catch (err) {
@@ -3557,11 +3568,22 @@
       if (window.fitHeights) window.fitHeights();
     }
 
+    // Cancel goes BACK to the screen that opened the creator, when there was
+    // one — picking "set it up myself" and then changing your mind used to
+    // drop you out of the whole flow, so you had to start again from the +.
+    // The ✕ and clicking away still mean "close the lot".
+    const leaveCreator = (goBack) => {
+      addInstanceModal.classList.remove('active');
+      const back = creatorBack;
+      creatorBack = null;
+      if (goBack && typeof back === 'function') back();
+    };
+
     if (modalCancelBtn) {
       modalCancelBtn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        addInstanceModal.classList.remove('active');
+        leaveCreator(true);
       };
     }
 
@@ -3569,7 +3591,7 @@
       closeAddInstanceBtn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        addInstanceModal.classList.remove('active');
+        leaveCreator(false);
       };
     }
 
@@ -3577,6 +3599,7 @@
     addInstanceModal.addEventListener('click', (e) => {
       if (e.target === addInstanceModal) {
         addInstanceModal.classList.remove('active');
+        creatorBack = null;
       }
     });
 
