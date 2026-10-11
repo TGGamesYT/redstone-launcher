@@ -6844,6 +6844,24 @@ async function fetchPanoramaFromMojang(version) {
     } catch { /* not cacheable, still usable */ }
     out.push(buf);
   }
+  // The overlay, if this version has one. Missing is fine — 1.12 and earlier
+  // have no overlay at all.
+  try {
+    const rec = objects[`${PANORAMA_ASSET_PREFIX}overlay.png`];
+    if (rec && rec.hash) {
+      const dest = assetObjectPath(rec.hash);
+      if (fs.existsSync(dest)) out.overlay = fs.readFileSync(dest);
+      else {
+        const two = String(rec.hash).slice(0, 2);
+        const r = await fetch(`${MOJANG_RESOURCES}/${two}/${rec.hash}`);
+        if (r.ok) {
+          const buf = Buffer.from(await r.arrayBuffer());
+          out.overlay = buf;
+          try { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.writeFileSync(dest, buf); } catch { }
+        }
+      }
+    }
+  } catch { /* the panorama is still usable without it */ }
   return out;
 }
 
@@ -6921,6 +6939,12 @@ const usableFace = (data) => {
   return !!(size && size.width >= 16 && size.height >= 16);
 };
 
+// The still image the title screen lays OVER the panorama — a soft vignette
+// that is part of how the background looks in game. It is stretched across the
+// whole view rather than tiled, and it lives beside the six faces, so a pack
+// that replaces the panorama usually replaces this too.
+const OVERLAY_NAME = "panorama_overlay.png";
+
 // A pack that was extracted into a folder rather than left as a zip.
 function panoramaFromDir(root) {
   for (const base of PANORAMA_BASES) {
@@ -6934,7 +6958,14 @@ function panoramaFromDir(root) {
         found.push(data);
       } catch { break; }
     }
-    if (found.length === 6) return found;
+    if (found.length !== 6) continue;
+    let overlay = null;
+    try {
+      const f = path.join(root, ...base.split("/").filter(Boolean), OVERLAY_NAME);
+      if (fs.existsSync(f)) overlay = fs.readFileSync(f);
+    } catch { /* no overlay */ }
+    found.overlay = overlay;
+    return found;
   }
   return null;
 }
@@ -6963,7 +6994,10 @@ async function panoramaFromArchive(file) {
       if (!usableFace(data)) break;
       found.push(data);
     }
-    if (found.length === 6) return found;
+    if (found.length !== 6) continue;
+    const ov = byPath.get(`${base}${OVERLAY_NAME}`);
+    if (ov) { try { found.overlay = await ov.buffer(); } catch { /* no overlay */ } }
+    return found;
   }
   return null;
 }
@@ -6973,6 +7007,9 @@ async function panoramaFromArchive(file) {
 // 220px tall.
 async function panoramaToDataUrls(faces) {
   const out = [];
+  out.overlay = faces.overlay
+    ? "data:image/png;base64," + faces.overlay.toString("base64")
+    : null;
   for (const raw of faces) {
     let buf = raw;
     try {
@@ -7044,6 +7081,7 @@ ipcMain.handle("icon:packPanoramas", async (event, { profileId } = {}) => {
         enabled: c.on,
         faces: urls,
         forward: urls[0],
+        overlay: urls.overlay || null,
       });
     } catch (e) {
       devtoolsLog(`panorama: could not prepare ${c.name}:`, e && e.message);
@@ -7072,8 +7110,16 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
           if (!fs.existsSync(f)) break;
           bufs.push(fs.readFileSync(f));
         }
-        if (bufs.length === 6) faces = bufs;
-        else devtoolsLog(`panorama: ${v} asset index has ${bufs.length}/6 faces downloaded`);
+        if (bufs.length === 6) {
+          faces = bufs;
+          // The still image laid over the panorama lives in the asset store
+          // beside the faces.
+          const ov = objects[`${PANORAMA_ASSET_PREFIX}overlay.png`];
+          if (ov && ov.hash) {
+            const f = assetObjectPath(ov.hash);
+            if (fs.existsSync(f)) { try { faces.overlay = fs.readFileSync(f); } catch { } }
+          }
+        } else devtoolsLog(`panorama: ${v} asset index has ${bufs.length}/6 faces downloaded`);
       } catch (e) {
         devtoolsLog("panorama: could not read the asset index:", e && e.message);
       }
@@ -7102,7 +7148,7 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
 
     const out = await panoramaToDataUrls(faces);
     // Face 0 is the one the title screen starts on, i.e. "facing forward".
-    return { faces: out, forward: out[0] };
+    return { faces: out, forward: out[0], overlay: out.overlay || null };
   } catch (err) {
     devtoolsLog("panorama failed:", err && err.message);
     return { error: String(err && err.message || err) };

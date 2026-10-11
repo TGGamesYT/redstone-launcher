@@ -30,7 +30,7 @@ the order it is being built in.
 - [x] **26.x ships deobfuscated**, so no mapping file is needed there.
 
 ### C. After the rendering work
-- [ ] **Panorama overlays are missed.** A version's panorama — and a modded one
+- [x] **Panorama overlays are missed.** A version's panorama — and a modded one
       — can have still images laid over it in game; those are not being drawn.
 - [x] **New-instance modals: cancel/back closes everything** instead of going
       back to the modal it came from.

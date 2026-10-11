@@ -184,6 +184,12 @@
       <div id="ipPanStage" style="position:relative; border:1px solid var(--border-dark);
         border-radius:var(--border-radius); overflow:hidden; background:var(--menu-bg); cursor:grab;">
         <canvas id="ipPanCv" style="display:block; width:100%; height:360px;"></canvas>
+        <!-- The still image the title screen lays over the panorama. It is
+             stretched across the whole view in game, not tiled, so it is one
+             element over the canvas rather than anything the 3D scene knows
+             about — and it is composited into the crop the same way. -->
+        <img id="ipPanOverlay" alt="" style="position:absolute; inset:0; width:100%; height:100%;
+          pointer-events:none; display:none;" />
         <div id="ipPanFrame" style="position:absolute; pointer-events:none; border:2px solid #fff;
           box-shadow:0 0 0 9999px rgba(0,0,0,0.45); border-radius:6px;"></div>
       </div>
@@ -197,6 +203,8 @@
     const stage = ov.querySelector('#ipPanStage');
     const cv = ov.querySelector('#ipPanCv');
     const frame = ov.querySelector('#ipPanFrame');
+    const overlayEl = ov.querySelector('#ipPanOverlay');
+    if (p.overlay) { overlayEl.src = p.overlay; overlayEl.style.display = ''; }
     let disposed = false, raf = null, renderer = null;
     const close = () => {
       disposed = true;
@@ -339,7 +347,18 @@
         const sy = Math.round((r.height * dpr - side) / 2);
         const out = document.createElement('canvas');
         out.width = out.height = side;
-        out.getContext('2d').drawImage(cv, sx, sy, side, side, 0, 0, side, side);
+        const octx = out.getContext('2d');
+        octx.drawImage(cv, sx, sy, side, side, 0, 0, side, side);
+        // The overlay is stretched over the WHOLE view, so the crop takes the
+        // part of it that lines up with the square being cropped — otherwise
+        // what you picked and what you get would not match.
+        if (p.overlay && overlayEl.complete && overlayEl.naturalWidth) {
+          const fx = overlayEl.naturalWidth / (r.width * dpr);
+          const fy = overlayEl.naturalHeight / (r.height * dpr);
+          try {
+            octx.drawImage(overlayEl, sx * fx, sy * fy, side * fx, side * fy, 0, 0, side, side);
+          } catch { /* a tainted image would throw; the crop is still fine */ }
+        }
         let url = null;
         try { url = out.toDataURL('image/png'); } catch { }
         close();
