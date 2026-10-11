@@ -196,11 +196,41 @@ function scheduleLogFlush() {
   logFlushTimer = setTimeout(flushLogs, 120);
 }
 
+/**
+ * Take the secrets out of a line before anyone can read it.
+ *
+ * The game is started with the account's access token and xuid on the command
+ * line, and minecraft-launcher-core prints that command line. So the log a
+ * player is looking at — and the log they paste into a bug report or a Discord
+ * channel when something goes wrong — contained a live Minecraft session token
+ * for their account.
+ *
+ * Censored at the point the line enters the log rather than on the way out, so
+ * there is no copy anywhere that still has it: not in the in-memory buffer, not
+ * in what the window is sent, not in a file written from either.
+ */
+const SECRET_PATTERNS = [
+  // --accessToken <jwt>, --uuid, --xuid, --clientId and their = forms.
+  [/(--(?:accessToken|access_token|xuid|clientId|session)[=\s]+)(\S+)/gi, (m, a) => a + '****'],
+  // "access_token":"...", accessToken: '...' — in JSON and in object dumps.
+  [/(["']?(?:access_?token|refresh_?token|xuid|client_?token|id_?token|bearer)["']?\s*[:=]\s*["']?)([A-Za-z0-9._\-+/=]{8,})/gi, (m, a) => a + '****'],
+  // Authorization: Bearer <jwt>
+  [/(Authorization\s*:\s*Bearer\s+)(\S+)/gi, (m, a) => a + '****'],
+  // A bare JWT anywhere else. Three base64url runs separated by dots, long
+  // enough that it cannot be ordinary text.
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '****'],
+];
+function censorSecrets(text) {
+  let out = String(text);
+  for (const [re, to] of SECRET_PATTERNS) out = out.replace(re, to);
+  return out;
+}
+
 function broadcastLog(profileId, msg) {
   if (!instanceLogs.has(profileId)) {
     instanceLogs.set(profileId, []);
   }
-  const text = typeof msg === 'string' ? msg.replace(/\r?\n$/, '') : String(msg);
+  const text = censorSecrets(typeof msg === 'string' ? msg.replace(/\r?\n$/, '') : String(msg));
   const logs = instanceLogs.get(profileId);
   logs.push(text);
   if (logs.length > 2000) logs.shift(); // Keep last 2000 lines
@@ -1115,18 +1145,20 @@ if (!gotTheLock) {
 }
 
 function devtoolsLog(...args) {
-  const text = args.map(arg => {
+  const text = censorSecrets(args.map(arg => {
     if (arg instanceof Error) return arg.stack || arg.message;
     if (typeof arg === 'object') {
       try { return JSON.stringify(arg); } catch(e) { return String(arg); }
     }
     return String(arg);
-  }).join(' ');
+  }).join(' '));
 
   if (mainWindow && mainWindow.webContents) {
     mainWindow.webContents.send("devtools-log", text);
   }
-  console.log(...args);
+  // The same line to the terminal, censored the same way: an auth failure
+  // dumps the whole response body, token and all.
+  console.log(text);
 }
 
 export function alert(message) {

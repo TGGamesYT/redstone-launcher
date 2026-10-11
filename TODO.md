@@ -35,7 +35,7 @@ the order it is being built in.
 - [ ] **New-instance modals: cancel/back closes everything** instead of going
       back to the modal it came from.
 - [ ] **The icon picker takes a while to fill in** every time it is opened.
-- [ ] **Censor the access token, the xuid and the like in the logs** as `****`.
+- [x] **Censor the access token, the xuid and the like in the logs** as `****`.
 - [ ] **An imported modpack should show the modpack's icon.**
 
 ### D. The friends panel
