@@ -182,7 +182,11 @@
     // Model space is 0..16 with the origin at a corner; put the block's middle
     // at the world origin so rotations turn it about its own centre.
     const inner = new THREE.Group();
-    inner.position.set(-8, -8, -8);
+    // A block's space is 0..16 with the origin at a corner, so its middle has
+    // to be brought to the world origin for rotations to turn it about itself.
+    // An entity's is already centred on its own pivot and carries its own
+    // transforms, so it is left where it is.
+    if (flat.space !== 'entity') inner.position.set(-8, -8, -8);
     root.add(inner);
     scene.add(root);
 
@@ -210,11 +214,17 @@
         from[2] + (to[2] - from[2]) / 2,
       );
 
-      // An element can be rotated about one axis, around a point in model
-      // space. three rotates about the mesh's own centre, so the mesh is put
-      // inside a group pinned at that point.
+      // An entity's box comes with a matrix instead — the part tree it hangs
+      // off has already been walked and composed, which a single axis and
+      // angle could not express.
       let holder = mesh;
-      if (el.rotation && el.rotation.axis && el.rotation.angle) {
+      if (Array.isArray(el.transform) && el.transform.length === 16) {
+        const g = new THREE.Group();
+        g.matrixAutoUpdate = false;
+        g.matrix.fromArray(el.transform);
+        g.add(mesh);
+        holder = g;
+      } else if (el.rotation && el.rotation.axis && el.rotation.angle) {
         const o = (el.rotation.origin || [8, 8, 8]).map(Number);
         const g = new THREE.Group();
         g.position.set(o[0], o[1], o[2]);
@@ -269,7 +279,12 @@
         }
         setFaceUv(uvAttr, slot, uv, rot, frames);
 
-        const shade = face.shade === false ? 1 : SHADE[shadedDir(THREE, dir, worldQuat)];
+        // `shade` is an ELEMENT property in the format, not a face one —
+        // block/cross and block/tinted_cross both turn it off on the element,
+        // which is why every plant and sapling came out two shades too dark
+        // when only the face was looked at. A face may still override it.
+        const shadeOff = face.shade === false || (face.shade === undefined && el.shade === false);
+        const shade = shadeOff ? 1 : SHADE[shadedDir(THREE, dir, worldQuat)];
         // The factor is stated in sRGB, not in three's linear working space.
         // `new Color(0.8, 0.8, 0.8)` means 0.8 of LINEAR white, which comes out
         // at 231/255 rather than the 204/255 that "80% brightness" means

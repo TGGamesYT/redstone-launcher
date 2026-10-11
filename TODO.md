@@ -23,8 +23,11 @@ the order it is being built in.
       orange poplar leaves.
 
 ### B. Entities
-- [ ] **An entity renderer**: read/simulate the entity renderer classes and,
+- [x] **An entity renderer**: read/simulate the entity renderer classes and,
       with the entity texture, render entities too.
+- [x] **Cross-modelled blocks render dark** — `shade` is an element property,
+      not a face one.
+- [x] **26.x ships deobfuscated**, so no mapping file is needed there.
 
 ### C. After the rendering work
 - [ ] **Panorama overlays are missed.** A version's panorama — and a modded one
