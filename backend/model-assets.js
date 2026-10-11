@@ -404,7 +404,7 @@ export function pngSize(buf) {
  * the crop here would mean decoding and re-encoding every texture in the main
  * process; a UV scale in the renderer is free.
  */
-export async function loadTextures(stack, ids) {
+export async function loadTextures(stack, ids, { measure = null } = {}) {
   const out = {};
   for (const id of new Set(ids.filter(Boolean))) {
     const hit = await stack.get(texturePath(id));
@@ -417,9 +417,49 @@ export async function loadTextures(stack, ids) {
       url: 'data:image/png;base64,' + hit.buf.toString('base64'),
       width: size.width, height: size.height, frames,
       from: hit.from,
+      saturation: measure ? await measure(hit.buf) : null,
     };
   }
   return out;
+}
+
+// How colourful a texture is, 0 for a greyscale one. Passed in rather than
+// imported so this module needs no image library of its own; main.js hands it
+// a sharp-backed one.
+//
+// It answers a question the model format cannot: a face with a `tintindex` is
+// meant to be coloured by the game from the biome, but plenty of blocks inherit
+// that flag from a shared parent and are NOT tinted — cherry leaves and pale
+// oak leaves both inherit it from block/leaves. The textures tell them apart.
+// Measured across 1.21.9: grass_block_top 0.000, short_grass 0.005, oak_leaves
+// 0.017, jungle_leaves 0.075 (all tinted in game) against cherry_leaves 0.327
+// and azalea_leaves 0.601 (both not).
+export const TINT_MAX_SATURATION = 0.05;
+
+/**
+ * A flattened model with its textures turned into pixels, in the one shape the
+ * renderer reads.
+ *
+ * flattenModelJson answers `textures` as key -> texture ID ("all" ->
+ * "minecraft:block/stone") and `layers` as a list of IDs, because that is what
+ * the files say. The renderer wants to look up a face's "#all" and get a
+ * picture, so this re-keys the map by the model's own texture KEYS and turns
+ * `layers` into keys too. Having one shape for both — a face's "#key" and a
+ * layer's "layer0" both index `textures` — is what keeps the renderer from
+ * needing two lookup paths.
+ */
+export async function resolveModelTextures(stack, flat, opts = {}) {
+  const ids = Object.values(flat.textures || {}).filter(Boolean);
+  const byId = await loadTextures(stack, ids, opts);
+  const textures = {};
+  for (const [key, id] of Object.entries(flat.textures || {})) {
+    textures[key] = id ? (byId[id] || null) : null;
+  }
+  // layer0, layer1… are already keys in `textures`; name them as such.
+  const layers = (flat.layers || [])
+    .map(id => Object.keys(flat.textures || {}).find(k => flat.textures[k] === id))
+    .filter(Boolean);
+  return { ...flat, textures, layers, textureIds: flat.textures };
 }
 
 // ── Blockstates ─────────────────────────────────────────────────────────────
@@ -465,6 +505,114 @@ export async function blockStates(stack, blockId) {
     return parts.length ? [{ state: '', parts }] : null;
   }
   return null;
+}
+
+// ── Picking a representative state ──────────────────────────────────────────
+// A blockstate's variants come in file order, which for oak_stairs starts at an
+// inner corner and for oak_log starts at axis=x — so "the first one" makes a
+// bad picture of the block. These are the values that mean "plain", and the
+// state matching the most of them wins.
+const PLAIN_VALUE = new Set([
+  'axis=y', 'half=bottom', 'type=bottom', 'shape=straight', 'facing=north',
+  'powered=false', 'open=false', 'lit=false', 'waterlogged=false', 'snowy=false',
+  'attached=false', 'triggered=false', 'extended=false', 'conditional=false',
+  'in_wall=false', 'short=false', 'disarmed=false', 'occupied=false',
+  'hanging=false', 'signal_fire=false', 'has_bottle_0=false', 'bottom=false',
+  'up=false', 'down=false', 'north=false', 'south=false', 'east=false', 'west=false',
+  'hinge=left', 'part=foot', 'face=wall', 'mode=compare', 'orientation=north_up',
+  'level=0', 'age=0', 'power=0', 'bites=0', 'honey_level=0', 'charges=0',
+  'distance=0', 'delay=1', 'note=0', 'rotation=0', 'layers=1', 'eggs=1',
+  'hatch=0', 'moisture=0', 'stage=0', 'pickles=1', 'candles=1', 'flower_amount=1',
+]);
+export function preferredState(states) {
+  if (!states || !states.length) return null;
+  const plain = states.find(s => s.state === '' || s.state === 'normal');
+  if (plain) return plain;
+  let best = null, bestScore = -Infinity;
+  for (const s of states) {
+    if (plainScore(s) > bestScore) { bestScore = plainScore(s); best = s; }
+  }
+  return best || states[0];
+}
+function plainScore(s) {
+  const props = String(s.state || '').split(',').filter(Boolean);
+  let score = 0;
+  for (const p of props) if (PLAIN_VALUE.has(p.trim())) score++;
+  // A state with fewer properties is a plainer one when the counts tie.
+  return score - props.length / 100;
+}
+
+// ── Turning a block to face the camera ──────────────────────────────────────
+// The view shows a block's south and east sides. `facing=north` is the plain
+// default, and for a block with a front — a furnace, a bee nest, a dried
+// ghast — that points the front AWAY: the render comes out showing the back
+// and a side, a half-turn from the way the block wants to be seen. The wiki
+// has the same problem and settles it by hand, filing the SOUTH-facing variant
+// as the canonical picture of a bee nest, a furnace and a dried ghast while
+// keeping the north-facing one for stairs.
+//
+// So: a block whose sides are not all alike has a front, and `facing=south`
+// points it at the viewer. A block whose four sides carry the same textures —
+// stairs, slabs, a fence gate's post — has no front to turn, and the plain
+// default stands. That is exactly the split the wiki draws by hand, and it
+// needs no table of which blocks have faces.
+const SIDES = ['north', 'east', 'south', 'west'];
+
+/** Do all four sides of this model carry the same textures? */
+export function sidesAlike(flat) {
+  if (!flat || !Array.isArray(flat.elements)) return true;
+  // A face's own "#north" says nothing — block/cube, which nearly every full
+  // block inherits its elements from, names all six faces after their
+  // direction and leaves the parent to point those keys at real textures.
+  // What tells a front from a side is what each key RESOLVES to.
+  const resolve = (ref) => (flat.textures || {})[String(ref || '').replace(/^#/, '')] || String(ref || '');
+  let first = null;
+  for (const dir of SIDES) {
+    const ids = [];
+    for (const el of flat.elements) {
+      const f = (el.faces || {})[dir];
+      if (f && f.texture) ids.push(resolve(f.texture));
+    }
+    const sig = ids.sort().join('|');
+    if (first === null) first = sig; else if (sig !== first) return false;
+  }
+  return true;
+}
+
+/**
+ * The state to draw a block in: preferredState, but turned so a block with a
+ * front shows it. Needs the models, so unlike preferredState it is async;
+ * preferredState stays as the answer when there is nothing to read.
+ */
+export async function chooseState(stack, states) {
+  if (!states || !states.length) return null;
+  const plain = preferredState(states);
+  if (states.length < 2) return plain;
+
+  // Only a TURN is on the table. The states in the running match the plainest
+  // in every property but `facing`, so this cannot also open a door, light a
+  // furnace, or — as it first did — put snow on a grass block.
+  const props = (s) => {
+    const m = new Map();
+    for (const p of String(s.state || '').split(',')) {
+      if (!p) continue;
+      const i = p.indexOf('=');
+      if (i > 0) m.set(p.slice(0, i).trim(), p.slice(i + 1).trim());
+    }
+    return m;
+  };
+  const base = props(plain);
+  if (!base.has('facing')) return plain;
+  const south = states.find(s => {
+    const m = props(s);
+    if (m.get('facing') !== 'south' || m.size !== base.size) return false;
+    for (const [k, v] of base) if (k !== 'facing' && m.get(k) !== v) return false;
+    return true;
+  });
+  if (!south || !south.parts || !south.parts[0]) return plain;
+
+  const flat = await flattenModelJson(stack, south.parts[0].model);
+  return sidesAlike(flat) ? plain : south;
 }
 
 // ── Indexing what a stack holds ─────────────────────────────────────────────

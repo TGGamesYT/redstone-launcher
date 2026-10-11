@@ -15,11 +15,11 @@ Everything asked for across this round, **in the order it was asked**, which is
 the order it is being built in.
 
 ### A. The block/item renderer, as reported from the test sheet
-- [ ] **Some models render turned half a turn** from the angle they should be
+- [x] **Some models render turned half a turn** from the angle they should be
       seen at — dried ghast and bee nest definitely; stairs face the right way.
-- [ ] **A transparent render shows what is behind it.** By default nothing
+- [x] **A transparent render shows what is behind it.** By default nothing
       should be visible through a face.
-- [ ] **Cherry leaves are already pink and must not be tinted**, the same as
+- [x] **Cherry leaves are already pink and must not be tinted**, the same as
       orange poplar leaves.
 
 ### B. Entities
