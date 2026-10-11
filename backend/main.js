@@ -2063,7 +2063,29 @@ function loaderFromCurseId(id, mcVersion) {
 // into an <img src>. Checks the handful of places a pack may carry one, then
 // falls back to fetching the project icon from the browser listing.
 const MIME_BY_EXT = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
-async function packIcon(zip, iconUrl) {
+
+// A modpack's icon on Modrinth, found by the name in its own index. Only an
+// EXACT name match counts: "the pack called this" is a fair guess, "a pack
+// whose description mentions this" is not, and putting a stranger's artwork on
+// someone's instance is worse than leaving it plain.
+async function modrinthPackIconByName(name) {
+  const q = String(name || "").trim();
+  if (q.length < 3) return null;
+  try {
+    const url = "https://api.modrinth.com/v2/search?limit=5"
+      + "&facets=" + encodeURIComponent('[["project_type:modpack"]]')
+      + "&query=" + encodeURIComponent(q);
+    const res = await fetch(url, { headers: { "User-Agent": LAUNCHER_UA } });
+    if (!res.ok) return null;
+    const j = await res.json();
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const hit = (j.hits || []).find(h => norm(h.title) === norm(q));
+    return (hit && hit.icon_url) || null;
+  } catch {
+    return null;
+  }
+}
+async function packIcon(zip, iconUrl, packName) {
   const inZip = ["icon.png", "overrides/icon.png", "overrides/pack.png", "pack.png",
     "client-overrides/icon.png"];
   for (const name of inZip) {
@@ -2072,6 +2094,11 @@ async function packIcon(zip, iconUrl) {
       if (e) return "data:image/png;base64," + e.getData().toString("base64");
     } catch { /* try the next one */ }
   }
+  // Importing a .mrpack FILE gives no iconUrl — there is no browser listing to
+  // take one from — and the format does not require an icon inside the zip, so
+  // a pack imported from disk came out with the generic launcher icon however
+  // well known the pack is. Look it up by name instead.
+  if (!iconUrl && packName) iconUrl = await modrinthPackIconByName(packName);
   if (!iconUrl) return null;
   // Inlined rather than stored as a URL so the instance still has its icon
   // offline, and doesn't break if the project is later taken down.
@@ -2133,7 +2160,7 @@ async function mrpack(mrpackPath, onProgress, hooks) {
   // meant every pack installed from the browser came out with the default
   // icon. Try the places packs do put one, then fall back to the project icon
   // the caller was already showing in the browser.
-  let icon = await packIcon(zip, hooks.iconUrl);
+  let icon = await packIcon(zip, hooks.iconUrl, indexJson.name);
 
   const newProfile = {
     id: profileId,
@@ -2662,8 +2689,9 @@ async function curseforgeImport(zipPath, onProgress, hooks) {
 
 
   // CurseForge packs rarely carry an icon either, so the same fallback chain
-  // applies: whatever is in the archive, else the project icon.
-  const icon = await packIcon(zip, hooks.iconUrl);
+  // applies: whatever is in the archive, else the project icon, else the pack
+  // looked up by its own name.
+  const icon = await packIcon(zip, hooks.iconUrl, manifest.name);
 
   const newProfile = {
     id: profileId,

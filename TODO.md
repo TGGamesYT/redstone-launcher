@@ -36,7 +36,7 @@ the order it is being built in.
       back to the modal it came from.
 - [ ] **The icon picker takes a while to fill in** every time it is opened.
 - [x] **Censor the access token, the xuid and the like in the logs** as `****`.
-- [ ] **An imported modpack should show the modpack's icon.**
+- [x] **An imported modpack should show the modpack's icon.**
 
 ### D. The friends panel
 - [ ] **The status dropdown is MY OWN status** — the one reported through the

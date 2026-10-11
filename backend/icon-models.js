@@ -324,16 +324,25 @@ export async function describeEntity({ profileId, version, name }) {
   const L = layers.get(name);
   if (!L) return { error: `no entity layer called ${name}` };
   const st = await stackFor({ profileId, version });
-  const tex = await entityTexture(st ? st.textures : null, name);
-  if (!tex) return { error: `no texture for ${name}` };
+  const tex0 = await entityTextureFile(st ? st.textures : null, name);
+  if (!tex0) return { error: `no texture for ${name}` };
+  const tex0Path = tex0.path;
 
   const elements = L.elements.slice();
-  const textures = { 0: { url: tex, width: L.texWidth, height: L.texHeight, frames: 1 } };
+  const textures = { 0: { url: tex0.url, width: L.texWidth, height: L.texHeight, frames: 1 } };
 
   const outer = layers.get(`${name}/outer`);
   if (outer) {
-    const outerTex = await entityTexture(st ? st.textures : null, `${name}_outer_layer`)
-      || await entityTexture(st ? st.textures : null, `${name}/outer`);
+    // The overlay's OWN texture, or nothing. It sits beside the body texture
+    // and is named for it — skeleton/stray_overlay.png,
+    // zombie/drowned_outer_layer.png — and it is mostly transparent, which is
+    // the whole point: the game registers the stray's overlay as a
+    // player-shaped humanoid, and only the clothing shows because the rest of
+    // that shape samples empty texture. Falling back to the body's texture, as
+    // this first did, therefore drew the overlay SOLID, and a stray came out
+    // with a skeleton's head on a player's arms.
+    const outerTex = await siblingTexture(st ? st.textures : null, tex0Path,
+      ['_overlay', '_outer_layer', '_outer']);
     if (outerTex) {
       textures[1] = { url: outerTex, width: outer.texWidth, height: outer.texHeight, frames: 1 };
       for (const el of outer.elements) {
@@ -350,21 +359,41 @@ export async function describeEntity({ profileId, version, name }) {
 // of the time; where they do not, any file under textures/entity with that
 // name will do.
 async function entityTexture(stack, name) {
+  const f = await entityTextureFile(stack, name);
+  return f ? f.url : null;
+}
+async function entityTextureFile(stack, name) {
   if (!stack) return null;
   const base = String(name).split('/')[0];
+  const take = async (p) => {
+    const hit = await stack.get(p);
+    return hit ? { url: 'data:image/png;base64,' + hit.buf.toString('base64'), path: p } : null;
+  };
   for (const p of [
     `assets/minecraft/textures/entity/${base}.png`,
     `assets/minecraft/textures/entity/${base}/${base}.png`,
   ]) {
-    const hit = await stack.get(p);
-    if (hit) return 'data:image/png;base64,' + hit.buf.toString('base64');
+    const got = await take(p);
+    if (got) return got;
   }
   for (const s of stack.sources) {
     let names = [];
     try { names = s.list(); } catch { continue; }
     const any = names.find(n => n.startsWith('assets/minecraft/textures/entity/') && n.endsWith(`/${base}.png`));
     if (!any) continue;
-    const hit = await stack.get(any);
+    const got = await take(any);
+    if (got) return got;
+  }
+  return null;
+}
+
+// A texture beside another one, with a suffix on its name. Overlay textures
+// live next to the body texture they belong to and are named after it.
+async function siblingTexture(stack, basePath, suffixes) {
+  if (!stack || !basePath) return null;
+  const stem = basePath.replace(/\.png$/, '');
+  for (const suffix of suffixes) {
+    const hit = await stack.get(stem + suffix + '.png');
     if (hit) return 'data:image/png;base64,' + hit.buf.toString('base64');
   }
   return null;
