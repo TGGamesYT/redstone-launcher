@@ -73,16 +73,16 @@ started.
 - [x] **Scrolling to the end loads more.**
 
 ### D. Elsewhere
-- [ ] **Changing what a page is showing has no loading transition** — the
+- [x] **Changing what a page is showing has no loading transition** — the
       instance detail to the instance list is instant where a page change is not.
 - [ ] **The render in a friend's details has no physics** and never returns to
       facing forward.
-- [ ] **The admin password file should hold the hash, not the password.**
-- [ ] **Switching instance leaves the old instance's modals open.**
-- [ ] **The skins page's "Loading your skins & capes" should be the ordinary
+- [x] **The admin password file should hold the hash, not the password.**
+- [x] **Switching instance leaves the old instance's modals open.**
+- [x] **The skins page's "Loading your skins & capes" should be the ordinary
       page-change loading**, saying what it is waiting for.
-- [ ] **With one skin saved, Add skin does not take the rest of the row.**
-- [ ] **A modpack picked in "from a mod or modpack" does not get the confirm
+- [x] **With one skin saved, Add skin does not take the rest of the row.**
+- [x] **A modpack picked in "from a mod or modpack" does not get the confirm
       page** that a mod gets.
 - [ ] **Some versions have no panorama** — `1.12.2 asset index has 0/6 faces
       downloaded`, `no panorama_0`.

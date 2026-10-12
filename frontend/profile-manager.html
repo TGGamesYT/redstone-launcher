@@ -1152,14 +1152,16 @@
       const row = grid && grid.querySelector(".skin-actions-row");
       if (!grid || !row) return;
       row.style.width = "";              // measure the natural layout, not the last answer
-      const cards = [...grid.querySelectorAll(".card[data-skinid]")];
-      if (!cards.length) return;         // no skins: let it have the whole row
-      const boxes = cards.map(c => c.getBoundingClientRect());
-      const topY = Math.min(...boxes.map(b => b.top));
-      const firstRow = boxes.filter(b => Math.abs(b.top - topY) < 1);
-      const left = Math.min(...firstRow.map(b => b.left));
-      const right = Math.max(...firstRow.map(b => b.right));
-      if (right > left) row.style.width = (right - left) + "px";
+      // Where a FULL row of cards would end, which is what the grid's own
+      // columns say -- not where the cards that happen to exist end. With one
+      // skin saved, measuring the cards made the Add row one card wide.
+      const cs = getComputedStyle(grid);
+      const cols = (cs.gridTemplateColumns || '').split(/\s+/)
+        .map(v => parseFloat(v)).filter(v => Number.isFinite(v) && v > 0);
+      if (!cols.length) return;
+      const gap = parseFloat(cs.columnGap || cs.gap || '0') || 0;
+      const full = cols.reduce((a, b) => a + b, 0) + gap * (cols.length - 1);
+      if (full > 0) row.style.width = full + "px";
     }
     window.addEventListener("resize", fitActionsRow);
 
@@ -1913,6 +1915,15 @@
     let renderSeq = 0;
 
     function showLoading(on) {
+      // The launcher's own loading screen, saying what it is waiting for,
+      // rather than a second spinner in the middle of the page. The inline
+      // one is kept for a page that somehow has no overlay.
+      if (window.pageLoading) {
+        if (on) window.pageLoading.hold('skins', 'Loading your skins & capes…');
+        else window.pageLoading.release('skins');
+        document.getElementById('pm-loading').style.display = 'none';
+        return;
+      }
       document.getElementById('pm-loading').style.display = on ? 'flex' : 'none';
     }
 

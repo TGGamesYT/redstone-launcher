@@ -336,9 +336,55 @@ applyModProviderIcon();
 function hideLoadingOverlay() {
   const overlay = document.getElementById('loading-overlay');
   if (!overlay) return;
+  if (_loadHolds.size) return;        // something is still loading; it says so
   overlay.classList.add('fade-out');
-  setTimeout(() => { overlay.style.display = 'none'; }, 500);
+  setTimeout(() => { if (!_loadHolds.size) overlay.style.display = 'none'; }, 500);
 }
+
+// A page can keep the launcher's own loading screen up while it finishes
+// getting what it needs, instead of putting a second spinner of its own in
+// the middle of the page. The subtext says what it is waiting for.
+//
+//   pageLoading.hold('skins', 'Loading your skins & capes…')
+//   pageLoading.release('skins')
+//   pageLoading.show('Opening Fabulously Optimized…')   // an in-page change
+//
+// A hold that is never released would leave the launcher behind a curtain,
+// so each one lets go by itself after a while.
+const _loadHolds = new Map();
+const LOAD_HOLD_MAX = 15000;
+function _setLoadText(text) {
+  const el = document.querySelector('#loading-overlay .loading-subtext');
+  if (el && text) el.textContent = text;
+}
+function _showOverlay(text) {
+  const overlay = document.getElementById('loading-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('fade-out');
+  overlay.style.display = '';
+  _setLoadText(text);
+}
+window.pageLoading = {
+  hold(key, text) {
+    _showOverlay(text);
+    clearTimeout(_loadHolds.get(key));
+    _loadHolds.set(key, setTimeout(() => window.pageLoading.release(key), LOAD_HOLD_MAX));
+  },
+  release(key) {
+    clearTimeout(_loadHolds.get(key));
+    _loadHolds.delete(key);
+    if (!_loadHolds.size) hideLoadingOverlay();
+  },
+  // A change WITHIN a page -- the instance list to an instance, and back --
+  // which is a page change as far as anyone looking at it is concerned, and
+  // used to happen with no sign that anything had happened at all.
+  show(text, ms) {
+    const key = 'page:' + Math.random().toString(36).slice(2);
+    window.pageLoading.hold(key, text);
+    setTimeout(() => window.pageLoading.release(key), Math.max(120, ms || 280));
+  },
+};
+
 if (document.readyState === 'complete') {
   setTimeout(hideLoadingOverlay, 400);
 } else {

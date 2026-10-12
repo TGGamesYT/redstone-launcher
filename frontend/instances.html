@@ -1659,9 +1659,36 @@
       else if (!prev) _wantVersionFilter = null;
     }
 
+    // Anything open belongs to what is on screen now. Switching instance used
+    // to leave the last one's dialogs sitting there -- its settings, its icon
+    // picker, its confirmations -- all still pointed at an instance that is
+    // no longer being looked at.
+    function closeOpenModals() {
+      document.querySelectorAll('.ni-overlay, .mpi-overlay, .uim-overlay').forEach(el => el.remove());
+      document.querySelectorAll('.modal-overlay.active, .modal-base.active').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.modal-overlay[style*="flex"]').forEach(el => { el.style.display = 'none'; });
+    }
+
+    let lastShownInstance = null;
+
     async function renderListOrDetail() {
       const urlParams = new URLSearchParams(window.location.search);
       const instanceId = urlParams.get('i');
+      if (String(instanceId) !== String(lastShownInstance)) {
+        if (lastShownInstance !== null) {
+          closeOpenModals();
+          // Going from the list to an instance and back is a page change as
+          // far as anyone looking at it is concerned, and it used to happen
+          // with no sign that anything had happened at all.
+          if (window.pageLoading) {
+            const name = instanceId && instanceId !== 'NEWINSTANCE'
+              ? (profiles.find(p => String(p.id) === String(instanceId)) || {}).name
+              : null;
+            window.pageLoading.show(name ? `Opening ${name}…` : 'Your instances…');
+          }
+        }
+        lastShownInstance = instanceId;
+      }
 
       // The first seconds of a pack install, before the instance exists: show
       // the progress on its own rather than dropping the user on the list.

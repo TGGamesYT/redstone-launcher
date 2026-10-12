@@ -509,7 +509,13 @@ let adminPasswordHash = null;
 function reloadAdminPassword() {
   try {
     const raw = fs.readFileSync(ADMIN_PASSWORD_FILE, "utf8").trim();
-    adminPasswordHash = raw ? crypto.createHash("sha256").update(raw).digest() : null;
+    // The file holds the SHA-256 of the password, not the password. Nothing
+    // here ever needs the password itself -- it only needs to recognise it --
+    // so there is no reason for the VPS to have a copy of it lying about.
+    adminPasswordHash = /^[0-9a-f]{64}$/i.test(raw) ? Buffer.from(raw, "hex") : null;
+    if (raw && !adminPasswordHash) {
+      log("admin password file is not a sha256 hash; see the README");
+    }
   } catch { adminPasswordHash = null; }
 }
 reloadAdminPassword();

@@ -73,20 +73,22 @@ launcher's settings (Mojang's `hasJoined` proves who they are, so every
 suggestion has a real person behind it — and that person is shown what
 happened to theirs). They land in `relay-suggestions.json`.
 
-To read and answer them, create the password file:
+To read and answer them, write the **hash** of a password into the password
+file — not the password:
 
 ```bash
 cd relay-server
-printf '%s' 'something long and random' > admin-password.txt
+printf '%s' 'something long and random' | sha256sum | cut -d' ' -f1 > admin-password.txt
 chmod 600 admin-password.txt
 ```
 
-It is **not** in the repository (`.gitignore` keeps it out) and never leaves
-the VPS: the relay keeps only its SHA-256 and compares in constant time, so a
-wrong guess takes exactly as long as a right one. The file is re-read every
-minute, so the password can be changed on a relay that is already running —
-and with no file, or an empty one, the admin panel is simply closed to
-everybody.
+The relay only ever has to recognise the password, never know it, so there is
+no reason for a copy of it to be sitting on the VPS. The file holds 64 hex
+characters and nothing else; anything else in it is ignored and logged. The
+comparison is done in constant time, so a wrong guess takes exactly as long
+as a right one. The file is re-read every minute, so the password can be
+changed on a relay that is already running — and with no file, or an empty
+one, the admin panel is simply closed to everybody.
 
 Then, in the launcher (with **Developer mode** on), open devtools on any page
 and type:
