@@ -7604,6 +7604,18 @@ iconModels.configure({
       return n ? s / n : 0;
     } catch { return null; }
   },
+  // How much of an image is painted at all, 0..1. An overlay is drawn ON a
+  // mob and is mostly empty -- an iron golem's cracks, a creeper's charge --
+  // where another skin for it covers the same ground as the first. Nothing in
+  // the names tells the two apart reliably, but this does.
+  measureAlpha: async (buf) => {
+    try {
+      const { data } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      let on = 0, n = 0;
+      for (let i = 3; i < data.length; i += 4) { n++; if (data[i] > 8) on++; }
+      return n ? on / n : 0;
+    } catch { return null; }
+  },
   // One pixel out of an image, for reading a biome colour off the game's own
   // colormaps rather than hard-coding what green looks like.
   samplePixel: async (buf, x, y) => {

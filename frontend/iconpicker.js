@@ -405,7 +405,7 @@
       <div class="ip-section-title">Turn</div>
       <input type="range" id="ipAdjYaw" min="-180" max="180" step="5" value="0" style="width:100%;">
       <div class="ip-section-title">Tilt</div>
-      <input type="range" id="ipAdjPitch" min="-60" max="60" step="5" value="0" style="width:100%;">
+      <input type="range" id="ipAdjPitch" min="-180" max="180" step="5" value="0" style="width:100%;">
       <div class="ip-section-title">Detail</div>
       <div class="ip-circle-row">
         <input type="range" id="ipAdjSize" min="0" max="3" step="1" value="1" style="flex:1;">
@@ -440,9 +440,15 @@
     ov.querySelector('#ipAdjCancel').onclick = () => close(null);
     ov.addEventListener('mousedown', e => { if (e.target === ov) close(null); });
 
-    // Which parts are drawn. Everything, until told otherwise.
+    // Which parts are drawn. Everything the mob is made of, and none of the
+    // things it only wears sometimes -- an iron golem's cracks, a creeper's
+    // charge -- which come marked for exactly this.
     const off = new Set();
+    const startOff = (d) => {
+      for (const p of ((d && d.parts) || [])) if (p.off) off.add(p.key);
+    };
     let desc = base;
+    startOff(desc);
     let url = null;
 
     const partsWrap = ov.querySelector('#ipAdjPartsWrap');
@@ -485,16 +491,24 @@
         // A mob's variants are textures on one model; an item's are whole
         // models -- every trim on a chestplate, every hand position on a
         // clock -- so which one is asked for depends on what this is.
+        //
+        // Except that some of a mob's skins come with a model of their own: a
+        // cold chicken has no beak, a warm cow no horns. Those carry the layer
+        // they belong to, and it is asked for instead, or the new skin goes on
+        // the old shape.
+        const pick = (list || []).find(v => v.path === variantSel.value);
         const next = info.item && info.item.kind === 'entity'
           ? await ipcRenderer.invoke('model:entity', {
             profileId: opts0.instanceId ?? null, version: opts0.version || null,
-            name: String(info.item.id).replace(/^entity:/, ''), texture: variantSel.value,
+            name: (pick && pick.layer) || String(info.item.id).replace(/^entity:/, ''),
+            texture: variantSel.value,
           })
           : await ipcRenderer.invoke('model:describe', {
             profileId: opts0.instanceId ?? null, version: opts0.version || null,
             id: info.item.id, state: info.state || undefined, variant: variantSel.value,
           });
-        if (next && !next.error) { desc = next; paintParts(); redraw(); }
+        // The list follows the model: a cold cow's skins are its own.
+        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); redraw(); }
       };
     }
 
@@ -527,7 +541,7 @@
           profileId: opts0.instanceId ?? null, version: opts0.version || null,
           id: info.item.id, state: stateSel.value,
         });
-        if (next && !next.error) { desc = next; paintParts(); paintVariants(); redraw(); }
+        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); redraw(); }
       };
     }
 
@@ -541,9 +555,14 @@
         : desc;
       const job = window.BlockRender.render(shown, {
         size,
-        rotX: (desc.rotX || 0) + (+pitch.value),
+        // The model's own x rotation is the game's, about the world axis; the
+        // slider's is a tilt towards the viewer, over whatever it is turned to.
+        rotX: desc.rotX || 0,
+        tilt: +pitch.value,
         rotY: (desc.rotY || 0) + (+yaw.value),
         uvlock: !!desc.uvlock,
+        // The switches decide; `off` already holds the ones that start off.
+        overlays: true,
       });
       drawing = job;
       const out = await job;

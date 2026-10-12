@@ -168,6 +168,17 @@
   // The world direction a face ends up pointing, once the element's own
   // rotation has been applied, snapped to the nearest axis — which is what
   // decides its shade.
+  // How squarely a face is turned towards the camera, 0..1.
+  //
+  // The camera always looks down the (1,1,1) diagonal, so "towards it" is that
+  // same direction. 1 is head-on, 0 is edge-on or facing away.
+  function facingCamera(THREE, dir, quat) {
+    const n = DIR_NORMAL[dir];
+    const v = new THREE.Vector3(n[0], n[1], n[2]).applyQuaternion(quat);
+    const k = 1 / Math.sqrt(3);
+    return Math.max(0, v.x * k + v.y * k + v.z * k);
+  }
+
   function shadedDir(THREE, dir, quat) {
     const n = DIR_NORMAL[dir];
     const v = new THREE.Vector3(n[0], n[1], n[2]).applyQuaternion(quat);
@@ -230,10 +241,31 @@
     // right-handed Y rotation.
     root.rotation.y = -(opts.rotY || 0) * Math.PI / 180;
     root.rotation.x = -(opts.rotX || 0) * Math.PI / 180;
+    // Tilting it towards you, which is a different thing from the model's own
+    // x rotation above.
+    //
+    // That one is Minecraft's: a blockstate says "this model is rotated 90
+    // about x" and it means about the world's x axis, before anything else.
+    // Applying a person's tilt the same way tipped the model about an axis
+    // that runs diagonally across the screen, so a turned model went sideways
+    // instead of leaning back -- "it tilts from the original angle rather than
+    // the current one". A tilt is about the screen's horizontal, which for a
+    // camera looking down the (1,1,1) diagonal is (1,0,-1), and it is applied
+    // last, over whatever the model has already been turned to.
+    if (opts.tilt) {
+      const axis = new THREE.Vector3(1, 0, -1).normalize();
+      const q = new THREE.Quaternion().setFromAxisAngle(axis, -opts.tilt * Math.PI / 180);
+      root.quaternion.premultiply(q);
+    }
 
     const texCache = new Map();
     const disposables = [];
-    const elements = Array.isArray(flat.elements) ? flat.elements : [];
+    // Things a mob only wears sometimes -- an iron golem's cracks, a
+    // creeper's charge -- travel with the model but are not part of it, so
+    // they are left out unless whoever is drawing asks for them. The adjust
+    // dialog asks, and then decides for itself which are switched on.
+    const all = Array.isArray(flat.elements) ? flat.elements : [];
+    const elements = opts.overlays ? all : all.filter(el => !el.over);
 
     for (const el of elements) {
       const from = (el.from || [0, 0, 0]).map(Number);
@@ -326,9 +358,22 @@
         // dark: their quads are turned 45 degrees and were being shaded as
         // though they faced north and west.
         const override = el.shade_direction_override || el.shadeDirectionOverride;
-        const shade = shadeOff ? 1
+        const table = shadeOff ? 1
           : (override && SHADE[override] !== undefined ? SHADE[override]
             : SHADE[shadedDir(THREE, dir, worldQuat)]);
+        // A face turned to look straight at you is lit, whatever direction it
+        // happens to point in the world.
+        //
+        // The table is Minecraft's, and it is about a block sitting in a world
+        // with the sun overhead: the top is bright, the sides less so. Here the
+        // model can be turned to any angle, and a face brought round to face
+        // the camera head-on was still being dimmed to 60% because it happened
+        // to be pointing east -- so turning something to look at its front made
+        // the front go dark. Taking whichever is brighter leaves the table
+        // alone at the standing angle, where nothing points at the camera
+        // (every face is 58% on, below its own table value), and lifts a face
+        // only as it comes round to meet you.
+        const shade = shadeOff ? 1 : Math.max(table, facingCamera(THREE, dir, worldQuat));
         // The factor is stated in sRGB, not in three's linear working space.
         // `new Color(0.8, 0.8, 0.8)` means 0.8 of LINEAR white, which comes out
         // at 231/255 rather than the 204/255 that "80% brightness" means

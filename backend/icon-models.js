@@ -632,8 +632,8 @@ export async function describeEntity({ profileId, version, name, texture, textur
   const tx = st ? st.textures : null;
   // `textureFor` is the name to dress it in when that is not the layer's own:
   // an ender chest is the chest model wearing chest/ender.png.
-  const tex0 = await entityTextureFile(tx, textureFor || name, texture)
-    || await entityTextureFile(tx, name, texture);
+  const tex0 = await entityTextureFile(tx, textureFor || name, texture, layers)
+    || await entityTextureFile(tx, name, texture, layers);
   if (!tex0 && L.elements.length) return { error: `no texture for ${name}` };
 
   const parts = [...layers.keys()].filter(k => k.startsWith(name + '/'));
@@ -663,6 +663,9 @@ export async function describeEntity({ profileId, version, name, texture, textur
   const mine = (el) => el.fits !== false || !hosted.has(boxId(el));
 
   const elements = L.elements.filter(mine);
+  const overlayGroups = [];
+  // Textures a layer of its own already wears, so they are not laid on twice.
+  const wornPaths = new Set();
   const textures = {};
   if (tex0) textures[0] = { url: tex0.url, width: L.texWidth, height: L.texHeight, frames: 1 };
   let slot = 1;
@@ -691,15 +694,61 @@ export async function describeEntity({ profileId, version, name, texture, textur
     // and it matters that it does, because it is mostly transparent on
     // purpose. Some parts genuinely share -- a slime's outer shell is the
     // same cube, the same texture, one size up.
-    const pt = await entityTextureFile(tx, key);
+    const pt = await entityTextureFile(tx, key, null, layers);
     if (!pt && !tex0) continue;
+    if (pt) wornPaths.add(pt.path);
     textures[slot] = { url: (pt || tex0).url, width: part.texWidth, height: part.texHeight, frames: 1 };
     const ref = '#' + slot;
     slot++;
+    // Something it only sometimes wears travels with the model but is not
+    // drawn unless asked for -- see SOMETIMES.
+    const sometimes = !worn(key.slice(name.length + 1).replace(/[_/]+/g, ' '));
     for (const el of part.elements.filter(mine)) {
-      elements.push({ ...el, group: key, faces: Object.fromEntries(
-        Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: ref }])) });
+      elements.push({
+        ...el, group: key, ...(sometimes ? { over: true } : {}),
+        faces: Object.fromEntries(
+          Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: ref }])),
+      });
     }
+  }
+
+  // The ones that are drawn ON it rather than instead of it.
+  //
+  // An iron golem's three crackinesses and a creeper's charge were offered as
+  // other skins for the mob, which is wrong twice over: they are not skins, and
+  // picking one replaced the mob with a sheet of cracks on an invisible body.
+  // They are overlays -- mostly empty textures laid over the same boxes -- and
+  // telling them from a skin is a matter of looking: a skin covers roughly what
+  // the first one covers, an overlay covers a fraction of it.
+  //
+  // So they become parts, switched off to begin with, because a golem is not
+  // cracked and a creeper is not charged unless you say so.
+  const skins = [];
+  const baseCover = tex0 ? await textureCoverage(tx, tex0.path) : null;
+  for (const c of ((tex0 && tex0.choices) || [])) {
+    if (c.path === (tex0 && tex0.path)) { skins.push(c); continue; }
+    if (wornPaths.has(c.path)) continue;   // a part of the mob already wears it
+    const cover = await textureCoverage(tx, c.path);
+    const thin = cover != null && baseCover != null && baseCover > 0.05
+      && cover < baseCover * 0.45;
+    if (!thin) { skins.push(c); continue; }
+    const hit = await stackTexture(tx, c.path);
+    if (!hit) { skins.push(c); continue; }
+    const key = 'over:' + c.path;
+    textures[slot] = { url: hit, width: L.texWidth, height: L.texHeight, frames: 1 };
+    const ref = '#' + slot;
+    slot++;
+    for (const el of L.elements.filter(mine)) {
+      elements.push({
+        ...el, group: key, over: true,
+        // A hair bigger, or it fights with the body it is lying on.
+        from: el.from.map(v => v - OVERLAY_GROW),
+        to: el.to.map(v => v + OVERLAY_GROW),
+        faces: Object.fromEntries(
+          Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: ref }])),
+      });
+    }
+    overlayGroups.push({ key, label: c.label, off: true });
   }
 
   // What it is made of, so whoever is looking at it can switch a part off
@@ -711,7 +760,13 @@ export async function describeEntity({ profileId, version, name, texture, textur
   const groups = own ? [{ key: '', label: 'Body', n: own }] : [];
   for (const key of parts) {
     const n = elements.filter(el => el.group === key).length;
-    if (n) groups.push({ key, label: key.slice(name.length + 1).replace(/[_/]+/g, ' '), n });
+    if (!n) continue;
+    const label = key.slice(name.length + 1).replace(/[_/]+/g, ' ');
+    groups.push({ key, label, n, ...(worn(label) ? {} : { off: true }) });
+  }
+  for (const g of overlayGroups) {
+    const n = elements.filter(el => el.group === g.key).length;
+    if (n) groups.push({ ...g, n });
   }
 
   // A chest and a bell are built in a block's own space rather than around a
@@ -726,7 +781,9 @@ export async function describeEntity({ profileId, version, name, texture, textur
     // Which skin this is wearing, and the others it could be: a cow is six
     // textures on one model, a cushion sixteen.
     texture: tex0 ? tex0.path : null,
-    variants: ((tex0 && tex0.choices) || []).map(c => ({ path: c.path, label: c.label })),
+    // `layer` is set when this skin belongs to a model of its own -- a cold
+    // cow is not quite a cow -- so that picking it brings that model too.
+    variants: skins.map(c => ({ path: c.path, label: c.label, layer: c.layer || null })),
     parts: groups.length > 1 ? groups : null,
   };
 }
@@ -752,7 +809,13 @@ const OVERLAY_WORDS = new Set([
   'fireball', 'wind', 'saddle', 'collar', 'decor', 'harness', 'ropes', 'glow',
   'shadow', 'melting', 'angry', 'invulnerable', 'charge',
 ]);
-const words = (s) => String(s).toLowerCase().split(/[_/]+/).filter(Boolean);
+// A word, as the matcher compares them: singular. The layer is called
+// `decorated_pot_sides` and its texture is `decorated_pot_side.png`, which
+// matched nothing at all, so the pot came out as a few loose plates with no
+// walls. Nothing else in the names turns on a plural, so one is simply not a
+// difference. Only a trailing "s" after a letter, so "glass" stays "glass".
+const stem1 = (w) => (/[a-z]{3}s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w);
+const words = (s) => String(s).toLowerCase().split(/[_/]+/).filter(Boolean).map(stem1);
 const sameWords = (a, b) => {
   const A = new Set(words(a)), B = new Set(words(b));
   if (A.size !== B.size) return false;
@@ -779,7 +842,7 @@ async function entityTexturePaths(stack) {
  * variant -- "temperate", "red", "exploding" -- or the layer's own name when
  * there is only one.
  */
-async function entityTextureChoices(stack, name) {
+async function entityTextureChoices(stack, name, layers) {
   if (!stack) return [];
   const full = String(name);
   const base = full.split('/')[0];
@@ -835,15 +898,109 @@ async function entityTextureChoices(stack, name) {
     score -= extra.filter(w => w !== 'baby').length;
 
     const label = extra.filter(w => w !== 'baby').join(' ') || fname.replace(/_/g, ' ');
-    scored.push({ path: p, label, score });
+    scored.push({ path: p, label, score, folder, fname, fw });
   }
   scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-  return scored;
+  if (!scored.length) return scored;
+
+  // Which of these are actually OTHER SKINS for this thing.
+  //
+  // The scorer is deliberately generous, because the one texture a thing wears
+  // can be named almost anything -- an ender dragon's is enderdragon/dragon.png
+  // and an elder guardian's is guardian/guardian_elder.png -- and the best
+  // guess being wrong means the thing does not render at all. Everything it
+  // reached for, though, was then offered as a VARIANT, and most of what it
+  // reaches for belongs to something else entirely: the ender dragon offered
+  // the ender chest's texture, the armadillo a wolf's armour, the iron golem
+  // every piece of iron equipment in the game, and a decorated pot a banner's.
+  //
+  // The best match is kept whatever it is -- it is the thing's skin, by
+  // definition. Past that, three things disqualify a texture:
+  const home = scored[0].folder;
+  const mine = new Set(words(stem));
+  const squash = (s) => String(s).replace(/[_/]+/g, '');
+  const all = layers instanceof Map ? layers : new Map();
+  const others = [...all.keys()].filter(n => n !== full && n !== base);
+  const myBoxes = (all.get(full) || all.get(base) || { elements: [] }).elements.length;
+  // Is that other layer the same thing in a different coat, or a different
+  // thing that happens to share a word? A cold cow is a cow -- same model, one
+  // box different at most -- while a llama's spit is a single box and an
+  // evoker's fangs are a mouthful of them. Nothing in the names says which, so
+  // the shapes are compared.
+  const sameShape = (L) => {
+    const n = (all.get(L) || { elements: [] }).elements.length;
+    if (!n || !myBoxes) return false;
+    return Math.abs(n - myBoxes) <= Math.max(2, Math.max(n, myBoxes) * 0.3);
+  };
+  const ownedBy = (fname) => others.find(L =>
+    fname === L || squash(fname) === squash(L) || sameWords(fname, L)) || null;
+
+  const kept = [];
+  for (let i = 0; i < scored.length; i++) {
+    const c = scored[i];
+    if (i === 0) { kept.push(c); continue; }
+    // Somebody else's folder. Textures for one thing live together, so one
+    // from elsewhere is a near miss on the name, not another skin.
+    if (c.folder !== home) continue;
+    // Its name is part of this one's rather than an addition to it. A variant
+    // says something EXTRA -- cow_cold, mooshroom_red -- where `ghast` beside
+    // `happy_ghast` is simply the other mob.
+    if (c.fw.length && c.fw.length < mine.size && c.fw.every(w => mine.has(w))) continue;
+    // A layer of its own is named for it. If that layer is a different shape
+    // it is a different thing, and the texture is its, not this one's: a
+    // llama's spit, an evoker's fangs. If it is the same shape it is this
+    // thing in another coat -- a cold cow, a warm chicken -- and it stays, but
+    // tagged, because those models are NOT identical (a cold chicken has no
+    // beak, a warm cow no horns) and picking it has to bring its own model.
+    const owner = ownedBy(c.fname);
+    if (owner && !sameShape(owner)) continue;
+    kept.push(owner ? { ...c, layer: owner } : c);
+  }
+  return kept;
 }
 
 const asDataUrl = (buf) => 'data:image/png;base64,' + buf.toString('base64');
 
-async function entityTextureFile(stack, name, wantPath) {
+// How much of a texture is painted at all, 0..1, remembered per file. What it
+// is for is at the call site: telling an overlay from another skin.
+const _coverage = new Map();
+async function textureCoverage(stack, p) {
+  if (!stack || !p || !DEPS.measureAlpha) return null;
+  if (_coverage.has(p)) return _coverage.get(p);
+  const q = (async () => {
+    const hit = await stack.get(p);
+    if (!hit) return null;
+    try { return await DEPS.measureAlpha(hit.buf); } catch { return null; }
+  })();
+  _coverage.set(p, q);
+  return q;
+}
+async function stackTexture(stack, p) {
+  const hit = stack && p ? await stack.get(p) : null;
+  return hit ? asDataUrl(hit.buf) : null;
+}
+// How far an overlay is grown so it does not fight with the body underneath.
+const OVERLAY_GROW = 0.02;
+
+// A mob's layers include things it is only sometimes wearing. A creeper's
+// `armor` is the charge that a lightning strike leaves on it; a drowned's
+// `outer` is its clothes and seaweed, which it always has. Both are extra
+// layers over the same boxes and nothing in the data tells them apart -- what
+// decides it in the game is a condition in Java, checked per frame.
+//
+// So this is a short, deliberate list rather than a mechanism, in the same
+// spirit as the mobs whose rest pose is misleading: the words that mean "only
+// under some condition". Anything not named here is taken to be part of the
+// mob and is drawn. Being off is only a default; every one of them is a switch
+// in the adjust dialog either way.
+const SOMETIMES = new Set([
+  'armor', 'armour', 'crackiness', 'charge', 'charged', 'powered', 'trim',
+  'invulnerable', 'exploding', 'melting', 'angry', 'shadow', 'saddle',
+  'harness', 'decor', 'ropes', 'carpet', 'chest',
+]);
+const worn = (label) => !String(label).split(/[\s_/]+/).some(w => SOMETIMES.has(w.toLowerCase()));
+
+async function entityTextureFile(stack, name, wantPath, layers) {
   if (!stack) return null;
   const take = async (p) => {
     const hit = await stack.get(p);
@@ -853,17 +1010,12 @@ async function entityTextureFile(stack, name, wantPath) {
     const got = await take(wantPath);
     if (got) return got;
   }
-  const choices = await entityTextureChoices(stack, name);
+  const choices = await entityTextureChoices(stack, name, layers);
   for (const c of choices) {
     const got = await take(c.path);
     if (got) return { ...got, choices };
   }
   return null;
-}
-
-async function entityTexture(stack, name) {
-  const f = await entityTextureFile(stack, name);
-  return f ? f.url : null;
 }
 
 
