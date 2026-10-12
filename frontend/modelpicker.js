@@ -177,6 +177,7 @@
 
     async function load(reset) {
       const mine = ++seq;
+      loading = true;
       if (reset) {
         offset = 0;
         grid.innerHTML = '';
@@ -191,8 +192,9 @@
           query, kinds: kinds(), limit: PAGE, offset,
         });
       } catch { r = null; }
-      if (mine !== seq) return;                      // a newer search overtook
+      if (mine !== seq) { loading = false; return; }  // a newer search overtook
       if (!r || r.error || !r.items) {
+        loading = false;
         more.textContent = (r && r.error) || 'Nothing to show for this version yet.';
         return;
       }
@@ -201,15 +203,39 @@
       for (const c of cells) { grid.appendChild(c); if (io) io.observe(c); }
       offset += r.items.length;
       await prefill(cells);
+      loading = false;
       if (mine !== seq) return;
       if (offset < total) {
         more.style.display = '';
         more.innerHTML = `<button class="mp-moreBtn">Show more (${total - offset} left)</button>`;
         more.querySelector('button').onclick = () => load(false);
+        // ...and it loads itself when you reach it, so scrolling to the
+        // bottom is enough and the button is only there to say how many are
+        // left.
+        watchMore();
       } else {
         more.style.display = total ? 'none' : '';
         if (!total) more.textContent = 'No match.';
       }
+    }
+
+    // Reaching the end asks for the next page. One observer, re-pointed at
+    // the button each time, so a page that loads instantly does not chain
+    // into a dozen more before anything has been seen.
+    let moreIo = null;
+    let loading = false;
+    function watchMore() {
+      if (!moreIo) {
+        try {
+          moreIo = new IntersectionObserver((es) => {
+            if (!es.some(e => e.isIntersecting) || loading) return;
+            if (offset >= total) return;
+            load(false);
+          }, { root: null, rootMargin: '300px' });
+        } catch { return; }
+      }
+      moreIo.disconnect();
+      moreIo.observe(more);
     }
 
     let timer = null;

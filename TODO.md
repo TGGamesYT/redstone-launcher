@@ -60,16 +60,17 @@ started.
       layer resolves its own, and the others are offered as variants.
 
 ### C. The icon picker
-- [ ] **The title stays above the scrolling area, and Custom image / Cancel stay
+- [x] **The title stays above the scrolling area, and Custom image / Cancel stay
       below it.**
-- [ ] **The cropper will not let you move the image once it is zoomed out.**
-- [ ] **Searching "ice ball" does not find `ice_ball`.**
+- [x] **The cropper will not let you move the image once it is zoomed out.**
+- [x] **Searching "ice ball" does not find `ice_ball`.**
 - [x] **A render resolution slider and a render angle slider** in the cropper
       — in an adjust step before it, along with the part switches.
-- [ ] **An icon out of a mod file can still come out blurred.**
-- [ ] **A big modpack's icons should appear as they are rendered**, not all at
+- [x] **An icon out of a mod file can still come out blurred.** The cropper
+      was interpolating on the way up to 256.
+- [x] **A big modpack's icons should appear as they are rendered**, not all at
       once after a "Loading…".
-- [ ] **Scrolling to the end loads more.**
+- [x] **Scrolling to the end loads more.**
 
 ### D. Elsewhere
 - [ ] **Changing what a page is showing has no loading transition** — the

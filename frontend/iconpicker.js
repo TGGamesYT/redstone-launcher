@@ -613,6 +613,14 @@
 
     const draw = () => {
       cx.clearRect(0, 0, OUT, OUT);
+      // Pixel art stays pixel art. The cropper's output is 256 across, so a
+      // 32-pixel mod icon is being blown up eight times on the way through
+      // -- with smoothing on, what came out the other side was a blurred
+      // 256-pixel image, and nothing downstream could tell it had ever been
+      // sharp. Only interpolate when shrinking, where it is right.
+      const shrinking = (im.naturalWidth || 0) > OUT * 1.05;
+      cx.imageSmoothingEnabled = shrinking;
+      if (shrinking) cx.imageSmoothingQuality = 'high';
       cx.save();
       const roundPct = Number(roundEl.value) || 0;
       if (roundPct > 0) {
@@ -634,8 +642,14 @@
       const base = Math.max(OUT / im.naturalWidth, OUT / im.naturalHeight);
       const s = base * zoom;
       const w = im.naturalWidth * s, h = im.naturalHeight * s;
-      // Don't let the image be dragged off the square entirely.
-      const maxX = Math.max(0, (w - OUT) / 2), maxY = Math.max(0, (h - OUT) / 2);
+      // Don't let the image be dragged off the square entirely. Zoomed out
+      // there is nothing hanging over the edge to pull back in, so the old
+      // limit of "however much is outside" was zero and the image would not
+      // move at all -- which is exactly when you want to move it, to choose
+      // where in the square it sits. Below the covering size, the limit is
+      // the empty space instead.
+      const overX = (w - OUT) / 2, overY = (h - OUT) / 2;
+      const maxX = Math.abs(overX), maxY = Math.abs(overY);
       ox = Math.max(-maxX, Math.min(maxX, ox));
       oy = Math.max(-maxY, Math.min(maxY, oy));
       cx.drawImage(im, (OUT - w) / 2 + ox, (OUT - h) / 2 + oy, w, h);
@@ -650,7 +664,9 @@
       const hint = ov.querySelector('#ipCropHint');
       if (hint) {
         hint.textContent = (maxX > 0.5 || maxY > 0.5)
-          ? "Drag to choose what's in frame · scroll to zoom"
+          ? (overX < 0 || overY < 0
+            ? 'Drag to place it in the square · scroll to zoom'
+            : "Drag to choose what's in frame · scroll to zoom")
           : minZoom < 1
             ? 'Scroll to zoom in, or out to fit the whole image'
             : 'Zoom in to choose what\'s in frame';
@@ -725,14 +741,21 @@
       .ip-cell { width:56px; height:56px; border:2px solid var(--border-dark); border-radius:var(--border-radius); cursor:pointer; display:flex; align-items:center; justify-content:center; background:var(--menu-bg); overflow:hidden; }
       .ip-cell:hover { border-color:var(--accent); }
       .ip-cell img { width:100%; height:100%; object-fit:contain; padding:4px; image-rendering:auto; }
-      .ip-section-title { font-size:12px; text-transform:uppercase; opacity:0.7; margin:12px 0 4px; }`;
+      .ip-section-title { font-size:12px; text-transform:uppercase; opacity:0.7; margin:12px 0 4px; }
+      /* The icons scroll; the title above them and the buttons below do not. */
+      .modal-content.ip-modal { display:flex; flex-direction:column; overflow:hidden; max-height:85vh; }
+      .ip-modal .ip-scroll { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
+      .ip-modal .modal-actions { flex:0 0 auto; margin-top:12px; }
+      /* Each grid scrolls with the page now rather than inside itself. */
+      .ip-modal .ip-grid { max-height:none; overflow:visible; }`;
     document.head.appendChild(s);
   }
 
   window.IconPicker = {
-    // Exposed for the tests: the adjust dialog on its own, without the
-    // picker around it.
+    // Exposed for the tests: the adjust dialog and the cropper on their
+    // own, without the picker around them.
     __adjust: (info, done) => openModelAdjust(info, done),
+    __crop: (src, done) => openCropper(src, done),
     // opts: { instanceId?, serverName?, version?, onPick }
     open(opts) {
       ensureStyle();
@@ -740,8 +763,12 @@
       const ov = document.createElement('div');
       ov.className = 'modal-overlay active';
       ov.style.zIndex = 6000;
-      ov.innerHTML = `<div class="modal-content" style="max-width:460px;">
+      // The heading and the buttons stay put; only the icons scroll. With
+      // everything in one scrolling box, "Choose an icon" and the Custom
+      // image button were both somewhere up or down the page.
+      ov.innerHTML = `<div class="modal-content ip-modal" style="max-width:460px;">
         <div class="modal-header"><h2>Choose an icon</h2><button class="modal-close" id="ipClose">✕</button></div>
+        <div class="ip-scroll">
         <div class="ip-section-title">Presets</div>
         <div class="ip-grid" id="ipPresets"></div>
         <div id="ipVersionWrap" style="display:none;"><div class="ip-section-title">This version</div><div class="ip-grid" id="ipVersion"></div></div>
@@ -754,6 +781,7 @@
         <div id="ipPacksWrap" style="display:none;"><div class="ip-section-title">Resource packs</div><div class="ip-grid" id="ipPacks"></div></div>
         <div class="ip-section-title">Blocks, items &amp; mobs</div>
         <div id="ipModels"></div>
+        </div>
         <div class="modal-actions"><button id="ipCustom">Custom image…</button><button id="ipCancel">Cancel</button></div>
         <input type="file" id="ipFile" accept="image/*" style="display:none;" />
       </div>`;
@@ -1005,12 +1033,35 @@
       }
 
       function addContentSection(tab, wrapSel, gridSel) {
+        const shape = (x) => ({
+          icon: x.icon, iconPath: x.iconPath, name: x.name,
+          modrinthId: x.projectId || null, curseId: x.curseId || null,
+        });
+        // A big modpack takes a while: the launcher reads every file off the
+        // disk and then asks Modrinth and CurseForge about each one. The
+        // first pass is sent as soon as the disk has been read, so the icons
+        // appear then rather than after every lookup has finished, and the
+        // full answer tops them up.
+        const seen = new Set();
+        const add = (list) => {
+          const fresh = (list || []).filter(x => x.icon && !seen.has(x.filename || x.name));
+          fresh.forEach(x => seen.add(x.filename || x.name));
+          if (fresh.length) renderContentCells(fresh.map(shape), wrapSel, gridSel);
+        };
+        const onPartial = (_e, msg) => {
+          if (!ov.isConnected || !msg || msg.tab !== tab) return;
+          if (String(msg.profileId) !== String(opts.instanceId)) return;
+          add(msg.results);
+        };
+        ipcRenderer.on('instance-content-partial', onPartial);
         ipcRenderer.invoke('get-instance-mods', { profileId: opts.instanceId, tab })
-          .then(list => renderContentCells((list || []).filter(x => x.icon).map(x => ({
-            icon: x.icon, iconPath: x.iconPath, name: x.name,
-            modrinthId: x.projectId || null, curseId: x.curseId || null,
-          })), wrapSel, gridSel))
-          .catch(() => {});
+          .then(list => add(list))
+          .catch(() => { })
+          .finally(() => {
+            // `removeListener` is Electron's; a page that stubs ipcRenderer
+            // may not have it, and a missing tidy-up must not throw.
+            try { ipcRenderer.removeListener('instance-content-partial', onPartial); } catch { /* nothing to remove */ }
+          });
       }
 
       function renderContentCells(items, wrapSel, gridSel) {

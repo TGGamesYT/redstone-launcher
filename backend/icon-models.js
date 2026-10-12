@@ -576,9 +576,18 @@ export async function listModels({ profileId, version, query = '', kinds = null,
     }
   }
 
-  const match = q
-    ? items.filter(it => it.name.toLowerCase().includes(q) || it.ns.toLowerCase().includes(q))
-    : items;
+  // "ice ball" should find ice_ball: a name is words joined with underscores,
+  // so a search is matched against it both as typed and with the spaces
+  // closed up, and every word has to appear somewhere in the name.
+  const terms = q ? q.split(/\s+/).filter(Boolean) : [];
+  const matches = (it) => {
+    const name = it.name.toLowerCase();
+    const flat = name.replace(/[_/]+/g, '');
+    const ns = it.ns.toLowerCase();
+    if (name.includes(q) || flat.includes(q.replace(/[\s_]+/g, '')) || ns.includes(q)) return true;
+    return terms.every(t => name.includes(t) || flat.includes(t));
+  };
+  const match = q ? items.filter(matches) : items;
   // Shortest name first for a query, so "stone" puts stone above
   // stone_brick_stairs; alphabetical otherwise.
   match.sort((a, b) => (q ? a.name.length - b.name.length : 0) || a.ns.localeCompare(b.ns) || a.name.localeCompare(b.name));
