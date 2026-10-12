@@ -9,6 +9,71 @@ started.
 
 ---
 
+## 0. Round 22
+
+### A. Modals and the new-instance flow
+- [ ] **Every modal should animate in and out**, not appear and vanish.
+- [ ] **"Set it up myself" is too small for what it is.** The version and loader
+      pages should fill the window rather than sitting in a small box in the
+      middle, with bigger cards.
+- [ ] **Drop Cancel and Continue from those pages.** Cancel does what the ✕
+      already does, and clicking a version (or a snapshot) should go straight on.
+- [ ] **After the version and loader, open a finalize page**, not the old
+      create-instance modal.
+
+### B. Block and entity rendering
+- [ ] **Some things cannot be found at all** in the icon picker's search —
+      ender dragon, cushions, pigs, cows.
+- [ ] **An armadillo shows curled up and standing at the same time.**
+- [ ] **An elder guardian's side has a hole in it**, the way the ender dragon did.
+- [ ] **An evoker's hands are both together and held out at once.**
+- [ ] **A baby drowned has the same missing layer the drowned had.**
+- [ ] **A block with block states cannot be shown in a different state.**
+- [ ] **Tinting must be detected, not listed by hand.** Some tall and short grass
+      variants, water and jungle leaves still come out grey.
+- [ ] **Cross models on a wall are lit wrongly and turned 45°.**
+- [ ] **The bell comes out wrong**, with parts missing or cropped off.
+- [ ] **One entity is split into several** — breeze, breeze/eyes, breeze/wind.
+- [ ] **Two-block blocks do not render as one** (beds, doors).
+- [ ] **Trimmed armour shows as the untrimmed armour.**
+- [ ] **Item variants should be offered** the way a mod's pictures are — every
+      clock, every compass and so on.
+- [ ] **Chests, ender chests and copper chests render as plain cubes.**
+- [ ] **Mob heads render as plain cubes** rather than the head model.
+- [ ] **The red mushroom block renders as nothing**, mushroom cross models are
+      lit wrongly, and so is the cross model inside a flower pot — fix the
+      lighting itself rather than patching the cases.
+- [ ] **Some entities get the wrong texture**, and an outer layer is often
+      rendered as its own thing with the texture all over the place.
+
+### C. The icon picker
+- [ ] **The title stays above the scrolling area, and Custom image / Cancel stay
+      below it.**
+- [ ] **The cropper will not let you move the image once it is zoomed out.**
+- [ ] **Searching "ice ball" does not find `ice_ball`.**
+- [ ] **A render resolution slider and a render angle slider** in the cropper.
+- [ ] **An icon out of a mod file can still come out blurred.**
+- [ ] **A big modpack's icons should appear as they are rendered**, not all at
+      once after a "Loading…".
+- [ ] **Scrolling to the end loads more.**
+
+### D. Elsewhere
+- [ ] **Changing what a page is showing has no loading transition** — the
+      instance detail to the instance list is instant where a page change is not.
+- [ ] **The render in a friend's details has no physics** and never returns to
+      facing forward.
+- [ ] **The admin password file should hold the hash, not the password.**
+- [ ] **Switching instance leaves the old instance's modals open.**
+- [ ] **The skins page's "Loading your skins & capes" should be the ordinary
+      page-change loading**, saying what it is waiting for.
+- [ ] **With one skin saved, Add skin does not take the rest of the row.**
+- [ ] **A modpack picked in "from a mod or modpack" does not get the confirm
+      page** that a mod gets.
+- [ ] **Some versions have no panorama** — `1.12.2 asset index has 0/6 faces
+      downloaded`, `no panorama_0`.
+- [ ] **An instance made from a mod or modpack still has no way back to its
+      version's default icon** — that icon is missing from "This version".
+
 ## 0. Round 21
 
 Everything asked for across this round, **in the order it was asked**, which is
