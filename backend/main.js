@@ -6970,9 +6970,9 @@ ipcMain.handle("icon:thumb", async (event, { filePath, size }) => {
   } catch { return null; }
 });
 
-// The wiki publishes a banner per version at a predictable path, but the
-// extension varies by version and plenty of versions have neither. Try png,
-// then jpg, and say so honestly when there is nothing.
+// The wiki publishes a banner per version at a predictable path, but the shape
+// of that path varies and plenty of versions have no banner at all. Try each
+// shape in turn, and say so honestly when there is nothing.
 const _bannerMemo = new Map();
 ipcMain.handle("icon:versionBanner", async (event, { version }) => {
   const v = String(version || "").trim();
@@ -6989,8 +6989,15 @@ ipcMain.handle("icon:versionBanner", async (event, { version }) => {
     _bannerMemo.set(v, out);
     return out;
   }
-  for (const ext of ["png", "jpg"]) {
-    const url = `https://minecraft.wiki/images/${encodeURIComponent(v)}_banner.${ext}`;
+  // A release's banner is "<version>_banner.png"; a snapshot's is the plain
+  // "<id>.jpg" its wiki page leads with (25w31a.jpg, 26.3-pre1.jpg,
+  // 26.3-rc1.jpg). Both are tried, because the id alone does not always say
+  // which kind it is.
+  const candidates = [
+    `${v}_banner.png`, `${v}_banner.jpg`, `${v}.jpg`, `${v}.png`,
+  ];
+  for (const name of candidates) {
+    const url = `https://minecraft.wiki/images/${encodeURIComponent(name)}`;
     try {
       const r = await fetch(url, { headers: { "User-Agent": LAUNCHER_UA } });
       if (!r.ok) continue;
@@ -7560,6 +7567,16 @@ ipcMain.handle("model:entity", async (event, opts = {}) => {
 ipcMain.handle("icon:versionIcon", async (event, opts = {}) => {
   try { return await iconModels.versionIcon(opts); }
   catch (err) { return { kind: "release", reason: String(err && err.message || err) }; }
+});
+// Everything the version picker needs to draw itself: the releases, the
+// snapshots, and which version the "latest snapshot" card should borrow its
+// icon from.
+ipcMain.handle("icon:pickerVersions", async () => {
+  try { return await iconModels.versionIcons.pickerVersions(); }
+  catch (err) {
+    devtoolsLog("picker versions failed:", String(err && err.message || err));
+    return { releases: [], snapshots: [], latest: {}, next: null };
+  }
 });
 ipcMain.handle("icon:storeVersionIcon", async (event, opts = {}) => {
   try { return await iconModels.storeVersionIcon(opts); }

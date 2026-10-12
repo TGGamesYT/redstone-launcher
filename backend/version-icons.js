@@ -207,3 +207,32 @@ export async function resolveVersionIcon(version) {
     reason: pick.version === v ? `${v} is listed` : `${v} carries forward from ${pick.version}`,
   };
 }
+
+/**
+ * The versions a picker needs, in one answer.
+ *
+ *   releases    every release, newest first, with its date
+ *   snapshots   every snapshot, pre-release and release candidate, newest first
+ *   latest      Mojang's own { release, snapshot }
+ *   next        the newest version named in versions.json — which may be one
+ *               that is not out yet (the list is written ahead of a release),
+ *               and is what the "latest snapshot" card borrows its icon from
+ *
+ * Ordering is by release date, because that is what the manifest is sorted by
+ * and what "newest" means to somebody picking one.
+ */
+export async function pickerVersions() {
+  const [entries, manifest] = await Promise.all([versionList(), manifestIndex()]);
+  const releases = [], snapshots = [];
+  for (const v of manifest.by.values()) {
+    (v.type === 'release' ? releases : snapshots).push({ id: v.id, at: v.at, type: v.type });
+  }
+  const byDate = (a, b) => (b.at || 0) - (a.at || 0);
+  releases.sort(byDate);
+  snapshots.sort(byDate);
+  return {
+    releases, snapshots,
+    latest: manifest.latest || {},
+    next: entries.length ? entries[entries.length - 1].version : null,
+  };
+}

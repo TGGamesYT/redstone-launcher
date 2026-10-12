@@ -57,7 +57,39 @@
       .ni-actions .ni-backBtn { margin-right:auto; }
       .ni-actions button { padding:8px 16px; border:1px solid var(--border-dark); background:var(--menu-bg);
         color:var(--text-color); border-radius:var(--border-radius); cursor:pointer; font-family:var(--text-font); }
-      .ni-empty { opacity:0.7; padding:24px 4px; font-size:13px; line-height:1.6; }`;
+      .ni-empty { opacity:0.7; padding:24px 4px; font-size:13px; line-height:1.6; }
+
+      /* The version / loader cards: the wiki banner behind, the version's own
+         rendered icon on top of it, the name under that. */
+      .ni-cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px;
+        overflow-y:auto; flex:1; min-height:0; padding:2px; align-content:start; }
+      .ni-tile { position:relative; height:104px; border:2px solid var(--border-dark);
+        border-radius:var(--border-radius); overflow:hidden; cursor:pointer;
+        background:var(--very-dark); transition:var(--smooth-transition); }
+      .ni-tile:hover { border-color:var(--base-color); }
+      .ni-tile.sel { border-color:var(--base-color); box-shadow:0 0 0 2px color-mix(in srgb, var(--base-color) 60%, transparent); }
+      .ni-tile .bg { position:absolute; inset:0; background-size:cover; background-position:center;
+        opacity:0; transition:opacity 0.25s ease; }
+      .ni-tile .bg.on { opacity:1; }
+      /* Readable names over whatever the banner happens to be. */
+      .ni-tile .veil { position:absolute; inset:0; background:linear-gradient(180deg,
+        rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.35) 45%, rgba(0,0,0,0.78) 100%); }
+      .ni-tile .inner { position:absolute; inset:0; display:flex; flex-direction:column;
+        align-items:center; justify-content:center; gap:6px; padding:8px; text-align:center; }
+      .ni-tile .inner img { width:40px; height:40px; object-fit:contain;
+        filter:drop-shadow(0 2px 4px rgba(0,0,0,0.7)); }
+      .ni-tile .n { font-size:13px; font-weight:600; text-shadow:0 1px 3px rgba(0,0,0,0.9); }
+      .ni-tile .s { font-size:10px; opacity:0.85; text-shadow:0 1px 3px rgba(0,0,0,0.9); }
+      /* The snapshot card is the odd one out and says so. */
+      .ni-tile.wide { grid-column:span 2; }
+      .ni-plain { display:flex; align-items:center; justify-content:space-between; gap:10px;
+        padding:9px 12px; cursor:pointer; border-bottom:1px solid color-mix(in srgb, var(--border-dark) 60%, transparent); }
+      .ni-plain:last-child { border-bottom:none; }
+      .ni-plain:hover { background:var(--menu-hover-bg, rgba(255,255,255,0.06)); }
+      .ni-plain.sel { background:var(--base-color); }
+      .ni-plain .m { font-size:11px; opacity:0.75; }
+      .ni-plainlist { overflow-y:auto; flex:1; min-height:0; border:1px solid var(--border-dark);
+        border-radius:var(--border-radius); }`;
     document.head.appendChild(s);
   }
 
@@ -380,7 +412,7 @@
       row(list, {
         icon: 'travel_explore',
         title: 'A modpack or a mod',
-        desc: 'Search Modrinth and install a modpack, or set an instance up for a single mod.',
+        desc: 'Search Modrinth and CurseForge: install a modpack, or set an instance up for a single mod.',
         onClick: () => { close(); openSearch({ ...opts, onBack: reopen }); },
       });
       row(list, {
@@ -425,8 +457,342 @@
         desc: server
           ? 'Pick the version, the loader and the rest by hand.'
           : 'Pick the version, the loader, the icon and the rest by hand.',
-        onClick: () => { close(); opts.onCustom && opts.onCustom(null, reopen); },
+        // Which version, then which loader, then the creator with both filled
+        // in. Going straight to the creator meant the first thing anybody saw
+        // of a hand-built instance was a form with two dropdowns on it.
+        onClick: () => {
+          close();
+          pickVersion({
+            onBack: reopen,
+            onPick: (version) => pickLoader({
+              version,
+              onBack: () => window.NewInstance.choose(opts),
+              onPick: (loader) => {
+                window.NewInstance.closeAll();
+                opts.onCustom && opts.onCustom({ version, loader }, reopen);
+              },
+            }),
+          });
+        },
       });
     },
+    pickVersion,
+    pickLoader,
+    closeAll() { if (openShell && openShell.isConnected) openShell.remove(); openShell = null; },
   };
+
+  // ── Picking a version ─────────────────────────────────────────────────────
+  // A card per release: the wiki's banner for that version behind it, that
+  // version's own rendered icon on top. Both are already cached by the main
+  // process, so the second visit costs nothing.
+  //
+  // Snapshots are not cards. There are thousands of them, almost none has a
+  // banner, and nobody browses them — so they live behind a button next to
+  // Continue, as a plain list.
+  async function pickVersion(opts, preselect) {
+    opts = opts || {};
+    const { card, list } = shell(
+      'Which Minecraft version?',
+      'Releases, newest first. Snapshots are behind the button at the bottom.',
+      { onBack: opts.onBack }
+    );
+    list.className = 'ni-cards';
+
+    const actions = card.querySelector('.ni-actions');
+    const snapBtn = document.createElement('button');
+    snapBtn.textContent = 'Select a snapshot…';
+    // Bottom left, beside Continue but outside the cards, so it does not
+    // scroll away with them.
+    snapBtn.style.marginRight = 'auto';
+    const goBtn = document.createElement('button');
+    goBtn.textContent = 'Continue';
+    goBtn.className = 'primary';
+    goBtn.style.background = 'var(--base-color)';
+    goBtn.disabled = true;
+    actions.prepend(snapBtn);
+    actions.appendChild(goBtn);
+
+    // A snapshot chosen from the list comes back here as the selection, so
+    // Continue means the same thing whichever way the version was picked.
+    let chosen = preselect || null;
+    const choose = (version, tile) => {
+      chosen = version;
+      list.querySelectorAll('.ni-tile.sel').forEach(t => t.classList.remove('sel'));
+      if (tile) tile.classList.add('sel');
+      goBtn.disabled = !chosen;
+      goBtn.textContent = chosen ? `Continue with ${chosen}` : 'Continue';
+    };
+    if (chosen) choose(chosen, null);
+    goBtn.onclick = () => { if (chosen) opts.onPick && opts.onPick(chosen); };
+
+    list.innerHTML = '<div class="ni-empty">Loading versions…</div>';
+    let data = { releases: [], snapshots: [], latest: {}, next: null };
+    try { data = await ipcRenderer.invoke('icon:pickerVersions') || data; } catch { /* below */ }
+    if (!list.isConnected) return;
+    if (!data.releases.length) {
+      list.innerHTML = '<div class="ni-empty">Could not reach Mojang for the version list.</div>';
+      return;
+    }
+    list.innerHTML = '';
+
+    // The snapshot card. Its icon is the newest version the icon list names —
+    // which is usually the release these snapshots are building up to, and is
+    // in the list before that release exists — and its banner is the newest
+    // snapshot's own.
+    const latestSnapshot = (data.latest && data.latest.snapshot) || (data.snapshots[0] && data.snapshots[0].id);
+    if (latestSnapshot) {
+      const tile = makeTile({
+        name: 'Latest snapshot', sub: latestSnapshot, wide: true,
+        iconVersion: data.next || latestSnapshot, bannerVersion: latestSnapshot,
+      });
+      tile.onclick = () => choose(latestSnapshot, tile);
+      list.appendChild(tile);
+    }
+
+    for (const r of data.releases) {
+      const tile = makeTile({ name: r.id, sub: whenShort(r.at), iconVersion: r.id, bannerVersion: r.id });
+      tile.onclick = () => choose(r.id, tile);
+      list.appendChild(tile);
+    }
+
+    // A plain list, because a snapshot has no banner and no icon of its own
+    // and a grid of identical grey cards would be worse than a list.
+    snapBtn.onclick = () => {
+      const picked = chosen;
+      pickFromList({
+        title: 'Which snapshot?',
+        sub: 'Every snapshot, pre-release and release candidate, newest first.',
+        items: data.snapshots.map(s => ({ id: s.id, meta: whenShort(s.at) })),
+        selected: picked,
+        onBack: () => pickVersion(opts, picked),
+        onPick: (id) => pickVersion(opts, id),
+      });
+    };
+
+    // The card for a chosen snapshot: it has none of its own, so the snapshot
+    // card stands in for it and carries its name.
+    if (chosen && !data.releases.some(r => r.id === chosen)) {
+      const first = list.querySelector('.ni-tile');
+      if (first) {
+        first.classList.add('sel');
+        const s = first.querySelector('.s');
+        if (s) s.textContent = chosen;
+      }
+    } else if (chosen) {
+      for (const t of list.querySelectorAll('.ni-tile')) {
+        const n = t.querySelector('.n');
+        if (n && n.textContent === chosen) { t.classList.add('sel'); break; }
+      }
+    }
+  }
+
+  const whenShort = (ms) => {
+    if (!ms) return '';
+    try { return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short' }); }
+    catch { return ''; }
+  };
+
+  // One card. The banner and the icon both arrive later and fade in, because
+  // either may need the network the first time and neither should hold the
+  // screen up.
+  function makeTile({ name, sub, iconVersion, bannerVersion, icon, banner, wide }) {
+    const tile = document.createElement('div');
+    tile.className = 'ni-tile' + (wide ? ' wide' : '');
+    const bg = document.createElement('div');
+    bg.className = 'bg';
+    const veil = document.createElement('div');
+    veil.className = 'veil';
+    const inner = document.createElement('div');
+    inner.className = 'inner';
+    const img = document.createElement('img');
+    img.alt = '';
+    const n = document.createElement('div');
+    n.className = 'n';
+    n.textContent = name;
+    inner.appendChild(img);
+    inner.appendChild(n);
+    if (sub) {
+      const s = document.createElement('div');
+      s.className = 's';
+      s.textContent = sub;
+      inner.appendChild(s);
+    }
+    tile.append(bg, veil, inner);
+
+    const showBanner = (url) => { if (url) { bg.style.backgroundImage = `url("${url}")`; bg.classList.add('on'); } };
+    if (banner) showBanner(banner);
+    if (icon) img.src = icon;
+
+    // Only once it is actually on screen: a hundred releases is a hundred
+    // banners and a hundred renders, and nobody scrolls to 1.0.
+    if (iconVersion || bannerVersion) {
+      const io = new IntersectionObserver((es) => {
+        if (!es.some(e => e.isIntersecting)) return;
+        io.disconnect();
+        if (bannerVersion) {
+          ipcRenderer.invoke('icon:versionBanner', { version: bannerVersion })
+            .then(b => showBanner(b && (b.dataUrl || b.url)))
+            .catch(() => { });
+        }
+        if (iconVersion && window.VersionIcon) {
+          window.VersionIcon.get(iconVersion).then(u => { if (u) img.src = u; }).catch(() => { });
+        }
+      }, { rootMargin: '200px' });
+      io.observe(tile);
+    }
+    return tile;
+  }
+
+  // A plain scrolling list with a Use button — the snapshots, and anything
+  // else that has nothing to show for itself.
+  function pickFromList({ title, sub, items, selected, onBack, onPick }) {
+    const { card, list, close } = shell(title, sub, { onBack });
+    list.className = 'ni-plainlist';
+    const input = document.createElement('input');
+    input.className = 'ni-search';
+    input.type = 'text';
+    input.placeholder = 'Search';
+    card.querySelector('.ni-sub').after(input);
+
+    const actions = card.querySelector('.ni-actions');
+    const goBtn = document.createElement('button');
+    goBtn.textContent = 'Use this';
+    goBtn.style.background = 'var(--base-color)';
+    goBtn.disabled = true;
+    actions.appendChild(goBtn);
+
+    let chosen = selected || null;
+    const paint = () => {
+      const q = input.value.trim().toLowerCase();
+      list.innerHTML = '';
+      const shown = items.filter(i => !q || i.id.toLowerCase().includes(q));
+      if (!shown.length) {
+        list.innerHTML = '<div class="ni-empty" style="padding:14px;">Nothing matches that.</div>';
+        return;
+      }
+      for (const it of shown.slice(0, 600)) {
+        const r = document.createElement('div');
+        r.className = 'ni-plain' + (chosen === it.id ? ' sel' : '');
+        const a = document.createElement('div');
+        a.textContent = it.id;
+        const b = document.createElement('div');
+        b.className = 'm';
+        b.textContent = it.meta || '';
+        r.append(a, b);
+        r.onclick = () => { chosen = it.id; goBtn.disabled = false; paint(); };
+        list.appendChild(r);
+      }
+    };
+    goBtn.disabled = !chosen;
+    input.oninput = paint;
+    paint();
+    goBtn.onclick = () => { if (chosen) { close(); onPick && onPick(chosen); } };
+  }
+
+  // ── Picking a loader ──────────────────────────────────────────────────────
+  // The same cards, but a loader has a logo rather than a banner. The card's
+  // background is that logo's own edge pixels pulled out across it, so each
+  // one is in its own colours without a wide image existing for it.
+  const LOADERS = [
+    { id: 'vanilla', name: 'Vanilla', sub: 'No mods', icon: 'assets/icons/Java_Edition_icon.png' },
+    { id: 'fabric', name: 'Fabric', sub: 'Light and quick to update', icon: 'assets/loaders/fabric.png' },
+    { id: 'neoforge', name: 'NeoForge', sub: 'Forge, carried on', icon: 'assets/loaders/neoforge.png' },
+    { id: 'forge', name: 'Forge', sub: 'The old standard', icon: 'assets/loaders/forge.png' },
+    { id: 'quilt', name: 'Quilt', sub: 'A fork of Fabric', icon: 'assets/loaders/quilt.png' },
+  ];
+
+  function pickLoader(opts) {
+    opts = opts || {};
+    const { card, list } = shell(
+      'Which mod loader?',
+      opts.version ? `For Minecraft ${opts.version}.` : 'Pick what the instance runs its mods with.',
+      { onBack: opts.onBack }
+    );
+    list.className = 'ni-cards';
+
+    const goBtn = document.createElement('button');
+    goBtn.textContent = 'Continue';
+    goBtn.style.background = 'var(--base-color)';
+    goBtn.disabled = true;
+    card.querySelector('.ni-actions').appendChild(goBtn);
+
+    let chosen = null;
+    goBtn.onclick = () => { if (chosen) opts.onPick && opts.onPick(chosen); };
+
+    for (const l of LOADERS) {
+      const tile = makeTile({ name: l.name, sub: l.sub, icon: l.icon });
+      tile.onclick = () => {
+        chosen = l.id;
+        list.querySelectorAll('.ni-tile.sel').forEach(t => t.classList.remove('sel'));
+        tile.classList.add('sel');
+        goBtn.disabled = false;
+        goBtn.textContent = `Continue with ${l.name}`;
+      };
+      list.appendChild(tile);
+      edgeBanner(l.icon).then(url => {
+        if (!url) return;
+        const bg = tile.querySelector('.bg');
+        bg.style.backgroundImage = `url("${url}")`;
+        bg.classList.add('on');
+      }).catch(() => { });
+    }
+  }
+
+  // A wide background made out of a square logo: the logo scaled to the card's
+  // height in the middle, and its leftmost and rightmost columns of pixels
+  // stretched out to either side. Where those columns are transparent — which
+  // for a logo on a clear background they usually are — they sit over the
+  // logo's own average colour, so the card still comes out in its colours.
+  const _edgeBanners = new Map();
+  function edgeBanner(src, w = 320, h = 128) {
+    if (_edgeBanners.has(src)) return _edgeBanners.get(src);
+    const p = new Promise((res) => {
+      const im = new Image();
+      im.onload = () => {
+        try {
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          const cx = cv.getContext('2d');
+
+          // The average of everything solid in the logo, as the base.
+          const probe = document.createElement('canvas');
+          probe.width = probe.height = 32;
+          const pcx = probe.getContext('2d');
+          pcx.drawImage(im, 0, 0, 32, 32);
+          const d = pcx.getImageData(0, 0, 32, 32).data;
+          let r = 0, g = 0, b = 0, n = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            if (d[i + 3] < 128) continue;
+            r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
+          }
+          cx.fillStyle = n ? `rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})` : '#333';
+          cx.fillRect(0, 0, w, h);
+
+          const side = Math.min(im.naturalWidth, im.naturalHeight) || 1;
+          const scale = h / side;
+          const dw = im.naturalWidth * scale;
+          const x0 = (w - dw) / 2;
+          // The edge columns, stretched out to the sides.
+          cx.imageSmoothingEnabled = true;
+          if (x0 > 0) {
+            cx.drawImage(im, 0, 0, 1, im.naturalHeight, 0, 0, x0, h);
+            cx.drawImage(im, im.naturalWidth - 1, 0, 1, im.naturalHeight, x0 + dw, 0, w - x0 - dw, h);
+          }
+          // The logo itself goes in the middle softened and faint: the card
+          // already shows it crisply as its icon, and two copies of it on top
+          // of each other is a mess.
+          cx.save();
+          cx.globalAlpha = 0.4;
+          try { cx.filter = 'blur(6px)'; } catch { /* older engines */ }
+          cx.drawImage(im, x0, 0, dw, h);
+          cx.restore();
+          res(cv.toDataURL('image/png'));
+        } catch { res(null); }
+      };
+      im.onerror = () => res(null);
+      im.src = src;
+    });
+    _edgeBanners.set(src, p);
+    return p;
+  }
 })();

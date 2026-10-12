@@ -83,17 +83,18 @@ the order it is being built in.
 - [x] **The + button can open more than one new-instance modal.**
 
 ### G. The new-instance flow
-- [ ] **Keep the per-version banners.**
-- [ ] **"Set it up myself" starts with a version picker**: a card per version
+- [x] **Keep the per-version banners.** Kept on disk, and the snapshot shape
+      of the wiki's path (`25w31a.jpg`) is tried as well as the release one.
+- [x] **"Set it up myself" starts with a version picker**: a card per version
       with the wiki banner behind it and the rendered version icon above the
       name.
-- [ ] **A "latest snapshot" card**: the icon of the newest version named in the
+- [x] **A "latest snapshot" card**: the icon of the newest version named in the
       JSON even if it is not out yet, over the newest snapshot's banner
       (`.../26.4-snapshot-2.jpg`, `.../26.3-pre1.jpg`, `.../26.3-rc1.jpg`).
-- [ ] **A "select snapshot" button** bottom-left, beside Continue bottom-right
+- [x] **A "select snapshot" button** bottom-left, beside Continue bottom-right
       and outside the scrolling area, opening the same modal listing every
       snapshot with no icons or banners.
-- [ ] **Continue goes to the same kind of page for loaders**, their icons being
+- [x] **Continue goes to the same kind of page for loaders**, their icons being
       the loaders' icons and the backgrounds their logos' edge pixels stretched.
 
 ### H. The skin editor
