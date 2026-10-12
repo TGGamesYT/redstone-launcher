@@ -501,7 +501,32 @@ export async function blockStates(stack, blockId) {
   }
   if (Array.isArray(json.multipart)) {
     const always = json.multipart.filter(p => !p.when).map(p => one(p.apply)).filter(Boolean);
-    const parts = always.length ? always : [one(json.multipart[0].apply)].filter(Boolean);
+    // No piece is unconditional: the block is made entirely of pieces that
+    // depend on its state. A mushroom block is six single faces, one per
+    // side that is showing, plus six more of the pale inside for the sides
+    // that are not -- and taking the first piece drew one face edge-on,
+    // which is nothing at all.
+    //
+    // What a block looks like out on its own is the pieces whose conditions
+    // are all "true": every side of the mushroom showing, no inside faces.
+    // A fence or a pane has an unconditional post, which is why those take
+    // the branch above and come out unconnected, the way the game draws them
+    // in your hand.
+    const every = (when, value) => !!when && !when.OR && !when.AND
+      && Object.values(when).every(v => String(v) === value);
+    const pick = (test) => json.multipart.filter(p => test(p.when)).map(p => one(p.apply)).filter(Boolean);
+    const parts = always.length
+      // Plus the pieces for "nothing next to me": iron bars are a pair of
+      // ends that are always there and a post that is only there when none
+      // of the four sides is connected.
+      ? [...always, ...pick(w => every(w, 'false'))]
+      : pick(w => every(w, 'true'));
+    // Conditions that are neither (redstone wire's are "none" / "side" /
+    // "up"): rather than nothing at all, the first piece.
+    if (!parts.length && json.multipart.length) {
+      const first = one(json.multipart[0].apply);
+      if (first) parts.push(first);
+    }
     return parts.length ? [{ state: '', parts }] : null;
   }
   return null;

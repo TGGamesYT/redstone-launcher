@@ -67,18 +67,22 @@
   // (Tints that are not foliage — redstone dust, water — are rare enough among
   // blocks that getting those slightly wrong is the better trade.)
   const DEFAULT_TINT = [0x91 / 255, 0xBD / 255, 0x59 / 255];
-  // ...but only where the texture is actually greyscale. `tintindex` is
-  // inherited from block/leaves by cherry and pale oak leaves, which the game
-  // does NOT tint, and painting those green is worse than leaving a grey block
-  // grey. The texture settles it: see TINT_MAX_SATURATION in model-assets.js
-  // for the measurements. A texture whose saturation was not measured is
-  // treated as colourful, so nothing is tinted by accident.
-  const TINT_MAX_SATURATION = 0.05;
-  const wantsTint = (face, spec, opts) =>
+  // A face says it is tinted by carrying a `tintindex`, and that is the whole
+  // test. It used to be gated on the texture being nearly grey as well, which
+  // left jungle leaves, water and some of the grasses flatly grey -- they are
+  // greyish but not grey enough for the number that had been picked.
+  //
+  // The one case the model data cannot tell apart is cherry leaves, which
+  // inherit `tintindex` from block/leaves and are NOT tinted by the game:
+  // every leaf block shares one model file, so there is nothing in it that
+  // separates them. A texture that is already properly coloured is therefore
+  // left alone -- cherry blossom is pink at 0.33, where jungle leaves are
+  // 0.08 and grass is 0.01.
+  const TINT_MAX_SATURATION = 0.25;
+  const wantsTint = (face, spec, opts, flat) =>
     opts.tint !== false
-    && face.tintindex != null && face.tintindex >= 0
-    && spec && typeof spec.saturation === 'number'
-    && spec.saturation <= TINT_MAX_SATURATION;
+    && ((face.tintindex != null && face.tintindex >= 0) || (flat && flat.tintAll))
+    && !(spec && typeof spec.saturation === 'number' && spec.saturation > TINT_MAX_SATURATION);
 
   function textureKey(name, textures) {
     // A face's texture is "#key"; the flattened map is already keyed by name
@@ -289,7 +293,10 @@
         // `new Color(0.8, 0.8, 0.8)` means 0.8 of LINEAR white, which comes out
         // at 231/255 rather than the 204/255 that "80% brightness" means
         // everywhere else — visibly too pale, and not what the game does.
-        const t = wantsTint(face, spec, opts) ? DEFAULT_TINT : [1, 1, 1];
+        // The colour comes with the model: the game keeps a table of which
+        // block is coloured from which biome map, and the backend has read
+        // the right one out of the jar.
+        const t = wantsTint(face, spec, opts, flat) ? (flat.tint || DEFAULT_TINT) : [1, 1, 1];
         const tint = new THREE.Color();
         tint.setRGB(shade * t[0], shade * t[1], shade * t[2], THREE.SRGBColorSpace);
         const m = new THREE.MeshBasicMaterial({

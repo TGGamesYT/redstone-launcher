@@ -7595,6 +7595,17 @@ iconModels.configure({
       return n ? s / n : 0;
     } catch { return null; }
   },
+  // One pixel out of an image, for reading a biome colour off the game's own
+  // colormaps rather than hard-coding what green looks like.
+  samplePixel: async (buf, x, y) => {
+    try {
+      const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const px = Math.max(0, Math.min(info.width - 1, Math.round(x)));
+      const py = Math.max(0, Math.min(info.height - 1, Math.round(y)));
+      const i = (py * info.width + px) * 4;
+      return [data[i], data[i + 1], data[i + 2]];
+    } catch { return null; }
+  },
 });
 
 ipcMain.handle("model:list", async (event, opts = {}) => {

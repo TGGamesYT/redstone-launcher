@@ -35,21 +35,24 @@ started.
 - [x] **A baby drowned has the same missing layer the drowned had.**
 - [x] **A block with block states cannot be shown in a different state.**
       Pick one in the adjust dialog.
-- [ ] **Tinting must be detected, not listed by hand.** Some tall and short grass
-      variants, water and jungle leaves still come out grey.
+- [x] **Tinting must be detected, not listed by hand.** Some tall and short grass
+      variants, water and jungle leaves still come out grey. A `tintindex` is
+      the whole test now, and the colour is read out of the game's own
+      colormaps in the jar.
 - [ ] **Cross models on a wall are lit wrongly and turned 45°.**
-- [ ] **The bell comes out wrong**, with parts missing or cropped off.
+- [x] **The bell comes out wrong**, with parts missing or cropped off.
 - [x] **One entity is split into several** — breeze, breeze/eyes, breeze/wind.
       Parts are drawn with the mob and are switches, not entries of their own.
 - [ ] **Two-block blocks do not render as one** (beds, doors).
 - [ ] **Trimmed armour shows as the untrimmed armour.**
 - [ ] **Item variants should be offered** the way a mod's pictures are — every
       clock, every compass and so on.
-- [ ] **Chests, ender chests and copper chests render as plain cubes.**
-- [ ] **Mob heads render as plain cubes** rather than the head model.
-- [ ] **The red mushroom block renders as nothing**, mushroom cross models are
-      lit wrongly, and so is the cross model inside a flower pot — fix the
-      lighting itself rather than patching the cases.
+- [x] **Chests, ender chests and copper chests render as plain cubes.**
+- [x] **Mob heads render as plain cubes** rather than the head model.
+- [x] **The red mushroom block renders as nothing** — it is six separate
+      faces in a multipart blockstate, and only the first was drawn.
+- [ ] **Mushroom cross models are lit wrongly, and so is the cross model
+      inside a flower pot** — fix the lighting itself rather than the cases.
 - [x] **Some entities get the wrong texture**, and an outer layer is often
       rendered as its own thing with the texture all over the place. Each
       layer resolves its own, and the others are offered as variants.

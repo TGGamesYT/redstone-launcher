@@ -217,9 +217,43 @@ export async function describeModel({ profileId, version, id, state }) {
     }
   }
 
+  // More than one model in one block: a multipart blockstate, where a
+  // mushroom block is six separate faces and a wall is a post plus its arms.
+  // Each piece has its own turn, so the turns are baked into the pieces
+  // rather than applied to the lot.
+  if (chosen && chosen.parts && chosen.parts.length > 1) {
+    const merged = await mergeParts(st, chosen.parts);
+    if (merged) {
+      return {
+        ...merged,
+        approximated: false,
+        model: modelId,
+        state: chosen.state || null,
+        rotX: 0, rotY: 0, uvlock: false,
+        tint: await tintFor(st.textures, id),
+        tintAll: false,
+      };
+    }
+  }
+
   const flat = await MA.renderableModel(st.models, modelId);
+
+  // A block the game draws with Java rather than with a model -- a chest, a
+  // bell, a mob head -- has nothing in the assets but a particle texture, and
+  // came out as a plain cube of it. The shape IS in the game, though: those
+  // blocks are drawn by the same code that draws entities, and their models
+  // are in the layer list beside the mobs'. So before settling for a cube,
+  // look for the layer this block is drawn with.
+  // ...or barely anything: a bell's model is the two-by-three nub it hangs
+  // from, and the bell itself is drawn by the game. Where the model is a
+  // fraction of a block and an entity layer exists, the entity IS the block.
+  if (flat.approximated || flat.kind === 'unrenderable' || tinyModel(flat)) {
+    const asEntity = await blockEntityModel({ profileId, version, id, state: chosen ? chosen.state : state });
+    if (asEntity) return asEntity;
+  }
   if (flat.kind === 'unrenderable') return { error: `${modelId} has no geometry` };
   const withTex = await textureSpecs(st.textures, flat, DEPS.measureSaturation);
+
   return {
     kind: withTex.kind,
     elements: withTex.elements || null,
@@ -229,7 +263,160 @@ export async function describeModel({ profileId, version, id, state }) {
     model: modelId,
     state: chosen ? chosen.state : null,
     rotX, rotY, uvlock,
+    // The colour the game would paint the tinted faces, for this block.
+    tint: await tintFor(st.textures, id),
+    // Water has no model at all -- it is drawn by the fluid renderer, and all
+    // that is in the jar is a particle texture. What stands in for it here is
+    // a cube of that texture, which carries no tintindex because there is no
+    // model to carry one, so it has to be told that the whole thing is
+    // tinted or it comes out grey.
+    tintAll: !!withTex.approximated && tintFamily(id) === 'water',
   };
+}
+
+// Several models drawn as one block, each turned the way its piece says.
+//
+// A rotation in a blockstate turns the model about the middle of the block,
+// so that is where the matrix turns it: in to the middle, turn, back out.
+function rotateAbout(x, y) {
+  const rx = (-x || 0) * Math.PI / 180, ry = (-y || 0) * Math.PI / 180;
+  const cx = Math.cos(rx), sx = Math.sin(rx), cy = Math.cos(ry), sy = Math.sin(ry);
+  // Column-major: translate(8,8,8) * rotY * rotX * translate(-8,-8,-8)
+  const r = [
+    cy, sx * sy, -cx * sy, 0,
+    0, cx, sx, 0,
+    sy, -sx * cy, cx * cy, 0,
+    0, 0, 0, 1,
+  ];
+  const t = [8, 8, 8];
+  for (let i = 0; i < 3; i++) {
+    r[12 + i] = t[i] - (r[i] * t[0] + r[4 + i] * t[1] + r[8 + i] * t[2]);
+  }
+  return r;
+}
+
+async function mergeParts(st, parts) {
+  const elements = [];
+  const textures = {};
+  let i = 0;
+  for (const part of parts) {
+    const flat = await MA.renderableModel(st.models, part.model);
+    if (flat.kind !== 'elements' || !flat.elements) continue;
+    const withTex = await textureSpecs(st.textures, flat, DEPS.measureSaturation);
+    const pre = 'p' + (i++) + '_';
+    for (const [k, v] of Object.entries(withTex.textures || {})) textures[pre + k] = v;
+    const turn = (part.x || part.y) ? rotateAbout(part.x, part.y) : null;
+    for (const el of withTex.elements) {
+      elements.push({
+        ...el,
+        transform: turn,
+        faces: Object.fromEntries(Object.entries(el.faces).map(([d, f]) =>
+          [d, { ...f, texture: '#' + pre + String(f.texture || '').replace(/^#/, '') }])),
+      });
+    }
+  }
+  if (!elements.length) return null;
+  return { kind: 'elements', elements, layers: null, textures };
+}
+
+// Is a block's own geometry so small that it cannot be the block? A bell is
+// drawn by the game and all the assets have is the fitting it hangs from.
+function tinyModel(flat) {
+  if (flat.kind !== 'elements' || !Array.isArray(flat.elements) || !flat.elements.length) return false;
+  let v = 0;
+  for (const el of flat.elements) {
+    v += Math.abs((el.to[0] - el.from[0]) * (el.to[1] - el.from[1]) * (el.to[2] - el.from[2]));
+  }
+  return v < 16 * 16 * 16 * 0.12;
+}
+
+// Which entity layer draws this block, if one does.
+//
+// The names line up by word: `ender_chest` and `trapped_chest` are both the
+// `chest` model, `zombie_head` is `zombie_head`, `potted_x` is not a block
+// entity at all. The texture is then resolved against the BLOCK's name, so
+// an ender chest comes out in chest/ender.png rather than the plain one.
+async function blockEntityLayer(version, id) {
+  const layers = await entityLayers(version);
+  if (!layers || !layers.size) return null;
+  const bare = String(id).split(':').pop().replace(/^block\//, '');
+  if (layers.has(bare)) return bare;
+  const w = words(bare);
+  // The longest layer name made of this block's own words: `ender_chest`
+  // matches `chest`, and `chest` beats nothing.
+  // Something that is only ever its parts: a conduit is conduit/cage,
+  // conduit/eye and conduit/shell, with no layer of its own.
+  if ([...layers.keys()].some(k => k.startsWith(bare + '/'))) return bare;
+  let best = null;
+  for (const key of layers.keys()) {
+    if (key.includes('/')) continue;
+    const kw = words(key);
+    if (!kw.length || !kw.every(x => w.includes(x))) continue;
+    if (!best || kw.length > words(best).length) best = key;
+  }
+  return best;
+}
+
+async function blockEntityModel({ profileId, version, id, state }) {
+  let layerName = null;
+  try { layerName = await blockEntityLayer(version, id); } catch { return null; }
+  if (!layerName) return null;
+  const bare = String(id).split(':').pop();
+  const desc = await describeEntity({ profileId, version, name: layerName, textureFor: bare });
+  if (!desc || desc.error) return null;
+  return { ...desc, model: `entity:${layerName}`, state: state || null, fromEntity: layerName };
+}
+
+// ── What colour a tint is ───────────────────────────────────────────────────
+//
+// A face with a `tintindex` is drawn greyscale and coloured in by the game.
+// WHICH colour is not in the model -- it comes from the block's entry in the
+// game's own colour table -- but two of the three sources are in the jar, as
+// the colormaps the game samples by biome: grass.png and foliage.png. Plains
+// is the biome the wiki's renders use, and is where these are read.
+//
+// Water is the exception with no colormap: it is one number in the game.
+const PLAINS = { x: 51, y: 173 };           // temperature 0.8, downfall 0.4
+const WATER_TINT = [0x3F / 255, 0x76 / 255, 0xE4 / 255];
+const LILY_TINT = [0x20 / 255, 0x80 / 255, 0x30 / 255];
+const REDSTONE_TINT = [0xC8 / 255, 0x00 / 255, 0x00 / 255];
+
+const _colormaps = new Map();
+async function colormap(stack, which) {
+  const key = which;
+  if (_colormaps.has(key)) return _colormaps.get(key);
+  const p = (async () => {
+    const hit = await stack.get(`assets/minecraft/textures/colormap/${which}.png`);
+    if (!hit || !DEPS.samplePixel) return null;
+    try { return await DEPS.samplePixel(hit.buf, PLAINS.x, PLAINS.y); } catch { return null; }
+  })();
+  _colormaps.set(key, p);
+  return p;
+}
+
+// Which of the game's colour tables this block is in, by what it is. The
+// model cannot say -- every leaf block shares one model file -- and this is
+// the same split the game makes.
+function tintFamily(id) {
+  const n = String(id || '').toLowerCase();
+  if (/water|bubble_column/.test(n)) return 'water';
+  if (/lily_pad/.test(n)) return 'lily';
+  if (/redstone/.test(n)) return 'redstone';
+  if (/leaves|vine/.test(n)) return 'foliage';
+  return 'grass';
+}
+
+async function tintFor(stack, id) {
+  const family = tintFamily(id);
+  if (family === 'water') return WATER_TINT;
+  if (family === 'lily') return LILY_TINT;
+  if (family === 'redstone') return REDSTONE_TINT;
+  const got = await colormap(stack, family === 'foliage' ? 'foliage' : 'grass');
+  if (got) return got.map(v => v / 255);
+  // The colormap could not be read: plains, as the wiki's renders use it.
+  return family === 'foliage'
+    ? [0x77 / 255, 0xAB / 255, 0x2F / 255]
+    : [0x91 / 255, 0xBD / 255, 0x59 / 255];
 }
 
 /** Every state a block has, for the picker's state chooser. */
@@ -326,17 +513,26 @@ async function entityLayers(version) {
 // when the entity actually has the gear, and nothing in the model data says
 // which is which -- so a saddle would otherwise end up on every pig.
 
-export async function describeEntity({ profileId, version, name, texture }) {
+export async function describeEntity({ profileId, version, name, texture, textureFor }) {
   const layers = await entityLayers(version);
-  const L = layers.get(name);
+  // A few things are only ever their parts: a conduit is its cage, its eye
+  // and its shell, with no layer of its own to hang them on.
+  const L = layers.get(name)
+    || ([...layers.keys()].some(k => k.startsWith(name + '/'))
+      ? { elements: [], texWidth: 64, texHeight: 64 }
+      : null);
   if (!L) return { error: `no entity layer called ${name}` };
   const st = await stackFor({ profileId, version });
   const tx = st ? st.textures : null;
-  const tex0 = await entityTextureFile(tx, name, texture);
-  if (!tex0) return { error: `no texture for ${name}` };
+  // `textureFor` is the name to dress it in when that is not the layer's own:
+  // an ender chest is the chest model wearing chest/ender.png.
+  const tex0 = await entityTextureFile(tx, textureFor || name, texture)
+    || await entityTextureFile(tx, name, texture);
+  if (!tex0 && L.elements.length) return { error: `no texture for ${name}` };
 
   const elements = L.elements.slice();
-  const textures = { 0: { url: tex0.url, width: L.texWidth, height: L.texHeight, frames: 1 } };
+  const textures = {};
+  if (tex0) textures[0] = { url: tex0.url, width: L.texWidth, height: L.texHeight, frames: 1 };
   let slot = 1;
 
   // Everything the mob is made of that the game registers as its own layer:
@@ -365,6 +561,7 @@ export async function describeEntity({ profileId, version, name, texture }) {
     // purpose. Some parts genuinely share -- a slime's outer shell is the
     // same cube, the same texture, one size up.
     const pt = await entityTextureFile(tx, key);
+    if (!pt && !tex0) continue;
     textures[slot] = { url: (pt || tex0).url, width: part.texWidth, height: part.texHeight, frames: 1 };
     const ref = '#' + slot;
     slot++;
@@ -379,7 +576,7 @@ export async function describeEntity({ profileId, version, name, texture }) {
   // which parts the game hides while a mob stands still -- an armadillo has
   // the ball it rolls into, an evoker has both sets of arms -- so rather than
   // guess, everything is drawn and the parts are named.
-  const groups = [{ key: '', label: 'Body', n: L.elements.length }];
+  const groups = L.elements.length ? [{ key: '', label: 'Body', n: L.elements.length }] : [];
   for (const key of parts) {
     const n = elements.filter(el => el.group === key).length;
     if (n) groups.push({ key, label: key.slice(name.length + 1).replace(/[_/]+/g, ' '), n });
@@ -389,8 +586,8 @@ export async function describeEntity({ profileId, version, name, texture }) {
     kind: 'elements', space: 'entity', elements, textures, rotY: 180,
     // Which skin this is wearing, and the others it could be: a cow is six
     // textures on one model, a cushion sixteen.
-    texture: tex0.path,
-    variants: (tex0.choices || []).map(c => ({ path: c.path, label: c.label })),
+    texture: tex0 ? tex0.path : null,
+    variants: ((tex0 && tex0.choices) || []).map(c => ({ path: c.path, label: c.label })),
     parts: groups.length > 1 ? groups : null,
   };
 }
@@ -470,6 +667,9 @@ async function entityTextureChoices(stack, name) {
     // The folder is named after the entity even when the file is not:
     // `enderdragon/dragon.png`, which matches nothing by name at all.
     else if (folder === stem || folder === squashed) score = 50 - fw.length;
+    // Or the other way about: an ender chest is the chest model wearing
+    // `chest/ender.png`, whose name is part of the block's.
+    else if (fw.length && fw.every(w => bare.has(w))) score = 40 + fw.length;
     if (score < 0) continue;
 
     // A sub-layer (breeze/eyes) wants the parent's texture with that word on
