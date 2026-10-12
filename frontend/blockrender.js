@@ -310,6 +310,13 @@
           side: opts.doubleSide ? THREE.DoubleSide : THREE.FrontSide,
           depthWrite: true,
         });
+        // A shell the game draws see-through: a slime's outer layer is the
+        // same cube one size up, and drawn solid it hides the face inside it.
+        if (el.translucent) {
+          m.opacity = 0.55;
+          m.depthWrite = false;
+          m.alphaTest = 0;
+        }
         if (!map) m.visible = false;      // a texture that could not be read
         materials.push(m); disposables.push(m);
       }

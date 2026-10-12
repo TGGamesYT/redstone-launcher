@@ -323,100 +323,22 @@ async function entityLayers(version) {
  * out looking flat and wrong. So any `<name>/outer` layer is drawn on top,
  * with its own texture, as a second set of elements.
  */
-// ── Parts that are alternatives to each other ───────────────────────────────
-//
-// A model carries every pose the mob can be in. An armadillo is a body with
-// legs AND the ball it rolls into; an evoker has its arms crossed AND held
-// out for casting; the game shows one set and hides the other depending on
-// what the mob is doing. Drawn without that, an armadillo is a ball with legs
-// sticking out of it and an evoker has four arms.
-//
-// Nothing in the model data says which parts exclude which. What it does say
-// is where they are, and two alternatives are in the SAME PLACE -- that is
-// what makes them alternatives. So: group the boxes by the part they belong
-// to, and where two groups sit on top of each other, keep the bigger one.
-// The pose a model is built around has more to it than the one it switches
-// into; the ball is one box against a body, a head, two ears, a tail and four
-// legs.
-const corners = (el) => {
-  const [x0, y0, z0] = el.from, [x1, y1, z1] = el.to;
-  const m = el.transform;
-  const out = [];
-  for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [z0, z1]) {
-    out.push(m
-      ? [m[0] * x + m[4] * y + m[8] * z + m[12],
-         m[1] * x + m[5] * y + m[9] * z + m[13],
-         m[2] * x + m[6] * y + m[10] * z + m[14]]
-      : [x, y, z]);
-  }
+// Is this texture drawn in white for the game to colour in? Greyscale and
+// bright is what that looks like, and it is the same test the block renderer
+// uses to decide whether a tint applies.
+const TINTED_SATURATION = 0.10;
+const _tintCheck = new Map();
+async function looksTinted(dataUrl) {
+  if (!DEPS.measureSaturation || !dataUrl) return false;
+  if (_tintCheck.has(dataUrl)) return _tintCheck.get(dataUrl);
+  let out = false;
+  try {
+    const buf = Buffer.from(String(dataUrl).split(',')[1] || '', 'base64');
+    out = (await DEPS.measureSaturation(buf)) < TINTED_SATURATION;
+  } catch { out = false; }
+  if (_tintCheck.size > 200) _tintCheck.clear();
+  _tintCheck.set(dataUrl, out);
   return out;
-};
-const boxOf = (els) => {
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (const el of els) for (const c of corners(el)) for (let i = 0; i < 3; i++) {
-    if (c[i] < lo[i]) lo[i] = c[i];
-    if (c[i] > hi[i]) hi[i] = c[i];
-  }
-  return { lo, hi };
-};
-const volume = (b) => Math.max(0, b.hi[0] - b.lo[0]) * Math.max(0, b.hi[1] - b.lo[1]) * Math.max(0, b.hi[2] - b.lo[2]);
-const overlap = (a, b) => {
-  let v = 1;
-  for (let i = 0; i < 3; i++) v *= Math.max(0, Math.min(a.hi[i], b.hi[i]) - Math.max(a.lo[i], b.lo[i]));
-  return v;
-};
-
-// Is `many` the group that holds both of what `one` is one of? `arms` and
-// `right_arm`; `legs` and `left_leg`.
-function isPluralOf(many, one) {
-  if (!many.endsWith('s') || many === one) return false;
-  const singular = many.slice(0, -1);
-  return one === singular || one.endsWith('_' + singular);
-}
-
-function dropAlternatePoses(elements) {
-  // Group by the top of the part path: `body/head/left_ear` belongs to
-  // `body`, because a hat on a head is not an alternative to the head.
-  const groups = new Map();
-  for (const el of elements) {
-    const top = String(el.part || '').split('/')[0] || '';
-    if (!groups.has(top)) groups.set(top, []);
-    groups.get(top).push(el);
-  }
-  if (groups.size < 2) return elements;
-
-  const info = [...groups.entries()].map(([name, els]) => ({ name, els, box: boxOf(els), n: els.length }));
-  const dropped = new Set();
-  for (let i = 0; i < info.length; i++) {
-    for (let j = i + 1; j < info.length; j++) {
-      const a = info[i], b = info[j];
-      if (dropped.has(a.name) || dropped.has(b.name)) continue;
-      const va = volume(a.box), vb = volume(b.box);
-      const small = Math.min(va, vb), big = Math.max(va, vb);
-      if (small <= 0) continue;
-      // Two conditions, and both matter. Most of the smaller one has to be
-      // inside the bigger one -- they are in the same place -- AND they have
-      // to be about the same size. Without the second, a body contains its
-      // own legs and would swallow them: a leg is wholly inside the body's
-      // box, but it is seventy times smaller, so it is a part of it rather
-      // than another version of it.
-      if (overlap(a.box, b.box) / small < 0.55) continue;
-      // Two conditions, either of which is enough once they are in the same
-      // place. Same size, so one is another version of the other rather than
-      // a part of it -- or one is the plural of the other, which is how the
-      // models say it: a villager has `arms` crossed in front of it and a
-      // `right_arm` and `left_arm` for when it is doing something with them,
-      // and those are the same two arms twice.
-      const plural = isPluralOf(a.name, b.name) || isPluralOf(b.name, a.name);
-      if (!plural && big / small > 5) continue;
-      const loser = plural
-        ? (isPluralOf(a.name, b.name) ? b : a)
-        : (a.n === b.n ? (volume(a.box) < volume(b.box) ? a : b) : (a.n < b.n ? a : b));
-      dropped.add(loser.name);
-    }
-  }
-  if (!dropped.size) return elements;
-  return elements.filter(el => !dropped.has(String(el.part || '').split('/')[0]));
 }
 
 // Parts of a mob that are worn rather than grown. The game draws these only
@@ -433,7 +355,7 @@ export async function describeEntity({ profileId, version, name, texture }) {
   const tex0 = await entityTextureFile(tx, name, texture);
   if (!tex0) return { error: `no texture for ${name}` };
 
-  const elements = dropAlternatePoses(L.elements);
+  const elements = L.elements.slice();
   const textures = { 0: { url: tex0.url, width: L.texWidth, height: L.texHeight, frames: 1 } };
   let slot = 1;
 
@@ -453,13 +375,29 @@ export async function describeEntity({ profileId, version, name, texture }) {
     .filter(k => !words(k.slice(name.length + 1)).some(w => WORN.has(w)));
   for (const key of parts) {
     const part = layers.get(key);
+    if (!part) continue;
+    // Its own texture, or the body's. A part normally has one of its own and
+    // it matters that it does -- an overlay is mostly transparent on purpose,
+    // and the stray's is registered as a whole player-shaped humanoid, so
+    // drawing it with the body's texture would make it solid. But some parts
+    // genuinely share: a slime's outer shell is the same cube, the same
+    // texture, one size up.
     const pt = await entityTextureFile(tx, key);
-    if (!part || !pt) continue;
-    textures[slot] = { url: pt.url, width: part.texWidth, height: part.texHeight, frames: 1 };
+    // A part drawn in white is one the game colours in as it draws it: the
+    // breeze's `wind` is the swirl of air around it, tinted and faded by how
+    // fast it is going. Standing still it is not there at all, and drawn
+    // untinted it is grey plates round a mob doing nothing. Measured rather
+    // than listed -- a part with colour of its own is part of the mob.
+    if (pt && await looksTinted(pt.url)) continue;
+    textures[slot] = { url: (pt || tex0).url, width: part.texWidth, height: part.texHeight, frames: 1 };
     const ref = '#' + slot;
+    // A shell with no texture of its own is one the game draws see-through --
+    // a slime's outer layer is its own cube one size up -- and drawn solid it
+    // hides the face inside it.
+    const translucent = !pt;
     slot++;
     for (const el of part.elements) {
-      elements.push({ ...el, faces: Object.fromEntries(
+      elements.push({ ...el, translucent, faces: Object.fromEntries(
         Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: ref }])) });
     }
   }
