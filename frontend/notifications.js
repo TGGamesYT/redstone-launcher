@@ -169,8 +169,10 @@ class NotificationPopup {
 const notificationPopup = new NotificationPopup();
 
 async function checkAndShowNotifications() {
-  const unread = await ipcRenderer.invoke('get-unread-notifications');
-  
+  // Nothing is not an error: the handler answers null when the list could not
+  // be read, and every page that loads this file was throwing on it.
+  const unread = (await ipcRenderer.invoke('get-unread-notifications')) || [];
+
   unread.forEach((notif, index) => {
     setTimeout(() => {
       notificationPopup.show(notif);
@@ -181,7 +183,7 @@ async function checkAndShowNotifications() {
 }
 
 async function updateUnreadBadge() {
-  const unread = await ipcRenderer.invoke('get-unread-notifications');
+  const unread = (await ipcRenderer.invoke('get-unread-notifications')) || [];
   const updateButton = document.getElementById('update');
   
   if (updateButton && unread.length > 0) {

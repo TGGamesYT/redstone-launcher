@@ -3559,6 +3559,52 @@ async function relayAccountForSync() {
   return (await accountCredsByIdFresh(id)) || null;
 }
 
+// Which of these accounts have used Redstone Launcher, and when.
+//
+// Only the relay can answer this — nothing on this computer knows about
+// anybody else's — so it needs a signed-in Microsoft account to make the
+// connection with. The answer is about public accounts, so there is nothing
+// private being handed over in either direction.
+//
+// Cached for a while: a friends list is looked at often and the answer changes
+// at most once a session.
+const _seenCache = new Map();          // uuid -> { at, value }
+const SEEN_TTL = 30 * 60 * 1000;
+ipcMain.handle("friends:seen", async (event, { uuids } = {}) => {
+  const want = (Array.isArray(uuids) ? uuids : [])
+    .map(u => String(u || "").replace(/-/g, "").toLowerCase())
+    .filter(u => /^[0-9a-f]{32}$/.test(u));
+  if (!want.length) return { success: true, users: {} };
+
+  const now = Date.now();
+  const users = {};
+  const missing = [];
+  for (const u of want) {
+    const hit = _seenCache.get(u);
+    if (hit && now - hit.at < SEEN_TTL) users[u] = hit.value;
+    else missing.push(u);
+  }
+  if (!missing.length) return { success: true, users };
+
+  try {
+    const account = await relayAccountForSync();
+    if (!account) return { success: true, users, partial: true, reason: "no Microsoft account signed in" };
+    const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
+    const got = await relayClient.seenRelay({
+      host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+      account, rejectUnauthorized, uuids: missing.slice(0, 50),
+    });
+    for (const [u, v] of Object.entries(got || {})) {
+      _seenCache.set(u, { at: now, value: v });
+      users[u] = v;
+    }
+    return { success: true, users };
+  } catch (err) {
+    devtoolsLog("friends: could not ask the relay who has used the launcher:", err && err.message);
+    return { success: true, users, partial: true, reason: String(err && err.message || err) };
+  }
+});
+
 // Pull, merge, save, push back. One call keeps both ends in step.
 async function syncSkinLibraryNow() {
   const account = await relayAccountForSync();
@@ -9670,7 +9716,8 @@ async function headTextureForUuid(uuid) {
     const url = decoded?.textures?.SKIN?.url || "";
     const hash = url.split("/").pop() || null;
     const slim = decoded?.textures?.SKIN?.metadata?.model === "slim";
-    const entry = { hash, slim, at: Date.now() };
+    const cape = decoded?.textures?.CAPE?.url || null;
+    const entry = { hash, slim, cape, at: Date.now() };
     _headProfile.set(key, entry);
     return entry;
   } catch (err) {
@@ -9697,7 +9744,8 @@ async function headUuidForName(name) {
     if (!res.ok) throw new Error(`names ${res.status}`);
     const j = await res.json();
     const uuid = j && j.id ? String(j.id) : null;
-    _headUuid.set(key, { uuid, at: Date.now() });
+    // Mojang's spelling, not the caller's: "notch" should come back "Notch".
+    _headUuid.set(key, { uuid, at: Date.now(), name: (j && j.name) || null });
     return uuid;
   } catch (err) {
     _headCool("n:" + key);
@@ -9844,7 +9892,10 @@ ipcMain.handle("head:skin", async (event, { name, uuid, offline, playerId } = {}
         const prof = await headTextureForUuid(id);
         if (prof && prof.hash) {
           const png = await skinByTextureHash(prof.hash);
-          return { base64: png.toString("base64"), slim: !!prof.slim, from: "skin" };
+          // The cape too, when Mojang is serving one: a player's details page
+          // shows them as they look, and for a lot of people the cape IS how
+          // they look.
+          return { base64: png.toString("base64"), slim: !!prof.slim, from: "skin", capeUrl: prof.cape || null };
         }
       }
     }
@@ -9862,6 +9913,21 @@ ipcMain.handle("head:skin", async (event, { name, uuid, offline, playerId } = {}
   } catch (err) {
     return { error: String(err && err.message || err) };
   }
+});
+
+// A username -> the account Mojang has for it, or nothing. Used by the
+// friends panel's Add box, which looks a player up and shows them before it
+// offers to send anybody a request.
+ipcMain.handle("mc:profileByName", async (event, { name } = {}) => {
+  const who = String(name || "").trim();
+  if (!/^\w{1,16}$/.test(who)) return null;
+  try {
+    const uuid = await headUuidForName(who);
+    if (!uuid) return null;
+    // The canonical spelling, which is what should be shown back.
+    const hit = _headUuid.get(who.toLowerCase());
+    return { uuid, name: (hit && hit.name) || who };
+  } catch { return null; }
 });
 
 ipcMain.handle("head:get", async (event, opts) => playerHead(opts || {}));

@@ -39,18 +39,18 @@ the order it is being built in.
 - [x] **An imported modpack should show the modpack's icon.**
 
 ### D. The friends panel
-- [ ] **The status dropdown is MY OWN status** — the one reported through the
+- [x] **The status dropdown is MY OWN status** — the one reported through the
       API — not a filter over the list.
-- [ ] **"Search or add by username"**: the box searches the list it is over; the
+- [x] **"Search or add by username"**: the box searches the list it is over; the
       Add button (or Enter) does not add straight away — it opens the player's
       details first.
-- [ ] **A player details modal**: on the left their skin as a player render,
+- [x] **A player details modal**: on the left their skin as a player render,
       the same as the skins page's main render, with their cape and no random
       animations. On the right, the same head/name/status line the list shows,
       and under it a remove-friend button, a NameMC button (their uuid's page),
       and a label saying whether they have used Redstone Launcher before and on
       what day — detected on the server.
-- [ ] **The list's remove button becomes an info button** that opens that page.
+- [x] **The list's remove button becomes an info button** that opens that page.
 
 ### E. Suggestions
 - [ ] **A Suggestions tab in settings**, with a form icon, the blurb about not

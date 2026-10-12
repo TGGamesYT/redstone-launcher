@@ -48,7 +48,7 @@ process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.
 // served on the SAME public port as Minecraft (25565) — a Minecraft handshake
 // never begins with an HTTP method, so we can tell the two apart from the first
 // bytes and route by the token in the request URL. No extra port to open.
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17 };
 
 // URL token (the "random safety token" in the pack path) -> the host serving it.
 const packRoutes = new Map();
@@ -330,6 +330,48 @@ function syncWrite(uuid, kind, value) {
   fs.renameSync(tmp, syncPath(uuid, kind));
 }
 
+// ───────────────────────── who has used the launcher ────────────────────
+// The friends panel shows, on a player's details, whether they have used
+// Redstone Launcher and when they last did. That can only be answered here:
+// the launcher on one computer has no way of knowing about anybody else.
+//
+// Only what is needed to answer it is kept — the account's UUID, the first and
+// last time it was seen, and the name it had, so a details page can be filled
+// in for a player who is not a friend yet. It is written ONLY from a UUID that
+// Mojang's hasJoined verified on this connection, so nobody can mark anybody
+// else as a user, and read back by UUID only, which is already public.
+const SEEN_FILE = process.env.RELAY_SEEN || path.join(__dirname, "relay-seen.json");
+const SEEN_QUERY_MAX = 50;
+let seenUsers = loadJson(SEEN_FILE, {});
+let seenDirty = false;
+// Batched: a busy relay would otherwise rewrite the whole file on every
+// connection.
+setInterval(() => {
+  if (!seenDirty) return;
+  seenDirty = false;
+  try { fs.writeFileSync(SEEN_FILE, JSON.stringify(seenUsers)); } catch { /* ignore */ }
+}, 30_000).unref();
+
+function markSeen(uuid, name) {
+  const id = String(uuid || "").toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(id)) return;
+  const now = Date.now();
+  const was = seenUsers[id];
+  seenUsers[id] = { first: (was && was.first) || now, last: now, name: name || (was && was.name) || null };
+  seenDirty = true;
+}
+
+function lookupSeen(ids) {
+  const out = {};
+  for (const raw of (Array.isArray(ids) ? ids : []).slice(0, SEEN_QUERY_MAX)) {
+    const id = String(raw || "").replace(/-/g, "").toLowerCase();
+    if (!/^[0-9a-f]{32}$/.test(id)) continue;
+    const hit = seenUsers[id];
+    out[id] = hit ? { first: hit.first, last: hit.last, name: hit.name || null } : null;
+  }
+  return out;
+}
+
 // The control-channel handler, run on a TLS socket (see the demuxing listener
 // below — the same port also serves plain-HTTP resource-pack requests).
 function handleControl(sock) {
@@ -362,6 +404,8 @@ function handleControl(sock) {
       if (!profile || !profile.id) { send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: "Premium verification failed" }))); return sock.destroy(); }
       const uuid = String(profile.id).replace(/-/g, "").toLowerCase();
       const isAdmin = adminUuids.has(uuid);
+      // Verified, so this account really is using the launcher right now.
+      markSeen(uuid, profile.name);
 
       // Sync-only: the verified UUID is all this needs. No address is claimed,
       // so none of the domain rules below apply.
@@ -401,6 +445,18 @@ function handleControl(sock) {
       return;
     }
     if (!state.authed) return sock.destroy();
+    if (type === T.SEEN) {
+      // Any authenticated connection may ask, because the answer is about
+      // whether a public account has used this launcher — not about anything
+      // private to it. Capped per request, and the caller gets exactly the
+      // ids it asked about so it needs no bookkeeping.
+      let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      let users = {};
+      try { users = lookupSeen(req.uuids); } catch { /* answer empty */ }
+      send(T.SEEN_DATA, streamId, Buffer.from(JSON.stringify({ id: req.id ?? null, users })));
+      return;
+    }
+
     if (type === T.SYNC) {
       // Only ever this connection's own verified account.
       if (!state.syncUuid) return sock.destroy();

@@ -5,7 +5,7 @@ import net from "net";
 import tls from "tls";
 import https from "https";
 
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17 };
 
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
@@ -105,6 +105,46 @@ export function syncRelay({ host, controlPort, account, op = "get", kind = "skin
   });
 }
 
+/**
+ * Has this account used Redstone Launcher, and when?
+ *
+ * The relay is the only thing that can answer it — this computer has no way of
+ * knowing about anybody else's. Answers { "<uuid>": { first, last, name } |
+ * null }, with an entry for every uuid asked about.
+ *
+ * Signing in with the asking account's own Mojang session is what gets the
+ * connection; the answer is about public accounts, so there is nothing of
+ * anybody's to leak.
+ */
+export function seenRelay({ host, controlPort, account, uuids, rejectUnauthorized = true }) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (fn, v) => { if (done) return; done = true; fn(v); try { sock.end(); } catch { /* ignore */ } };
+    const sock = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () =>
+      sock.write(encodeFrame(T.HELLO, 0, Buffer.from(JSON.stringify({ sync: true })))));
+    const send = (t, s2, p) => { try { sock.write(encodeFrame(t, s2, p)); } catch { /* ignore */ } };
+    const decode = createDecoder(async (type, streamId, payload) => {
+      if (type === T.CHALLENGE) {
+        let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        const ok = await mojangJoin(account.accessToken, account.uuid, info.serverId);
+        if (!ok) return finish(reject, new Error("Could not verify your Minecraft account"));
+        send(T.AUTH, 0, Buffer.from(JSON.stringify({ username: account.name })));
+      } else if (type === T.WELCOME) {
+        send(T.SEEN, 0, Buffer.from(JSON.stringify({ uuids })));
+      } else if (type === T.SEEN_DATA) {
+        let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        finish(resolve, (info && info.users) || {});
+      } else if (type === T.ERROR) {
+        let m = "relay error"; try { m = JSON.parse(payload.toString()).message; } catch { /* ignore */ }
+        finish(reject, new Error(m));
+      }
+    });
+    sock.on("data", decode);
+    sock.on("error", (e) => { if (!done) { done = true; reject(e); } });
+    sock.setTimeout(20000, () => { if (!done) { done = true; sock.destroy(); reject(new Error("Relay timed out")); } });
+  });
+}
+
 // Open a relay session. Resolves { address, port, close() }.
 //   account: { accessToken, uuid, name }  (a verified premium account)
 export function openRelay({ host, controlPort, subdomain, domain, localPort, account, directIp, rejectUnauthorized = true }) {
@@ -178,4 +218,4 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
   });
 }
 
-export default { openRelay, queryRelay, syncRelay };
+export default { openRelay, queryRelay, syncRelay, seenRelay };
