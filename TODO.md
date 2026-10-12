@@ -13,11 +13,21 @@ started.
 
 Sent while Round 23 was still being worked through.
 
-- [ ] **`entity models: createRoots stopped early — length of a non-array`**,
+- [x] **`entity models: createRoots stopped early — length of a non-array`**,
       logged on several versions. The interpreter gives up part way through the
-      layer catalogue, so whatever comes after the bail is simply missing —
-      which is why there is no `ghast` layer, among others.
-- [ ] **The pistons move linearly**, where the game's ease in and out.
+      layer catalogue, so whatever comes after the bail is simply missing.
+      *It was an enum's `values()` — which compiles to `$VALUES.clone()` — on
+      `Direction`, `Direction$Axis` and `EquipmentSlot`. The interpreter does
+      not model that call, so in lenient mode it is an opaque value, and taking
+      its length stopped everything. Array operations on an opaque now give an
+      empty array, which is the same bargain lenient mode already makes
+      everywhere else, and what it waved through is logged once at the end
+      instead of silently.*
+- [x] **The pistons move linearly**, where the game's ease in and out.
+      *Each one fires now: the travel happens over the first half of its window,
+      fastest as it leaves, and then it stands there extended for a quarter of
+      a second before coming back. Its retract still coincides exactly with the
+      next one's push.*
 - [ ] **An older instance with no icon of its own shows redstone ore.** It
       should show its version's own render — and so should the latest snapshot.
 - [ ] **Cropping a picture that is not square still will not move off the

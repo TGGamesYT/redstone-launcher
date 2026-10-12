@@ -184,6 +184,15 @@ export class EntityModels {
     this._layers = null;
     // See the note on unmodelled calls in invoke(). Off by default.
     this.lenient = false;
+    // What lenient mode has had to wave through, counted by kind. Carrying on
+    // is right -- the alternative is no catalogue at all -- but doing it
+    // silently is how a mob goes missing and nobody can say why, so it is
+    // reported once at the end rather than per occurrence.
+    this.vagueCounts = new Map();
+  }
+
+  vague(what) {
+    this.vagueCounts.set(what, (this.vagueCounts.get(what) || 0) + 1);
   }
 
   /**
@@ -208,6 +217,7 @@ export class EntityModels {
     if (!m) { this._layers = out; return out; }
 
     this.builders.clear();
+    this.vagueCounts.clear();
     let result = null;
     this.lenient = true;
     try { result = await this.exec(cls, m, [], 0); }
@@ -215,6 +225,10 @@ export class EntityModels {
       if (!(err instanceof Bail)) throw err;
       this.log(`entity models: createRoots stopped early — ${err.message}`);
     } finally { this.lenient = false; }
+    if (this.vagueCounts.size) {
+      const what = [...this.vagueCounts].map(([k, n]) => `${k} x${n}`).join(', ');
+      this.log(`entity models: carried on past ${what}`);
+    }
     // Whatever was built, finished or not.
     let entries = result instanceof JMap ? result.entries : [];
     for (const b of this.builders) if (b.entries.length > entries.length) entries = b.entries;
@@ -428,10 +442,20 @@ export class EntityModels {
       case 'lcmp': case 'fcmpl': case 'fcmpg': case 'dcmpl': case 'dcmpg': {
         const b = pop(), a = pop(); push(a > b ? 1 : a < b ? -1 : 0); break;
       }
+      // An array operation on something that is not an array means the array
+      // came out of a call the interpreter does not model -- in lenient mode
+      // that is a JOpaque, and here it is an empty one. The same reasoning as
+      // for JOpaque itself applies: the registry walk keeps an entry only when
+      // its key really is a layer location and its value really is a layer, so
+      // nothing vague can be mistaken for geometry, and a loop over an empty
+      // array simply does not run. Stopping instead truncated the whole layer
+      // catalogue at that point, which is what "createRoots stopped early --
+      // length of a non-array" was, with every layer after it missing.
       case 'arraylength': {
         const a = pop();
-        push(a instanceof JArray ? a.v.length
-          : bail(`length of a non-array (${describeValue(a)})`));
+        if (a instanceof JArray) { push(a.v.length); break; }
+        if (this.lenient) { this.vague(`length of ${describeValue(a)}`); push(0); break; }
+        bail(`length of a non-array (${describeValue(a)})`);
         break;
       }
       case 'newarray': case 'anewarray': { const n = pop(); push(new JArray(n, op === 'newarray' ? 0 : null)); break; }
@@ -439,15 +463,21 @@ export class EntityModels {
       case 'iaload': case 'faload': case 'aaload': case 'baload': case 'saload': case 'caload':
       case 'laload': case 'daload': {
         const idx = pop(), arr = pop();
-        if (!(arr instanceof JArray)) bail('load from a non-array');
-        push(arr.v[idx]);
+        if (arr instanceof JArray) { push(arr.v[idx]); break; }
+        if (this.lenient) {
+          this.vague(`load from ${describeValue(arr)}`);
+          push(new JOpaque('array element'));
+          break;
+        }
+        bail(`load from a non-array (${describeValue(arr)})`);
         break;
       }
       case 'iastore': case 'fastore': case 'aastore': case 'bastore': case 'sastore': case 'castore':
       case 'lastore': case 'dastore': {
         const v = pop(), idx = pop(), arr = pop();
-        if (!(arr instanceof JArray)) bail('store to a non-array');
-        arr.v[idx] = v;
+        if (arr instanceof JArray) { arr.v[idx] = v; break; }
+        if (this.lenient) { this.vague(`store to ${describeValue(arr)}`); break; }
+        bail(`store to a non-array (${describeValue(arr)})`);
         break;
       }
       case 'new': push(new Pending(x.const.name)); break;

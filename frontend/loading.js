@@ -45,6 +45,19 @@
   // what makes it read as one thing going round rather than four taking
   // turns.
   const OUT = 0.25, BACK = 0.25;
+  // A piston does not glide. In the game it is out in a couple of ticks and
+  // stops dead, so the travel happens over the first part of its window, fast,
+  // and for the rest of the window it simply stands there extended. Moving at
+  // one speed across the whole window is what made it look like a slider being
+  // dragged rather than something firing.
+  const STROKE = 0.55;                 // of the window spent moving
+  // Fast away, decelerating into the stop. A real piston arrives instantly;
+  // flat out and a hard stop at 16px looks like a dropped frame, so it is
+  // eased just enough to read as weight arriving.
+  const fire = (u) => {
+    const k = Math.min(1, Math.max(0, u) / STROKE);
+    return 1 - Math.pow(1 - k, 3);
+  };
   const ARM = 4;                       // the head's arm is 4 px across
   const FACE = 4;                      // and its wooden face 4 px deep
 
@@ -113,8 +126,8 @@
       const outEnd = OUT;
       const backEnd = OUT + BACK;
       let e = 0;
-      if (local < outEnd) e = local / outEnd;
-      else if (local < backEnd) e = 1 - (local - outEnd) / (backEnd - outEnd);
+      if (local < outEnd) e = fire(local / outEnd);
+      else if (local < backEnd) e = 1 - fire((local - outEnd) / (backEnd - outEnd));
 
       const [bx, by] = p.body, [rx, ry] = p.block, [dx, dy] = p.d;
       const bpx = bx * TEX, bpy = by * TEX;
