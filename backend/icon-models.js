@@ -284,6 +284,10 @@ export async function listModels({ profileId, version, query = '', kinds = null,
   if (want.has('entity')) {
     const ents = await entityLayers(version);
     for (const name of ents.keys()) {
+      // `breeze/eyes` is not an entity, it is part of the breeze -- and it is
+      // drawn with it now, so listing it separately was offering a mob's eyes
+      // as a thing to pick.
+      if (name.includes('/')) continue;
       items.push({ kind: 'entity', id: 'entity:' + name, name, ns: 'minecraft', from: 'client jar' });
     }
   }
@@ -319,85 +323,288 @@ async function entityLayers(version) {
  * out looking flat and wrong. So any `<name>/outer` layer is drawn on top,
  * with its own texture, as a second set of elements.
  */
-export async function describeEntity({ profileId, version, name }) {
+// ── Parts that are alternatives to each other ───────────────────────────────
+//
+// A model carries every pose the mob can be in. An armadillo is a body with
+// legs AND the ball it rolls into; an evoker has its arms crossed AND held
+// out for casting; the game shows one set and hides the other depending on
+// what the mob is doing. Drawn without that, an armadillo is a ball with legs
+// sticking out of it and an evoker has four arms.
+//
+// Nothing in the model data says which parts exclude which. What it does say
+// is where they are, and two alternatives are in the SAME PLACE -- that is
+// what makes them alternatives. So: group the boxes by the part they belong
+// to, and where two groups sit on top of each other, keep the bigger one.
+// The pose a model is built around has more to it than the one it switches
+// into; the ball is one box against a body, a head, two ears, a tail and four
+// legs.
+const corners = (el) => {
+  const [x0, y0, z0] = el.from, [x1, y1, z1] = el.to;
+  const m = el.transform;
+  const out = [];
+  for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [z0, z1]) {
+    out.push(m
+      ? [m[0] * x + m[4] * y + m[8] * z + m[12],
+         m[1] * x + m[5] * y + m[9] * z + m[13],
+         m[2] * x + m[6] * y + m[10] * z + m[14]]
+      : [x, y, z]);
+  }
+  return out;
+};
+const boxOf = (els) => {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const el of els) for (const c of corners(el)) for (let i = 0; i < 3; i++) {
+    if (c[i] < lo[i]) lo[i] = c[i];
+    if (c[i] > hi[i]) hi[i] = c[i];
+  }
+  return { lo, hi };
+};
+const volume = (b) => Math.max(0, b.hi[0] - b.lo[0]) * Math.max(0, b.hi[1] - b.lo[1]) * Math.max(0, b.hi[2] - b.lo[2]);
+const overlap = (a, b) => {
+  let v = 1;
+  for (let i = 0; i < 3; i++) v *= Math.max(0, Math.min(a.hi[i], b.hi[i]) - Math.max(a.lo[i], b.lo[i]));
+  return v;
+};
+
+// Is `many` the group that holds both of what `one` is one of? `arms` and
+// `right_arm`; `legs` and `left_leg`.
+function isPluralOf(many, one) {
+  if (!many.endsWith('s') || many === one) return false;
+  const singular = many.slice(0, -1);
+  return one === singular || one.endsWith('_' + singular);
+}
+
+function dropAlternatePoses(elements) {
+  // Group by the top of the part path: `body/head/left_ear` belongs to
+  // `body`, because a hat on a head is not an alternative to the head.
+  const groups = new Map();
+  for (const el of elements) {
+    const top = String(el.part || '').split('/')[0] || '';
+    if (!groups.has(top)) groups.set(top, []);
+    groups.get(top).push(el);
+  }
+  if (groups.size < 2) return elements;
+
+  const info = [...groups.entries()].map(([name, els]) => ({ name, els, box: boxOf(els), n: els.length }));
+  const dropped = new Set();
+  for (let i = 0; i < info.length; i++) {
+    for (let j = i + 1; j < info.length; j++) {
+      const a = info[i], b = info[j];
+      if (dropped.has(a.name) || dropped.has(b.name)) continue;
+      const va = volume(a.box), vb = volume(b.box);
+      const small = Math.min(va, vb), big = Math.max(va, vb);
+      if (small <= 0) continue;
+      // Two conditions, and both matter. Most of the smaller one has to be
+      // inside the bigger one -- they are in the same place -- AND they have
+      // to be about the same size. Without the second, a body contains its
+      // own legs and would swallow them: a leg is wholly inside the body's
+      // box, but it is seventy times smaller, so it is a part of it rather
+      // than another version of it.
+      if (overlap(a.box, b.box) / small < 0.55) continue;
+      // Two conditions, either of which is enough once they are in the same
+      // place. Same size, so one is another version of the other rather than
+      // a part of it -- or one is the plural of the other, which is how the
+      // models say it: a villager has `arms` crossed in front of it and a
+      // `right_arm` and `left_arm` for when it is doing something with them,
+      // and those are the same two arms twice.
+      const plural = isPluralOf(a.name, b.name) || isPluralOf(b.name, a.name);
+      if (!plural && big / small > 5) continue;
+      const loser = plural
+        ? (isPluralOf(a.name, b.name) ? b : a)
+        : (a.n === b.n ? (volume(a.box) < volume(b.box) ? a : b) : (a.n < b.n ? a : b));
+      dropped.add(loser.name);
+    }
+  }
+  if (!dropped.size) return elements;
+  return elements.filter(el => !dropped.has(String(el.part || '').split('/')[0]));
+}
+
+// Parts of a mob that are worn rather than grown. The game draws these only
+// when the entity actually has the gear, and nothing in the model data says
+// which is which -- so a saddle would otherwise end up on every pig.
+const WORN = new Set(['saddle', 'armor', 'armour', 'decor', 'collar', 'harness', 'ropes', 'cape', 'ears']);
+
+export async function describeEntity({ profileId, version, name, texture }) {
   const layers = await entityLayers(version);
   const L = layers.get(name);
   if (!L) return { error: `no entity layer called ${name}` };
   const st = await stackFor({ profileId, version });
-  const tex0 = await entityTextureFile(st ? st.textures : null, name);
+  const tx = st ? st.textures : null;
+  const tex0 = await entityTextureFile(tx, name, texture);
   if (!tex0) return { error: `no texture for ${name}` };
-  const tex0Path = tex0.path;
 
-  const elements = L.elements.slice();
+  const elements = dropAlternatePoses(L.elements);
   const textures = { 0: { url: tex0.url, width: L.texWidth, height: L.texHeight, frames: 1 } };
+  let slot = 1;
 
-  const outer = layers.get(`${name}/outer`);
-  if (outer) {
-    // The overlay's OWN texture, or nothing. It sits beside the body texture
-    // and is named for it — skeleton/stray_overlay.png,
-    // zombie/drowned_outer_layer.png — and it is mostly transparent, which is
-    // the whole point: the game registers the stray's overlay as a
-    // player-shaped humanoid, and only the clothing shows because the rest of
-    // that shape samples empty texture. Falling back to the body's texture, as
-    // this first did, therefore drew the overlay SOLID, and a stray came out
-    // with a skeleton's head on a player's arms.
-    const outerTex = await siblingTexture(st ? st.textures : null, tex0Path,
-      ['_overlay', '_outer_layer', '_outer']);
-    if (outerTex) {
-      textures[1] = { url: outerTex, width: outer.texWidth, height: outer.texHeight, frames: 1 };
-      for (const el of outer.elements) {
-        elements.push({ ...el, faces: Object.fromEntries(
-          Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: '#1' }])) });
-      }
+  // Everything the mob is made of that the game registers as its own layer:
+  // `drowned/outer` (its clothes and seaweed), `breeze/eyes`, `breeze/wind`,
+  // `warden/heart`. Each is a second set of boxes with a texture of its own,
+  // and without them the mob comes out flat and wrong -- or, worse, the parts
+  // turn up in the list as entities of their own, which is what they looked
+  // like before.
+  //
+  // Each part's texture is its own: an overlay is mostly transparent on
+  // purpose (the stray's overlay is registered as a player-shaped humanoid,
+  // and only the clothing shows because the rest samples empty texture), so
+  // falling back to the body's texture would draw it solid.
+  const parts = [...layers.keys()]
+    .filter(k => k.startsWith(name + '/'))
+    .filter(k => !words(k.slice(name.length + 1)).some(w => WORN.has(w)));
+  for (const key of parts) {
+    const part = layers.get(key);
+    const pt = await entityTextureFile(tx, key);
+    if (!part || !pt) continue;
+    textures[slot] = { url: pt.url, width: part.texWidth, height: part.texHeight, frames: 1 };
+    const ref = '#' + slot;
+    slot++;
+    for (const el of part.elements) {
+      elements.push({ ...el, faces: Object.fromEntries(
+        Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: ref }])) });
     }
   }
 
-  return { kind: 'elements', space: 'entity', elements, textures, rotY: 180 };
+  return {
+    kind: 'elements', space: 'entity', elements, textures, rotY: 180,
+    // Which skin this is wearing, and the others it could be: a cow is six
+    // textures on one model, a cushion sixteen.
+    texture: tex0.path,
+    variants: (tex0.choices || []).map(c => ({ path: c.path, label: c.label })),
+  };
 }
 
-// A layer name -> its texture. The names line up with the texture paths most
-// of the time; where they do not, any file under textures/entity with that
-// name will do.
+// ── Which texture goes on which entity ──────────────────────────────────────
+//
+// A layer is called `cow` and its texture is `entity/cow/cow_temperate.png`.
+// It is called `ender_dragon` and its texture is
+// `entity/enderdragon/dragon.png`. It is called `elder_guardian` and its
+// texture is `entity/guardian/guardian_elder.png`. There is no rule that
+// turns one into the other, which is why a pig, a cow, a cushion and the
+// ender dragon simply did not appear: the old lookup wanted a file named
+// exactly after the layer, found none, and the entry was dropped.
+//
+// So instead of guessing one path, every texture under entity/ is scored
+// against the layer's name and the best one wins -- and the rest are handed
+// back as the variants they are, because `cow` really is six textures and
+// `cushion` is sixteen.
+const TEX_ROOT = 'assets/minecraft/textures/entity/';
+// Bits of a name that mean "this is drawn ON something", not "this is it".
+const OVERLAY_WORDS = new Set([
+  'overlay', 'outer', 'layer', 'eyes', 'armor', 'armour', 'beam', 'exploding',
+  'fireball', 'wind', 'saddle', 'collar', 'decor', 'harness', 'ropes', 'glow',
+  'shadow', 'melting', 'angry', 'invulnerable', 'charge',
+]);
+const words = (s) => String(s).toLowerCase().split(/[_/]+/).filter(Boolean);
+const sameWords = (a, b) => {
+  const A = new Set(words(a)), B = new Set(words(b));
+  if (A.size !== B.size) return false;
+  for (const w of A) if (!B.has(w)) return false;
+  return true;
+};
+
+async function entityTexturePaths(stack) {
+  const out = new Set();
+  for (const s of stack.sources) {
+    let names = [];
+    try { names = s.list(); } catch { continue; }
+    for (const n of names) {
+      if (n.startsWith(TEX_ROOT) && n.endsWith('.png')) out.add(n);
+    }
+  }
+  return [...out];
+}
+
+/**
+ * Every texture that could belong to this layer, best first.
+ *
+ * Each one is { path, label }. The label is what a person would call that
+ * variant -- "temperate", "red", "exploding" -- or the layer's own name when
+ * there is only one.
+ */
+async function entityTextureChoices(stack, name) {
+  if (!stack) return [];
+  const full = String(name);
+  const base = full.split('/')[0];
+  const sub = full.includes('/') ? full.split('/').slice(1).join('_') : null;
+  const wantBaby = /_baby$/.test(base);
+  const stem = base.replace(/_baby$/, '');
+  const squashed = stem.replace(/_/g, '');
+  const bare = new Set(words(stem));
+
+  const paths = await entityTexturePaths(stack);
+  const scored = [];
+  for (const p of paths) {
+    const file = p.slice(TEX_ROOT.length);
+    const folder = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
+    const fname = file.slice(file.lastIndexOf('/') + 1).replace(/\.png$/, '');
+    const fw = words(fname);
+    const extra = fw.filter(w => !bare.has(w));
+
+    let score = -1;
+    if (fname === stem) score = 100;
+    else if (fname === squashed) score = 96;
+    else if (sameWords(fname, stem)) score = 92;                 // guardian_elder
+    else if (fw.length > bare.size && [...bare].every(w => fw.includes(w))) score = 70;  // cow_temperate
+    // The folder is named after the entity even when the file is not:
+    // `enderdragon/dragon.png`, which matches nothing by name at all.
+    else if (folder === stem || folder === squashed) score = 50 - fw.length;
+    if (score < 0) continue;
+
+    // A sub-layer (breeze/eyes) wants the parent's texture with that word on
+    // it; the parent itself wants the one without.
+    const isOverlay = extra.some(w => OVERLAY_WORDS.has(w));
+    if (sub) {
+      const subWords = words(sub);
+      if (!subWords.every(w => fw.includes(w))) continue;
+      score += 30;
+    } else if (isOverlay) {
+      continue;                                  // not the entity's own skin
+    }
+
+    // Babies have their own texture, and only babies should get it.
+    const isBaby = fw.includes('baby');
+    if (isBaby !== wantBaby) continue;
+
+    // The folder matters: `pig/pig_temperate.png` over `banner/piglin.png`.
+    if (folder === stem || folder === squashed) score += 12;
+    else if (words(folder).some(w => bare.has(w))) score += 6;
+    // Vanilla's own default among a set of variants.
+    if (extra.includes('temperate') || extra.includes('default') || extra.includes('normal')) score += 4;
+    // Fewer extra words is closer to plain.
+    score -= extra.filter(w => w !== 'baby').length;
+
+    const label = extra.filter(w => w !== 'baby').join(' ') || fname.replace(/_/g, ' ');
+    scored.push({ path: p, label, score });
+  }
+  scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  return scored;
+}
+
+const asDataUrl = (buf) => 'data:image/png;base64,' + buf.toString('base64');
+
+async function entityTextureFile(stack, name, wantPath) {
+  if (!stack) return null;
+  const take = async (p) => {
+    const hit = await stack.get(p);
+    return hit ? { url: asDataUrl(hit.buf), path: p } : null;
+  };
+  if (wantPath) {
+    const got = await take(wantPath);
+    if (got) return got;
+  }
+  const choices = await entityTextureChoices(stack, name);
+  for (const c of choices) {
+    const got = await take(c.path);
+    if (got) return { ...got, choices };
+  }
+  return null;
+}
+
 async function entityTexture(stack, name) {
   const f = await entityTextureFile(stack, name);
   return f ? f.url : null;
 }
-async function entityTextureFile(stack, name) {
-  if (!stack) return null;
-  const base = String(name).split('/')[0];
-  const take = async (p) => {
-    const hit = await stack.get(p);
-    return hit ? { url: 'data:image/png;base64,' + hit.buf.toString('base64'), path: p } : null;
-  };
-  for (const p of [
-    `assets/minecraft/textures/entity/${base}.png`,
-    `assets/minecraft/textures/entity/${base}/${base}.png`,
-  ]) {
-    const got = await take(p);
-    if (got) return got;
-  }
-  for (const s of stack.sources) {
-    let names = [];
-    try { names = s.list(); } catch { continue; }
-    const any = names.find(n => n.startsWith('assets/minecraft/textures/entity/') && n.endsWith(`/${base}.png`));
-    if (!any) continue;
-    const got = await take(any);
-    if (got) return got;
-  }
-  return null;
-}
 
-// A texture beside another one, with a suffix on its name. Overlay textures
-// live next to the body texture they belong to and are named after it.
-async function siblingTexture(stack, basePath, suffixes) {
-  if (!stack || !basePath) return null;
-  const stem = basePath.replace(/\.png$/, '');
-  for (const suffix of suffixes) {
-    const hit = await stack.get(stem + suffix + '.png');
-    if (hit) return 'data:image/png;base64,' + hit.buf.toString('base64');
-  }
-  return null;
-}
 
 // ── The version's own icon ──────────────────────────────────────────────────
 const iconCacheFile = (version) =>

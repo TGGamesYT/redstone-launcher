@@ -812,7 +812,7 @@ function flatten(layer, poses) {
   // way up, since it is built with +Y pointing down.
   const ROOT = mRotZ(Math.PI);
 
-  const walk = (part, parent, name) => {
+  const walk = (part, parent, name, path) => {
     // A pose that came out of a call the interpreter did not model is not a
     // pose; treat it as no offset rather than letting undefined spread.
     const p = (part.pose instanceof JPose) ? part.pose : JPose.ZERO;
@@ -871,11 +871,19 @@ function flatten(layer, poses) {
         to: [b.x + b.w + g.gx, b.y + b.h + g.gy, b.z + b.d + g.gz],
         faces,
         transform: mMul(ROOT, m),
+        // Which part of the model this box belongs to, as a path through the
+        // tree. The game hides and shows whole parts depending on what the
+        // mob is doing -- an armadillo is either its body or the ball it
+        // rolls into -- and nothing downstream can tell which boxes go
+        // together without this.
+        part: path || name || '',
       });
     }
-    for (const [childName, child] of part.children) walk(child, m, childName);
+    for (const [childName, child] of part.children) {
+      walk(child, m, childName, path ? path + '/' + childName : childName);
+    }
   };
-  walk(layer.mesh.root, mIdent(), null);
+  walk(layer.mesh.root, mIdent(), null, '');
 
   return { elements, texWidth: texW, texHeight: texH };
 }
