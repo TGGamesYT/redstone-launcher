@@ -361,14 +361,23 @@
           // panes need; without it their transparent corners punch holes in
           // whatever is behind them.
           alphaTest: seeThrough ? 0 : 0.02,
-          // Front faces only, so a block is not see-through. With both sides
-          // drawn, glass and leaves showed the INSIDE of their own far faces
-          // through their transparent parts, which reads as a wireframe box
-          // rather than a block. A model that needs both sides says so by
+          // Front faces only for a BLOCK, so it is not see-through. With both
+          // sides drawn, glass and leaves showed the INSIDE of their own far
+          // faces through their transparent parts, which reads as a wireframe
+          // box rather than a block. A model that needs both sides says so by
           // declaring a face in each direction, which a cross-shaped plant
           // does — those still work, because a zero-thickness element is
           // given a hair of depth and so has two real faces.
-          side: opts.doubleSide ? THREE.DoubleSide : THREE.FrontSide,
+          //
+          // A mob is the other way about, and the game agrees: it draws them
+          // with culling off. Their boxes are routinely painted on one side
+          // only — a chicken's leg is a 3x5x3 box with a single one-pixel
+          // column of art on its south face and nothing on the other three, an
+          // axolotl's tail and a fish's fins are flat plates with one painted
+          // side — so culling the back of that one painted face leaves the leg
+          // visible from one direction and simply gone from the other.
+          side: (opts.doubleSide || flat.space === 'entity')
+            ? THREE.DoubleSide : THREE.FrontSide,
           depthWrite: !seeThrough,
         });
         if (!map) m.visible = false;      // a texture that could not be read

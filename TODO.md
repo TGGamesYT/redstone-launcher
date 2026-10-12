@@ -44,7 +44,12 @@ Sent while Round 23 was still being worked through.
       rectangle landing on half pixels, which makes the canvas blend the
       outermost row with what is behind it; it is snapped to whole pixels.*
 - [ ] **The creeper's charge texture is in the wrong place.**
-- [ ] **A chicken's legs are still only drawn from one side.**
+- [x] **A chicken's legs are still only drawn from one side.**
+      *The game draws mobs with backface culling off, because their boxes are
+      routinely painted on one side only — a chicken's leg is a 3x5x3 box with
+      one one-pixel column of art on one face and nothing on the other three.
+      Mobs are drawn both-sided now; blocks keep culling, which is what stops
+      glass and leaves showing the inside of their own far faces.*
 - [ ] **Whatever the copper chest is rendering as, it is badly wrong.**
 
 ## 0. Round 23
@@ -133,8 +138,9 @@ stuff" — so the list is in two halves and the first half is done first.
 - [ ] **A face pointing at the camera should be fully lit**, which settles the
       lighting generally.
 - [ ] **A cross model's rotation settings do nothing.**
-- [ ] **Parts that only render from one side** — the axolotl's tail, a
-      chicken's legs, some fish tails.
+- [x] **Parts that only render from one side** — the axolotl's tail, a
+      chicken's legs, some fish tails. *All one cause: mobs are drawn with
+      culling off in the game, and were not here.*
 - [ ] **A variant that is also its own entry** can differ from it — the cold
       chicken has no beak; the warm cow has no horns.
 - [ ] **Minecart variants have no block in them** and are not offered as
