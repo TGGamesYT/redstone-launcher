@@ -2840,7 +2840,14 @@
           serverInput.addEventListener("input", applyServerIcon);
 
           overlay.querySelector("#scChangeIcon").onclick = () => {
-            window.IconPicker.open({ instanceId: profile.id, onPick: (url) => { scIconData = url; scIcon.src = url; iconSource = null; } });
+            // With the version, so the picker can offer what this instance
+            // would have as its default -- which is how you get back to it
+            // after a modpack or a mod has given the instance its own icon.
+            window.IconPicker.open({
+              instanceId: profile.id,
+              version: profile.version || undefined,
+              onPick: (url) => { scIconData = url; scIcon.src = url; iconSource = null; },
+            });
           };
 
           const close = () => overlay.remove();

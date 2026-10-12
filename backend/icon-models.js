@@ -873,6 +873,32 @@ export async function versionIcon({ version, profileId = null }) {
   return { ...r, draw: desc };
 }
 
+/**
+ * The six panorama faces out of a version's own files.
+ *
+ * The usual place for these is the asset index, where they are hashed objects
+ * downloaded from Mojang. Before 1.13 there was no such entry -- the faces
+ * were in the jar -- which is why older versions reported "asset index has no
+ * panorama_0" and showed nothing. The jar is where to look then.
+ *
+ * Modern jars DO have files at that path, but they are 1x1 grey placeholders
+ * (69 bytes), so anything that small is not an answer.
+ */
+export async function panoramaFromFiles({ profileId, version }) {
+  const st = await stackFor({ profileId, version });
+  if (!st) return null;
+  const out = [];
+  for (let i = 0; i < 6; i++) {
+    const hit = await st.textures.get(
+      `assets/minecraft/textures/gui/title/background/panorama_${i}.png`);
+    if (!hit) return null;
+    const size = MA.pngSize(hit.buf);
+    if (!size || size.width < 16 || size.height < 16) return null;   // a placeholder
+    out.push(hit.buf);
+  }
+  return out.length === 6 ? out : null;
+}
+
 // ── Thumbnails ──────────────────────────────────────────────────────────────
 // Rendering a grid of models costs a WebGL pass each, and the picker is opened
 // over and over. The renderer hands back what it drew and gets it straight

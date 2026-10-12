@@ -7122,6 +7122,15 @@ async function fetchPanoramaFromMojang(version) {
     fs.writeFileSync(path.join(idxDir, `${ai.id}.json`), JSON.stringify({ objects }));
   } catch { /* caching is a bonus */ }
 
+  // Before 1.13 the panorama was not an asset at all -- it was in the jar --
+  // so an index with no entry for it is not a failure, it is an older
+  // version, and the jar is where to look.
+  if (!objects[`${PANORAMA_ASSET_PREFIX}0.png`]) {
+    const fromJar = await iconModels.panoramaFromFiles({ version });
+    if (fromJar) return fromJar;
+    throw new Error(`${version} has no panorama, in its assets or its jar`);
+  }
+
   const out = [];
   for (let i = 0; i < 6; i++) {
     const rec = objects[`${PANORAMA_ASSET_PREFIX}${i}.png`];

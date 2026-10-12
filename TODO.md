@@ -9,6 +9,76 @@ started.
 
 ---
 
+## 0. Round 23
+
+Asked for in one batch, with "do everything else before the icon renderer
+stuff" — so the list is in two halves and the first half is done first.
+
+### A. Everything that is not the renderer
+- [ ] **The loading animation fires one piston at a time.** The next should
+      start as the one before it comes back, not after.
+- [ ] **A modal's blur covers the corner where the top and left bars meet** —
+      the friend details one, again.
+- [ ] **The loader cards are too small**: the five of them should fill the
+      page, and the last page leaves too much of it empty.
+- [ ] **Clicking the version or the loader on the last page** should be a
+      re-pick of that one thing that comes straight back, not a restart of
+      the sequence.
+- [ ] **The latest-snapshot icon** should be the newest version named in the
+      JSON *unless that version has been released* — and the plain snapshot
+      mark when there is nothing newer named.
+- [ ] **"Use this" in the adjust dialog** should say it goes on to the
+      cropping.
+
+### B. The renderer
+- [ ] **Block entities are upside down** (chests, bells).
+- [ ] **The breeze's wind should be see-through, not left out** — let a part
+      be transparent instead.
+- [ ] **A part of the breeze's body is a snippet of texture that is not it.**
+- [ ] **Variants that are not variants.** The ender dragon has an "ender" one
+      wearing the ender chest's texture; the armadillo has "scute"; the dragon
+      skull has two wrong "skull" ones; the evoker has "fangs"; the llama has
+      "trader" (an overlay) and "spit" (its own entity); the iron golem has
+      the iron armour and tools; the happy ghast has the ghast; a banner has
+      five "brown" ones and wears a bed's texture.
+- [ ] **Tell an overlay from a variant by rendering it**: an overlay is mostly
+      transparent where a variant is not.
+- [ ] **Cracked iron golem, drowned armour and the like should be toggles
+      over the mob**, not entries of their own — and armour it never wears
+      should not be there at all.
+- [ ] **Block states that change the texture do nothing** — the anvil's
+      facing, the creaking heart, the icicle, the bell's block form.
+- [ ] **A bell has three entries** (item, block, block entity); an item model
+      that is the same as its block's should not be a second entry, and the
+      one that is kept is the one with the states.
+- [ ] **An item model that is a block, or more than one picture, should still
+      be adjustable** — and turning and tilting a flat item does nothing, so
+      the dialog should not offer it.
+- [ ] **Tilt does not go all the way round**, and it tilts from the original
+      angle rather than the current one.
+- [ ] **Chest variants do nothing**, and a double chest should be drawn as
+      both halves.
+- [ ] **All the armour trims render as the plain item.**
+- [ ] **Every clock variant is also its own search result.**
+- [ ] **Bush, fern and large fern have no tint**, and the tint should be
+      changeable in the render settings. Leather armour too, in its colours.
+- [ ] **A face pointing at the camera should be fully lit**, which settles the
+      lighting generally.
+- [ ] **A cross model's rotation settings do nothing.**
+- [ ] **Parts that only render from one side** — the axolotl's tail, a
+      chicken's legs, some fish tails.
+- [ ] **A variant that is also its own entry** can differ from it — the cold
+      chicken has no beak; the warm cow has no horns.
+- [ ] **Minecart variants have no block in them** and are not offered as
+      variants.
+- [ ] **The bogged's parts all use one texture.**
+- [ ] **The wither's armour layer is in the wrong place** — the right texture,
+      mapped onto its head.
+- [ ] **A cross model on the second block of a two-block block is turned 45°**,
+      and a two-block block with no upper half draws something there anyway.
+- [ ] **The dried ghast's default rotation is wrong**, which matters because it
+      is a version's default icon.
+
 ## 0. Round 22
 
 ### A. Modals and the new-instance flow
