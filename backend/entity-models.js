@@ -37,6 +37,17 @@ import { readClass } from './classfile.js';
 class Bail extends Error { }
 const bail = (msg) => { throw new Bail(msg); };
 
+// What a value on the stack is, for a bail message. "it stopped early" is not
+// something anybody can act on; "it stopped early on a JOpaque(Stream)" is.
+function describeValue(v) {
+  if (v === null) return 'null';
+  if (v === undefined) return 'nothing';
+  if (typeof v !== 'object') return `${typeof v} ${v}`;
+  const n = v.constructor && v.constructor.name;
+  if (v instanceof JOpaque) return `JOpaque(${v.what})`;
+  return n || 'object';
+}
+
 // ── The objects the builder API passes around ───────────────────────────────
 // Stand-ins, not reimplementations: they record what was asked for and nothing
 // more. Nothing here bakes, draws or validates.
@@ -280,6 +291,19 @@ export class EntityModels {
   }
 
   async exec(cls, method, args, depth) {
+    try {
+      return await this.run(cls, method, args, depth);
+    } catch (err) {
+      // Where it gave up, named once, by the innermost frame that knows.
+      if (err instanceof Bail && !err.where) {
+        err.where = `${this.maps.realClass(cls.name) || cls.name}.${method.name}`;
+        err.message = `${err.message} in ${err.where}`;
+      }
+      throw err;
+    }
+  }
+
+  async run(cls, method, args, depth) {
     if (depth > MAX_DEPTH) bail('too deep');
     const code = method.code;
     if (!code) bail(`${method.name} has no code`);
@@ -404,7 +428,12 @@ export class EntityModels {
       case 'lcmp': case 'fcmpl': case 'fcmpg': case 'dcmpl': case 'dcmpg': {
         const b = pop(), a = pop(); push(a > b ? 1 : a < b ? -1 : 0); break;
       }
-      case 'arraylength': { const a = pop(); push(a instanceof JArray ? a.v.length : bail('length of a non-array')); break; }
+      case 'arraylength': {
+        const a = pop();
+        push(a instanceof JArray ? a.v.length
+          : bail(`length of a non-array (${describeValue(a)})`));
+        break;
+      }
       case 'newarray': case 'anewarray': { const n = pop(); push(new JArray(n, op === 'newarray' ? 0 : null)); break; }
       case 'multianewarray': bail('multianewarray');
       case 'iaload': case 'faload': case 'aaload': case 'baload': case 'saload': case 'caload':

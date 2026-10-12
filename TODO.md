@@ -9,6 +9,23 @@ started.
 
 ---
 
+## 0. Round 24
+
+Sent while Round 23 was still being worked through.
+
+- [ ] **`entity models: createRoots stopped early — length of a non-array`**,
+      logged on several versions. The interpreter gives up part way through the
+      layer catalogue, so whatever comes after the bail is simply missing —
+      which is why there is no `ghast` layer, among others.
+- [ ] **The pistons move linearly**, where the game's ease in and out.
+- [ ] **An older instance with no icon of its own shows redstone ore.** It
+      should show its version's own render — and so should the latest snapshot.
+- [ ] **Cropping a picture that is not square still will not move off the
+      sides**, and still has odd edges.
+- [ ] **The creeper's charge texture is in the wrong place.**
+- [ ] **A chicken's legs are still only drawn from one side.**
+- [ ] **Whatever the copper chest is rendering as, it is badly wrong.**
+
 ## 0. Round 23
 
 Asked for in one batch, with "do everything else before the icon renderer
