@@ -108,8 +108,13 @@ the order it is being built in.
       released; the original should be shown in place while it moves.
 
 ### I. Cloud skins
-- [ ] **A cloud-synced skin cannot be deleted at all.**
-- [ ] **Editing a cloud-saved skin saves a new one** instead of changing it.
+- [x] **A cloud-synced skin cannot be deleted at all.** Deletions are recorded
+      and travel with the library, so one stays deleted — here and on the
+      account's other computers. The image itself stays on Mojang's servers,
+      because texture ids are permanent, and the dialog says so.
+- [x] **Editing a cloud-saved skin saves a new one** instead of changing it.
+      The merge matches on the skin's id as well as its pixels, so an edit is
+      still the same skin; the image it was before is retired with it.
 
 ### J. The loading indicator
 - [ ] **Replace every page's spinner** with a 4×4 grid of blocks that loops

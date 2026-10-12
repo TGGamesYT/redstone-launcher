@@ -656,6 +656,7 @@
     <div class="skin-modal-card" style="width:320px;">
       <h3 style="margin-top:0;">Delete skin</h3>
       <p id="skinDeleteText" style="opacity:0.85; margin-top:0;">Remove this skin from your library?</p>
+      <p id="skinDeleteCloud" style="opacity:0.7; font-size:12px; margin-top:-4px; display:none;"></p>
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button class="pm-btn" id="skinDeleteCancelBtn">Cancel</button>
         <button class="pm-btn" id="skinDeleteConfirmBtn" style="background:#c0392b;">Delete</button>
@@ -2688,6 +2689,18 @@
     function openSkinDelete(uuid, skin) {
       deleteTarget = { uuid, skin };
       document.getElementById('skinDeleteText').textContent = `Remove "${skin.name}" from your skin library?`;
+      // A skin that has been on Mojang's servers cannot be taken off them by
+      // anybody -- texture ids are permanent and content addressed. What the
+      // launcher can do is stop carrying it, here and on your other
+      // computers, and it should say which of the two this is.
+      const note = document.getElementById('skinDeleteCloud');
+      if (skin.mojangUrl) {
+        note.style.display = '';
+        note.textContent = 'It goes from your library on every computer you are signed in on. '
+          + 'The image itself stays on Mojang’s servers — texture ids are permanent, and nobody can delete one.';
+      } else {
+        note.style.display = 'none';
+      }
       document.getElementById('skinDeleteModal').style.display = 'flex';
     }
     document.getElementById('skinRenameCancelBtn').onclick = () => { document.getElementById('skinRenameModal').style.display = 'none'; renameTarget = null; };

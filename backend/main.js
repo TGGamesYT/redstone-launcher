@@ -3550,21 +3550,56 @@ ipcMain.handle("relay:domain", () => DOMAIN_BASE);
 // machines that each added skins while offline end up with both sets instead of
 // whichever synced last. A skin deleted on one machine comes back from the
 // other, which is the right trade for a library — losing one is worse.
-function mergeSkinLists(mine, theirs) {
+// Two copies of one library into one.
+//
+// A skin is the same skin as another when it has the same id -- which is what
+// editing one keeps -- and failing that when it has the same pixels. Matching
+// on pixels ALONE is what made editing a skin that was in the cloud look like
+// it had made a second one: the edit changed the pixels, so the copy on the
+// relay no longer matched it and came back down as a stranger.
+//
+// `deleted` is { key: whenDeleted }, keyed by pixels and by id. Either side's
+// skin that was deleted after it was last touched is gone and stays gone; one
+// added or edited since has a newer timestamp and wins.
+function mergeSkinLists(mine, theirs, deleted) {
+  const gone = deleted || {};
+  const out = [];
+  const byId = new Map();
   const byHash = new Map();
+  const touched = (s) => Math.max(s.updatedAt || 0, s.addedAt || 0);
+
+  const buried = (s) => {
+    for (const key of [s.pixelHash, s.id != null ? `id:${s.id}` : null]) {
+      if (key && gone[key] && Number(gone[key]) >= touched(s)) return true;
+    }
+    return false;
+  };
+
   // Ours first, so local names and ordering win for anything on both sides.
   for (const s of [...(mine || []), ...(theirs || [])]) {
-    if (!s) continue;
-    const key = s.pixelHash || `id:${s.id}`;
-    if (byHash.has(key)) {
-      // Keep whichever knows where it lives on Mojang.
-      const have = byHash.get(key);
-      if (!have.mojangUrl && s.mojangUrl) { have.mojangUrl = s.mojangUrl; have.mojangAt = s.mojangAt; }
+    if (!s || buried(s)) continue;
+    const idKey = s.id != null ? `id:${s.id}` : null;
+    const have = (idKey && byId.get(idKey)) || (s.pixelHash && byHash.get(s.pixelHash)) || null;
+    if (have) {
+      // The same skin twice. Keep whichever was touched last -- that is the
+      // edit -- and whichever of the two knows where it lives on Mojang.
+      if (touched(s) > touched(have.skin)) {
+        const mojang = have.skin.mojangUrl ? { mojangUrl: have.skin.mojangUrl, mojangAt: have.skin.mojangAt } : {};
+        have.skin = { ...mojang, ...s };
+        out[have.at] = have.skin;
+        if (s.pixelHash) byHash.set(s.pixelHash, have);
+      } else if (!have.skin.mojangUrl && s.mojangUrl) {
+        have.skin.mojangUrl = s.mojangUrl;
+        have.skin.mojangAt = s.mojangAt;
+      }
       continue;
     }
-    byHash.set(key, { ...s });
+    const slot = { skin: { ...s }, at: out.length };
+    out.push(slot.skin);
+    if (idKey) byId.set(idKey, slot);
+    if (s.pixelHash) byHash.set(s.pixelHash, slot);
   }
-  return [...byHash.values()].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+  return out.filter(Boolean).sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
 }
 
 // Null rather than a throw when there is nobody to sync for: an offline-only
@@ -3746,9 +3781,19 @@ async function syncSkinLibraryNow() {
   // one's cloud library.
   const mine = lib[uuid] || [];
   const theirs = (remote && remote.data && Array.isArray(remote.data.skins)) ? remote.data.skins : [];
-  const merged = mergeSkinLists(mine, theirs);
+  // Deletions travel both ways too, and the later record of a given skin
+  // wins -- so deleting on one computer removes it on the others, and
+  // re-adding it afterwards is not undone by the old tombstone.
+  const theirMarks = (remote && remote.data && remote.data.deleted && typeof remote.data.deleted === "object")
+    ? remote.data.deleted : {};
+  const marks = { ...theirMarks };
+  for (const [k, at] of Object.entries(tombstonesFor(lib, uuid))) {
+    if (!marks[k] || Number(at) > Number(marks[k])) marks[k] = Number(at);
+  }
+  const merged = mergeSkinLists(mine, theirs, marks);
 
   lib[uuid] = merged;
+  setTombstones(lib, uuid, marks);
   saveSkinLib(lib);
 
   // ONLY skins that are on Mojang's servers leave this computer. A skin you
@@ -3757,11 +3802,15 @@ async function syncSkinLibraryNow() {
   // nobody anything they couldn't already fetch. A local draft is a private
   // file on your disk, and stays one.
   const uploaded = merged.filter(s => s && s.mojangUrl);
-  await relayClient.syncRelay({ ...opts, op: "put", kind: "skins", data: { skins: uploaded } });
+  await relayClient.syncRelay({
+    ...opts, op: "put", kind: "skins",
+    data: { skins: uploaded, deleted: tombstonesFor(lib, uuid) },
+  });
   return {
     success: true,
     local: mine.length, remote: theirs.length,
     total: merged.length, shared: uploaded.length,
+    deleted: Object.keys(tombstonesFor(lib, uuid)).length,
   };
 }
 
@@ -11112,12 +11161,43 @@ const poolingSkins = () => settings.get(POOL_SKINS_SETTING, false) === true;
 // in any one of them. Kept under a key no UUID can collide with.
 const POOL_ORDER_KEY = "__pool_order__";
 
+// Skins that were deleted, by the hash of their pixels, with when.
+//
+// Without these, deleting a skin that is in the cloud did nothing you could
+// see for long: the next sync pulled the library back off the relay, found
+// the skin missing locally, and helpfully put it back. A deletion has to
+// travel the same way an addition does, so it is recorded here, merged with
+// whatever the relay knows, and pushed back up -- which is also what makes
+// the deletion reach the account's other computers.
+//
+// Kept under a key no UUID can collide with: { [uuid]: { [hash]: at } }.
+const DELETED_KEY = "__deleted__";
+// A tombstone is only needed for as long as some other copy of the library
+// might still be carrying the skin. Half a year is far past that, and stops
+// the list growing forever.
+const TOMBSTONE_TTL = 183 * 24 * 60 * 60 * 1000;
+
+const skinKey = (s) => (s && (s.pixelHash || `id:${s.id}`)) || null;
+
+function tombstonesFor(lib, uuid) {
+  const all = lib[DELETED_KEY];
+  const mine = (all && typeof all === "object" && all[uuid]) || {};
+  return (mine && typeof mine === "object") ? mine : {};
+}
+function setTombstones(lib, uuid, map) {
+  if (!lib[DELETED_KEY] || typeof lib[DELETED_KEY] !== "object") lib[DELETED_KEY] = {};
+  const cutoff = Date.now() - TOMBSTONE_TTL;
+  const kept = {};
+  for (const [k, at] of Object.entries(map || {})) if (Number(at) > cutoff) kept[k] = Number(at);
+  lib[DELETED_KEY][uuid] = kept;
+}
+
 function pooledSkinList(lib) {
   const seen = new Set();
   const out = [];
   for (const [uuid, arr] of Object.entries(lib)) {
-    if (uuid === POOL_ORDER_KEY) continue;
-    for (const s of arr || []) {
+    if (!Array.isArray(arr)) continue;        // __pool_order__, __deleted__, ...
+    for (const s of arr) {
       // The same skin saved by two accounts is one skin.
       const key = s.pixelHash || `id:${s.id}`;
       if (seen.has(key)) continue;
@@ -11166,7 +11246,7 @@ function findSkinEntry(lib, uuid, id) {
 // Every account's skins as one flat list, for matching against Mojang.
 function skinBucketsToScan(lib, uuid) {
   if (!poolingSkins()) return [uuid];
-  return Object.keys(lib).filter(u => u !== POOL_ORDER_KEY);
+  return Object.keys(lib).filter(u => Array.isArray(lib[u]));
 }
 
 function loadSkinLib() {
@@ -11189,7 +11269,8 @@ ipcMain.handle("skins:allLibrary", () => {
   const lib = loadSkinLib();
   const out = [];
   for (const arr of Object.values(lib)) {
-    (arr || []).forEach(s => out.push({ id: s.id, name: s.name, base64: s.base64, variant: s.variant }));
+    if (!Array.isArray(arr)) continue;
+    arr.forEach(s => out.push({ id: s.id, name: s.name, base64: s.base64, variant: s.variant }));
   }
   return out;
 });
@@ -11521,8 +11602,17 @@ ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name, editorT
     lib[uuid] = arr; saveSkinLib(lib);
     return skinViewFor(lib, uuid);
   }
-  arr.unshift({ id: Date.now(), pixelHash, name: name || "Skin", base64: b, variant: (variant || "classic"), addedAt: Date.now(), editorType: editorType || "advanced", creatorState: creatorState || null, layerState: layerState || null });
+  const fresh = { id: Date.now(), pixelHash, name: name || "Skin", base64: b, variant: (variant || "classic"), addedAt: Date.now(), editorType: editorType || "advanced", creatorState: creatorState || null, layerState: layerState || null };
+  arr.unshift(fresh);
   lib[uuid] = arr;
+  // Adding back something that was deleted before takes the note of its
+  // deletion with it, so nothing has to reason about which is newer.
+  const marks = { ...tombstonesFor(lib, uuid) };
+  if (marks[pixelHash] || marks[`id:${fresh.id}`]) {
+    delete marks[pixelHash];
+    delete marks[`id:${fresh.id}`];
+    setTombstones(lib, uuid, marks);
+  }
   saveSkinLib(lib);
   scheduleSkinSync();
   return skinViewFor(lib, uuid);
@@ -11546,7 +11636,20 @@ ipcMain.handle("skins:remove", (event, { uuid, id }) => {
   const lib = loadSkinLib();
   // With a shared library the skin may be filed under another account.
   const hit = findSkinEntry(lib, uuid, id);
-  if (hit) hit.arr.splice(hit.idx, 1);
+  if (hit) {
+    hit.arr.splice(hit.idx, 1);
+    // Remembered as deleted, under the bucket it was actually filed in, so
+    // the next sync does not fetch it straight back off the relay -- and so
+    // the deletion reaches this account's other computers.
+    const now = Date.now();
+    const marks = { ...tombstonesFor(lib, hit.uuid) };
+    // Both the pixels and the id: another copy of the library may be holding
+    // an older version of this skin, which has the same id but not the same
+    // pixels, and that one is just as deleted.
+    if (hit.skin && hit.skin.pixelHash) marks[hit.skin.pixelHash] = now;
+    if (hit.skin && hit.skin.id != null) marks[`id:${hit.skin.id}`] = now;
+    setTombstones(lib, hit.uuid, marks);
+  }
   saveSkinLib(lib);
   scheduleSkinSync();
   return skinViewFor(lib, uuid);
@@ -11621,8 +11724,21 @@ ipcMain.handle("skins:update", async (event, { uuid, id, base64, variant, name, 
   const s = hit.skin;
   if (base64) {
     const b = String(base64).replace(/^data:image\/\w+;base64,/, "");
+    const was = s.pixelHash;
     s.base64 = b;
     s.pixelHash = await skinPixelHash(b);
+    if (was && was !== s.pixelHash) {
+      // The image changed, so what was on Mojang's servers is a different
+      // skin from this one now. Texture ids are permanent and content
+      // addressed -- the old image is still up there and always will be --
+      // but this skin is no longer it, and saying otherwise would make the
+      // cloud badge point at a picture that is not the one on the card.
+      delete s.mojangUrl;
+      delete s.mojangAt;
+      // And the old image is not in the library any more, so it must not be
+      // fetched back off the relay as a skin of its own.
+      setTombstones(lib, hit.uuid, { ...tombstonesFor(lib, hit.uuid), [was]: Date.now() });
+    }
   }
   if (variant) s.variant = variant;
   if (name) s.name = name;
