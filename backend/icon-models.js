@@ -323,28 +323,8 @@ async function entityLayers(version) {
  * out looking flat and wrong. So any `<name>/outer` layer is drawn on top,
  * with its own texture, as a second set of elements.
  */
-// Is this texture drawn in white for the game to colour in? Greyscale and
-// bright is what that looks like, and it is the same test the block renderer
-// uses to decide whether a tint applies.
-const TINTED_SATURATION = 0.10;
-const _tintCheck = new Map();
-async function looksTinted(dataUrl) {
-  if (!DEPS.measureSaturation || !dataUrl) return false;
-  if (_tintCheck.has(dataUrl)) return _tintCheck.get(dataUrl);
-  let out = false;
-  try {
-    const buf = Buffer.from(String(dataUrl).split(',')[1] || '', 'base64');
-    out = (await DEPS.measureSaturation(buf)) < TINTED_SATURATION;
-  } catch { out = false; }
-  if (_tintCheck.size > 200) _tintCheck.clear();
-  _tintCheck.set(dataUrl, out);
-  return out;
-}
-
-// Parts of a mob that are worn rather than grown. The game draws these only
 // when the entity actually has the gear, and nothing in the model data says
 // which is which -- so a saddle would otherwise end up on every pig.
-const WORN = new Set(['saddle', 'armor', 'armour', 'decor', 'collar', 'harness', 'ropes', 'cape', 'ears']);
 
 export async function describeEntity({ profileId, version, name, texture }) {
   const layers = await entityLayers(version);
@@ -370,9 +350,7 @@ export async function describeEntity({ profileId, version, name, texture }) {
   // purpose (the stray's overlay is registered as a player-shaped humanoid,
   // and only the clothing shows because the rest samples empty texture), so
   // falling back to the body's texture would draw it solid.
-  const parts = [...layers.keys()]
-    .filter(k => k.startsWith(name + '/'))
-    .filter(k => !words(k.slice(name.length + 1)).some(w => WORN.has(w)));
+  const parts = [...layers.keys()].filter(k => k.startsWith(name + '/'));
   for (const key of parts) {
     const part = layers.get(key);
     if (!part) continue;
@@ -382,24 +360,29 @@ export async function describeEntity({ profileId, version, name, texture }) {
     // drawing it with the body's texture would make it solid. But some parts
     // genuinely share: a slime's outer shell is the same cube, the same
     // texture, one size up.
+    // Its own texture, or the body's: an overlay normally has one of its own
+    // and it matters that it does, because it is mostly transparent on
+    // purpose. Some parts genuinely share -- a slime's outer shell is the
+    // same cube, the same texture, one size up.
     const pt = await entityTextureFile(tx, key);
-    // A part drawn in white is one the game colours in as it draws it: the
-    // breeze's `wind` is the swirl of air around it, tinted and faded by how
-    // fast it is going. Standing still it is not there at all, and drawn
-    // untinted it is grey plates round a mob doing nothing. Measured rather
-    // than listed -- a part with colour of its own is part of the mob.
-    if (pt && await looksTinted(pt.url)) continue;
     textures[slot] = { url: (pt || tex0).url, width: part.texWidth, height: part.texHeight, frames: 1 };
     const ref = '#' + slot;
-    // A shell with no texture of its own is one the game draws see-through --
-    // a slime's outer layer is its own cube one size up -- and drawn solid it
-    // hides the face inside it.
-    const translucent = !pt;
     slot++;
     for (const el of part.elements) {
-      elements.push({ ...el, translucent, faces: Object.fromEntries(
+      elements.push({ ...el, group: key, faces: Object.fromEntries(
         Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: ref }])) });
     }
+  }
+
+  // What it is made of, so whoever is looking at it can switch a part off
+  // when the game would not have drawn it. There is no data here that says
+  // which parts the game hides while a mob stands still -- an armadillo has
+  // the ball it rolls into, an evoker has both sets of arms -- so rather than
+  // guess, everything is drawn and the parts are named.
+  const groups = [{ key: '', label: 'Body', n: L.elements.length }];
+  for (const key of parts) {
+    const n = elements.filter(el => el.group === key).length;
+    if (n) groups.push({ key, label: key.slice(name.length + 1).replace(/[_/]+/g, ' '), n });
   }
 
   return {
@@ -408,6 +391,7 @@ export async function describeEntity({ profileId, version, name, texture }) {
     // textures on one model, a cushion sixteen.
     texture: tex0.path,
     variants: (tex0.choices || []).map(c => ({ path: c.path, label: c.label })),
+    parts: groups.length > 1 ? groups : null,
   };
 }
 

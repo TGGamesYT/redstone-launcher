@@ -22,18 +22,25 @@ started.
       create-instance modal. A mod and a modpack end on the same page.
 
 ### B. Block and entity rendering
-- [ ] **Some things cannot be found at all** in the icon picker's search —
-      ender dragon, cushions, pigs, cows.
+- [x] **Some things cannot be found at all** in the icon picker's search —
+      ender dragon, cushions, pigs, cows. Their textures are not named after
+      them; every texture under entity/ is scored against the name now.
 - [ ] **An armadillo shows curled up and standing at the same time.**
-- [ ] **An elder guardian's side has a hole in it**, the way the ender dragon did.
-- [ ] **An evoker's hands are both together and held out at once.**
-- [ ] **A baby drowned has the same missing layer the drowned had.**
-- [ ] **A block with block states cannot be shown in a different state.**
+      Guessing which parts are alternatives broke far more than it fixed, so
+      every part is drawn and each one is a switch in the adjust dialog.
+      Doing it properly means reading `setupAnim` out of the model class.
+- [x] **An elder guardian's side has a hole in it**, the way the ender dragon did.
+- [ ] **An evoker's hands are both together and held out at once.** Same as
+      the armadillo: a switch rather than a guess, for now.
+- [x] **A baby drowned has the same missing layer the drowned had.**
+- [x] **A block with block states cannot be shown in a different state.**
+      Pick one in the adjust dialog.
 - [ ] **Tinting must be detected, not listed by hand.** Some tall and short grass
       variants, water and jungle leaves still come out grey.
 - [ ] **Cross models on a wall are lit wrongly and turned 45°.**
 - [ ] **The bell comes out wrong**, with parts missing or cropped off.
-- [ ] **One entity is split into several** — breeze, breeze/eyes, breeze/wind.
+- [x] **One entity is split into several** — breeze, breeze/eyes, breeze/wind.
+      Parts are drawn with the mob and are switches, not entries of their own.
 - [ ] **Two-block blocks do not render as one** (beds, doors).
 - [ ] **Trimmed armour shows as the untrimmed armour.**
 - [ ] **Item variants should be offered** the way a mod's pictures are — every
@@ -43,15 +50,17 @@ started.
 - [ ] **The red mushroom block renders as nothing**, mushroom cross models are
       lit wrongly, and so is the cross model inside a flower pot — fix the
       lighting itself rather than patching the cases.
-- [ ] **Some entities get the wrong texture**, and an outer layer is often
-      rendered as its own thing with the texture all over the place.
+- [x] **Some entities get the wrong texture**, and an outer layer is often
+      rendered as its own thing with the texture all over the place. Each
+      layer resolves its own, and the others are offered as variants.
 
 ### C. The icon picker
 - [ ] **The title stays above the scrolling area, and Custom image / Cancel stay
       below it.**
 - [ ] **The cropper will not let you move the image once it is zoomed out.**
 - [ ] **Searching "ice ball" does not find `ice_ball`.**
-- [ ] **A render resolution slider and a render angle slider** in the cropper.
+- [x] **A render resolution slider and a render angle slider** in the cropper
+      — in an adjust step before it, along with the part switches.
 - [ ] **An icon out of a mod file can still come out blurred.**
 - [ ] **A big modpack's icons should appear as they are rendered**, not all at
       once after a "Loading…".

@@ -51,17 +51,29 @@
     working = false;
   }
 
+  // The description a cell was drawn from, kept so that picking it can open
+  // the adjust dialog without asking for it all over again.
+  const described = new Map();
+
+  async function describe(it, ctx, state) {
+    const key = keyOf(it, state);
+    if (described.has(key)) return described.get(key);
+    const p = it.kind === 'entity'
+      ? ipcRenderer.invoke('model:entity', {
+        profileId: ctx.instanceId, version: ctx.version, name: it.id.replace(/^entity:/, ''),
+      })
+      : ipcRenderer.invoke('model:describe', {
+        profileId: ctx.instanceId, version: ctx.version, id: it.id, state,
+      });
+    described.set(key, p);
+    return p;
+  }
+
   async function draw(it, ctx, state) {
     const key = keyOf(it, state);
     if (memo.has(key)) return memo.get(key);
     const p = (async () => {
-      const desc = it.kind === 'entity'
-        ? await ipcRenderer.invoke('model:entity', {
-          profileId: ctx.instanceId, version: ctx.version, name: it.id.replace(/^entity:/, ''),
-        })
-        : await ipcRenderer.invoke('model:describe', {
-          profileId: ctx.instanceId, version: ctx.version, id: it.id, state,
-        });
+      const desc = await describe(it, ctx, state);
       if (!desc || desc.error) return null;
       const url = await enqueue(() => window.BlockRender.render(desc, {
         size: CELL_PX, rotX: desc.rotX || 0, rotY: desc.rotY || 0, uvlock: !!desc.uvlock,
@@ -86,7 +98,13 @@
     cell._state = state || '';
     cell.onclick = async () => {
       const url = img.getAttribute('src') || await draw(it, ctx, state);
-      if (url) ctx.onPick(url);
+      if (!url) return;
+      // The description comes with it: what is picked here is a model, and
+      // the next step is a chance to turn it, size it, and switch off a part
+      // the game would not have drawn.
+      let desc = null;
+      try { desc = await describe(it, ctx, state); } catch { /* the picture will do */ }
+      ctx.onPick(url, { desc: desc && !desc.error ? desc : null, item: it, state: state || '' });
     };
     return cell;
   }

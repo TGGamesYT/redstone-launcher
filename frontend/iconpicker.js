@@ -375,6 +375,182 @@
     }).catch((e) => fail('Could not load the 3D view: ' + (e && e.message)));
   }
 
+  /**
+   * Turning, sizing and part-switching a rendered model, before it is cropped.
+   *
+   * A render is not a photograph: it was drawn here, from a model, at an
+   * angle and a size this launcher chose, with every part of the model in it.
+   * The game hides some of those parts depending on what the mob is doing and
+   * nothing in the model data says which -- so rather than guess (which took
+   * the hands off a pillager and the legs off a chicken), each part is a
+   * switch and the person looking at it decides.
+   *
+   * `info` is { desc, item, state } from the model picker.
+   */
+  function openModelAdjust(info, onDone) {
+    ensureStyle();
+    const base = info.desc;
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay active';
+    ov.style.zIndex = 6150;
+    ov.innerHTML = `<div class="modal-content" style="max-width:520px;">
+      <div class="modal-header"><h2>Adjust the render</h2><button class="modal-close" id="ipAdjX">✕</button></div>
+      <div id="ipAdjStage" style="display:flex; justify-content:center; align-items:center; min-height:220px;
+        background:var(--menu-bg); border:1px solid var(--border-dark); border-radius:var(--border-radius);">
+        <img id="ipAdjImg" alt="" style="width:200px; height:200px; object-fit:contain; image-rendering:pixelated;">
+      </div>
+      <div class="ip-section-title">Turn</div>
+      <input type="range" id="ipAdjYaw" min="-180" max="180" step="5" value="0" style="width:100%;">
+      <div class="ip-section-title">Tilt</div>
+      <input type="range" id="ipAdjPitch" min="-60" max="60" step="5" value="0" style="width:100%;">
+      <div class="ip-section-title">Detail</div>
+      <div class="ip-circle-row">
+        <input type="range" id="ipAdjSize" min="0" max="3" step="1" value="1" style="flex:1;">
+        <span id="ipAdjSizeLabel" style="font-size:11px;opacity:0.75;min-width:52px;text-align:right;"></span>
+      </div>
+      <div id="ipAdjVariantWrap" style="display:none;">
+        <div class="ip-section-title">Variant</div>
+        <select id="ipAdjVariant" style="width:100%;"></select>
+      </div>
+      <div id="ipAdjStateWrap" style="display:none;">
+        <div class="ip-section-title">Block state</div>
+        <select id="ipAdjState" style="width:100%;"></select>
+      </div>
+      <div id="ipAdjPartsWrap" style="display:none;">
+        <div class="ip-section-title">Parts</div>
+        <div id="ipAdjParts" style="display:flex; flex-wrap:wrap; gap:4px 12px; font-size:12px;"></div>
+      </div>
+      <div class="modal-actions"><button id="ipAdjOk">Use this</button><button id="ipAdjCancel">Cancel</button></div>
+    </div>`;
+    document.body.appendChild(ov);
+
+    const img = ov.querySelector('#ipAdjImg');
+    const yaw = ov.querySelector('#ipAdjYaw');
+    const pitch = ov.querySelector('#ipAdjPitch');
+    const sizeEl = ov.querySelector('#ipAdjSize');
+    const sizeLabel = ov.querySelector('#ipAdjSizeLabel');
+    const SIZES = [128, 256, 512, 1024];
+    const close = (v) => bye(ov, () => onDone(v));
+    ov.querySelector('#ipAdjX').onclick = () => close(null);
+    ov.querySelector('#ipAdjCancel').onclick = () => close(null);
+    ov.addEventListener('mousedown', e => { if (e.target === ov) close(null); });
+
+    // Which parts are drawn. Everything, until told otherwise.
+    const off = new Set();
+    let desc = base;
+    let url = null;
+
+    const partsWrap = ov.querySelector('#ipAdjPartsWrap');
+    const partsBox = ov.querySelector('#ipAdjParts');
+    function paintParts() {
+      partsBox.innerHTML = '';
+      const list = (desc && desc.parts) || [];
+      partsWrap.style.display = list.length > 1 ? '' : 'none';
+      for (const p of list) {
+        const l = document.createElement('label');
+        l.style.cssText = 'display:flex; align-items:center; gap:5px; cursor:pointer;';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !off.has(p.key);
+        cb.onchange = () => { if (cb.checked) off.delete(p.key); else off.add(p.key); redraw(); };
+        const t = document.createElement('span');
+        t.textContent = p.label;
+        l.append(cb, t);
+        partsBox.appendChild(l);
+      }
+    }
+
+    // The same model wearing a different skin: a cow is six textures, a
+    // cushion sixteen.
+    const variantWrap = ov.querySelector('#ipAdjVariantWrap');
+    const variantSel = ov.querySelector('#ipAdjVariant');
+    function paintVariants() {
+      const list = (desc && desc.variants) || [];
+      variantWrap.style.display = list.length > 1 ? '' : 'none';
+      if (list.length < 2) return;
+      variantSel.innerHTML = '';
+      for (const v of list) {
+        const o = document.createElement('option');
+        o.value = v.path;
+        o.textContent = v.label || v.path.split('/').pop().replace(/\.png$/, '');
+        variantSel.appendChild(o);
+      }
+      variantSel.value = desc.texture || list[0].path;
+      variantSel.onchange = async () => {
+        const next = await ipcRenderer.invoke('model:entity', {
+          profileId: opts0.instanceId ?? null, version: opts0.version || null,
+          name: String(info.item.id).replace(/^entity:/, ''), texture: variantSel.value,
+        });
+        if (next && !next.error) { desc = next; paintParts(); redraw(); }
+      };
+    }
+
+    // The same block in another state: which way it faces, whether it is open.
+    const stateWrap = ov.querySelector('#ipAdjStateWrap');
+    const stateSel = ov.querySelector('#ipAdjState');
+    async function loadStates() {
+      if (!info.item || info.item.kind !== 'block') return;
+      let r = null;
+      try {
+        r = await ipcRenderer.invoke('model:states', {
+          profileId: opts0.instanceId ?? null, version: opts0.version || null, id: info.item.id,
+        });
+      } catch { /* a block with no states is the usual case */ }
+      const list = Array.isArray(r) ? r : ((r && r.states) || []);
+      if (list.length < 2) return;
+      stateWrap.style.display = '';
+      stateSel.innerHTML = '';
+      let preferred = '';
+      for (const st of list) {
+        const o = document.createElement('option');
+        o.value = typeof st === 'string' ? st : (st.state || '');
+        o.textContent = o.value || 'default';
+        if (st && st.preferred) preferred = o.value;
+        stateSel.appendChild(o);
+      }
+      stateSel.value = info.state || preferred || stateSel.options[0].value;
+      stateSel.onchange = async () => {
+        const next = await ipcRenderer.invoke('model:describe', {
+          profileId: opts0.instanceId ?? null, version: opts0.version || null,
+          id: info.item.id, state: stateSel.value,
+        });
+        if (next && !next.error) { desc = next; paintParts(); paintVariants(); redraw(); }
+      };
+    }
+
+    let drawing = null;
+    async function redraw() {
+      if (!window.BlockRender || !desc) return;
+      const size = SIZES[+sizeEl.value] || 256;
+      sizeLabel.textContent = size + 'px';
+      const shown = off.size
+        ? { ...desc, elements: desc.elements.filter(el => !off.has(el.group || '')) }
+        : desc;
+      const job = window.BlockRender.render(shown, {
+        size,
+        rotX: (desc.rotX || 0) + (+pitch.value),
+        rotY: (desc.rotY || 0) + (+yaw.value),
+        uvlock: !!desc.uvlock,
+      });
+      drawing = job;
+      const out = await job;
+      if (drawing !== job || !ov.isConnected) return;     // a later change won
+      if (out) { url = out; img.src = out; }
+    }
+    yaw.oninput = redraw;
+    pitch.oninput = redraw;
+    sizeEl.oninput = redraw;
+    ov.querySelector('#ipAdjOk').onclick = () => close(url);
+
+    paintParts();
+    paintVariants();
+    loadStates();
+    redraw();
+  }
+  // The options the picker was opened with, so the adjust dialog can ask for
+  // the same instance's models.
+  let opts0 = {};
+
   // Crop + optional circle mask. Everything reaching this is already a data:
   // URL, so the canvas is never tainted and toDataURL always works.
   function openCropper(src, onDone) {
@@ -546,9 +722,13 @@
   }
 
   window.IconPicker = {
+    // Exposed for the tests: the adjust dialog on its own, without the
+    // picker around it.
+    __adjust: (info, done) => openModelAdjust(info, done),
     // opts: { instanceId?, serverName?, version?, onPick }
     open(opts) {
       ensureStyle();
+      opts0 = opts || {};
       const ov = document.createElement('div');
       ov.className = 'modal-overlay active';
       ov.style.zIndex = 6000;
@@ -613,7 +793,13 @@
           window.ModelPicker.mount(ov.querySelector('#ipModels'), {
             instanceId: opts.instanceId ?? null,
             version: opts.version || null,
-            onPick: (url) => editThenPick(url),
+            // A model goes through the adjust dialog first -- turn it, size
+            // it, switch a part off -- and then the cropper, like everything
+            // else.
+            onPick: (url, info) => {
+              if (info && info.desc) openModelAdjust(info, (out) => { if (out) editThenPick(out); });
+              else editThenPick(url);
+            },
           });
         }
       } catch (e) { console.info('[icon picker] models unavailable:', e && e.message); }
