@@ -58,7 +58,8 @@
     // The picker: which version, and whether this becomes a client instance or
     // a server. Install used to drop straight into "newest, as an instance",
     // which is why packs meant to be hosted kept turning into instances.
-    open(project, versions) {
+    open(project, versions, opts) {
+      opts = opts || {};
       ensureStyle();
       // One at a time: this can be reached from several places, and a second
       // copy on top of the first is never what was meant.
@@ -89,7 +90,7 @@
       // hint that a row had to be picked first.
       let chosen = list[0] || null;
 
-      const close = () => ov.remove();
+      const close = () => (window.ModalFX ? window.ModalFX.close(ov, () => ov.remove()) : ov.remove());
       card.querySelector('.mpi-x').onclick = close;
       card.querySelector('.mpi-cancel').onclick = close;
       ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
@@ -157,6 +158,21 @@
             return uiAlert((r && r.error)
               || 'CurseForge would not hand out a download link for that file.', 'Nothing to install');
           }
+        }
+        // The caller may want a last page before anything is downloaded --
+        // the same "here is what is about to be made" the hand-built route
+        // ends with. When it does, hand it what was chosen instead of
+        // starting the install here.
+        if (typeof opts.onChoose === 'function') {
+          close();
+          opts.onChoose({
+            url, mode, project, version: chosen,
+            name: project.title || chosen.name,
+            icon: iconOf(project),
+            mc: (chosen.game_versions || [])[0] || null,
+            loader: (chosen.loaders || [])[0] || 'vanilla',
+          });
+          return;
         }
         await window.ModpackInstall.start(url, project.title || chosen.name, mode, iconOf(project));
       };

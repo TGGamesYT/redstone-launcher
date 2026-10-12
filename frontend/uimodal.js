@@ -70,7 +70,8 @@
         if (settled) return;
         settled = true;
         document.removeEventListener('keydown', onKey, true);
-        ov.remove();
+        // Out the way it came in, rather than blinking away.
+        if (window.ModalFX) window.ModalFX.close(ov, () => ov.remove()); else ov.remove();
         resolve(v);
       };
       const no_ = kind === 'alert' ? undefined : (kind === 'prompt' ? null : false);

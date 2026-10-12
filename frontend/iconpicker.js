@@ -4,6 +4,14 @@
 (function () {
   const { ipcRenderer } = require('electron');
 
+  // Out the way it came in. ModalFX plays the leaving animation and then
+  // does the removing; without it (a page that does not load it) the modal
+  // just goes, which is what used to happen everywhere.
+  const bye = (el, after) => {
+    if (window.ModalFX) window.ModalFX.close(el, () => { el.remove(); if (after) after(); });
+    else { el.remove(); if (after) after(); }
+  };
+
   // Predefined icons — Minecraft block renders bundled in assets/icons.
   const PRESET_ICONS = [
     'Block_of_Diamond_JE5_BE3.png', 'Block_of_Emerald_JE4_BE3.png', 'Block_of_Gold_JE6_BE3.png',
@@ -211,7 +219,7 @@
       if (raf) cancelAnimationFrame(raf);
       try { renderer && renderer.dispose(); } catch { }
       try { renderer && renderer.forceContextLoss(); } catch { }
-      ov.remove();
+      bye(ov);
     };
     ov.querySelector('#ipPanX').onclick = close;
     ov.querySelector('#ipPanCancel').onclick = close;
@@ -474,7 +482,7 @@
       zoomEl.min = String(Math.floor(minZoom * 100));
       draw();
     };
-    im.onerror = () => { ov.remove(); onDone(null); };
+    im.onerror = () => bye(ov, () => onDone(null));
     im.src = src;
 
     zoomEl.oninput = () => { zoom = Math.max(minZoom, zoomEl.value / 100); draw(); };
@@ -511,7 +519,7 @@
     stage.addEventListener('pointerup', endDrag);
     stage.addEventListener('pointercancel', endDrag);
 
-    const close = (v) => { ov.remove(); onDone(v); };
+    const close = (v) => bye(ov, () => onDone(v));
     ov.querySelector('#ipCropX').onclick = () => close(null);
     ov.querySelector('#ipCropCancel').onclick = () => close(null);
     ov.addEventListener('mousedown', e => { if (e.target === ov) close(null); });
@@ -562,7 +570,7 @@
         <input type="file" id="ipFile" accept="image/*" style="display:none;" />
       </div>`;
       document.body.appendChild(ov);
-      const close = () => { hidePeek(); ov.remove(); };
+      const close = () => { hidePeek(); bye(ov); };
       wirePeek(ov);
       const pick = (dataUrl) => { close(); opts.onPick && opts.onPick(dataUrl); };
       // EVERYTHING goes through the cropper. It used to be only the wide
@@ -889,7 +897,7 @@
         sub.querySelector('p').textContent = name;
         document.body.appendChild(sub);
         const body = sub.querySelector('#ipWhichBody');
-        const close = () => sub.remove();
+        const close = () => bye(sub);
         sub.querySelector('#ipWhichX').onclick = close;
         sub.querySelector('#ipWhichCancel').onclick = close;
         sub.addEventListener('mousedown', e => { if (e.target === sub) close(); });

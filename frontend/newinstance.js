@@ -61,9 +61,12 @@
 
       /* The version / loader cards: the wiki banner behind, the version's own
          rendered icon on top of it, the name under that. */
-      .ni-cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px;
+      /* The version and loader pages are the whole job, not a dialog off to
+         one side, so they take the window rather than a box in the middle. */
+      .ni-card.wide { width:calc(100% - 56px); max-width:none; height:calc(100% - 56px); max-height:none; }
+      .ni-cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:12px;
         overflow-y:auto; flex:1; min-height:0; padding:2px; align-content:start; }
-      .ni-tile { position:relative; height:104px; border:2px solid var(--border-dark);
+      .ni-tile { position:relative; height:132px; border:2px solid var(--border-dark);
         border-radius:var(--border-radius); overflow:hidden; cursor:pointer;
         background:var(--very-dark); transition:var(--smooth-transition); }
       .ni-tile:hover { border-color:var(--base-color); }
@@ -76,10 +79,10 @@
         rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.35) 45%, rgba(0,0,0,0.78) 100%); }
       .ni-tile .inner { position:absolute; inset:0; display:flex; flex-direction:column;
         align-items:center; justify-content:center; gap:6px; padding:8px; text-align:center; }
-      .ni-tile .inner img { width:40px; height:40px; object-fit:contain;
+      .ni-tile .inner img { width:54px; height:54px; object-fit:contain;
         filter:drop-shadow(0 2px 4px rgba(0,0,0,0.7)); }
-      .ni-tile .n { font-size:13px; font-weight:600; text-shadow:0 1px 3px rgba(0,0,0,0.9); }
-      .ni-tile .s { font-size:10px; opacity:0.85; text-shadow:0 1px 3px rgba(0,0,0,0.9); }
+      .ni-tile .n { font-size:16px; font-weight:600; text-shadow:0 1px 3px rgba(0,0,0,0.9); }
+      .ni-tile .s { font-size:11px; opacity:0.85; text-shadow:0 1px 3px rgba(0,0,0,0.9); }
       /* The snapshot card is the odd one out and says so. */
       .ni-tile.wide { grid-column:span 2; }
       .ni-plain { display:flex; align-items:center; justify-content:space-between; gap:10px;
@@ -89,7 +92,28 @@
       .ni-plain.sel { background:var(--base-color); }
       .ni-plain .m { font-size:11px; opacity:0.75; }
       .ni-plainlist { overflow-y:auto; flex:1; min-height:0; border:1px solid var(--border-dark);
-        border-radius:var(--border-radius); }`;
+        border-radius:var(--border-radius); }
+
+      /* The last page: what is about to be made, and the few things worth
+         changing before it is. */
+      .ni-fin { display:flex; gap:22px; align-items:flex-start; overflow-y:auto; flex:1; min-height:0; padding:4px 2px; }
+      .ni-fin .pic { flex:0 0 150px; text-align:center; }
+      .ni-fin .pic img { width:150px; height:150px; object-fit:contain; image-rendering:pixelated;
+        border:2px solid var(--border-dark); border-radius:var(--border-radius); background:var(--very-dark); }
+      .ni-fin .pic button { margin-top:8px; width:100%; }
+      .ni-fin .fields { flex:1; min-width:0; display:flex; flex-direction:column; gap:12px; }
+      .ni-fin label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;
+        opacity:0.65; margin-bottom:4px; }
+      .ni-fin input[type=text] { width:100%; box-sizing:border-box; padding:10px 12px; margin:0;
+        border:1px solid var(--border-dark); border-radius:var(--border-radius);
+        background:var(--very-dark); color:var(--text-color); font-family:var(--text-font); font-size:15px; }
+      .ni-chips { display:flex; gap:10px; flex-wrap:wrap; }
+      .ni-chip { display:flex; align-items:center; gap:8px; padding:8px 12px; cursor:pointer;
+        border:2px solid var(--border-dark); border-radius:var(--border-radius); background:var(--menu-bg); }
+      .ni-chip:hover { border-color:var(--base-color); }
+      .ni-chip img { width:24px; height:24px; object-fit:contain; image-rendering:pixelated; }
+      .ni-chip .k { font-size:10px; text-transform:uppercase; letter-spacing:0.05em; opacity:0.6; }
+      .ni-chip .v { font-size:14px; }`;
     document.head.appendChild(s);
   }
 
@@ -109,11 +133,15 @@
 
   const shell = (title, sub, opts = {}) => {
     ensureStyle();
-    if (openShell && openShell.isConnected) openShell.remove();
+    // Including one that is still fading out: the page that is arriving
+    // must be the only one on screen, or a click lands on the wrong card and
+    // anything reading the page sees the one that is leaving.
+    document.querySelectorAll('.ni-overlay').forEach(x => x.remove());
+    openShell = null;
     const ov = document.createElement('div');
     ov.className = 'ni-overlay';
     const card = document.createElement('div');
-    card.className = 'ni-card';
+    card.className = 'ni-card' + (opts.wide ? ' wide' : '');
     card.innerHTML = `
       <div class="ni-head">
         <div class="ni-title"><button class="ni-back" style="display:none" title="Back">‹</button><h2></h2></div>
@@ -127,7 +155,10 @@
     ov.appendChild(card);
     document.body.appendChild(ov);
     openShell = ov;
-    const close = () => { ov.remove(); if (openShell === ov) openShell = null; };
+    const close = () => {
+      if (openShell === ov) openShell = null;
+      if (window.ModalFX) window.ModalFX.close(ov, () => ov.remove()); else ov.remove();
+    };
     const back = typeof opts.onBack === 'function'
       ? () => { close(); opts.onBack(); }
       : null;
@@ -346,9 +377,22 @@
           return uiAlert("That modpack has no downloadable versions.", 'Nothing to install');
         }
         close();
-        window.ModpackInstall.open({
-          title: project.title, id: project.id, icon_url: project.icon, source: project.source,
-        }, versions);
+        const asProject = { title: project.title, id: project.id, icon_url: project.icon, source: project.source };
+        window.ModpackInstall.open(asProject, versions, {
+          // A modpack gets the same last page a mod does: what is about to be
+          // made, with a chance to name it and give it an icon first.
+          onChoose: (picked) => pickFinalize({
+            version: picked.mc || '',
+            loader: picked.loader || 'vanilla',
+            prefill: { name: picked.name, icon: picked.icon, projectTitle: null },
+            pack: true,
+            onBack: () => window.ModpackInstall.open(asProject, versions, { onChoose: null }),
+            onCreate: (profile) => {
+              window.NewInstance.closeAll();
+              window.ModpackInstall.start(picked.url, profile.name, picked.mode, profile.icon || picked.icon);
+            },
+          }),
+        });
         return;
       }
 
@@ -370,8 +414,7 @@
       const newest = versions[0];
       const gameVersion = (newest.game_versions || []).slice(-1)[0] || null;
       const loader = (newest.loaders || [])[0] || 'vanilla';
-      close();
-      opts.onCustom && opts.onCustom({
+      const prefill = {
         name: project.title,
         icon: project.icon || null,
         version: gameVersion,
@@ -384,7 +427,10 @@
         projectTitle: project.title,
         supportedVersions: [...supportedVersions],
         supportedLoaders: [...supportedLoaders],
-      });
+      };
+      // The same version and loader pages as building one by hand, limited to
+      // what this mod runs on, and the same last page at the end of them.
+      buildFlow(opts, () => openSearch(opts), prefill);
     }
 
     let timer = null;
@@ -462,24 +508,56 @@
         // of a hand-built instance was a form with two dropdowns on it.
         onClick: () => {
           close();
-          pickVersion({
-            onBack: reopen,
-            onPick: (version) => pickLoader({
-              version,
-              onBack: () => window.NewInstance.choose(opts),
-              onPick: (loader) => {
-                window.NewInstance.closeAll();
-                opts.onCustom && opts.onCustom({ version, loader }, reopen);
-              },
-            }),
-          });
+          buildFlow(opts, reopen, null);
         },
       });
     },
     pickVersion,
     pickLoader,
+    pickFinalize,
+    build: (opts, prefill) => buildFlow(opts, () => window.NewInstance.choose(opts), prefill || null),
     closeAll() { if (openShell && openShell.isConnected) openShell.remove(); openShell = null; },
   };
+
+  // Version, then loader, then the last page. `prefill` is what a mod or a
+  // modpack brought with it; when it names a version and a loader those steps
+  // are skipped, because the mod decided them.
+  function buildFlow(opts, back, prefill) {
+    const pre = prefill || {};
+    const finish = (version, loader, onBack, onLoaderBack) => pickFinalize({
+      version, loader, prefill: pre,
+      onBack, onLoaderBack,
+      onCreate: (profile, carried) => {
+        window.NewInstance.closeAll();
+        opts.onCreate
+          ? opts.onCreate(profile, carried)
+          : (opts.onCustom && opts.onCustom({ ...carried, ...profile }, back));
+      },
+      // Everything the last page does not ask about is in the old creator,
+      // which opens filled in with what has been chosen so far.
+      onMore: (sofar) => {
+        window.NewInstance.closeAll();
+        opts.onCustom && opts.onCustom({ ...pre, ...sofar }, back);
+      },
+    });
+
+    const loaderStep = (version, onBack) => pickLoader({
+      version,
+      onBack,
+      // Only the loaders this mod has builds for, when it came from one.
+      only: pre.supportedLoaders && pre.supportedLoaders.length ? pre.supportedLoaders : null,
+      onPick: (loader) => finish(version, loader,
+        () => versionStep(), () => loaderStep(version, onBack)),
+    });
+
+    const versionStep = () => pickVersion({
+      onBack: back,
+      only: pre.supportedVersions && pre.supportedVersions.length ? pre.supportedVersions : null,
+      onPick: (version) => loaderStep(version, () => versionStep()),
+    });
+
+    versionStep();
+  }
 
   // ── Picking a version ─────────────────────────────────────────────────────
   // A card per release: the wiki's banner for that version behind it, that
@@ -489,41 +567,27 @@
   // Snapshots are not cards. There are thousands of them, almost none has a
   // banner, and nobody browses them — so they live behind a button next to
   // Continue, as a plain list.
-  async function pickVersion(opts, preselect) {
+  async function pickVersion(opts) {
     opts = opts || {};
     const { card, list } = shell(
       'Which Minecraft version?',
       'Releases, newest first. Snapshots are behind the button at the bottom.',
-      { onBack: opts.onBack }
+      { onBack: opts.onBack, wide: true }
     );
     list.className = 'ni-cards';
+
+    // Clicking a version IS choosing it. There was a Continue button to press
+    // afterwards, and a Cancel that did what the ✕ already does.
+    const choose = (version) => { if (version) opts.onPick && opts.onPick(version); };
 
     const actions = card.querySelector('.ni-actions');
     const snapBtn = document.createElement('button');
     snapBtn.textContent = 'Select a snapshot…';
-    // Bottom left, beside Continue but outside the cards, so it does not
-    // scroll away with them.
+    // Bottom left, outside the cards, so it does not scroll away with them.
     snapBtn.style.marginRight = 'auto';
-    const goBtn = document.createElement('button');
-    goBtn.textContent = 'Continue';
-    goBtn.className = 'primary';
-    goBtn.style.background = 'var(--base-color)';
-    goBtn.disabled = true;
     actions.prepend(snapBtn);
-    actions.appendChild(goBtn);
-
-    // A snapshot chosen from the list comes back here as the selection, so
-    // Continue means the same thing whichever way the version was picked.
-    let chosen = preselect || null;
-    const choose = (version, tile) => {
-      chosen = version;
-      list.querySelectorAll('.ni-tile.sel').forEach(t => t.classList.remove('sel'));
-      if (tile) tile.classList.add('sel');
-      goBtn.disabled = !chosen;
-      goBtn.textContent = chosen ? `Continue with ${chosen}` : 'Continue';
-    };
-    if (chosen) choose(chosen, null);
-    goBtn.onclick = () => { if (chosen) opts.onPick && opts.onPick(chosen); };
+    const cancel = actions.querySelector('.ni-cancel');
+    if (cancel) cancel.remove();
 
     list.innerHTML = '<div class="ni-empty">Loading versions…</div>';
     let data = { releases: [], snapshots: [], latest: {}, next: null };
@@ -539,51 +603,45 @@
     // which is usually the release these snapshots are building up to, and is
     // in the list before that release exists — and its banner is the newest
     // snapshot's own.
-    const latestSnapshot = (data.latest && data.latest.snapshot) || (data.snapshots[0] && data.snapshots[0].id);
+    const only = opts.only ? new Set(opts.only) : null;
+    const latestSnapshot = only
+      ? (data.snapshots.find(sn => only.has(sn.id)) || {}).id
+      : ((data.latest && data.latest.snapshot) || (data.snapshots[0] && data.snapshots[0].id));
     if (latestSnapshot) {
       const tile = makeTile({
         name: 'Latest snapshot', sub: latestSnapshot, wide: true,
         iconVersion: data.next || latestSnapshot, bannerVersion: latestSnapshot,
       });
-      tile.onclick = () => choose(latestSnapshot, tile);
+      tile.onclick = () => choose(latestSnapshot);
       list.appendChild(tile);
     }
 
-    for (const r of data.releases) {
+    // Started from a mod: only what that mod has a build for. Picking
+    // anything else makes an instance the mod cannot run in.
+    const releases = only ? data.releases.filter(r => only.has(r.id)) : data.releases;
+    for (const r of releases) {
       const tile = makeTile({ name: r.id, sub: whenShort(r.at), iconVersion: r.id, bannerVersion: r.id });
-      tile.onclick = () => choose(r.id, tile);
+      tile.onclick = () => choose(r.id);
       list.appendChild(tile);
+    }
+    if (only && !releases.length) {
+      list.innerHTML = '<div class="ni-empty">No release supports it. Try the snapshots.</div>';
     }
 
     // A plain list, because a snapshot has no banner and no icon of its own
     // and a grid of identical grey cards would be worse than a list.
     snapBtn.onclick = () => {
-      const picked = chosen;
       pickFromList({
         title: 'Which snapshot?',
-        sub: 'Every snapshot, pre-release and release candidate, newest first.',
-        items: data.snapshots.map(s => ({ id: s.id, meta: whenShort(s.at) })),
-        selected: picked,
-        onBack: () => pickVersion(opts, picked),
-        onPick: (id) => pickVersion(opts, id),
+        sub: 'Every snapshot, pre-release and release candidate, newest first. '
+          + 'Picking one goes straight on, the same as picking a release.',
+        items: data.snapshots
+          .filter(sn => !only || only.has(sn.id))
+          .map(sn => ({ id: sn.id, meta: whenShort(sn.at) })),
+        onBack: () => pickVersion(opts),
+        onPick: (id) => choose(id),
       });
     };
-
-    // The card for a chosen snapshot: it has none of its own, so the snapshot
-    // card stands in for it and carries its name.
-    if (chosen && !data.releases.some(r => r.id === chosen)) {
-      const first = list.querySelector('.ni-tile');
-      if (first) {
-        first.classList.add('sel');
-        const s = first.querySelector('.s');
-        if (s) s.textContent = chosen;
-      }
-    } else if (chosen) {
-      for (const t of list.querySelectorAll('.ni-tile')) {
-        const n = t.querySelector('.n');
-        if (n && n.textContent === chosen) { t.classList.add('sel'); break; }
-      }
-    }
   }
 
   const whenShort = (ms) => {
@@ -645,23 +703,18 @@
 
   // A plain scrolling list with a Use button — the snapshots, and anything
   // else that has nothing to show for itself.
-  function pickFromList({ title, sub, items, selected, onBack, onPick }) {
-    const { card, list, close } = shell(title, sub, { onBack });
+  function pickFromList({ title, sub, items, onBack, onPick }) {
+    const { card, list, close } = shell(title, sub, { onBack, wide: true });
     list.className = 'ni-plainlist';
     const input = document.createElement('input');
     input.className = 'ni-search';
     input.type = 'text';
     input.placeholder = 'Search';
     card.querySelector('.ni-sub').after(input);
+    const cancel = card.querySelector('.ni-cancel');
+    if (cancel) cancel.remove();
 
-    const actions = card.querySelector('.ni-actions');
-    const goBtn = document.createElement('button');
-    goBtn.textContent = 'Use this';
-    goBtn.style.background = 'var(--base-color)';
-    goBtn.disabled = true;
-    actions.appendChild(goBtn);
-
-    let chosen = selected || null;
+    // Clicking one picks it, the same as clicking a card on the page before.
     const paint = () => {
       const q = input.value.trim().toLowerCase();
       list.innerHTML = '';
@@ -672,21 +725,163 @@
       }
       for (const it of shown.slice(0, 600)) {
         const r = document.createElement('div');
-        r.className = 'ni-plain' + (chosen === it.id ? ' sel' : '');
+        r.className = 'ni-plain';
         const a = document.createElement('div');
         a.textContent = it.id;
         const b = document.createElement('div');
         b.className = 'm';
         b.textContent = it.meta || '';
         r.append(a, b);
-        r.onclick = () => { chosen = it.id; goBtn.disabled = false; paint(); };
+        r.onclick = () => { close(); onPick && onPick(it.id); };
         list.appendChild(r);
       }
     };
-    goBtn.disabled = !chosen;
     input.oninput = paint;
     paint();
-    goBtn.onclick = () => { if (chosen) { close(); onPick && onPick(chosen); } };
+    setTimeout(() => input.focus(), 0);
+  }
+
+  // ── The last page ─────────────────────────────────────────────────────────
+  // What is about to be made, and the two things worth changing before it is:
+  // its name and its icon. Everything else has a sensible answer already, and
+  // the ones that do not are behind "More settings", which is the old creator.
+  //
+  //   pickFinalize({ version, loader, prefill, onBack, onCreate, onMore })
+  //
+  // `prefill` is what a mod or modpack the instance was started from brought
+  // with it. `onCreate(profile, prefill)` is handed the finished thing -- the
+  // page that opened this owns the making of it, because it also owns what
+  // happens next (opening the instance, putting the mod in it).
+  const LOADER_NAMES = { vanilla: 'Vanilla', fabric: 'Fabric', forge: 'Forge', neoforge: 'NeoForge', quilt: 'Quilt' };
+
+  function pickFinalize(opts) {
+    opts = opts || {};
+    const pre = opts.prefill || {};
+    const version = opts.version;
+    const loader = opts.loader || 'vanilla';
+    const loaderName = LOADER_NAMES[loader] || loader;
+    const autoName = pre.name || `${loaderName} ${version}`;
+
+    const { card, list } = shell(
+      'Ready to make it',
+      'Give it a name and an icon, or leave them and they will be filled in.',
+      { onBack: opts.onBack, wide: true }
+    );
+    list.className = 'ni-fin';
+    const cancelBtn = card.querySelector('.ni-cancel');
+    if (cancelBtn) cancelBtn.remove();
+
+    // ── the icon ──
+    let icon = pre.icon || null;
+    const pic = document.createElement('div');
+    pic.className = 'pic';
+    const img = document.createElement('img');
+    img.alt = '';
+    const pickIcon = document.createElement('button');
+    pickIcon.textContent = 'Change icon…';
+    pic.append(img, pickIcon);
+    const showIcon = (src) => { if (src) img.src = src; };
+    showIcon(icon);
+    // No icon of its own: the block its version is remembered for, which is
+    // what it would end up with anyway.
+    if (!icon && window.VersionIcon) {
+      window.VersionIcon.get(version).then(u => { if (!icon && u) showIcon(u); }).catch(() => { });
+    }
+    pickIcon.onclick = () => {
+      if (!window.IconPicker) return;
+      window.IconPicker.open({ version, onPick: (d) => { icon = d; showIcon(d); } });
+    };
+
+    // ── the fields ──
+    const fields = document.createElement('div');
+    fields.className = 'fields';
+    const nameWrap = document.createElement('div');
+    const nameLabel = document.createElement('label');
+    nameLabel.textContent = 'Name';
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.placeholder = autoName;
+    name.value = pre.name || '';
+    nameWrap.append(nameLabel, name);
+
+    // What was chosen on the way here, each one a way back to that step.
+    const chips = document.createElement('div');
+    chips.className = 'ni-chips';
+    const chip = (kind, value, art, back) => {
+      const c = document.createElement('div');
+      c.className = 'ni-chip';
+      c.title = 'Change it';
+      if (art) { const i = document.createElement('img'); i.src = art; c.appendChild(i); }
+      const t = document.createElement('div');
+      const k = document.createElement('div'); k.className = 'k'; k.textContent = kind;
+      const v = document.createElement('div'); v.className = 'v'; v.textContent = value;
+      t.append(k, v);
+      c.appendChild(t);
+      c.onclick = back;
+      chips.appendChild(c);
+      return c;
+    };
+    const vChip = chip('Minecraft', version || 'from the pack', null,
+      () => { if (!opts.pack && opts.onBack) opts.onBack(); });
+    if (window.VersionIcon) {
+      window.VersionIcon.get(version).then(u => {
+        if (!u || !vChip.isConnected) return;
+        const i = document.createElement('img');
+        i.src = u;
+        vChip.prepend(i);
+      }).catch(() => { });
+    }
+    const loaderArt = (LOADERS.find(l => l.id === loader) || {}).icon;
+    chip('Loader', loaderName, loaderArt,
+      () => { if (!opts.pack && opts.onLoaderBack) opts.onLoaderBack(); });
+
+    const chipWrap = document.createElement('div');
+    const chipLabel = document.createElement('label');
+    chipLabel.textContent = 'Running';
+    chipWrap.append(chipLabel, chips);
+
+    fields.append(nameWrap, chipWrap);
+
+    if (pre.projectTitle) {
+      const note = document.createElement('div');
+      note.className = 'ni-empty';
+      note.style.padding = '0';
+      note.textContent = `${pre.projectTitle} will be installed into it once it exists.`;
+      fields.appendChild(note);
+    }
+
+    list.append(pic, fields);
+
+    // ── the buttons ──
+    const actions = card.querySelector('.ni-actions');
+    // A pack brings its own settings; there is no creator behind it to open.
+    const more = opts.pack ? null : document.createElement('button');
+    if (more) {
+      more.textContent = 'More settings…';
+      more.onclick = () => opts.onMore && opts.onMore({
+        name: name.value.trim() || autoName, icon, version, loader, ...pre,
+      });
+    }
+    const make = document.createElement('button');
+    make.textContent = opts.pack ? 'Install it' : 'Create';
+    make.style.background = 'var(--base-color)';
+    make.onclick = async () => {
+      make.disabled = true;
+      make.textContent = 'Creating…';
+      let finalIcon = icon;
+      if (!finalIcon && window.VersionIcon) {
+        try { finalIcon = await window.VersionIcon.forNewInstance(version); } catch { /* the default will do */ }
+      }
+      opts.onCreate && opts.onCreate({
+        name: name.value.trim() || autoName,
+        version, loader,
+        loaderVersion: '',
+        icon: finalIcon || null,
+      }, pre);
+    };
+    if (more) actions.appendChild(more);
+    actions.appendChild(make);
+    setTimeout(() => name.focus(), 0);
   }
 
   // ── Picking a loader ──────────────────────────────────────────────────────
@@ -706,28 +901,18 @@
     const { card, list } = shell(
       'Which mod loader?',
       opts.version ? `For Minecraft ${opts.version}.` : 'Pick what the instance runs its mods with.',
-      { onBack: opts.onBack }
+      { onBack: opts.onBack, wide: true }
     );
     list.className = 'ni-cards';
+    const cancelBtn = card.querySelector('.ni-cancel');
+    if (cancelBtn) cancelBtn.remove();
 
-    const goBtn = document.createElement('button');
-    goBtn.textContent = 'Continue';
-    goBtn.style.background = 'var(--base-color)';
-    goBtn.disabled = true;
-    card.querySelector('.ni-actions').appendChild(goBtn);
-
-    let chosen = null;
-    goBtn.onclick = () => { if (chosen) opts.onPick && opts.onPick(chosen); };
-
-    for (const l of LOADERS) {
+    // Started from a mod: only the loaders it has builds for.
+    const only = opts.only ? new Set(opts.only.map(x => String(x).toLowerCase())) : null;
+    const offered = only ? LOADERS.filter(l => only.has(l.id)) : LOADERS;
+    for (const l of (offered.length ? offered : LOADERS)) {
       const tile = makeTile({ name: l.name, sub: l.sub, icon: l.icon });
-      tile.onclick = () => {
-        chosen = l.id;
-        list.querySelectorAll('.ni-tile.sel').forEach(t => t.classList.remove('sel'));
-        tile.classList.add('sel');
-        goBtn.disabled = false;
-        goBtn.textContent = `Continue with ${l.name}`;
-      };
+      tile.onclick = () => opts.onPick && opts.onPick(l.id);
       list.appendChild(tile);
       edgeBanner(l.icon).then(url => {
         if (!url) return;

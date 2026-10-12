@@ -12,14 +12,14 @@ started.
 ## 0. Round 22
 
 ### A. Modals and the new-instance flow
-- [ ] **Every modal should animate in and out**, not appear and vanish.
-- [ ] **"Set it up myself" is too small for what it is.** The version and loader
+- [x] **Every modal should animate in and out**, not appear and vanish.
+- [x] **"Set it up myself" is too small for what it is.** The version and loader
       pages should fill the window rather than sitting in a small box in the
       middle, with bigger cards.
-- [ ] **Drop Cancel and Continue from those pages.** Cancel does what the ✕
+- [x] **Drop Cancel and Continue from those pages.** Cancel does what the ✕
       already does, and clicking a version (or a snapshot) should go straight on.
-- [ ] **After the version and loader, open a finalize page**, not the old
-      create-instance modal.
+- [x] **After the version and loader, open a finalize page**, not the old
+      create-instance modal. A mod and a modpack end on the same page.
 
 ### B. Block and entity rendering
 - [ ] **Some things cannot be found at all** in the icon picker's search —

@@ -29,6 +29,7 @@
   <script src="defaults.js"></script>
   <script src="console-commands.js"></script>
   <script src="loading.js"></script>
+  <script src="modalfx.js"></script>
   <script src="pixelart.js"></script>
   <script src="blockrender.js"></script>
   <script src="modelpicker.js"></script>
@@ -1024,6 +1025,16 @@
         window.NewInstance.choose({
           target: 'instance',
           onCustom: (prefill, onBack) => openCustomCreator(prefill, onBack),
+          // The last page of the new-instance flow hands over a finished
+          // profile. Making it is this page's job, because what happens next
+          // -- opening it, putting the mod it was started from into it -- is
+          // this page's job too.
+          onCreate: (profile, from) => {
+            modalCreateBtn._prefillProject = (from && (from.projectId || from.curseId))
+              ? { source: from.source || 'modrinth', projectId: from.projectId || null, curseId: from.curseId || null }
+              : null;
+            ipcRenderer.send('create-profile', profile);
+          },
           onImportFile: (onBack) => {
             const btn = document.getElementById('importPackBtn') || { innerHTML: '', disabled: false };
             // The file dialog is the OS's, so there is no modal to put a Back

@@ -27,6 +27,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <script src="defaults.js"></script>
   <script src="console-commands.js"></script>
   <script src="loading.js"></script>
+  <script src="modalfx.js"></script>
   <script src="pixelart.js"></script>
   <script src="blockrender.js"></script>
   <script src="modelpicker.js"></script>
@@ -1248,6 +1249,26 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       if (!window.NewInstance) return openServerModal(null);
       window.NewInstance.choose({
         target: 'server',
+        // A server is made through its own form, so the flow's last page
+        // hands what was chosen to that rather than making anything itself.
+        onCreate: (profile) => {
+          openServerModal(null);
+          if (profile.name) $('srvName').value = profile.name;
+          const type = $('srvType');
+          if (profile.loader && [...type.options].some(o => o.value === profile.loader)) {
+            type.value = profile.loader;
+            type.dispatchEvent(new Event('change'));
+          }
+          if (profile.version) {
+            const sel = $('srvVersion');
+            if (![...sel.options].some(o => o.value === profile.version)) {
+              const opt = document.createElement('option');
+              opt.value = opt.textContent = profile.version;
+              sel.appendChild(opt);
+            }
+            sel.value = profile.version;
+          }
+        },
         onCustom: (prefill) => {
           openServerModal(null);
           if (!prefill) return;
