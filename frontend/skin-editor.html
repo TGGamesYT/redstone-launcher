@@ -85,6 +85,13 @@
     .ed-btn-row { display: flex; gap: 6px; }
     .ed-swatches { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .ed-swatch { width: 18px; height: 18px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.4); cursor: pointer; }
+    .ed-swatch.on { border-color: var(--text-color); box-shadow: 0 0 0 1px var(--base-color); }
+    /* Typing a colour in, for when the eyedropper is not enough and the OS
+       colour dialog is too much. */
+    .ed-hex { width: 74px; flex: 0 0 74px; font-family: var(--text-font); font-size: 12px;
+      padding: 3px 6px; margin: 0; border: 1px solid var(--border-dark); border-radius: 4px;
+      background: var(--very-dark); color: var(--text-color); text-transform: lowercase; }
+    .ed-hex.bad { border-color: #c2504a; }
     .ed-hint { font-size: 11px; opacity: 0.6; margin-top: 4px; }
     /* ── Edit-faces mode: a full-page texture mapper. Copy individual faces from
        other skins (file / library / playername) onto the working skin. ── */
@@ -312,7 +319,10 @@
           <button class="ed-btn" id="ed-sel-flipv" style="width:auto; padding:5px 10px;" title="Flip the selection top-to-bottom"><i class="material-icons" style="font-size:16px;">swap_vert</i> Flip V</button>
           <button class="ed-btn" id="ed-sel-colour" style="width:auto; padding:5px 10px;" title="Shift the selection's colours"><i class="material-icons" style="font-size:16px;">palette</i> Colour…</button>
           <button class="ed-btn" id="ed-sel-fill" style="width:auto; padding:5px 10px;" title="Fill the selection with the brush colour"><i class="material-icons" style="font-size:16px;">format_color_fill</i> Fill</button>
-          <button class="ed-btn" id="ed-sel-delete" style="width:auto; padding:5px 10px;" title="Erase what's selected"><i class="material-icons" style="font-size:16px;">delete</i> Erase</button>
+          <button class="ed-btn" id="ed-sel-delete" style="width:auto; padding:5px 10px;" title="Erase what's selected (Delete)"><i class="material-icons" style="font-size:16px;">delete</i> Erase</button>
+          <button class="ed-btn" id="ed-sel-copy" style="width:auto; padding:5px 10px;" title="Copy what's selected (Ctrl+C)"><i class="material-icons" style="font-size:16px;">content_copy</i> Copy</button>
+          <button class="ed-btn" id="ed-sel-cut" style="width:auto; padding:5px 10px;" title="Cut what's selected (Ctrl+X)"><i class="material-icons" style="font-size:16px;">content_cut</i> Cut</button>
+          <button class="ed-btn" id="ed-sel-paste" style="width:auto; padding:5px 10px;" title="Paste it back as something you can drag (Ctrl+V)" disabled><i class="material-icons" style="font-size:16px;">content_paste</i> Paste</button>
           <button class="ed-btn" id="ed-sel-none" style="width:auto; padding:5px 10px;">Deselect</button>
         </div>
         <!-- Only while an image is being positioned on the texture. -->
@@ -338,13 +348,15 @@
 
       <div class="ed-group">
         <h4>Brush</h4>
-        <div class="ed-row"><label>Color</label><input type="color" id="ed-color" value="#8a5a3b"><span id="ed-color-hex" style="font-size:12px;opacity:0.7;">#8a5a3b</span></div>
+        <div class="ed-row"><label>Color</label><input type="color" id="ed-color" value="#8a5a3b"><input type="text" id="ed-color-hex" class="ed-hex" value="#8a5a3b" spellcheck="false" maxlength="7" title="Type a hex colour"></div>
+        <div class="ed-row" id="ed-recent-row" style="display:none;"><label>Recent</label><div class="ed-swatches" id="ed-recent" style="flex:1;margin:0;"></div></div>
         <div class="ed-swatches" id="ed-swatches"></div>
         <div class="ed-row"><label>Size</label><input type="range" id="ed-size" min="1" max="8" value="1"><span id="ed-size-val" style="width:14px;">1</span></div>
         <div class="ed-row"><label>Opacity</label><input type="range" id="ed-opacity" min="1" max="100" value="100"><span id="ed-opacity-val" style="width:28px;">100%</span></div>
         <div class="ed-row" id="ed-fillregion-row" style="display:none;"><label>Fill</label>
           <select id="ed-fillregion"><option value="connected">Connected colours</option><option value="face">Whole face</option><option value="element">Whole element</option></select>
         </div>
+        <div class="ed-row" id="ed-tolerance-row" style="display:none;" title="How different a neighbouring colour may be and still be filled"><label>Tolerance</label><input type="range" id="ed-tolerance" min="0" max="100" value="16"><span id="ed-tolerance-val" style="width:28px;">16</span></div>
         <div class="ed-row" id="ed-selmode-row" style="display:none;"><label>Shape</label>
           <div class="ed-seg" style="flex:1; margin:0;">
             <button id="ed-selmode-rect" class="active" title="Drag out a rectangle">Rectangle</button>
@@ -581,6 +593,10 @@
     let brushSize = 1;
     let fillWith = 'brush';
     let fillRegion = 'connected';
+    // How different a neighbouring colour may be and still count as the same
+    // one. 0 is exact; skins routinely shade a face in near-identical tones,
+    // which is where a strictly exact fill is useless.
+    let fillTolerance = 16;
     let drawing = false;
     let lastTexel = null;
 
@@ -882,6 +898,8 @@
     function refreshSelectionUI() {
       const bar = document.getElementById('ed-sel-bar');
       if (bar) bar.style.display = selection ? 'flex' : 'none';
+      const paste = document.getElementById('ed-sel-paste');
+      if (paste) paste.disabled = !clipboard;
       refreshBottomHint();
     }
     // Only one thing at a time in the bottom strip: a bar if there is one to
@@ -897,6 +915,12 @@
     }
 
     // Lift the selected pixels off the layer so they can be dragged around.
+    //
+    // The layer is NOT touched here. The pixels being dragged are a copy, and
+    // the ones they came from stay where they are until the drag is finished
+    // -- so while it moves you can see what was there, which is what you are
+    // lining the move up against. The hole is punched at the other end, in
+    // commitFloat, and only if the thing actually went somewhere else.
     function liftFloat() {
       if (!selection || selFloat) return;
       const src = dctx().getImageData(0, 0, SIZE, SIZE);
@@ -906,17 +930,23 @@
       for (let i = 0; i < SIZE * SIZE; i++) {
         if (!selection.mask[i]) continue;
         for (let k = 0; k < 4; k++) out.data[i * 4 + k] = src.data[i * 4 + k];
-        src.data[i * 4 + 3] = 0;              // leave a hole behind
       }
       cx.putImageData(out, 0, 0);
-      dctx().putImageData(src, 0, 0);
-      selFloat = { canvas: cv, dx: 0, dy: 0 };
+      selFloat = { canvas: cv, dx: 0, dy: 0, from: new Uint8Array(selection.mask) };
       compose();
     }
     // Stamp the floating pixels back down wherever they ended up.
     function commitFloat() {
       if (!selFloat) return;
       const d = dctx();
+      // Moved somewhere else: the pixels it was lifted from go now. Dropped
+      // back where it started, there is nothing to clear -- and a paste never
+      // came off the layer in the first place.
+      if (selFloat.from && (selFloat.dx || selFloat.dy)) {
+        const img = d.getImageData(0, 0, SIZE, SIZE);
+        for (let i = 0; i < SIZE * SIZE; i++) if (selFloat.from[i]) img.data[i * 4 + 3] = 0;
+        d.putImageData(img, 0, 0);
+      }
       d.save(); d.globalAlpha = 1; d.imageSmoothingEnabled = false;
       d.drawImage(selFloat.canvas, selFloat.dx, selFloat.dy);
       d.restore();
@@ -1218,6 +1248,7 @@
       if (d[3] === 0) return;
       color = { r: d[0], g: d[1], b: d[2] };
       syncColorInputs();
+      rememberColor();
     }
     function floodFill(sx, sy, force) {
       if (!paintable(sx, sy, force)) return;
@@ -1225,7 +1256,9 @@
       const at = (x, y) => (y * SIZE + x) * 4;
       const t = at(sx, sy);
       const target = [img.data[t], img.data[t + 1], img.data[t + 2], img.data[t + 3]];
-      const tol = 40;
+      // The slider is 0..100 over the distance between black and white, which
+      // is what "tolerance" means to anyone who has used another editor.
+      const tol = (fillTolerance / 100) * 255;
       const match = (i) => {
         const dr = img.data[i] - target[0], dg = img.data[i + 1] - target[1], db = img.data[i + 2] - target[2], da = img.data[i + 3] - target[3];
         return (dr * dr + dg * dg + db * db + da * da) <= tol * tol;
@@ -1304,7 +1337,7 @@
       const t = texelFromEvent(e);
       if (tool === 'eyedropper') { pickColor(t.x, t.y); return; }
       pushUndo();
-      if (tool === 'fill') { doFill(t.x, t.y); render(); liveUpdate(); return; }
+      if (tool === 'fill') { doFill(t.x, t.y); render(); liveUpdate(); if (fillWith === 'brush') rememberColor(); return; }
       drawing = true; lastTexel = t;
       stampAt(t.x, t.y, strokeMode());
       render(); liveUpdate();
@@ -1378,7 +1411,13 @@
         renderOverlay();
         return;
       }
-      if (drawing) { drawing = false; lastTexel = null; liveUpdate(); }
+      if (drawing) {
+        drawing = false; lastTexel = null; liveUpdate();
+        // A colour counts as used once it has actually gone on the skin --
+        // not while the colour wheel is being dragged through every shade
+        // between where it started and where it ended up.
+        if (strokeMode() === 'brush') rememberColor();
+      }
     };
     view.addEventListener('pointerup', endStroke);
     view.addEventListener('pointercancel', endStroke);
@@ -1387,7 +1426,7 @@
     document.getElementById('ed-sel-fliph').onclick = () => flipSelection(true);
     document.getElementById('ed-sel-flipv').onclick = () => flipSelection(false);
     document.getElementById('ed-sel-none').onclick = () => clearSelection();
-    document.getElementById('ed-sel-delete').onclick = () => {
+    function deleteSelection() {
       if (!selection) return;
       commitFloat();
       pushUndo();
@@ -1396,7 +1435,65 @@
       for (let i = 0; i < SIZE * SIZE; i++) if (selection.mask[i]) img.data[i * 4 + 3] = 0;
       d.putImageData(img, 0, 0);
       afterEdit();
-    };
+    }
+    document.getElementById('ed-sel-delete').onclick = deleteSelection;
+    document.getElementById('ed-sel-copy').onclick = () => { copySelection(); refreshSelectionUI(); };
+    document.getElementById('ed-sel-cut').onclick = () => { cutSelection(); refreshSelectionUI(); };
+    document.getElementById('ed-sel-paste').onclick = () => pasteClipboard();
+
+    // ── Copy and paste ───────────────────────────────────────────────────────
+    // Kept in the editor rather than in the system clipboard: what is copied
+    // is a shape as well as some pixels, and a PNG on the clipboard would lose
+    // the shape. Pasting puts it back as a floating selection, so it arrives
+    // ready to be dragged where it is wanted.
+    let clipboard = null;         // { canvas, mask }
+    function copySelection() {
+      if (!selection) return false;
+      // While a selection is floating, the pixels live on the float's own
+      // canvas (unoffset) and the mask follows it; otherwise they are on the
+      // layer where the mask says. Either way what gets stored is the shape
+      // at its own coordinates, plus where it currently sits.
+      const src = (selFloat ? selFloat.canvas.getContext('2d', { willReadFrequently: true }) : dctx())
+        .getImageData(0, 0, SIZE, SIZE);
+      const cv = document.createElement('canvas'); cv.width = SIZE; cv.height = SIZE;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      const out = cx.createImageData(SIZE, SIZE);
+      const mask = new Uint8Array(SIZE * SIZE);
+      let any = false;
+      for (let i = 0; i < SIZE * SIZE; i++) {
+        if (!selection.mask[i]) continue;
+        for (let k = 0; k < 4; k++) out.data[i * 4 + k] = src.data[i * 4 + k];
+        mask[i] = 1;
+        any = true;
+      }
+      if (!any) return false;
+      cx.putImageData(out, 0, 0);
+      clipboard = { canvas: cv, mask, dx: selFloat ? selFloat.dx : 0, dy: selFloat ? selFloat.dy : 0 };
+      return true;
+    }
+    function cutSelection() {
+      if (!copySelection()) return;
+      deleteSelection();
+    }
+    function pasteClipboard() {
+      if (!clipboard) return;
+      commitFloat();
+      pushUndo();
+      // Back where it came from, as something that can be dragged straight
+      // away -- so paste-then-move is one gesture rather than two.
+      const cv = document.createElement('canvas'); cv.width = SIZE; cv.height = SIZE;
+      cv.getContext('2d').drawImage(clipboard.canvas, 0, 0);
+      selection = makeSelection(new Uint8Array(clipboard.mask));
+      // `from` is deliberately absent: these pixels were never lifted off the
+      // layer, so there is no hole to punch when they are put down.
+      selFloat = { canvas: cv, dx: clipboard.dx || 0, dy: clipboard.dy || 0 };
+      // Dragging it needs the selection tool, so switch to it rather than
+      // leaving a floating paste that the current tool cannot touch.
+      selectToolById('select');
+      refreshSelectionUI();
+      renderOverlay();
+      compose(); render(); liveUpdate();
+    }
     document.getElementById('ed-sel-fill').onclick = () => {
       if (!selection) return;
       commitFloat();
@@ -1416,6 +1513,7 @@
         img.data[o + 3] = Math.round(Math.max(a, opacity) * 255);
       }
       d.putImageData(img, 0, 0);
+      rememberColor();
       afterEdit();
     };
 
@@ -1581,8 +1679,16 @@
       if (on) { g.lineWidth = 1; [6.2, 9.8].forEach(t => { g.beginPath(); g.moveTo(t, 2.5); g.lineTo(t, 13.5); g.stroke(); g.beginPath(); g.moveTo(2.5, t); g.lineTo(13.5, t); g.stroke(); }); }
     }
     const toolGrid = document.getElementById('ed-tool-grid');
+    // Picking a tool from code — a paste needs the selection tool to be the
+    // one in hand, or the pixels it just put down could not be dragged.
+    const toolButtons = {};
+    function selectToolById(id) {
+      const b = toolButtons[id];
+      if (b && tool !== id) b.click();
+    }
     TOOLS.forEach(tl => {
       const b = document.createElement('button'); b.className = 'ed-tool' + (tl.id === tool ? ' active' : '');
+      toolButtons[tl.id] = b;
       if (tl.px) { const cv = document.createElement('canvas'); cv.width = 16; cv.height = 16; pxEraser(cv.getContext('2d')); b.appendChild(cv); b.appendChild(document.createTextNode(tl.label)); }
       else b.innerHTML = `<i class="material-icons">${tl.icon}</i>${tl.label}`;
       b.onclick = () => {
@@ -1595,11 +1701,18 @@
         [...toolGrid.children].forEach(c => c.classList.remove('active')); b.classList.add('active');
         document.getElementById('ed-fillwith-row').style.display = (tool === 'fill') ? '' : 'none';
         document.getElementById('ed-fillregion-row').style.display = (tool === 'fill') ? '' : 'none';
+        // Only the connected fill looks at neighbouring colours at all.
+        document.getElementById('ed-tolerance-row').style.display =
+          (tool === 'fill' && fillRegion === 'connected') ? '' : 'none';
         document.getElementById('ed-selmode-row').style.display = isSelectTool() ? '' : 'none';
       };
       toolGrid.appendChild(b);
     });
-    document.getElementById('ed-fillregion').onchange = (e) => { fillRegion = e.target.value; };
+    document.getElementById('ed-fillregion').onchange = (e) => {
+      fillRegion = e.target.value;
+      document.getElementById('ed-tolerance-row').style.display =
+        (tool === 'fill' && fillRegion === 'connected') ? '' : 'none';
+    };
     {
       const rectBtn = document.getElementById('ed-selmode-rect');
       const freeBtn = document.getElementById('ed-selmode-free');
@@ -1614,13 +1727,88 @@
 
     // Color + swatches
     const colorInput = document.getElementById('ed-color');
+    const hexInput = document.getElementById('ed-color-hex');
     const hexToRgb = (h) => ({ r: parseInt(h.slice(1, 3), 16), g: parseInt(h.slice(3, 5), 16), b: parseInt(h.slice(5, 7), 16) });
     const rgbToHex = (c) => '#' + [c.r, c.g, c.b].map(v => v.toString(16).padStart(2, '0')).join('');
-    function syncColorInputs() { colorInput.value = rgbToHex(color); document.getElementById('ed-color-hex').textContent = rgbToHex(color); }
-    colorInput.oninput = () => { color = hexToRgb(colorInput.value); document.getElementById('ed-color-hex').textContent = colorInput.value; };
+    // "#aabbcc", "aabbcc", "#abc" and "abc" all mean the same thing; anything
+    // else is not a colour and the box says so rather than guessing.
+    function parseHex(text) {
+      let t = String(text || '').trim().replace(/^#/, '').toLowerCase();
+      if (/^[0-9a-f]{3}$/.test(t)) t = t.split('').map(c => c + c).join('');
+      if (!/^[0-9a-f]{6}$/.test(t)) return null;
+      return hexToRgb('#' + t);
+    }
+    function syncColorInputs() {
+      const hex = rgbToHex(color);
+      colorInput.value = hex;
+      // Not while it is being typed in: rewriting the box under the cursor
+      // makes it impossible to type a colour out.
+      if (document.activeElement !== hexInput) hexInput.value = hex;
+      hexInput.classList.remove('bad');
+      markRecent();
+    }
+    colorInput.oninput = () => { color = hexToRgb(colorInput.value); syncColorInputs(); };
+    hexInput.oninput = () => {
+      const c = parseHex(hexInput.value);
+      hexInput.classList.toggle('bad', !c);
+      if (!c) return;
+      color = c;
+      colorInput.value = rgbToHex(c);
+      markRecent();
+    };
+    // Leaving the box, or pressing Enter, tidies what was typed into the full
+    // form -- or puts back the colour that is actually in use.
+    const tidyHex = () => { hexInput.value = rgbToHex(color); hexInput.classList.remove('bad'); };
+    hexInput.onblur = tidyHex;
+    hexInput.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); tidyHex(); hexInput.blur(); }
+      if (e.key === 'Escape') { tidyHex(); hexInput.blur(); }
+      e.stopPropagation();        // the editor's own shortcuts are not for here
+    };
+
+    // ── Recent colours ───────────────────────────────────────────────────────
+    // Remembered across sessions, because the colour you were just using is
+    // the one you want next and picking it out of the OS dialog again is the
+    // slowest way to get it. Added when a colour is USED, not when it is
+    // chosen -- dragging through the colour wheel would otherwise fill this
+    // with every shade it passed through.
+    const RECENT_KEY = 'skinEditorRecentColors';
+    const RECENT_MAX = 14;
+    let recentColors = [];
+    try { recentColors = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]').filter(c => /^#[0-9a-f]{6}$/.test(c)); }
+    catch { recentColors = []; }
+    const recentRow = document.getElementById('ed-recent-row');
+    const recentBox = document.getElementById('ed-recent');
+    function drawRecent() {
+      recentRow.style.display = recentColors.length ? '' : 'none';
+      recentBox.innerHTML = '';
+      const now = rgbToHex(color);
+      for (const c of recentColors) {
+        const d = document.createElement('div');
+        d.className = 'ed-swatch' + (c === now ? ' on' : '');
+        d.style.background = c;
+        d.title = c;
+        d.onclick = () => { color = hexToRgb(c); syncColorInputs(); };
+        recentBox.appendChild(d);
+      }
+    }
+    function markRecent() { drawRecent(); }
+    function rememberColor() {
+      const hex = rgbToHex(color);
+      recentColors = [hex, ...recentColors.filter(c => c !== hex)].slice(0, RECENT_MAX);
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(recentColors)); } catch { /* private window */ }
+      drawRecent();
+    }
+    drawRecent();
+
     const SWATCHES = ['#000000', '#ffffff', '#8a5a3b', '#c8a17a', '#3b2a1a', '#7f7f7f', '#c0392b', '#2980b9', '#27ae60', '#f1c40f', '#8e44ad', '#e67e22'];
     const sw = document.getElementById('ed-swatches');
-    SWATCHES.forEach(c => { const d = document.createElement('div'); d.className = 'ed-swatch'; d.style.background = c; d.onclick = () => { color = hexToRgb(c); syncColorInputs(); }; sw.appendChild(d); });
+    SWATCHES.forEach(c => { const d = document.createElement('div'); d.className = 'ed-swatch'; d.style.background = c; d.title = c; d.onclick = () => { color = hexToRgb(c); syncColorInputs(); }; sw.appendChild(d); });
+
+    document.getElementById('ed-tolerance').oninput = (e) => {
+      fillTolerance = +e.target.value;
+      document.getElementById('ed-tolerance-val').textContent = e.target.value;
+    };
 
     document.getElementById('ed-size').oninput = (e) => { brushSize = +e.target.value; document.getElementById('ed-size-val').textContent = brushSize; };
     document.getElementById('ed-opacity').oninput = (e) => { opacity = (+e.target.value) / 100; document.getElementById('ed-opacity-val').textContent = e.target.value + '%'; };
@@ -1660,9 +1848,38 @@
     document.getElementById('ed-undo').onclick = undo;
     document.getElementById('ed-redo').onclick = redo;
     refreshUndoButtons();
+    // Typing in a box is typing, not a shortcut.
+    const typingInAField = () => {
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    };
     window.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
-      else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redo(); }
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      if (mod && k === 'z') { e.preventDefault(); undo(); return; }
+      if (mod && (k === 'y' || (e.shiftKey && k === 'z'))) { e.preventDefault(); redo(); return; }
+      if (typingInAField()) return;
+      if (mod && k === 'c') { e.preventDefault(); copySelection(); refreshSelectionUI(); return; }
+      if (mod && k === 'x') { e.preventDefault(); cutSelection(); refreshSelectionUI(); return; }
+      if (mod && k === 'v') { e.preventDefault(); pasteClipboard(); return; }
+      if (mod && k === 'a' && !place) {
+        // Everything on the skin, so Delete or a move can take the lot.
+        e.preventDefault();
+        commitFloat();
+        selection = selectRect(0, 0, SIZE - 1, SIZE - 1);
+        selectToolById('select');
+        refreshSelectionUI();
+        renderOverlay();
+        return;
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
+        e.preventDefault();
+        deleteSelection();
+        return;
+      }
+      if (e.key === 'Escape' && (selection || selDraft)) { e.preventDefault(); clearSelection(); }
     });
     // Clears the LAYER you're on, not the whole skin.
     document.getElementById('ed-clear').onclick = () => { pushUndo(); dctx().clearRect(0, 0, SIZE, SIZE); compose(); render(); liveUpdate(); };
@@ -2106,7 +2323,7 @@
       const t = texelFromHit(e);
       if (!t) return;
       if (tool === 'eyedropper') { if (isDown) pickColor(t.x, t.y); return; }
-      if (tool === 'fill') { if (isDown) { pushUndo(); doFill(t.x, t.y, true); render(); liveUpdate(); } return; }
+      if (tool === 'fill') { if (isDown) { pushUndo(); doFill(t.x, t.y, true); render(); liveUpdate(); if (fillWith === 'brush') rememberColor(); } return; }
       stampAt(t.x, t.y, strokeMode(), true);
       render(); liveUpdate();
     }

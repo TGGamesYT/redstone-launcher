@@ -98,11 +98,13 @@ the order it is being built in.
       the loaders' icons and the backgrounds their logos' edge pixels stretched.
 
 ### H. The skin editor
-- [ ] **The colour picker takes no hex** and forgets the colours just used.
-- [ ] **The fill tool has no tolerance** for nearly-equal colours.
-- [ ] **Delete does nothing to a selected area.**
-- [ ] **No copy or paste of a selection.**
-- [ ] **Moving a selection leaves the original behind** until the button is
+- [x] **The colour picker takes no hex** and forgets the colours just used.
+      A hex box beside the swatch, and a Recent row kept across sessions.
+- [x] **The fill tool has no tolerance** for nearly-equal colours.
+- [x] **Delete does nothing to a selected area.** Delete, and Ctrl+A, Escape.
+- [x] **No copy or paste of a selection.** Copy, Cut and Paste, on the
+      selection bar and on Ctrl+C / Ctrl+X / Ctrl+V.
+- [x] **Moving a selection leaves the original behind** until the button is
       released; the original should be shown in place while it moves.
 
 ### I. Cloud skins
