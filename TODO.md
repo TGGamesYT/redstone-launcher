@@ -43,14 +43,18 @@ Sent while Round 23 was still being worked through.
       leave a tenth of the square covered. The odd edges were the drawn
       rectangle landing on half pixels, which makes the canvas blend the
       outermost row with what is behind it; it is snapped to whole pixels.*
-- [ ] **The creeper's charge texture is in the wrong place.**
+- [x] **The creeper's charge texture is in the wrong place.**
+      *It is the charge layer, which a creeper only wears after a lightning
+      strike. It is a switch now, off to begin with.*
 - [x] **A chicken's legs are still only drawn from one side.**
       *The game draws mobs with backface culling off, because their boxes are
       routinely painted on one side only — a chicken's leg is a 3x5x3 box with
       one one-pixel column of art on one face and nothing on the other three.
       Mobs are drawn both-sided now; blocks keep culling, which is what stops
       glass and leaves showing the inside of their own far faces.*
-- [ ] **Whatever the copper chest is rendering as, it is badly wrong.**
+- [x] **Whatever the copper chest is rendering as, it is badly wrong.** *It was a decorated pot in pieces: its sides layer is called
+      `decorated_pot_sides` and its texture `decorated_pot_side.png`, and the
+      plural matched nothing, so the pot had no walls.*
 
 ## 0. Round 23
 
@@ -108,17 +112,26 @@ stuff" — so the list is in two halves and the first half is done first.
       slabs of grey came from. Only dropped when another layer does have room
       for it, because a model that merely overflows its own texture (the
       decorated pot's top and bottom) must keep its boxes.*
-- [ ] **Variants that are not variants.** The ender dragon has an "ender" one
+- [x] **Variants that are not variants.** The ender dragon has an "ender" one
       wearing the ender chest's texture; the armadillo has "scute"; the dragon
       skull has two wrong "skull" ones; the evoker has "fangs"; the llama has
       "trader" (an overlay) and "spit" (its own entity); the iron golem has
       the iron armour and tools; the happy ghast has the ghast; a banner has
       five "brown" ones and wears a bed's texture.
-- [ ] **Tell an overlay from a variant by rendering it**: an overlay is mostly
+      *Past the best match, a texture is disqualified if it is in another
+      folder, if its name is part of this one's rather than an addition to it,
+      or if a differently-shaped layer of its own is named for it.*
+- [x] **Tell an overlay from a variant by rendering it**: an overlay is mostly
       transparent where a variant is not.
-- [ ] **Cracked iron golem, drowned armour and the like should be toggles
+      *By measuring it: a skin covers roughly what the first one covers, an
+      overlay a fraction of it.*
+- [x] **Cracked iron golem, drowned armour and the like should be toggles
       over the mob**, not entries of their own — and armour it never wears
       should not be there at all.
+      *Overlays are parts now, laid over the same boxes and switched off to
+      begin with. The armour it never wears was in another folder, so it is
+      gone. A creeper's charge arrives as a layer rather than a texture, and
+      the words that mean "only sometimes" are listed deliberately.*
 - [ ] **Block states that change the texture do nothing** — the anvil's
       facing, the creaking heart, the icicle, the bell's block form.
 - [ ] **A bell has three entries** (item, block, block entity); an item model
@@ -127,22 +140,30 @@ stuff" — so the list is in two halves and the first half is done first.
 - [ ] **An item model that is a block, or more than one picture, should still
       be adjustable** — and turning and tilting a flat item does nothing, so
       the dialog should not offer it.
-- [ ] **Tilt does not go all the way round**, and it tilts from the original
+- [x] **Tilt does not go all the way round**, and it tilts from the original
       angle rather than the current one.
+      *The slider is ±180, and a tilt is about the screen's horizontal applied
+      last, so a turned model leans back instead of going sideways. The model's
+      own x rotation stays Minecraft's.*
 - [ ] **Chest variants do nothing**, and a double chest should be drawn as
       both halves.
 - [ ] **All the armour trims render as the plain item.**
 - [ ] **Every clock variant is also its own search result.**
 - [ ] **Bush, fern and large fern have no tint**, and the tint should be
       changeable in the render settings. Leather armour too, in its colours.
-- [ ] **A face pointing at the camera should be fully lit**, which settles the
+- [x] **A face pointing at the camera should be fully lit**, which settles the
       lighting generally.
+      *Whichever is brighter wins, the shade table or how squarely the face
+      meets the camera — so nothing changes at the standing angle and a face
+      lifts as it comes round.*
 - [ ] **A cross model's rotation settings do nothing.**
 - [x] **Parts that only render from one side** — the axolotl's tail, a
       chicken's legs, some fish tails. *All one cause: mobs are drawn with
       culling off in the game, and were not here.*
-- [ ] **A variant that is also its own entry** can differ from it — the cold
+- [x] **A variant that is also its own entry** can differ from it — the cold
       chicken has no beak; the warm cow has no horns.
+      *Those variants carry the layer they belong to, and picking one brings
+      its model.*
 - [ ] **Minecart variants have no block in them** and are not offered as
       variants.
 - [ ] **The bogged's parts all use one texture.**
