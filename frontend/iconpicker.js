@@ -647,34 +647,43 @@
       const base = Math.max(OUT / im.naturalWidth, OUT / im.naturalHeight);
       const s = base * zoom;
       const w = im.naturalWidth * s, h = im.naturalHeight * s;
-      // Don't let the image be dragged off the square entirely. Zoomed out
-      // there is nothing hanging over the edge to pull back in, so the old
-      // limit of "however much is outside" was zero and the image would not
-      // move at all -- which is exactly when you want to move it, to choose
-      // where in the square it sits. Below the covering size, the limit is
-      // the empty space instead.
+      // How far it may be pushed.
+      //
+      // The limit used to be "however much of it is hanging over the edge",
+      // which means a wide picture could be slid along but its ends could
+      // never be brought inside the square, and a square one could not be
+      // moved at all. Both are exactly when you want to move it: to put a
+      // corner of the picture in the icon, or to sit a logo off to one side.
+      //
+      // So it may go right out past the edges, stopped only by having to leave
+      // a tenth of the square still covered -- far enough to frame any part of
+      // it, near enough that it cannot be lost off-screen with nothing to drag
+      // back.
       const overX = (w - OUT) / 2, overY = (h - OUT) / 2;
-      const maxX = Math.abs(overX), maxY = Math.abs(overY);
+      const KEEP = 0.1;
+      const maxX = (w + OUT) / 2 - OUT * KEEP;
+      const maxY = (h + OUT) / 2 - OUT * KEEP;
       ox = Math.max(-maxX, Math.min(maxX, ox));
       oy = Math.max(-maxY, Math.min(maxY, oy));
-      cx.drawImage(im, (OUT - w) / 2 + ox, (OUT - h) / 2 + oy, w, h);
+      // On whole pixels. A destination landing on a half pixel makes the
+      // canvas blend the outermost row and column with what is behind them,
+      // which is the faint fringe down the edges of an image that is otherwise
+      // sharp -- and it moves as the image is dragged, so it reads as the
+      // picture being slightly wrong rather than as an artefact.
+      cx.drawImage(im,
+        Math.round((OUT - w) / 2 + ox), Math.round((OUT - h) / 2 + oy),
+        Math.round(w), Math.round(h));
       cx.restore();
       if (roundLabel) {
         roundLabel.textContent = roundPct === 0 ? 'Square'
           : roundPct === 50 ? 'Circle'
             : `${Math.round(roundPct * 2)}%`;
       }
-      // A square image at 100% fills the box exactly, so there is nowhere to
-      // drag it — say so instead of inviting a drag that does nothing.
       const hint = ov.querySelector('#ipCropHint');
       if (hint) {
-        hint.textContent = (maxX > 0.5 || maxY > 0.5)
-          ? (overX < 0 || overY < 0
-            ? 'Drag to place it in the square · scroll to zoom'
-            : "Drag to choose what's in frame · scroll to zoom")
-          : minZoom < 1
-            ? 'Scroll to zoom in, or out to fit the whole image'
-            : 'Zoom in to choose what\'s in frame';
+        hint.textContent = (overX > 0.5 || overY > 0.5)
+          ? "Drag to choose what's in frame · scroll to zoom"
+          : 'Drag to place it in the square · scroll to zoom';
       }
     };
 

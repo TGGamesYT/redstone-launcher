@@ -35,8 +35,14 @@ Sent while Round 23 was still being worked through.
       snapshot is no longer a dead end: it takes the icon of the version it is
       on the way to — the first release out after it, or, when it is ahead of
       every release, whatever the icon list names as coming.*
-- [ ] **Cropping a picture that is not square still will not move off the
+- [x] **Cropping a picture that is not square still will not move off the
       sides**, and still has odd edges.
+      *The limit was "however much of it hangs over the edge", so a wide
+      picture could slide along but its ends could never be brought inside the
+      square. It can now go right out past the edges, stopped only by having to
+      leave a tenth of the square covered. The odd edges were the drawn
+      rectangle landing on half pixels, which makes the canvas blend the
+      outermost row with what is behind it; it is snapped to whole pixels.*
 - [ ] **The creeper's charge texture is in the wrong place.**
 - [ ] **A chicken's legs are still only drawn from one side.**
 - [ ] **Whatever the copper chest is rendering as, it is badly wrong.**
