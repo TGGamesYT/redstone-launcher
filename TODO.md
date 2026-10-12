@@ -117,7 +117,7 @@ the order it is being built in.
       still the same skin; the image it was before is retired with it.
 
 ### J. The loading indicator
-- [ ] **Replace every page's spinner** with a 4×4 grid of blocks that loops
+- [x] **Replace every page's spinner** with a 4×4 grid of blocks that loops
       round: `#RP# / P##R / R##P / #PR#`, where `#` is empty, `R` is a redstone
       block and `P` a piston facing the redstone block beside it. The top piston
       extends — swapped for the headless piston with its head sliding along
