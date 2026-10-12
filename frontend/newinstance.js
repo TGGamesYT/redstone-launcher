@@ -70,8 +70,14 @@
    * everything. Without it, picking "a modpack or a mod" and then deciding
    * against it dropped you all the way out and you had to start again.
    */
+  // Only ever one of these on screen. Each step closes the one before it, but
+  // the + button can be clicked again while one is already open -- and used to
+  // stack a second, identical chooser on top of the first.
+  let openShell = null;
+
   const shell = (title, sub, opts = {}) => {
     ensureStyle();
+    if (openShell && openShell.isConnected) openShell.remove();
     const ov = document.createElement('div');
     ov.className = 'ni-overlay';
     const card = document.createElement('div');
@@ -88,7 +94,8 @@
     card.querySelector('.ni-sub').textContent = sub;
     ov.appendChild(card);
     document.body.appendChild(ov);
-    const close = () => ov.remove();
+    openShell = ov;
+    const close = () => { ov.remove(); if (openShell === ov) openShell = null; };
     const back = typeof opts.onBack === 'function'
       ? () => { close(); opts.onBack(); }
       : null;
@@ -153,6 +160,13 @@
   // what someone making a new instance is looking for, each set sorted by
   // downloads. Modrinth's facets take a list-of-lists: the inner list is OR,
   // the outer is AND.
+  // Both sites, because plenty of packs are only on one of them and a search
+  // that quietly covered half of what exists looked like the pack was gone.
+  // Each hit is flattened to the same handful of fields so the list and the
+  // click do not care where it came from.
+  const CF_WORKER = 'https://curseforge.tgdoescode.workers.dev';
+  const CF_CLASS = { modpack: 4471, mod: 6 };
+
   async function searchModrinth(query, type, limit) {
     const url = new URL('https://api.modrinth.com/v2/search');
     url.searchParams.set('query', query || '');
@@ -162,13 +176,67 @@
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error(`Modrinth returned HTTP ${res.status}`);
     const j = await res.json();
-    return (j.hits || []).map(h => ({ ...h, project_type: type }));
+    return (j.hits || []).map(h => ({
+      source: 'modrinth', type,
+      id: h.project_id || h.slug, title: h.title, description: h.description,
+      icon: h.icon_url || null, downloads: h.downloads || 0, raw: h,
+    }));
+  }
+
+  async function searchCurseforge(query, type, limit) {
+    const res = await fetch(`${CF_WORKER}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gameId: 432, classId: CF_CLASS[type], searchFilter: query || '',
+        sortField: 6, sortOrder: 'desc', pageSize: limit, index: 0,   // 6 = total downloads
+      }),
+    });
+    if (!res.ok) throw new Error(`CurseForge returned HTTP ${res.status}`);
+    const j = await res.json();
+    return (j.data || []).map(m => ({
+      source: 'curseforge', type,
+      id: m.id, title: m.name, description: m.summary,
+      icon: (m.logo && m.logo.url) || null, downloads: m.downloadCount || 0, raw: m,
+    }));
+  }
+
+  // One site being down, or blocked, should not take the other with it.
+  const searchBoth = (query, type, limit) => Promise.all([
+    searchModrinth(query, type, limit).catch(e => ({ error: e })),
+    searchCurseforge(query, type, limit).catch(e => ({ error: e })),
+  ]).then(([a, b]) => {
+    const hits = [].concat(Array.isArray(a) ? a : [], Array.isArray(b) ? b : []);
+    if (!Array.isArray(a) && !Array.isArray(b)) throw (a.error || b.error);
+    return hits.sort((x, y) => y.downloads - x.downloads);
+  });
+
+  // CurseForge numbers its loaders. 0 is "any".
+  const CF_LOADERS = { 1: 'forge', 2: 'cauldron', 3: 'liteloader', 4: 'fabric', 5: 'quilt', 6: 'neoforge' };
+
+  async function curseforgeFiles(projectId) {
+    const res = await fetch(`${CF_WORKER}/files?projectID=${encodeURIComponent(projectId)}`);
+    if (!res.ok) return [];
+    const j = await res.json();
+    // Dressed as a Modrinth version, which is the shape the rest of the
+    // launcher already speaks. The download link is deliberately absent: it
+    // has to be asked for per file, and only when one is actually chosen.
+    return (Array.isArray(j.data) ? j.data : []).map(f => ({
+      source: 'curseforge',
+      name: f.displayName || f.fileName,
+      version_number: f.fileName,
+      date_published: f.fileDate,
+      game_versions: (f.gameVersions || []).filter(v => /^\d/.test(v)),
+      loaders: (f.gameVersions || []).filter(v => !/^\d/.test(v)).map(v => v.toLowerCase()),
+      files: [{ url: null, filename: f.fileName, cf: { projectID: projectId, fileID: f.id, fileName: f.fileName } }],
+    }));
   }
 
   async function openSearch(opts) {
     const { ov, card, list, close } = shell(
       opts.target === 'server' ? 'Find a modpack or mod for the server' : 'Find a modpack or mod',
-      'Modpacks first, then mods, each sorted by downloads. Picking a mod sets an instance up for it.',
+      'Modrinth and CurseForge. Modpacks first, then mods, each sorted by downloads. '
+      + 'Picking a mod sets an instance up for it.',
       { onBack: opts.onBack }
     );
     const input = document.createElement('input');
@@ -186,8 +254,8 @@
       let packs = [], mods = [];
       try {
         [packs, mods] = await Promise.all([
-          searchModrinth(q, 'modpack', 20),
-          searchModrinth(q, 'mod', 20),
+          searchBoth(q, 'modpack', 20),
+          searchBoth(q, 'mod', 20),
         ]);
       } catch (err) {
         if (mine !== seq) return;
@@ -210,30 +278,45 @@
       }
       for (const p of all) {
         row(list, {
-          img: p.icon_url || undefined,
-          icon: p.icon_url ? undefined : (p.project_type === 'modpack' ? 'inventory_2' : 'extension'),
+          img: p.icon || undefined,
+          icon: p.icon ? undefined : (p.type === 'modpack' ? 'inventory_2' : 'extension'),
           title: p.title,
           desc: `${fmtDownloads(p.downloads)} · ${p.description || ''}`,
-          tag: p.project_type === 'modpack' ? 'modpack' : 'mod',
+          // Which site it is from matters: the same pack is often on both,
+          // under slightly different names and versions.
+          tag: `${p.type} · ${p.source === 'curseforge' ? 'CurseForge' : 'Modrinth'}`,
           onClick: () => pick(p),
         });
       }
     }
 
+    // Every published build of a project, in Modrinth's shape whichever site
+    // it is from, newest first.
+    async function versionsOf(project) {
+      if (project.source === 'curseforge') {
+        const files = await curseforgeFiles(project.id);
+        return files.sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
+      }
+      try {
+        const res = await fetch(`https://api.modrinth.com/v2/project/${project.id}/version`);
+        return res.ok ? await res.json() : [];
+      } catch { return []; }
+    }
+
     async function pick(project) {
-      if (project.project_type === 'modpack') {
+      let versions = [];
+      try { versions = await versionsOf(project); } catch { /* reported below */ }
+
+      if (project.type === 'modpack') {
         // The modpack picker already knows how to choose a version and whether
         // to build an instance or a server.
-        let versions = [];
-        try {
-          const res = await fetch(`https://api.modrinth.com/v2/project/${project.project_id || project.slug}/version`);
-          versions = res.ok ? await res.json() : [];
-        } catch { /* reported below */ }
         if (!versions.length) {
           return uiAlert("That modpack has no downloadable versions.", 'Nothing to install');
         }
         close();
-        window.ModpackInstall.open({ ...project, id: project.project_id }, versions);
+        window.ModpackInstall.open({
+          title: project.title, id: project.id, icon_url: project.icon, source: project.source,
+        }, versions);
         return;
       }
 
@@ -241,11 +324,6 @@
       // for, so collect EVERY version and loader it supports, not just the
       // newest — picking anything outside that set makes an instance the mod
       // cannot run in.
-      let versions = [];
-      try {
-        const res = await fetch(`https://api.modrinth.com/v2/project/${project.project_id || project.slug}/version`);
-        versions = res.ok ? await res.json() : [];
-      } catch { /* handled below */ }
       if (!versions.length) {
         close();
         return uiAlert('That mod has no published versions to build an instance around.', 'Nothing to install');
@@ -263,10 +341,14 @@
       close();
       opts.onCustom && opts.onCustom({
         name: project.title,
-        icon: project.icon_url || null,
+        icon: project.icon || null,
         version: gameVersion,
         loader,
-        projectId: project.project_id || project.slug,
+        // Which site the mod comes from decides how it gets installed into the
+        // instance once that instance exists.
+        source: project.source,
+        projectId: project.source === 'modrinth' ? project.id : null,
+        curseId: project.source === 'curseforge' ? project.id : null,
         projectTitle: project.title,
         supportedVersions: [...supportedVersions],
         supportedLoaders: [...supportedLoaders],

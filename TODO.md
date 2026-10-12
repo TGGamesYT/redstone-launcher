@@ -70,12 +70,17 @@ the order it is being built in.
 - [x] **A submitter sees their own suggestions and their status.**
 
 ### F. Icons for a project
-- [ ] **Mods, resource packs and the rest should offer their Modrinth or
+- [x] **Mods, resource packs and the rest should offer their Modrinth or
       CurseForge icon and banner, and their gallery images** — clicking the icon
       first shows a choice between the in-file icon, the site icon, the banner
       and the gallery, and only then the cropper.
-- [ ] **Creating an instance from a mod or modpack only shows Modrinth results.**
-- [ ] **The + button can open more than one new-instance modal.**
+- [x] **Creating an instance from a mod or modpack only shows Modrinth results.**
+      Both sites are searched now, and a CurseForge pack or mod installs the
+      same way. A CurseForge pack cannot be set up as a *server* — that means
+      reading its manifest and working out which mods are client-only, which
+      the launcher only knows how to do for a .mrpack — so that one option is
+      greyed out with the reason on it.
+- [x] **The + button can open more than one new-instance modal.**
 
 ### G. The new-instance flow
 - [ ] **Keep the per-version banners.**

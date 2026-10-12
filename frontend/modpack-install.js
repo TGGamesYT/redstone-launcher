@@ -43,9 +43,13 @@
 
   const loaderOf = (v) => (v.loaders || []).join(', ') || 'unknown';
   const mcOf = (v) => (v.game_versions || []).join(', ');
-  // A pack whose loader has no server side can't be set up as one.
+  // A pack whose loader has no server side can't be set up as one. Nor can a
+  // CurseForge pack: setting one up as a server means reading its manifest and
+  // working out which of its mods are client-only, which the launcher only
+  // knows how to do for a .mrpack.
   const SERVER_LOADERS = ['forge', 'neoforge', 'fabric', 'quilt'];
-  const serverCapable = (v) => (v.loaders || []).some(l => SERVER_LOADERS.includes(String(l).toLowerCase()));
+  const serverCapable = (v) => v.source !== 'curseforge'
+    && (v.loaders || []).some(l => SERVER_LOADERS.includes(String(l).toLowerCase()));
   // .mrpack files almost never contain an icon, so the instance has to get the
   // project's icon from whichever browser the install was started in.
   const iconOf = (p) => (p && (p.icon_url || p.iconUrl || p.icon || (p.logo && p.logo.url) || p.thumbnailUrl)) || null;
@@ -56,6 +60,9 @@
     // which is why packs meant to be hosted kept turning into instances.
     open(project, versions) {
       ensureStyle();
+      // One at a time: this can be reached from several places, and a second
+      // copy on top of the first is never what was meant.
+      document.querySelectorAll('.mpi-overlay').forEach(x => x.remove());
       const list = (versions || []).slice().sort((a, b) => new Date(b.date_published) - new Date(a.date_published));
       const ov = document.createElement('div');
       ov.className = 'mpi-overlay';
@@ -105,7 +112,7 @@
           if (!usable) {
             const t = document.createElement('div');
             t.className = 'm';
-            t.textContent = 'no server build';
+            t.textContent = v.source === 'curseforge' ? 'CurseForge: instance only' : 'no server build';
             row.appendChild(t);
           }
           row.onclick = () => { if (!usable) return; chosen = v; paint(); };
@@ -136,7 +143,22 @@
         if (!file) return uiAlert('That version has no downloadable pack file.', 'Nothing to install');
         goBtn.disabled = true;
         goBtn.textContent = 'Starting…';
-        await window.ModpackInstall.start(file.url, project.title || chosen.name, mode, iconOf(project));
+        let url = file.url;
+        // A CurseForge version is named by ids, not by a link: the download
+        // URL has to be asked for, and the author may have switched
+        // third-party downloads off, in which case there is nothing to get.
+        if (!url && file.cf) {
+          const r = await ipcRenderer.invoke('curseforge:downloadUrl',
+            { projectID: file.cf.projectID, fileID: file.cf.fileID, fileName: file.cf.fileName });
+          url = (r && r.success) ? r.url : null;
+          if (!url) {
+            goBtn.disabled = false;
+            goBtn.textContent = 'Install';
+            return uiAlert((r && r.error)
+              || 'CurseForge would not hand out a download link for that file.', 'Nothing to install');
+          }
+        }
+        await window.ModpackInstall.start(url, project.title || chosen.name, mode, iconOf(project));
       };
       paint();
     },

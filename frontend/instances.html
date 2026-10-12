@@ -1001,8 +1001,11 @@
         instanceVersion.value = prefill.version;
       }
       if (typeof updateInstanceLoaderVersion === 'function') updateInstanceLoaderVersion();
-      // Remembered so the mod can be installed into the instance once it exists.
-      modalCreateBtn._prefillProject = (prefill && prefill.projectId) || null;
+      // Remembered so the mod can be installed into the instance once it
+      // exists -- which site it came from decides how.
+      modalCreateBtn._prefillProject = (prefill && (prefill.projectId || prefill.curseId))
+        ? { source: prefill.source || 'modrinth', projectId: prefill.projectId || null, curseId: prefill.curseId || null }
+        : null;
     }
 
     function openNewInstance(e) {
@@ -1266,7 +1269,9 @@
       const modpackUpdateSection = document.getElementById('modpackUpdateSection');
       const importTabBtn = document.getElementById('importTabBtn');
       const updateBtn = document.getElementById('updateModpackBtn');
-      if (profile.modpack && modpackUpdateSection && updateBtn) {
+      // Updating means picking a new .mrpack and diffing it against the file
+      // list the old one left behind — a CurseForge pack has neither.
+      if (profile.modpack && profile.packSource !== 'curseforge' && modpackUpdateSection && updateBtn) {
         if (importTabBtn) importTabBtn.style.display = '';
         modpackUpdateSection.style.display = '';
         updateBtn.onclick = () => startModpackUpdate(profile);
@@ -1336,23 +1341,56 @@
       document.querySelectorAll('#addInstanceModal .settings-panel').forEach((p) => p.classList.toggle('active', p.dataset.panel === 'general'));
     }
 
+    // The download link for a mod's build for this exact version and loader,
+    // from whichever site the instance was started from. Null when the mod has
+    // no build for it.
+    async function modrinthModUrl(projectId, version, loader) {
+      const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`
+        + `?game_versions=${encodeURIComponent(JSON.stringify([version]))}`
+        + `&loaders=${encodeURIComponent(JSON.stringify([loader]))}`);
+      const versions = res.ok ? await res.json() : [];
+      const first = versions[0];
+      const file = first && ((first.files || []).find(f => f.primary) || first.files[0]);
+      return (file && file.url) || null;
+    }
+
+    async function curseforgeModUrl(projectId, version, loader) {
+      // CurseForge has no version/loader filter on this endpoint: it lists
+      // every file with its game versions, and the loader is in that same
+      // list as a word rather than a number.
+      const res = await fetch(`https://curseforge.tgdoescode.workers.dev/files?projectID=${encodeURIComponent(projectId)}`);
+      const files = res.ok ? ((await res.json()).data || []) : [];
+      const want = String(loader || '').toLowerCase();
+      const fits = files.filter(f => {
+        const gv = (f.gameVersions || []).map(x => String(x).toLowerCase());
+        if (!gv.includes(String(version).toLowerCase())) return false;
+        // A vanilla instance, or a file that names no loader at all, takes
+        // whatever is there -- resource packs and data packs name none.
+        const named = gv.filter(x => !/^\d/.test(x));
+        return !named.length || want === 'vanilla' || named.includes(want);
+      }).sort((a, b) => new Date(b.fileDate) - new Date(a.fileDate));
+      const pick = fits[0];
+      if (!pick) return null;
+      const r = await ipcRenderer.invoke('curseforge:downloadUrl',
+        { projectID: projectId, fileID: pick.id, fileName: pick.fileName });
+      return (r && r.success) ? r.url : null;
+    }
+
     // Auto-open a freshly created instance.
     ipcRenderer.on('profile-created', async (e, newProfile) => {
       if (!newProfile || !newProfile.id) return;
       // Started from a mod? Put that mod in, so the instance is actually ready
       // rather than an empty instance named after it.
-      const projectId = modalCreateBtn._prefillProject;
+      const from = modalCreateBtn._prefillProject;
       modalCreateBtn._prefillProject = null;
-      if (projectId) {
+      if (from) {
         try {
-          const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`
-            + `?game_versions=${encodeURIComponent(JSON.stringify([newProfile.version]))}`
-            + `&loaders=${encodeURIComponent(JSON.stringify([newProfile.loader]))}`);
-          const versions = res.ok ? await res.json() : [];
-          const file = versions[0] && (versions[0].files || []).find(f => f.primary) || (versions[0] && versions[0].files[0]);
-          if (file) {
+          const fileUrl = from.source === 'curseforge'
+            ? await curseforgeModUrl(from.curseId, newProfile.version, newProfile.loader)
+            : await modrinthModUrl(from.projectId, newProfile.version, newProfile.loader);
+          if (fileUrl) {
             await ipcRenderer.invoke('mod-download', {
-              server: false, id: newProfile.id, fileUrl: file.url, projectType: 'mod',
+              server: false, id: newProfile.id, fileUrl, projectType: 'mod',
             });
             if (window.notify) window.notify('Added the mod to the new instance', 'success');
           } else if (window.notify) {

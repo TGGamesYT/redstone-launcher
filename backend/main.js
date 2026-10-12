@@ -2636,61 +2636,9 @@ async function curseforgeImport(zipPath, onProgress, hooks) {
   const profileFolder = path.join(profilesDir, `${profileId}`);
   fs.mkdirSync(profileFolder);
 
-  // Extract overrides/
-  zip.getEntries().forEach(entry => {
-    if (!entry.isDirectory && entry.entryName.startsWith("overrides/")) {
-      const relativePath = entry.entryName.replace(/^overrides\//, "");
-      if (!relativePath) return;
-      const outPath = path.join(profileFolder, relativePath);
-      const outDir = path.dirname(outPath);
-      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-      fs.writeFileSync(outPath, entry.getData());
-    }
-  });
-
-  // Download mods
-  const cfList = manifest.files || [];
-  let cfDone = 0;
-  for (const fileObj of cfList) {
-    try {
-      // Step 1: Lookup mod info → get classId
-      const modInfo = await getModInfo(fileObj.projectID);
-      let classId = modInfo.classId;
-      if (Array.isArray(modInfo.categories)) {
-        const anyCat = modInfo.categories.find(c => (c.classId || c.classId === 0));
-        if (anyCat) classId = anyCat.classId;
-      }
-
-      // Step 2: Decide folder based on classId
-      const subFolder = CLASS_ID_FOLDERS[classId] || "this_folder_is_for_projects_that_I_have_no_idea_of_what_the_type_is";
-      const targetFolder = path.join(profileFolder, subFolder);
-
-      await fs.promises.mkdir(targetFolder, { recursive: true });
-
-      // Step 3: Get download URL. The pack manifest only names ids, so dig the
-      // file name out of the mod info for the CDN fallback to have something
-      // to build a path from.
-      const known = (modInfo.latestFiles || []).find(f => String(f.id) === String(fileObj.fileID));
-      const url = await getDownloadUrl(fileObj.projectID, fileObj.fileID, known && known.fileName);
-      if (!url) throw new Error("CurseForge would not hand out a download link for this file");
-      const fileName = path.basename(url.split("?")[0]);
-      const dest = path.join(targetFolder, fileName);
-
-      // Step 4: Download
-      await downloadFile(url, dest);
-      devtoolsLog(`[ok] Installed ${fileName} to ${subFolder}`);
-    } catch (err) {
-      devtoolsLog(`[fail] Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
-    }
-    cfDone++;
-    if (typeof onProgress === "function") onProgress(cfDone, cfList.length, `mod ${cfDone}/${cfList.length}`);
-  }
-
-
-
-  // CurseForge packs rarely carry an icon either, so the same fallback chain
-  // applies: whatever is in the archive, else the project icon, else the pack
-  // looked up by its own name.
+  // CurseForge packs rarely carry an icon, so the same fallback chain as a
+  // .mrpack applies: whatever is in the archive, else the project icon the
+  // caller was showing, else the pack looked up by its own name.
   const icon = await packIcon(zip, hooks.iconUrl, manifest.name);
 
   const newProfile = {
@@ -2700,15 +2648,97 @@ async function curseforgeImport(zipPath, onProgress, hooks) {
     loader,
     loaderVersion,
     icon,
+    modpack: true,
+    // Which kind of pack it came from. The "update modpack" flow reads a
+    // .mrpack and diffs it against the file list one leaves behind, neither
+    // of which a CurseForge pack has, so it is not offered for these.
+    packSource: "curseforge",
+    installing: true,
     created: Date.now(),
-    lastUsed: Date.now()
+    lastUsed: Date.now(),
   };
 
-  const profiles = await loadProfiles();
-  profiles.push(newProfile);
-  saveProfiles(profiles);
+  // Saved FIRST, the same as a .mrpack: downloading a pack's mods takes
+  // minutes, and the instance being real from the start is what lets its page
+  // open straight away and show the progress.
+  {
+    const profiles = await loadProfiles();
+    profiles.push(newProfile);
+    saveProfiles(profiles);
+  }
+  if (typeof hooks.onCreated === "function") { try { hooks.onCreated(newProfile); } catch { /* caller's problem */ } }
 
-  return { success: true, profile: newProfile };
+  const finishProfile = async (patch) => {
+    const profiles = await loadProfiles();
+    const p = profiles.find(x => String(x.id) === String(profileId));
+    if (!p) return;
+    delete p.installing;
+    Object.assign(p, patch || {});
+    saveProfiles(profiles);
+  };
+
+  try {
+    // Extract overrides/
+    const overrides = zip.getEntries().filter(e => !e.isDirectory && e.entryName.startsWith("overrides/"));
+    let exDone = 0;
+    overrides.forEach(entry => {
+      const relativePath = entry.entryName.replace(/^overrides\//, "");
+      exDone++;
+      if (!relativePath) return;
+      const outPath = path.join(profileFolder, relativePath);
+      const outDir = path.dirname(outPath);
+      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      fs.writeFileSync(outPath, entry.getData());
+      if (typeof hooks.onExtract === "function") hooks.onExtract(exDone, overrides.length);
+    });
+
+    // Download mods
+    const cfList = manifest.files || [];
+    let cfDone = 0;
+    for (const fileObj of cfList) {
+      try {
+        // Step 1: Lookup mod info → get classId
+        const modInfo = await getModInfo(fileObj.projectID);
+        let classId = modInfo.classId;
+        if (Array.isArray(modInfo.categories)) {
+          const anyCat = modInfo.categories.find(c => (c.classId || c.classId === 0));
+          if (anyCat) classId = anyCat.classId;
+        }
+
+        // Step 2: Decide folder based on classId
+        const subFolder = CLASS_ID_FOLDERS[classId] || "this_folder_is_for_projects_that_I_have_no_idea_of_what_the_type_is";
+        const targetFolder = path.join(profileFolder, subFolder);
+
+        await fs.promises.mkdir(targetFolder, { recursive: true });
+
+        // Step 3: Get download URL. The pack manifest only names ids, so dig the
+        // file name out of the mod info for the CDN fallback to have something
+        // to build a path from.
+        const known = (modInfo.latestFiles || []).find(f => String(f.id) === String(fileObj.fileID));
+        const url = await getDownloadUrl(fileObj.projectID, fileObj.fileID, known && known.fileName);
+        if (!url) throw new Error("CurseForge would not hand out a download link for this file");
+        const fileName = path.basename(url.split("?")[0]);
+        const dest = path.join(targetFolder, fileName);
+
+        // Step 4: Download
+        await downloadFile(url, dest);
+        devtoolsLog(`[ok] Installed ${fileName} to ${subFolder}`);
+      } catch (err) {
+        devtoolsLog(`[fail] Failed to fetch mod ${fileObj.projectID}/${fileObj.fileID}:`, err);
+      }
+      cfDone++;
+      if (typeof onProgress === "function") onProgress(cfDone, cfList.length, `mod ${cfDone}/${cfList.length}`);
+    }
+
+    await finishProfile();
+    delete newProfile.installing;
+    return { success: true, profile: newProfile };
+  } catch (err) {
+    // The instance is already in the list, so say so rather than leaving it
+    // sitting there claiming to still be installing.
+    await finishProfile({ installFailed: String(err && err.message || err) });
+    return { success: false, error: String(err && err.message || err), profile: newProfile };
+  }
 }
 
 async function getJavaForMinecraft(mcVersion) {
@@ -4059,6 +4089,18 @@ const MP_PHASE_LABELS = {
   error: "Install failed",
 };
 
+// Which importer a downloaded pack needs. A .mrpack has modrinth.index.json
+// at its root and a CurseForge pack has manifest.json; nothing else is a pack
+// this launcher can install, and assuming .mrpack was what made a CurseForge
+// download fail with "modrinth.index.json not found".
+function packImporter(zipPath) {
+  try {
+    const names = new AdmZip(zipPath).getEntries().map(e => e.entryName);
+    if (names.includes("manifest.json") && !names.includes("modrinth.index.json")) return curseforgeImport;
+  } catch { /* let the importer give the real reason */ }
+  return mrpack;
+}
+
 async function runModpackInstall({ ticket, url, name, iconUrl }) {
   const st = {
     ticket, name: name || "Modpack", phase: "download",
@@ -4084,7 +4126,12 @@ async function runModpackInstall({ ticket, url, name, iconUrl }) {
     await downloadFile(url, tmpPath);
     emit({ phase: "extract", done: 0, total: 0, detail: "" });
 
-    const res = await mrpack(
+    // Which kind of pack is it? Both are zips, and a CurseForge download is
+    // just as likely to arrive here as a .mrpack now that the new-instance
+    // search offers both sites. Decided by what is inside rather than by the
+    // file name, which for CurseForge is a .zip either way.
+    const importer = packImporter(tmpPath);
+    const res = await importer(
       tmpPath,
       (done, total, rel) => emit({ phase: "mods", done, total, detail: rel }),
       {
@@ -7402,6 +7449,68 @@ ipcMain.handle("icon:dataUrl", async (event, { filePath }) => {
     const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "image/png";
     return `data:${mime};base64,` + buf.toString("base64");
   } catch { return null; }
+});
+
+// Every picture a mod (or pack, or modpack) has on Modrinth / CurseForge.
+//
+// A mod's icon in the launcher is whichever one of these the indexer happened
+// to pick, but the project usually has more: a banner, screenshots, artwork.
+// The icon picker offers the lot rather than that one.
+//
+// Kept for a while in memory: the pictures of a published project change
+// about never, and this is asked again every time the picker is opened.
+const _projectImages = new Map();          // "m:id" / "c:id" -> { at, images }
+const PROJECT_IMAGES_TTL = 6 * 60 * 60 * 1000;
+
+async function modrinthProjectImages(id) {
+  const r = await fetch(`https://api.modrinth.com/v2/project/${encodeURIComponent(id)}`,
+    { headers: { "User-Agent": LAUNCHER_UA } });
+  if (!r.ok) return [];
+  const p = await r.json();
+  const out = [];
+  if (p.icon_url) out.push({ url: p.icon_url, kind: "icon", title: "Modrinth icon", source: "modrinth" });
+  for (const g of (p.gallery || [])) {
+    if (!g || !g.url) continue;
+    out.push({
+      // Modrinth has no banner as such: the featured gallery image is the one
+      // shown across the top of the page, which is the same thing.
+      url: g.url, kind: g.featured ? "banner" : "gallery",
+      title: g.title || (g.featured ? "Featured image" : "Gallery"), source: "modrinth",
+    });
+  }
+  return out;
+}
+
+async function curseProjectImages(id) {
+  const r = await fetch(`${WORKER_URL}/mods?modId=${encodeURIComponent(id)}`,
+    { headers: { Accept: "application/json" } });
+  if (!r.ok) return [];
+  const p = (await r.json()).data || {};
+  const out = [];
+  if (p.logo && p.logo.url) out.push({ url: p.logo.url, kind: "icon", title: "CurseForge logo", source: "curseforge" });
+  for (const s of (p.screenshots || [])) {
+    if (!s || !s.url) continue;
+    out.push({ url: s.url, kind: "gallery", title: s.title || "Screenshot", source: "curseforge" });
+  }
+  return out;
+}
+
+ipcMain.handle("project:images", async (event, { modrinthId, curseId } = {}) => {
+  const want = [];
+  if (modrinthId) want.push(["m:" + modrinthId, () => modrinthProjectImages(modrinthId)]);
+  if (curseId) want.push(["c:" + curseId, () => curseProjectImages(curseId)]);
+  const images = [];
+  for (const [key, get] of want) {
+    const held = _projectImages.get(key);
+    if (held && Date.now() - held.at < PROJECT_IMAGES_TTL) { images.push(...held.images); continue; }
+    let got = [];
+    try { got = await get(); } catch (err) { devtoolsLog("project images failed:", String(err && err.message || err)); }
+    _projectImages.set(key, { at: Date.now(), images: got });
+    images.push(...got);
+  }
+  // The same picture can be both the Modrinth icon and the CurseForge logo.
+  const seen = new Set();
+  return { images: images.filter(i => !seen.has(i.url) && seen.add(i.url)) };
 });
 
 // ── Block, item and entity models as icons ─────────────────────────────────

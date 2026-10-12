@@ -804,7 +804,10 @@
 
       function addContentSection(tab, wrapSel, gridSel) {
         ipcRenderer.invoke('get-instance-mods', { profileId: opts.instanceId, tab })
-          .then(list => renderContentCells((list || []).filter(x => x.icon), wrapSel, gridSel))
+          .then(list => renderContentCells((list || []).filter(x => x.icon).map(x => ({
+            icon: x.icon, iconPath: x.iconPath, name: x.name,
+            modrinthId: x.projectId || null, curseId: x.curseId || null,
+          })), wrapSel, gridSel))
           .catch(() => {});
       }
 
@@ -825,20 +828,124 @@
           // A cached icon that has since been cleaned up would leave a blank cell.
           img.onerror = () => { if (it.icon && img.src !== it.icon) img.src = it.icon; else cell.remove(); };
           cell.appendChild(img);
-          cell.onclick = async () => {
-            // The chosen icon gets embedded (in serverinfo.json, in a shortcut),
-            // so it has to travel as data — a file:// path wouldn't survive.
-            // Through the cropper, because a mod's logo is often a wide banner
-            // rather than a square, and taking it as-is stretched it.
-            try {
-              if (it.iconPath) {
-                const d = await ipcRenderer.invoke('icon:dataUrl', { filePath: it.iconPath });
-                if (d) return editThenPick(d);
-              }
-              editThenPick(await urlToDataUrl(it.icon));
-            } catch { editThenPick(it.icon); }
-          };
+          cell.onclick = () => pickFromProject(it);
           g.appendChild(cell);
+        });
+      }
+
+      // A mod has more than one picture: the icon inside the file, the one on
+      // Modrinth or CurseForge, the banner across the top of its page and
+      // every screenshot in its gallery. Clicking it offers all of them and
+      // only then goes to the cropper — except when there is genuinely only
+      // one, where a dialog to pick from one thing would be in the way.
+      async function pickFromProject(it) {
+        const local = [];
+        if (it.iconPath) {
+          // Read as data rather than previewed from file:// and read again on
+          // the click: it is a local file either way, and the chosen icon has
+          // to travel as data anyway (it gets embedded in serverinfo.json and
+          // in desktop shortcuts, where a path would not survive).
+          let d = null;
+          try { d = await ipcRenderer.invoke('icon:dataUrl', { filePath: it.iconPath }); } catch { /* gone */ }
+          if (d) local.push({ preview: d, kind: 'file', title: 'From the file', full: () => d });
+        }
+        if (it.icon && !/^file:/.test(it.icon)) {
+          local.push({ preview: it.icon, kind: 'icon', title: 'Project icon', full: () => urlToDataUrl(it.icon) });
+        }
+
+        if (!it.modrinthId && !it.curseId) {
+          const one = local[0];
+          if (!one) return;
+          try { const d = await one.full(); if (d) return editThenPick(d); } catch { /* below */ }
+          return editThenPick(one.preview);
+        }
+
+        openImageChoice(it.name || 'This project', local, async () => {
+          let r = null;
+          try {
+            r = await ipcRenderer.invoke('project:images',
+              { modrinthId: it.modrinthId, curseId: it.curseId });
+          } catch { /* offline, or the site is down */ }
+          const seen = new Set(local.map(c => c.preview));
+          return ((r && r.images) || [])
+            .filter(i => !seen.has(i.url))
+            .map(i => ({ preview: i.url, kind: i.kind, title: i.title, full: () => urlToDataUrl(i.url) }));
+        });
+      }
+
+      // `known` is shown at once; `fetchMore` fills in what the sites have, so
+      // the dialog opens on the click rather than after a round trip.
+      function openImageChoice(name, known, fetchMore) {
+        const sub = document.createElement('div');
+        sub.className = 'modal-overlay active';
+        sub.style.zIndex = 6100;
+        sub.innerHTML = `<div class="modal-content" style="max-width:460px;">
+          <div class="modal-header"><h2>Which picture?</h2><button class="modal-close" id="ipWhichX">✕</button></div>
+          <p style="margin:0 0 4px; font-size:12px; opacity:0.75;"></p>
+          <div id="ipWhichBody"></div>
+          <div id="ipWhichNote" style="font-size:11px; opacity:0.7; padding:6px 2px;">Looking for more…</div>
+          <div class="modal-actions"><button id="ipWhichCancel">Cancel</button></div>
+        </div>`;
+        sub.querySelector('p').textContent = name;
+        document.body.appendChild(sub);
+        const body = sub.querySelector('#ipWhichBody');
+        const close = () => sub.remove();
+        sub.querySelector('#ipWhichX').onclick = close;
+        sub.querySelector('#ipWhichCancel').onclick = close;
+        sub.addEventListener('mousedown', e => { if (e.target === sub) close(); });
+
+        const GROUPS = [
+          ['file', 'In the file'],
+          ['icon', 'Icon'],
+          ['banner', 'Banner'],
+          ['gallery', 'Gallery'],
+        ];
+        const grids = {};
+        for (const [kind, label] of GROUPS) {
+          const wrap = document.createElement('div');
+          wrap.style.display = 'none';
+          const title = document.createElement('div');
+          title.className = 'ip-section-title';
+          title.textContent = label;
+          const grid = document.createElement('div');
+          grid.className = 'ip-grid';
+          wrap.append(title, grid);
+          body.appendChild(wrap);
+          grids[kind] = { wrap, grid };
+        }
+
+        const add = (choice) => {
+          const g = grids[choice.kind] || grids.gallery;
+          g.wrap.style.display = '';
+          const cell = document.createElement('div');
+          // A banner or a screenshot is wide; a 56px square of it is unreadable.
+          cell.className = 'ip-cell' + (choice.kind === 'banner' || choice.kind === 'gallery' ? ' ip-wide ip-shot' : '');
+          cell.title = choice.title || '';
+          const img = document.createElement('img');
+          img.loading = 'lazy';
+          img.src = choice.preview;
+          img.onerror = () => cell.remove();
+          cell.appendChild(img);
+          cell.onclick = async () => {
+            close();
+            try {
+              const d = await choice.full();
+              if (d) return editThenPick(d);
+            } catch { /* fall through to the preview, which may be remote */ }
+            editThenPick(choice.preview);
+          };
+          g.grid.appendChild(cell);
+        };
+        known.forEach(add);
+
+        fetchMore().then(more => {
+          if (!sub.isConnected) return;
+          more.forEach(add);
+          const note = sub.querySelector('#ipWhichNote');
+          note.textContent = more.length ? '' : 'Nothing else found for this one.';
+          if (more.length) note.remove();
+        }).catch(() => {
+          if (sub.isConnected) sub.querySelector('#ipWhichNote').textContent = 'Could not reach Modrinth or CurseForge.';
         });
       }
     },
