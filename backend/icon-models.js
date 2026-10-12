@@ -197,13 +197,32 @@ async function textureSpecs(stack, flat, measure) {
 }
 
 /** A block or item model, ready to render. */
-export async function describeModel({ profileId, version, id, state }) {
+export async function describeModel({ profileId, version, id, state, variant }) {
   const st = await stackFor({ profileId, version });
   if (!st) return { error: 'no assets for this version yet' };
 
   let modelId = id, rotX = 0, rotY = 0, uvlock = false, chosen = null;
+  // An item is a definition file before it is a model: one clock is twelve
+  // models and one chestplate is itself plus a trim for every material. The
+  // definition says which, and all of them are offered.
+  let itemVariants = null;
+  {
+    const { ns, name } = MA.splitId(id);
+    const bare = name.replace(/^items?\//, '');
+    const def = /(^|:)items?\//.test(id) || !name.includes('/')
+      ? await st.models.json(MA.itemDefPath(`${ns}:${bare}`))
+      : null;
+    if (def) {
+      const all = MA.modelsFromItemDef(def);
+      if (all.length) {
+        itemVariants = all;
+        const want = variant && all.find(v => v.model === variant);
+        modelId = (want || all[0]).model;
+      }
+    }
+  }
   // "minecraft:stone" with no folder means a BLOCK, through its blockstate.
-  if (!/\/(block|item)\//.test(id) && !/^[^:]*:?(block|item)\//.test(id)) {
+  if (!itemVariants && !/\/(block|item)\//.test(id) && !/^[^:]*:?(block|item)\//.test(id)) {
     const states = await MA.blockStates(st.models, id);
     if (states && states.length) {
       const pick = state != null
@@ -283,6 +302,12 @@ export async function describeModel({ profileId, version, id, state }) {
     model: modelId,
     state: chosen ? chosen.state : null,
     rotX, rotY, uvlock,
+    // The other things this item can be: every trim on a chestplate, every
+    // hand position on a clock.
+    variants: itemVariants && itemVariants.length > 1
+      ? itemVariants.map(v => ({ path: v.model, label: v.label || 'plain' }))
+      : null,
+    variantOf: itemVariants ? modelId : null,
     // The colour the game would paint the tinted faces, for this block.
     tint: await tintFor(st.textures, id),
     // Water has no model at all -- it is drawn by the fluid renderer, and all

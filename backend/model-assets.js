@@ -281,6 +281,50 @@ export function modelFromItemDef(def) {
   return walk(def && def.model) || null;
 }
 
+/**
+ * EVERY model an item definition can resolve to, with a name for each.
+ *
+ * A clock is twelve models, one per position of its hands; a compass is
+ * thirty-two; a chestplate is itself plus one for each trim material. The
+ * definition tree says so, and only the first was ever read -- which is why
+ * trimmed armour showed up as the armour without the trim. The name comes
+ * from the branch it was found down: the `when` of a select case, the
+ * threshold of a range entry, which side of a condition.
+ *
+ * Returns [{ model, label }], the plainest first.
+ */
+export function modelsFromItemDef(def) {
+  const out = [];
+  const seen = new Set();
+  const add = (model, trail) => {
+    if (!model || seen.has(model)) return;
+    seen.add(model);
+    out.push({ model, label: trail.filter(Boolean).join(' ') });
+  };
+  const walk = (node, trail) => {
+    if (!node || typeof node !== 'object') return;
+    const type = String(node.type || '').replace(/^minecraft:/, '');
+    if (type === 'model' && node.model) return add(node.model, trail);
+    if (type === 'special' && node.base) return add(node.base, trail);
+    for (const key of ['cases', 'entries', 'models']) {
+      for (const child of (Array.isArray(node[key]) ? node[key] : [])) {
+        if (!child || typeof child !== 'object') continue;
+        const name = child.when !== undefined
+          ? String(Array.isArray(child.when) ? child.when[0] : child.when).replace(/^minecraft:/, '')
+          : (child.threshold !== undefined ? String(child.threshold) : '');
+        walk(child.model || child, [...trail, name]);
+      }
+    }
+    for (const [key, label] of [['on_false', ''], ['on_true', 'on'], ['fallback', ''], ['model', '']]) {
+      if (node[key]) walk(node[key], [...trail, label]);
+    }
+  };
+  walk(def && def.model, []);
+  // The plain one is the one with nothing said about it.
+  out.sort((a, b) => (a.label ? 1 : 0) - (b.label ? 1 : 0));
+  return out;
+}
+
 // ── Flattening a model ──────────────────────────────────────────────────────
 const MAX_PARENTS = 16;   // a real chain is 2-4 deep; this is a loop guard
 

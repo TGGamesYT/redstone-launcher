@@ -45,8 +45,9 @@ started.
 - [x] **One entity is split into several** — breeze, breeze/eyes, breeze/wind.
       Parts are drawn with the mob and are switches, not entries of their own.
 - [x] **Two-block blocks do not render as one** (beds, doors).
-- [ ] **Trimmed armour shows as the untrimmed armour.**
-- [ ] **Item variants should be offered** the way a mod's pictures are — every
+- [x] **Trimmed armour shows as the untrimmed armour.** Every trim is a
+      variant in the adjust dialog, with the plain one as the default.
+- [x] **Item variants should be offered** the way a mod's pictures are — every
       clock, every compass and so on.
 - [x] **Chests, ender chests and copper chests render as plain cubes.**
 - [x] **Mob heads render as plain cubes** rather than the head model.

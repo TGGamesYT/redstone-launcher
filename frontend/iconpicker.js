@@ -475,12 +475,20 @@
         o.textContent = v.label || v.path.split('/').pop().replace(/\.png$/, '');
         variantSel.appendChild(o);
       }
-      variantSel.value = desc.texture || list[0].path;
+      variantSel.value = desc.texture || desc.variantOf || list[0].path;
       variantSel.onchange = async () => {
-        const next = await ipcRenderer.invoke('model:entity', {
-          profileId: opts0.instanceId ?? null, version: opts0.version || null,
-          name: String(info.item.id).replace(/^entity:/, ''), texture: variantSel.value,
-        });
+        // A mob's variants are textures on one model; an item's are whole
+        // models -- every trim on a chestplate, every hand position on a
+        // clock -- so which one is asked for depends on what this is.
+        const next = info.item && info.item.kind === 'entity'
+          ? await ipcRenderer.invoke('model:entity', {
+            profileId: opts0.instanceId ?? null, version: opts0.version || null,
+            name: String(info.item.id).replace(/^entity:/, ''), texture: variantSel.value,
+          })
+          : await ipcRenderer.invoke('model:describe', {
+            profileId: opts0.instanceId ?? null, version: opts0.version || null,
+            id: info.item.id, state: info.state || undefined, variant: variantSel.value,
+          });
         if (next && !next.error) { desc = next; paintParts(); redraw(); }
       };
     }
