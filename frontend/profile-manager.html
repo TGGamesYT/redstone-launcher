@@ -1172,31 +1172,17 @@
       } catch { /* no controls on this viewer */ }
     }
 
-    // ── Keeping the figure level while it spins ─────────────────────────────
-    // Spinning hard and ending up looking at the top of a head is not what
-    // spinning something does: a thing being turned fast settles into the plane
-    // it is turning in. So the pitch is always pulled back toward level, and
-    // the harder it is spinning the harder that pull is — a slow look around
-    // stays where you put it, a fast flick levels itself out while it runs
-    // down. HOME_PHI (PI/2) is level.
-    const LEVEL_PULL = 0.045;     // the pull at full spin
-    const LEVEL_FULL = 0.14;      // radians/frame of yaw that counts as "fast"
-    const LEVEL_DAMP = 0.84;      // heavy enough that it barely overshoots
-    // Zero when it is not turning, deliberately: looking at the top of a head
-    // and letting go has to STAY there, or the whole point of being able to
-    // tilt at all is gone. Settling back to the front is the job of the
-    // return-after-a-while homing, not of this.
-    function levelPull(yawRate) {
-      return LEVEL_PULL * Math.min(1, Math.abs(yawRate) / LEVEL_FULL);
-    }
-
-    // ── Settling back to the front ──────────────────────────────────────────
-    // Shared by the big render and the card renders so a skin coming home
-    // moves the same way whichever one you let go of. Damped rather than
-    // critically damped on purpose: it runs past centre and settles back with
-    // a couple of diminishing swings, which reads as weight.
-    const HOME_SPRING = 0.022;    // pull toward home, per frame
-    const HOME_DAMP = 0.94;       // <1 leaves overshoot; lower = stiffer
+    // ── Settling back to the front, and staying level ───────────────────────
+    // One definition of these, in skin-animations.js beside the camera physics
+    // built from them, so a skin let go of moves the same way whichever render
+    // it was in -- the big one, a card, or the friend details on the players
+    // page. What each is for is documented there.
+    //
+    // Nothing here renders at all without skinview3d, and neither does that
+    // file, so if the 3D is working these are here; the fallback only keeps a
+    // missing one from throwing on the way past.
+    const SPRING = (window.SkinAnimations && window.SkinAnimations.spring) || {};
+    const { HOME_SPRING, HOME_DAMP, LEVEL_DAMP, levelPull, camSpherical, camFromSpherical } = SPRING;
 
     function killViewer(v) {
       // dispose() alone does NOT release the WebGL context — that leaks a context
@@ -1313,19 +1299,6 @@
       } catch { }
       return { v, host, home, spin, raf: null, easing: false, owner: null, seq: 0,
                velTheta: 0, velPhi: 0, lastTheta: null, lastPhi: null, freeRaf: null };
-    }
-
-    // The camera orbits at a fixed distance, so its pose is two angles. Easing in
-    // spherical coordinates swings it back along its arc; a straight-line lerp
-    // between positions cuts the corner (reads as a zoom) and, at exactly 180°,
-    // passes through the origin and never converges at all.
-    function camSpherical(p) {
-      const r = p.length() || 1;
-      return { theta: Math.atan2(p.x, p.z), phi: Math.acos(Math.max(-1, Math.min(1, p.y / r))) };
-    }
-    function camFromSpherical(p, theta, phi, r) {
-      const sp = Math.sin(phi);
-      p.set(r * sp * Math.sin(theta), r * Math.cos(phi), r * sp * Math.cos(theta));
     }
 
     // Put the camera back exactly where makeLive() left it.
@@ -1526,9 +1499,10 @@
       if (!v || v._lifeWired || typeof skinview3d === "undefined") return;
       v._lifeWired = true;
       const S = skinview3d;
-      // Shared by both halves below: a gesture shouldn't start mid-drag, and the
-      // camera shouldn't drift home while the pointer is still on the model.
-      let dragging = false, hovering = false;
+      // A gesture shouldn't start while the model is being turned around. The
+      // camera physics below owns that fact, so it is asked rather than
+      // tracked twice.
+      const beingTurned = () => !!(v._physics && v._physics.dragging);
 
       // ONE animation owns the player. skin-animations.js supplies a conductor
       // that idles, eases into a clip when asked, plays it once and eases back
@@ -1552,7 +1526,7 @@
         var playGesture = () => {
           // Don't interrupt someone busy turning the model around, and don't
           // animate a tab nobody is looking at.
-          if (dragging || document.hidden || cond.busy) { scheduleGesture(); return; }
+          if (beingTurned() || document.hidden || cond.busy) { scheduleGesture(); return; }
           // The conductor holds this until the idle reaches its calm point, so
           // the clip always begins from the same resting arms.
           cond.play(SA.clips[SA.randomName()]);
@@ -1570,7 +1544,7 @@
         let backTimer = null;
         toIdle();
         var playGesture = () => {
-          if (dragging || document.hidden) { scheduleGesture(); return; }
+          if (beingTurned() || document.hidden) { scheduleGesture(); return; }
           try { v.animation = BUILT_IN_GESTURES[Math.floor(Math.random() * BUILT_IN_GESTURES.length)](); } catch { }
           clearTimeout(backTimer);
           backTimer = setTimeout(() => { toIdle(); scheduleGesture(); }, rand(2600, 5200));
@@ -1580,165 +1554,11 @@
       document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleGesture(); });
       scheduleGesture();
 
-      // ── Slow drift back to facing forward ─────────────────────────────────
-      // resetCameraPose() puts the camera at (0, 0, d), i.e. theta 0 / phi PI/2,
-      // looking at the origin — and orbiting preserves d — so "home" needs no
-      // bookkeeping, just the distance the camera is already at.
-      // The camera used to creep back along a fixed fraction per frame, which is
-      // why it read as lifeless: the same lazy drift whether you nudged it ten
-      // degrees or spun it right round, and it stopped dead on arrival.
-      //
-      // Instead it is a spring with a bit of weight. Flicking leaves velocity
-      // behind so the model keeps turning and slows down on its own; the pull
-      // home is proportional to how far out it is (so a big turn comes back
-      // fast) and damped rather than critically damped, so it runs past centre
-      // and settles back with a couple of diminishing swings.
-      const canvas = v.canvas;
-      let raf = null, idleTimer = null;
-      let velTheta = 0, velPhi = 0;       // radians per frame
-      let lastTheta = null, lastPhi = null;
-      let homing = false;
-      const norm = (a) => Math.atan2(Math.sin(a), Math.cos(a));
-      const HOME_PHI = Math.PI / 2;
-      const SPIN_DAMP = 0.97;             // free-spin decay after a flick
-      const MAX_VEL = 0.35;
-      // How long the player stays where it was left before drifting back. Long
-      // enough to actually look at the side or back of a skin.
-      const RETURN_AFTER = 3500;
-
-      const stopLoop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
-
-      // Orbiting the camera one way around a still model looks exactly like
-      // spinning the model the other way, so that is what the limbs are told
-      // is happening. The sign is flipped for that reason.
-      //
-      // The rate is measured against the clock rather than assumed to be one
-      // frame: the animation loop runs at the display's rate, but a drag
-      // reports through OrbitControls' "change" event, which fires per pointer
-      // move. Calling either one 1/60s would make the same drag read as a
-      // different speed depending on which path saw it.
-      const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      let lastSpinAt = 0;
-      const MAX_OMEGA = 14;            // rad/s; past this nothing looks any different
-      const reportSpin = (dTheta) => {
-        const t = now();
-        const dt = lastSpinAt ? Math.min(0.25, Math.max(1 / 240, (t - lastSpinAt) / 1000)) : 1 / 60;
-        lastSpinAt = t;
-        try {
-          const SA = window.SkinAnimations;
-          if (!SA || !SA.setSpin) return;
-          const w = -(Number.isFinite(dTheta) ? dTheta : 0) / dt;
-          SA.setSpin(Math.max(-MAX_OMEGA, Math.min(MAX_OMEGA, w)));
-        } catch { }
-      };
-
-      // While dragging, measure how fast the camera is actually moving so the
-      // flick carries over when the pointer is released.
-      const sampleDrag = () => {
-        try {
-          const cur = camSpherical(v.camera.position);
-          if (lastTheta !== null) {
-            velTheta = norm(cur.theta - lastTheta);
-            velPhi = cur.phi - lastPhi;
-            reportSpin(velTheta);
-          }
-          lastTheta = cur.theta; lastPhi = cur.phi;
-        } catch { }
-      };
-
-      const step = () => {
-        raf = null;
-        if (dragging) return;
-        try {
-          const cam = v.camera, tgt = v.controls.target;
-          const r = cam.position.length() || 1;
-          const cur = camSpherical(cam.position);
-
-          if (homing) {
-            // Spring toward the front, phi included so a drag upwards settles too.
-            velTheta += norm(0 - cur.theta) * HOME_SPRING;
-            velPhi += (HOME_PHI - cur.phi) * HOME_SPRING;
-            velTheta *= HOME_DAMP; velPhi *= HOME_DAMP;
-          } else {
-            // Free spin after a flick: bleed the speed away — but keep pulling
-            // the pitch back to level the whole time, harder the faster it is
-            // going, so a hard spin does not leave the figure tipped up or
-            // down. The yaw is left alone; only the pitch self-corrects.
-            velTheta *= SPIN_DAMP;
-            velPhi += (HOME_PHI - cur.phi) * levelPull(velTheta);
-            velPhi *= LEVEL_DAMP;
-          }
-          velTheta = Math.max(-MAX_VEL, Math.min(MAX_VEL, velTheta));
-          velPhi = Math.max(-MAX_VEL, Math.min(MAX_VEL, velPhi));
-
-          // The same limit the controls enforce while dragging, so a flick
-          // that carries on after the pointer leaves cannot sail past it.
-          const nextPhi = Math.max(MIN_POLAR, Math.min(MAX_POLAR, cur.phi + velPhi));
-          if (nextPhi !== cur.phi + velPhi) velPhi = 0;   // hit the stop; don't keep pushing
-          camFromSpherical(cam.position, cur.theta + velTheta, nextPhi, r);
-
-          if (tgt.lengthSq() > 0.0001) tgt.multiplyScalar(0.9); else tgt.set(0, 0, 0);
-          v.controls.update();
-          reportSpin(velTheta);
-
-          const offT = Math.abs(norm(0 - cur.theta)), offP = Math.abs(HOME_PHI - cur.phi);
-          const speed = Math.abs(velTheta) + Math.abs(velPhi);
-          if (homing && speed < 0.0015 && offT < 0.01 && offP < 0.01) {
-            camFromSpherical(cam.position, 0, HOME_PHI, r);
-            v.controls.update();
-            velTheta = velPhi = 0;
-            return;                        // settled
-          }
-          // A flick that has run out of speed just stops there and waits. It
-          // used to start homing the moment it slowed down, which meant a plain
-          // drag-and-release (no flick, so no speed to bleed off) snapped back
-          // immediately and the wait below never got a say.
-          //
-          // The pitch is the exception: the loop keeps running until it IS
-          // level, otherwise a fast spin stops the instant the yaw dies and
-          // leaves the figure tipped where the flick left it.
-          if (!homing && speed < 0.002 && offP < 0.01) {
-            velTheta = velPhi = 0;
-            // Never stop off-centre with nothing left to bring it back. If the
-            // figure is turned and no return is pending, schedule one — the
-            // loop is allowed to pause, but the render is not allowed to be
-            // stranded.
-            if (offT > 0.01 && !idleTimer) armReturn();
-            return;
-          }
-        } catch { return; }
-        raf = requestAnimationFrame(step);
-      };
-
-      const startLoop = () => { if (!raf) raf = requestAnimationFrame(step); };
-      const armReturn = () => {
-        clearTimeout(idleTimer);
-        // Let the flick play out first; the wait is before it decides to come
-        // back, not before it is allowed to move.
-        startLoop();
-        // Nulled when it fires, so "is a return pending?" is answerable.
-        idleTimer = setTimeout(() => { idleTimer = null; homing = true; startLoop(); }, RETURN_AFTER);
-      };
-      // Only the PENDING return is cancelled. A return already under way is
-      // left to finish: this used to clear `homing` as well, so moving the
-      // pointer over the render while it was swinging back dropped it into the
-      // free-spin branch, which — slow and already level — stopped the loop on
-      // the spot and left the figure sitting at whatever angle it had reached,
-      // with no timer left to bring it home. That is the "sometimes it ends up
-      // a bit rotated". Starting a DRAG still clears it, which is the one place
-      // abandoning the return is right.
-      const cancelReturn = () => { clearTimeout(idleTimer); idleTimer = null; };
-
-      canvas.addEventListener("pointerenter", () => { hovering = true; cancelReturn(); });
-      canvas.addEventListener("pointerleave", () => { hovering = false; armReturn(); });
-      try {
-        v.controls.addEventListener("start", () => {
-          dragging = true; cancelReturn(); homing = false; stopLoop();
-          velTheta = velPhi = 0; lastTheta = lastPhi = null;
-        });
-        v.controls.addEventListener("change", () => { if (dragging) sampleDrag(); });
-        v.controls.addEventListener("end", () => { dragging = false; armReturn(); });
-      } catch { }
+      // ── Weight, and the way back to facing forward ────────────────────────
+      // Both of these live in skin-animations.js now: the friend details render
+      // needs exactly the same thing and had none of it, and one copy of a
+      // spring is enough. Everything about how it behaves is documented there.
+      v._physics = (SA && SA.orbitPhysics) ? SA.orbitPhysics(v) : null;
     }
 
     // A card preview: an <img> holding a still 3D frame, with the size baked in.

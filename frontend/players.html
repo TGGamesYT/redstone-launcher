@@ -685,11 +685,15 @@
     // same as the skins page's main one but with no animations playing on its
     // own; on the right the line the list shows, then what you can do about
     // them.
-    let _pdViewer = null;
+    let _pdViewer = null, _pdPhysics = null;
     function closePlayerDetails() {
+      // Before the viewer goes: it holds a frame loop, a timer and listeners on
+      // a canvas that is about to be removed.
+      if (_pdPhysics) { try { _pdPhysics.stop(); } catch { } _pdPhysics = null; }
       if (_pdViewer) {
         try { _pdViewer.dispose(); } catch { }
         try { _pdViewer.renderer.forceContextLoss(); } catch { }
+        if (window.skinViewer === _pdViewer) window.skinViewer = null;
         _pdViewer = null;
       }
       const ov = document.getElementById('pdOverlay');
@@ -825,8 +829,17 @@
         if (!ov.isConnected) return;
         if (!skin || !skin.base64) { canvas.remove(); return; }
         _pdViewer = new skinview3d.SkinViewer({ canvas, width: 230, height: 380 });
+        // The handle skin-animations.js's devtools helpers look for, so
+        // playerRenderAnimPlay() and friends work on this render too.
+        window.skinViewer = _pdViewer;
         _pdViewer.zoom = 0.9;
         _pdViewer.autoRotate = false;
+        // The same pitch stops the skins page uses, so a drag upwards cannot
+        // put the camera over the top of the head.
+        try {
+          _pdViewer.controls.minPolarAngle = Math.PI / 2 - 0.55;
+          _pdViewer.controls.maxPolarAngle = Math.PI / 2 + 0.55;
+        } catch { }
         await _pdViewer.loadSkin('data:image/png;base64,' + skin.base64,
           { model: skin.slim ? 'slim' : 'default' });
         if (!ov.isConnected) return closePlayerDetails();
@@ -834,8 +847,25 @@
         if (skin.capeUrl) { try { await _pdViewer.loadCape(skin.capeUrl); } catch { } }
         // Standing still. No clip is scheduled here on purpose: this is a
         // picture of somebody, not a toy.
-        if (window.SkinAnimations && window.SkinAnimations.spinOnly) {
-          try { _pdViewer.animation = window.SkinAnimations.spinOnly(); } catch { }
+        //
+        // It is still a person being turned around, though. Dragging this one
+        // used to move the camera and nothing else: the figure never reacted,
+        // and wherever it was let go of is where it stayed. Both of those are
+        // the skins page's big render, so both come from the same place now --
+        // the physics reports how fast it is apparently being spun, and the
+        // animation reads that off and swings the arms, head and cape with it.
+        //
+        // It reports the rate to this render rather than through setSpin,
+        // which is one channel for a whole page -- this one is the only render
+        // here, but asking the handle is the answer that stays right.
+        const SA = window.SkinAnimations;
+        if (SA && SA.orbitPhysics) {
+          try { _pdPhysics = SA.orbitPhysics(_pdViewer, { onSpin: () => { } }); } catch { }
+        }
+        if (SA && SA.spinOnly) {
+          try {
+            _pdViewer.animation = SA.spinOnly(() => (_pdPhysics ? _pdPhysics.rate() : 0));
+          } catch { }
         }
       } catch {
         if (canvas) canvas.remove();

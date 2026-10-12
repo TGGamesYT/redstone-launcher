@@ -158,8 +158,15 @@ stuff" — so the list is in two halves and the first half is done first.
 ### D. Elsewhere
 - [x] **Changing what a page is showing has no loading transition** — the
       instance detail to the instance list is instant where a page change is not.
-- [ ] **The render in a friend's details has no physics** and never returns to
+- [x] **The render in a friend's details has no physics** and never returns to
       facing forward.
+      *The skins page's camera physics is in `skin-animations.js` now, so both
+      renders share one copy — and one copy of the springs with it. Two things
+      came out of it: a drag that left the narrow canvas killed the loop, so a
+      flick never carried; and the springs stepped per frame, so they ran at
+      the speed of the display — three times too fast at 144Hz and slow enough
+      on a struggling machine to read as never coming back. A frame counts for
+      how long it took now.*
 - [x] **The admin password file should hold the hash, not the password.**
 - [x] **Switching instance leaves the old instance's modals open.**
 - [x] **The skins page's "Loading your skins & capes" should be the ordinary

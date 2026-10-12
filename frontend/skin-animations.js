@@ -436,6 +436,268 @@
     return anim;
   }
 
+  // ── Being turned, and finding the way back ───────────────────────────────
+  /**
+   * Wire a viewer's camera so dragging it has weight, the limbs react to being
+   * turned, and the figure comes back to facing forward when it is left alone.
+   *
+   *   const phys = SkinAnimations.orbitPhysics(viewer);
+   *   …
+   *   phys.stop();      // when the viewer goes
+   *
+   * It lived on the skins page, where it is the big render's whole character:
+   * the friend-details render had a camera that moved when dragged and nothing
+   * else -- no weight, no reaction from the figure, and wherever you left it is
+   * where it stayed. So it is here, where both pages can have it.
+   *
+   * resetCameraPose() puts the camera at (0, 0, d) -- theta 0, phi PI/2,
+   * looking at the origin -- and orbiting preserves d, so "home" needs no
+   * bookkeeping beyond the distance the camera is already at.
+   *
+   * The camera used to creep home at a fixed fraction per frame, which is why
+   * it read as lifeless: the same lazy drift whether you nudged it ten degrees
+   * or spun it right round, and it stopped dead on arrival. It is a spring with
+   * a bit of weight instead. Flicking leaves velocity behind so the model keeps
+   * turning and slows down on its own; the pull home is proportional to how far
+   * out it is, and damped rather than critically damped, so it runs past centre
+   * and settles back with a couple of diminishing swings.
+   *
+   * opts:
+   *   onSpin(w)     told the apparent turn rate, rad/s, instead of setSpin.
+   *   returnAfter   ms to stay where it was left before drifting back.
+   */
+  // ── Keeping the figure level while it spins ──────────────────────────────
+  // Spinning hard and ending up looking at the top of a head is not what
+  // spinning something does: a thing being turned fast settles into the plane
+  // it is turning in. So the pitch is always pulled back toward level, and the
+  // harder it is spinning the harder that pull is -- a slow look around stays
+  // where you put it, a fast flick levels itself out while it runs down.
+  const LEVEL_PULL = 0.045;     // the pull at full spin
+  const LEVEL_FULL = 0.14;      // radians/frame of yaw that counts as "fast"
+  const LEVEL_DAMP = 0.84;      // heavy enough that it barely overshoots
+  // Zero when it is not turning, deliberately: looking at the top of a head and
+  // letting go has to STAY there, or being able to tilt at all is pointless.
+  // Settling back to the front is the homing's job, not this one's.
+  const levelPull = (yawRate) => LEVEL_PULL * Math.min(1, Math.abs(yawRate) / LEVEL_FULL);
+  // Damped rather than critically damped on purpose: it runs past centre and
+  // settles back with a couple of diminishing swings, which reads as weight.
+  const HOME_SPRING = 0.022;    // pull toward home, per frame
+  const HOME_DAMP = 0.94;       // <1 leaves overshoot; lower = stiffer
+  const HOME_PHI = Math.PI / 2; // level
+  const MAX_VEL = 0.35;
+  const SPIN_DAMP = 0.97;       // free-spin decay after a flick
+  const MAX_OMEGA = 14;         // rad/s; past this nothing looks any different
+
+  const normAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+  // The camera orbits at a fixed distance, so its pose is two angles. Easing in
+  // spherical coordinates swings it back along its arc; a straight-line lerp
+  // between positions cuts the corner (which reads as a zoom) and, at exactly
+  // 180 degrees, passes through the origin and never converges at all.
+  function camSpherical(p) {
+    const r = p.length() || 1;
+    return { theta: Math.atan2(p.x, p.z), phi: Math.acos(Math.max(-1, Math.min(1, p.y / r))) };
+  }
+  function camFromSpherical(p, theta, phi, r) {
+    const sp = Math.sin(phi);
+    p.set(r * sp * Math.sin(theta), r * Math.cos(phi), r * sp * Math.cos(theta));
+  }
+
+  function orbitPhysics(v, opts) {
+    opts = opts || {};
+    if (!v || !v.canvas || !v.controls) return { dragging: false, stop() { }, home() { } };
+    const canvas = v.canvas;
+    const RETURN_AFTER = Number.isFinite(opts.returnAfter) ? opts.returnAfter : 3500;
+    // The pitch stops the controls already enforce, so a flick carrying on
+    // after the pointer has gone cannot sail past one.
+    const minPolar = Number.isFinite(v.controls.minPolarAngle) ? v.controls.minPolarAngle : 0;
+    const maxPolar = Number.isFinite(v.controls.maxPolarAngle) ? v.controls.maxPolarAngle : Math.PI;
+
+    let raf = null, idleTimer = null;
+    let velTheta = 0, velPhi = 0;       // radians per frame
+    let lastTheta = null, lastPhi = null;
+    let homing = false, dragging = false, hovering = false, dead = false;
+    let lastW = 0;
+
+    const stopLoop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
+
+    // Orbiting the camera one way around a still model looks exactly like
+    // spinning the model the other way, so that is what the limbs are told is
+    // happening -- hence the flipped sign.
+    //
+    // The rate is measured against the clock rather than assumed to be one
+    // frame: the loop runs at the display's rate, but a drag reports through
+    // OrbitControls' "change" event, which fires per pointer move. Calling
+    // either one 1/60s would make the same drag read as a different speed
+    // depending on which path saw it.
+    const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    let lastSpinAt = 0;
+    const reportSpin = (dTheta) => {
+      const t = nowMs();
+      const dt = lastSpinAt ? Math.min(0.25, Math.max(1 / 240, (t - lastSpinAt) / 1000)) : 1 / 60;
+      lastSpinAt = t;
+      const w = Math.max(-MAX_OMEGA, Math.min(MAX_OMEGA,
+        -(Number.isFinite(dTheta) ? dTheta : 0) / dt));
+      lastW = w;
+      try { (opts.onSpin || setSpin)(w); } catch { /* the render is not worth throwing over */ }
+    };
+
+    // While dragging, measure how fast the camera is actually moving so the
+    // flick carries over when the pointer is released.
+    const sampleDrag = () => {
+      try {
+        const cur = camSpherical(v.camera.position);
+        if (lastTheta !== null) {
+          velTheta = normAngle(cur.theta - lastTheta);
+          velPhi = cur.phi - lastPhi;
+          reportSpin(velTheta);
+        }
+        lastTheta = cur.theta; lastPhi = cur.phi;
+      } catch { }
+    };
+
+    // The springs below are written per frame, and were tuned at 60Hz. Taken
+    // literally that makes the whole thing run at the speed of the display: on
+    // a 144Hz screen a flick comes home in a third of the time, and on anything
+    // struggling -- a slow machine, a blurred overlay over the top, a laptop on
+    // battery -- it crawls back so slowly it reads as never coming back at all.
+    // So a frame counts for how long it actually took. k is 1 at 60Hz, which is
+    // where the numbers came from, and is capped because a spring integrated in
+    // one huge step does not settle, it explodes.
+    let lastStepAt = 0;
+    const frames = () => {
+      const t = nowMs();
+      const dt = lastStepAt ? (t - lastStepAt) / 1000 : 1 / 60;
+      lastStepAt = t;
+      return Math.max(0.2, Math.min(3, dt * 60));
+    };
+
+    const step = () => {
+      raf = null;
+      if (dragging || dead) return;
+      try {
+        const cam = v.camera, tgt = v.controls.target;
+        const r = cam.position.length() || 1;
+        const cur = camSpherical(cam.position);
+        const k = frames();
+
+        if (homing) {
+          // Spring toward the front, phi included so a drag upwards settles too.
+          velTheta += normAngle(0 - cur.theta) * HOME_SPRING * k;
+          velPhi += (HOME_PHI - cur.phi) * HOME_SPRING * k;
+          velTheta *= Math.pow(HOME_DAMP, k); velPhi *= Math.pow(HOME_DAMP, k);
+        } else {
+          // Free spin after a flick: bleed the speed away -- but keep pulling
+          // the pitch back to level the whole time, harder the faster it is
+          // going, so a hard spin does not leave the figure tipped up or down.
+          // The yaw is left alone; only the pitch self-corrects.
+          velTheta *= Math.pow(SPIN_DAMP, k);
+          velPhi += (HOME_PHI - cur.phi) * levelPull(velTheta) * k;
+          velPhi *= Math.pow(LEVEL_DAMP, k);
+        }
+        velTheta = Math.max(-MAX_VEL, Math.min(MAX_VEL, velTheta));
+        velPhi = Math.max(-MAX_VEL, Math.min(MAX_VEL, velPhi));
+
+        const stepPhi = velPhi * k;
+        const nextPhi = Math.max(minPolar, Math.min(maxPolar, cur.phi + stepPhi));
+        if (nextPhi !== cur.phi + stepPhi) velPhi = 0;   // hit the stop; don't keep pushing
+        camFromSpherical(cam.position, cur.theta + velTheta * k, nextPhi, r);
+
+        if (tgt.lengthSq() > 0.0001) tgt.multiplyScalar(0.9); else tgt.set(0, 0, 0);
+        v.controls.update();
+        reportSpin(velTheta);
+
+        const offT = Math.abs(normAngle(0 - cur.theta)), offP = Math.abs(HOME_PHI - cur.phi);
+        const speed = Math.abs(velTheta) + Math.abs(velPhi);
+        if (homing && speed < 0.0015 && offT < 0.01 && offP < 0.01) {
+          camFromSpherical(cam.position, 0, HOME_PHI, r);
+          v.controls.update();
+          velTheta = velPhi = 0;
+          homing = false;
+          return;                        // settled
+        }
+        // A flick that has run out of speed just stops there and waits. It used
+        // to start homing the moment it slowed down, which meant a plain
+        // drag-and-release (no flick, so no speed to bleed off) snapped back
+        // immediately and the wait below never got a say.
+        //
+        // The pitch is the exception: the loop keeps running until it IS level,
+        // otherwise a fast spin stops the instant the yaw dies and leaves the
+        // figure tipped where the flick left it.
+        if (!homing && speed < 0.002 && offP < 0.01) {
+          velTheta = velPhi = 0;
+          // Never stop off-centre with nothing left to bring it back. If the
+          // figure is turned and no return is pending, schedule one -- the loop
+          // may pause, but the render may not be stranded.
+          if (offT > 0.01 && !idleTimer) armReturn();
+          return;
+        }
+      } catch { return; }
+      raf = requestAnimationFrame(step);
+    };
+
+    const startLoop = () => { if (!raf && !dead) raf = requestAnimationFrame(step); };
+    function armReturn() {
+      clearTimeout(idleTimer);
+      // Let the flick play out first; the wait is before it decides to come
+      // back, not before it is allowed to move.
+      startLoop();
+      // Nulled when it fires, so "is a return pending?" is answerable.
+      idleTimer = setTimeout(() => { idleTimer = null; homing = true; startLoop(); }, RETURN_AFTER);
+    }
+    // Only the PENDING return is cancelled. A return already under way is left
+    // to finish: clearing `homing` as well meant that moving the pointer over
+    // the render while it was swinging back dropped it into the free-spin
+    // branch, which -- slow and already level -- stopped the loop on the spot
+    // and left the figure at whatever angle it had reached, with no timer left
+    // to bring it home. That was the "sometimes it ends up a bit rotated".
+    // Starting a DRAG still clears it, which is the one place abandoning the
+    // return is right.
+    const cancelReturn = () => { clearTimeout(idleTimer); idleTimer = null; };
+
+    const onEnter = () => { hovering = true; cancelReturn(); };
+    // Not while it is being dragged. The pointer leaves the canvas constantly
+    // mid-drag -- the render is a narrow column and a sideways drag runs off it
+    // in a few dozen pixels -- and arming the return there started the loop,
+    // which saw `dragging` and stopped again, leaving nothing running to carry
+    // the flick when the pointer came up. The drag's own end arms it.
+    const onLeave = () => { hovering = false; if (!dragging) armReturn(); };
+    const onStart = () => {
+      dragging = true; cancelReturn(); homing = false; stopLoop();
+      velTheta = velPhi = 0; lastTheta = lastPhi = null;
+    };
+    const onChange = () => { if (dragging) sampleDrag(); };
+    const onEnd = () => { dragging = false; armReturn(); };
+
+    canvas.addEventListener('pointerenter', onEnter);
+    canvas.addEventListener('pointerleave', onLeave);
+    try {
+      v.controls.addEventListener('start', onStart);
+      v.controls.addEventListener('change', onChange);
+      v.controls.addEventListener('end', onEnd);
+    } catch { }
+
+    return {
+      get dragging() { return dragging; },
+      get hovering() { return hovering; },
+      // The apparent turn rate, for an animation that wants to read it rather
+      // than be told through setSpin.
+      rate: () => lastW,
+      // Bring it home now, without waiting.
+      home() { cancelReturn(); homing = true; startLoop(); },
+      stop() {
+        dead = true;
+        stopLoop(); cancelReturn();
+        canvas.removeEventListener('pointerenter', onEnter);
+        canvas.removeEventListener('pointerleave', onLeave);
+        try {
+          v.controls.removeEventListener('start', onStart);
+          v.controls.removeEventListener('change', onChange);
+          v.controls.removeEventListener('end', onEnd);
+        } catch { }
+      },
+    };
+  }
+
   // ── The conductor ────────────────────────────────────────────────────────
   // ONE animation owns the player for the whole page. It idles, and when a clip
   // is requested it waits for the calm point of the idle, eases into the clip's
@@ -605,9 +867,22 @@
     // positive for a turn to its left. Set it every frame while something is
     // moving; it bleeds away on its own once the updates stop.
     setSpin,
+    // The same figure, read back: what the spin currently is. Poll it once a
+    // frame; it bleeds away between polls once the updates stop.
+    currentSpin,
     // Rest pose plus the spin reactions, for the card previews -- they spin the
     // model itself, so this reads the rate off the model.
     spinOnly: spinOnlyAnimation,
+    // Weight on the camera, and a way back to facing forward.
+    orbitPhysics,
+    // The springs orbitPhysics is built from, for a render that drives its own
+    // camera and still has to come home the same way -- the card previews do.
+    // One definition, so a skin let go of moves identically whichever render
+    // it was.
+    spring: {
+      HOME_SPRING, HOME_DAMP, LEVEL_DAMP, MAX_VEL, SPIN_DAMP, HOME_PHI,
+      levelPull, camSpherical, camFromSpherical, norm: normAngle,
+    },
   };
 
   // ── Devtools ────────────────────────────────────────────────────────────
