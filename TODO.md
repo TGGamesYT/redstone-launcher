@@ -28,8 +28,13 @@ Sent while Round 23 was still being worked through.
       fastest as it leaves, and then it stands there extended for a quarter of
       a second before coming back. Its retract still coincides exactly with the
       next one's push.*
-- [ ] **An older instance with no icon of its own shows redstone ore.** It
+- [x] **An older instance with no icon of its own shows redstone ore.** It
       should show its version's own render — and so should the latest snapshot.
+      *An instance with nothing stored now draws its version's icon on demand,
+      in the lists, the sidebar, the home page and the settings preview. And a
+      snapshot is no longer a dead end: it takes the icon of the version it is
+      on the way to — the first release out after it, or, when it is ahead of
+      every release, whatever the icon list names as coming.*
 - [ ] **Cropping a picture that is not square still will not move off the
       sides**, and still has odd edges.
 - [ ] **The creeper's charge texture is in the wrong place.**

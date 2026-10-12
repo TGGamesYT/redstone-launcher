@@ -25,4 +25,32 @@
     if (!icon || icon === LEGACY_REMOTE) return DEFAULT_ICON;
     return icon;
   };
+
+  // The icon for an instance that has none of its own.
+  //
+  // Every instance made before the version icons existed has no icon stored,
+  // and they all came out as the same block of redstone ore -- a page of
+  // identical rows that said nothing about any of them. An instance made today
+  // is given its version's own render at the moment it is created, so the old
+  // ones should show the same thing; they simply have nowhere to have stored
+  // it. It is drawn on demand instead, and the main process keeps the drawing,
+  // so a page of instances on one version costs one render between them.
+  //
+  // The redstone ore still goes up first and is replaced when the render
+  // arrives, because the alternative is a hole in the list while it is drawn.
+  // An instance that HAS an icon never reaches any of this.
+  window.instanceIconInto = function (img, profile) {
+    const own = profile && profile.icon;
+    if (own && own !== LEGACY_REMOTE) { img.src = own; return; }
+    img.src = DEFAULT_ICON;
+    const version = profile && profile.version;
+    if (!version || !window.VersionIcon) return;
+    window.VersionIcon.get(version, (profile && profile.id) || null)
+      .then((url) => {
+        // Not if something else has taken the element over in the meantime --
+        // these lists are rebuilt from under themselves constantly.
+        if (url && img.isConnected && img.src.endsWith(DEFAULT_ICON)) img.src = url;
+      })
+      .catch(() => { /* the ore will do */ });
+  };
 })();

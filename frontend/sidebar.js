@@ -231,7 +231,7 @@ function renderInstances(instances) {
         }
       });
       const img = document.createElement("img");
-      img.src = instanceIcon(instance.icon);
+      window.instanceIconInto(img, instance);
       img.alt = instance.name;
       img.style.width = "24px";
       a.appendChild(img);

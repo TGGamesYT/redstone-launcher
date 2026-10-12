@@ -248,7 +248,7 @@
         li.className = "profile-item";
 
         const img = document.createElement("img");
-        img.src = instanceIcon(p.icon);
+        window.instanceIconInto(img, p);
         li.appendChild(img);
 
         const info = document.createElement("div");

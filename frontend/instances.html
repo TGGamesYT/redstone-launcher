@@ -1225,10 +1225,18 @@
 
       // Reset icon selection to the instance's current icon.
       pickedInstanceIcon = null;
-      // instanceIcon maps "no icon" and the old remote URL onto the one
-      // shipped with the launcher, so this section shows what the lists show
-      // rather than nothing or a fetched image.
+      // What the lists show, which for an instance with no icon of its own is
+      // its version's render rather than the shipped block.
       setInstancePreview(instanceIcon(profile.icon));
+      if (!profile.icon && profile.version && window.VersionIcon) {
+        window.VersionIcon.get(profile.version, profile.id).then((url) => {
+          // Only while the shipped block is still what is showing: by the time
+          // this arrives the dialog may have been closed, reopened on another
+          // instance, or had an icon picked in it.
+          const shown = instanceIconPreview && instanceIconPreview.getAttribute('src');
+          if (url && !pickedInstanceIcon && shown === window.DEFAULT_ICON) setInstancePreview(url);
+        }).catch(() => { /* the shipped block will do */ });
+      }
 
       // Java & Launch fields.
       document.getElementById('instanceLaunchArgs').value = profile.launchArgs || '';
@@ -1823,7 +1831,7 @@
         topRow.appendChild(left);
 
         const icon = document.createElement("img");
-        icon.src = instanceIcon(profile.icon);
+        window.instanceIconInto(icon, profile);
         icon.style.width = "64px";
         icon.style.height = "64px";
         icon.style.marginRight = "10px";
@@ -2196,7 +2204,7 @@
           li.className = "profile-item";
 
           const img = document.createElement("img");
-          img.src = instanceIcon(p.icon);
+          window.instanceIconInto(img, p);
           li.appendChild(img);
 
           const info = document.createElement("div");
@@ -2488,7 +2496,7 @@
             img.dataset.fallback = "1";
             img.src = DEFAULT_ICON;
           };
-          img.src = p.icon || DEFAULT_ICON;
+          window.instanceIconInto(img, p);
           // A cached image can be complete before onload is attached.
           if (img.complete && img.naturalWidth) reveal();
           li.appendChild(img);

@@ -155,6 +155,34 @@ export async function manifestIndex() {
  * plus `reason`, which is there to be shown in a tooltip or a log rather than
  * guessed at.
  */
+/**
+ * The release a snapshot is on the way to, or null.
+ *
+ * By date, because that is the only thing that orders a snapshot against a
+ * release: `25w31a` does not compare with `1.21.9` as a number. The first
+ * release out AFTER the snapshot is the one it was building up to. A snapshot
+ * ahead of every release is building up to something not out yet, which is
+ * what the icon list's newest entry names — the list is written ahead of a
+ * release for exactly this reason — unless that one has since shipped, in
+ * which case there is nothing newer to point at.
+ */
+function snapshotTarget(v, entries, manifest) {
+  const meta = manifest.by.get(v);
+  if (meta && meta.at) {
+    let best = null;
+    for (const m of manifest.by.values()) {
+      if (m.type !== 'release' || !m.at || m.at <= meta.at) continue;
+      if (!best || m.at < best.at) best = m;
+    }
+    if (best) return best.id;
+  }
+  const newest = entries.length ? entries[entries.length - 1].version : null;
+  if (!newest) return null;
+  const nm = manifest.by.get(newest);
+  const out = !!nm && (nm.type === 'release' || looksLikeRelease(nm.id));
+  return out ? null : newest;
+}
+
 export async function resolveVersionIcon(version) {
   const v = String(version || '').trim();
   if (!v) return { kind: 'legacy', reason: 'no version given' };
@@ -165,7 +193,23 @@ export async function resolveVersionIcon(version) {
   // Anything that is not plainly numbered is a snapshot, a pre-release or a
   // release candidate. The manifest can also say so for an id that looks
   // numbered but is not a release.
-  if (!looksLikeRelease(v)) return { kind: 'snapshot', reason: `${v} is not a release` };
+  //
+  // A snapshot is not a version nobody remembers a block for -- it is part of
+  // the run-up to one, and that one's block is the honest answer for it. So it
+  // takes the icon of the version it is building up to: the first release out
+  // after it, or, when it is still ahead of every release, whatever the icon
+  // list names as coming (which is why the list is written ahead of a release).
+  // Only when neither exists does it fall back to the plain snapshot mark.
+  if (!looksLikeRelease(v)) {
+    const target = snapshotTarget(v, entries, manifest);
+    if (target) {
+      const r = await resolveVersionIcon(target);
+      if (r.kind === 'model') {
+        return { ...r, forVersion: target, reason: `${v} is on the way to ${target}, which is ${r.reason}` };
+      }
+    }
+    return { kind: 'snapshot', reason: `${v} is not a release` };
+  }
 
   if (compareVersions(v, FIRST_MODELLED) < 0) {
     return { kind: 'legacy', reason: `${v} is older than ${FIRST_MODELLED}, which is where block models start` };
