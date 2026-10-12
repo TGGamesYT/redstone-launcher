@@ -785,6 +785,17 @@ function boxUv(b) {
   };
 }
 
+// Is there room on this layer's texture for the box's whole unwrap? The
+// unwrap is 2(w+d) across and h+d down from (u, v) -- see boxUv -- against a
+// texture of texW x texH, after the box's own texture scale.
+function boxFits(b, texW, texH) {
+  const su = b.texScaleU || 1, sv = b.texScaleV || 1;
+  const right = (b.u + 2 * (b.w + b.d)) / su;
+  const bottom = (b.v + b.h + b.d) / sv;
+  const EPS = 0.01;
+  return b.u / su >= -EPS && b.v / sv >= -EPS && right <= texW + EPS && bottom <= texH + EPS;
+}
+
 // A few mobs are never seen at rest.
 //
 // The model tree holds the REST pose; what the game shows is that pose after
@@ -889,6 +900,22 @@ function flatten(layer, poses) {
         // rolls into -- and nothing downstream can tell which boxes go
         // together without this.
         part: path || name || '',
+        // Whether this layer's texture has room for the box's whole unwrap.
+        //
+        // One mesh is often registered as several layers, each naming a texture
+        // of its own: a breeze's is registered three times, as the breeze, its
+        // wind and its eyes. What each layer actually DRAWS is decided in the
+        // renderer's Java, which there is nothing here to read -- but the UVs
+        // say it anyway, because the wind's boxes are unwrapped against a
+        // 128x128 sheet and run clean off the 32x32 one the body and the eyes
+        // use. Drawing them there is where the breeze's slabs of meaningless
+        // grey came from: a wind box sampling the body texture past its border.
+        //
+        // It is only a hint. Models do overflow their own texture in places
+        // nobody sees -- the decorated pot's top and bottom quads do -- so who
+        // acts on it is whoever can see the whole family of layers and tell
+        // "another layer draws this one" from "nothing does".
+        fits: boxFits(b, texW, texH),
       });
     }
     for (const [childName, child] of part.children) {

@@ -636,7 +636,33 @@ export async function describeEntity({ profileId, version, name, texture, textur
     || await entityTextureFile(tx, name, texture);
   if (!tex0 && L.elements.length) return { error: `no texture for ${name}` };
 
-  const elements = L.elements.slice();
+  const parts = [...layers.keys()].filter(k => k.startsWith(name + '/'));
+
+  // Which boxes belong to which layer of a shared mesh.
+  //
+  // One mesh is often registered several times over with a texture each -- a
+  // breeze is itself, its wind and its eyes -- and every registration carries
+  // every box. The flattener marks each box with whether the layer's texture
+  // has room for its unwrap, and that is the answer: a wind box is unwrapped
+  // against the wind's 128x128 sheet and runs off the 32x32 one the body and
+  // the eyes use. Drawing it there sampled the body texture past its border,
+  // which is where the breeze's slabs of grey came from.
+  //
+  // A box is only dropped from a layer when ANOTHER layer of the same mesh
+  // does have room for it, though -- that is what makes it somebody else's
+  // box rather than simply a sloppy unwrap. Models do overflow their own
+  // texture where nobody looks: a decorated pot's top and bottom quads do,
+  // and nothing else draws them, so they stay.
+  const boxId = (el) => `${el.part || ''}|${(el.from || []).join(',')}|${(el.to || []).join(',')}`;
+  const hosted = new Set();
+  for (const key of [name, ...parts]) {
+    const l = layers.get(key);
+    if (!l) continue;
+    for (const el of l.elements) if (el.fits !== false) hosted.add(boxId(el));
+  }
+  const mine = (el) => el.fits !== false || !hosted.has(boxId(el));
+
+  const elements = L.elements.filter(mine);
   const textures = {};
   if (tex0) textures[0] = { url: tex0.url, width: L.texWidth, height: L.texHeight, frames: 1 };
   let slot = 1;
@@ -652,7 +678,6 @@ export async function describeEntity({ profileId, version, name, texture, textur
   // purpose (the stray's overlay is registered as a player-shaped humanoid,
   // and only the clothing shows because the rest samples empty texture), so
   // falling back to the body's texture would draw it solid.
-  const parts = [...layers.keys()].filter(k => k.startsWith(name + '/'));
   for (const key of parts) {
     const part = layers.get(key);
     if (!part) continue;
@@ -671,7 +696,7 @@ export async function describeEntity({ profileId, version, name, texture, textur
     textures[slot] = { url: (pt || tex0).url, width: part.texWidth, height: part.texHeight, frames: 1 };
     const ref = '#' + slot;
     slot++;
-    for (const el of part.elements) {
+    for (const el of part.elements.filter(mine)) {
       elements.push({ ...el, group: key, faces: Object.fromEntries(
         Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: ref }])) });
     }
@@ -682,7 +707,8 @@ export async function describeEntity({ profileId, version, name, texture, textur
   // which parts the game hides while a mob stands still -- an armadillo has
   // the ball it rolls into, an evoker has both sets of arms -- so rather than
   // guess, everything is drawn and the parts are named.
-  const groups = L.elements.length ? [{ key: '', label: 'Body', n: L.elements.length }] : [];
+  const own = elements.filter(el => !el.group).length;
+  const groups = own ? [{ key: '', label: 'Body', n: own }] : [];
   for (const key of parts) {
     const n = elements.filter(el => el.group === key).length;
     if (n) groups.push({ key, label: key.slice(name.length + 1).replace(/[_/]+/g, ' '), n });

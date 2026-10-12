@@ -51,9 +51,20 @@ stuff" — so the list is in two halves and the first half is done first.
       can be read off the model, because the two spaces do not overlap. They
       also stop being spun to face the camera — their front already is one,
       which is why the chest showed its back.*
-- [ ] **The breeze's wind should be see-through, not left out** — let a part
+- [x] **The breeze's wind should be see-through, not left out** — let a part
       be transparent instead.
-- [ ] **A part of the breeze's body is a snippet of texture that is not it.**
+      *A texture with part-way alpha is now drawn blended and without writing
+      depth, and the cutout ones say they are opaque so they go in the pass
+      before it. With everything in the blended pass the wind and the breeze
+      raced — they share a centre, so nothing decided the order — and whichever
+      went first cut the other away.*
+- [x] **A part of the breeze's body is a snippet of texture that is not it.**
+      *One mesh is registered as several layers with a texture each, and every
+      registration carries every box. A box whose unwrap runs off the layer's
+      own texture belongs to another layer of the same mesh — that is where the
+      slabs of grey came from. Only dropped when another layer does have room
+      for it, because a model that merely overflows its own texture (the
+      decorated pot's top and bottom) must keep its boxes.*
 - [ ] **Variants that are not variants.** The ender dragon has an "ender" one
       wearing the ender chest's texture; the armadillo has "scute"; the dragon
       skull has two wrong "skull" ones; the evoker has "fangs"; the llama has

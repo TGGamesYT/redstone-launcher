@@ -91,6 +91,36 @@
     return textures[k] || null;
   }
 
+  // Is anything in this image part-way see-through? Minecraft's textures are
+  // overwhelmingly cutout — every pixel either solid or absent — and those want
+  // to be drawn as cutouts. A few are genuinely translucent: the breeze's wind
+  // is white at a third to three quarters opacity and nothing else, and drawing
+  // that as a cutout turns a draught into grey slabs that hide the mob behind
+  // them.
+  //
+  // Measured once per image, from the image itself, because nothing in the
+  // model data says it.
+  function hasPartialAlpha(img) {
+    try {
+      const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+      if (!w || !h || w * h > 1024 * 1024) return false;
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(img, 0, 0);
+      const d = cx.getImageData(0, 0, w, h).data;
+      let part = 0, solid = 0;
+      for (let i = 3; i < d.length; i += 4) {
+        const a = d[i];
+        if (a >= 250) solid++;
+        else if (a > 8) part++;
+      }
+      // A stray part-way pixel is an antialiased edge somebody left in, not an
+      // intent to be see-through. A real one is a good fraction of what shows.
+      return part > 0 && part >= (solid + part) * 0.25;
+    } catch { return false; }
+  }
+
   async function makeTexture(THREE, spec, cache) {
     if (!spec || !spec.url) return null;
     if (cache.has(spec.url)) return cache.get(spec.url);
@@ -104,6 +134,7 @@
         t.generateMipmaps = false;
         t.colorSpace = THREE.SRGBColorSpace;
         t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+        t.userData.translucent = hasPartialAlpha(t.image);
         res(t);
       }, undefined, () => res(null));
     });
@@ -308,14 +339,28 @@
         const t = wantsTint(face, spec, opts, flat) ? (flat.tint || DEFAULT_TINT) : [1, 1, 1];
         const tint = new THREE.Color();
         tint.setRGB(shade * t[0], shade * t[1], shade * t[2], THREE.SRGBColorSpace);
+        // A texture that is part-way see-through is drawn as what it is:
+        // blended at its own opacity, and not writing depth, so what is behind
+        // it shows through instead of being cut away.
+        //
+        // A cutout is opaque as far as the renderer is concerned — every pixel
+        // of it either covers what is behind or is thrown away — and saying so
+        // is what gets it drawn in the opaque pass, with depth written, before
+        // anything blended. A see-through surface then goes in the pass after
+        // it, back to front, over a depth buffer that already knows where
+        // everything solid is. With everything in the blended pass instead, the
+        // breeze's wind and the breeze itself raced: the two are on the same
+        // centre, so nothing about where they sit decides the order, and
+        // whichever went first cut the other away.
+        const seeThrough = !!(map && map.userData && map.userData.translucent);
         const m = new THREE.MeshBasicMaterial({
           map: map || null,
           color: tint,
-          transparent: true,
+          transparent: seeThrough,
           // Cutout rather than blending, which is what leaves, grass and glass
           // panes need; without it their transparent corners punch holes in
           // whatever is behind them.
-          alphaTest: 0.02,
+          alphaTest: seeThrough ? 0 : 0.02,
           // Front faces only, so a block is not see-through. With both sides
           // drawn, glass and leaves showed the INSIDE of their own far faces
           // through their transparent parts, which reads as a wireframe box
@@ -324,7 +369,7 @@
           // does — those still work, because a zero-thickness element is
           // given a hair of depth and so has two real faces.
           side: opts.doubleSide ? THREE.DoubleSide : THREE.FrontSide,
-          depthWrite: true,
+          depthWrite: !seeThrough,
         });
         if (!map) m.visible = false;      // a texture that could not be read
         materials.push(m); disposables.push(m);
