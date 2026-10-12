@@ -688,8 +688,15 @@ export async function describeEntity({ profileId, version, name, texture, textur
     if (n) groups.push({ key, label: key.slice(name.length + 1).replace(/[_/]+/g, ' '), n });
   }
 
+  // A chest and a bell are built in a block's own space rather than around a
+  // mob's pivot, so they are centred the way a block model is -- and they do
+  // not want the half turn that points a mob at the camera, because their
+  // front already is the front. A chest turned through it showed its back.
+  const inBlock = !!L.blockSpace;
+
   return {
-    kind: 'elements', space: 'entity', elements, textures, rotY: 180,
+    kind: 'elements', space: inBlock ? 'block' : 'entity', elements, textures,
+    rotY: inBlock ? 0 : 180,
     // Which skin this is wearing, and the others it could be: a cow is six
     // textures on one model, a cushion sixteen.
     texture: tex0 ? tex0.path : null,

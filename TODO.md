@@ -44,7 +44,13 @@ stuff" — so the list is in two halves and the first half is done first.
       cropping. *It says "Continue to cropping".*
 
 ### B. The renderer
-- [ ] **Block entities are upside down** (chests, bells).
+- [x] **Block entities are upside down** (chests, bells).
+      *A mob is built around its pivot with +Y pointing down and the game turns
+      it over to draw it; a chest and a bell are built the way a block model is,
+      +Y up inside the 0..16 cube, and get no such turn. Which kind a layer is
+      can be read off the model, because the two spaces do not overlap. They
+      also stop being spun to face the camera — their front already is one,
+      which is why the chest showed its back.*
 - [ ] **The breeze's wind should be see-through, not left out** — let a part
       be transparent instead.
 - [ ] **A part of the breeze's body is a snippet of texture that is not it.**

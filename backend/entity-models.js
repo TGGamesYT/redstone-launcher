@@ -807,9 +807,21 @@ export function poseFor(layerName) {
 function flatten(layer, poses) {
   const elements = [];
   const texW = layer.texW || 64, texH = layer.texH || 32;
-  // Minecraft renders a model under scale(-1, -1, 1), whose determinant is +1:
+  // Minecraft renders a MOB under scale(-1, -1, 1), whose determinant is +1:
   // a half turn about Z, not a mirror. That is what puts the model the right
-  // way up, since it is built with +Y pointing down.
+  // way up, since a mob is built with +Y pointing down from a pivot.
+  //
+  // Not every layer here is a mob. A few block entities -- the chest and the
+  // bell -- are drawn by a renderer that applies no such turn, and are built
+  // the way a block model is: +Y up, inside the 0..16 cube, origin at the
+  // block's corner. Turning those over is what had chests showing their lid
+  // and lock underneath and bells hanging the wrong way up. Which kind a layer
+  // is can be read off the model itself, because the two spaces do not
+  // overlap: a mob is centred on its pivot and so has boxes at negative
+  // coordinates, and reaches well past one block.
+  //
+  // So the boxes are laid out untouched first, and the turn is applied after,
+  // to the ones that are a mob.
   const ROOT = mRotZ(Math.PI);
 
   const walk = (part, parent, name, path) => {
@@ -870,7 +882,7 @@ function flatten(layer, poses) {
         from: [b.x - g.gx, b.y - g.gy, b.z - g.gz],
         to: [b.x + b.w + g.gx, b.y + b.h + g.gy, b.z + b.d + g.gz],
         faces,
-        transform: mMul(ROOT, m),
+        transform: m,
         // Which part of the model this box belongs to, as a path through the
         // tree. The game hides and shows whole parts depending on what the
         // mob is doing -- an armadillo is either its body or the ball it
@@ -885,7 +897,41 @@ function flatten(layer, poses) {
   };
   walk(layer.mesh.root, mIdent(), null, '');
 
-  return { elements, texWidth: texW, texHeight: texH };
+  // Which space it turned out to be in. A block entity's model sits inside the
+  // 0..16 cube with nothing behind the origin; a mob's is built around its
+  // pivot, so it has boxes at negative coordinates and is usually taller than
+  // a block besides. Both tests have to pass, so a small mob that happens to
+  // fit in a block is not mistaken for one.
+  let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const el of elements) {
+    for (const cx of [el.from[0], el.to[0]]) {
+      for (const cy of [el.from[1], el.to[1]]) {
+        for (const cz of [el.from[2], el.to[2]]) {
+          const p = apply(el.transform, [cx, cy, cz]);
+          for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
+        }
+      }
+    }
+  }
+  const EPS = 0.01;
+  const blockSpace = elements.length > 0
+    && lo.every(v => v >= -EPS) && hi.every(v => v <= 16 + EPS);
+
+  if (!blockSpace) {
+    for (const el of elements) el.transform = mMul(ROOT, el.transform);
+  }
+
+  return { elements, texWidth: texW, texHeight: texH, blockSpace };
+}
+
+// A point through a column-major 4x4.
+function apply(m, p) {
+  if (!m) return p;
+  return [
+    m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12],
+    m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
+    m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14],
+  ];
 }
 
 export { JPose, JDeform, JCubes, JPart, JMesh, JLayer, flatten, boxUv };
