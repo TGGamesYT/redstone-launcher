@@ -27,16 +27,21 @@ stuff" — so the list is in two halves and the first half is done first.
       `uiConfirm`/`uiAlert` and the notification popup — follow each bar that is
       actually there, since the splash has neither and the admin windows have no
       sidebar.*
-- [ ] **The loader cards are too small**: the five of them should fill the
+- [x] **The loader cards are too small**: the five of them should fill the
       page, and the last page leaves too much of it empty.
-- [ ] **Clicking the version or the loader on the last page** should be a
+      *The loaders get a column each, full height, with the art scaled to
+      match. The last page is a composition down the middle: the icon as big
+      as the page allows, the name and the chips beside it.*
+- [x] **Clicking the version or the loader on the last page** should be a
       re-pick of that one thing that comes straight back, not a restart of
       the sequence.
-- [ ] **The latest-snapshot icon** should be the newest version named in the
+      *Both chips are detours now and say "Change" on them; Back is still the
+      step before, which is the loaders rather than the versions.*
+- [x] **The latest-snapshot icon** should be the newest version named in the
       JSON *unless that version has been released* — and the plain snapshot
       mark when there is nothing newer named.
-- [ ] **"Use this" in the adjust dialog** should say it goes on to the
-      cropping.
+- [x] **"Use this" in the adjust dialog** should say it goes on to the
+      cropping. *It says "Continue to cropping".*
 
 ### B. The renderer
 - [ ] **Block entities are upside down** (chests, bells).

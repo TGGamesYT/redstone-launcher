@@ -214,9 +214,15 @@ export async function resolveVersionIcon(version) {
  *   releases    every release, newest first, with its date
  *   snapshots   every snapshot, pre-release and release candidate, newest first
  *   latest      Mojang's own { release, snapshot }
- *   next        the newest version named in versions.json — which may be one
- *               that is not out yet (the list is written ahead of a release),
- *               and is what the "latest snapshot" card borrows its icon from
+ *   next        the version the snapshots are building up to, which the
+ *               "latest snapshot" card borrows its icon from — or null, and
+ *               then the card gets the plain snapshot mark
+ *
+ * `next` is the newest version named in versions.json, which is written ahead
+ * of a release and so usually names one that is not out yet. Once it IS out
+ * the snapshots have moved on past it, and its block is the block of the last
+ * release rather than of what is coming — so it is dropped, and the card
+ * falls back to the snapshot mark until the list names something newer again.
  *
  * Ordering is by release date, because that is what the manifest is sorted by
  * and what "newest" means to somebody picking one.
@@ -230,9 +236,14 @@ export async function pickerVersions() {
   const byDate = (a, b) => (b.at || 0) - (a.at || 0);
   releases.sort(byDate);
   snapshots.sort(byDate);
+
+  const newest = entries.length ? entries[entries.length - 1].version : null;
+  const newestMeta = newest ? manifest.by.get(newest) : null;
+  // Out already, by the manifest or by the shape of its own id.
+  const out = !!newestMeta && (newestMeta.type === 'release' || looksLikeRelease(newestMeta.id));
   return {
     releases, snapshots,
     latest: manifest.latest || {},
-    next: entries.length ? entries[entries.length - 1].version : null,
+    next: out ? null : newest,
   };
 }

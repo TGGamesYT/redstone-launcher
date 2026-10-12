@@ -423,7 +423,9 @@
         <div class="ip-section-title">Parts</div>
         <div id="ipAdjParts" style="display:flex; flex-wrap:wrap; gap:4px 12px; font-size:12px;"></div>
       </div>
-      <div class="modal-actions"><button id="ipAdjOk">Use this</button><button id="ipAdjCancel">Cancel</button></div>
+      <!-- This is not the last step: the render goes to the cropper after it,
+           and "Use this" read as though it were about to be the icon. -->
+      <div class="modal-actions"><button id="ipAdjOk">Continue to cropping</button><button id="ipAdjCancel">Cancel</button></div>
     </div>`;
     document.body.appendChild(ov);
 

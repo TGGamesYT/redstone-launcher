@@ -85,6 +85,31 @@
       .ni-tile .s { font-size:11px; opacity:0.85; text-shadow:0 1px 3px rgba(0,0,0,0.9); }
       /* The snapshot card is the odd one out and says so. */
       .ni-tile.wide { grid-column:span 2; }
+
+      /* A page with a handful of cards and no more coming -- the loaders.
+         There are five of them, so a grid sized for a hundred releases left
+         them huddled in the top-left corner of a window-sized page. These
+         share the page out instead: one row, a column each, full height.
+         --cols is the number of them, set when the page is built. */
+      .ni-cards.fill { grid-template-columns:repeat(var(--cols, 3), 1fr); grid-auto-rows:1fr;
+        align-content:stretch; overflow:hidden; }
+      .ni-cards.fill .ni-tile { height:auto; min-height:132px; }
+      /* Below this a column each is too thin to read, so they wrap. */
+      @media (max-width: 1000px) {
+        .ni-cards.fill { grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); grid-auto-rows:minmax(132px, 1fr); }
+      }
+      /* The art has the room now, so it takes it -- a logo the size of a
+         thumbnail in a card this big just looks lost in it. */
+      .ni-cards.fill .ni-tile .inner { gap:14px; }
+      .ni-cards.fill .ni-tile .inner img { width:auto; height:auto; max-width:76%; max-height:38%;
+        min-width:54px; aspect-ratio:1; object-fit:contain; }
+      .ni-cards.fill .ni-tile .n { font-size:20px; }
+      .ni-cards.fill .ni-tile .s { font-size:12.5px; }
+      /* The veil is a gradient down to black for a banner with a name across
+         the bottom of it. These are twice as tall and the name is in the
+         middle, so it darkens towards the middle instead. */
+      .ni-cards.fill .ni-tile .veil { background:radial-gradient(ellipse at 50% 55%,
+        rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.42) 45%, rgba(0,0,0,0.22) 100%); }
       .ni-plain { display:flex; align-items:center; justify-content:space-between; gap:10px;
         padding:9px 12px; cursor:pointer; border-bottom:1px solid color-mix(in srgb, var(--border-dark) 60%, transparent); }
       .ni-plain:last-child { border-bottom:none; }
@@ -96,24 +121,48 @@
 
       /* The last page: what is about to be made, and the few things worth
          changing before it is. */
-      .ni-fin { display:flex; gap:22px; align-items:flex-start; overflow-y:auto; flex:1; min-height:0; padding:4px 2px; }
-      .ni-fin .pic { flex:0 0 150px; text-align:center; }
-      .ni-fin .pic img { width:150px; height:150px; object-fit:contain; image-rendering:pixelated;
-        border:2px solid var(--border-dark); border-radius:var(--border-radius); background:var(--very-dark); }
-      .ni-fin .pic button { margin-top:8px; width:100%; }
-      .ni-fin .fields { flex:1; min-width:0; display:flex; flex-direction:column; gap:12px; }
+      /* Two halves of a window-sized page, both of them stretching to the
+         bottom of it: the icon is the thing being made, so it gets to be the
+         size of the space rather than a thumbnail with a field of empty
+         underneath it. */
+      /* The two halves are a composition down the middle of the page rather
+         than two columns stretched to the bottom of it: an icon in a tall
+         empty frame looked like something had failed to load. */
+      .ni-fin { display:flex; gap:30px; align-items:center; justify-content:center;
+        overflow-y:auto; flex:1; min-height:0; padding:4px 2px; }
+      .ni-fin .pic { flex:0 1 48%; max-width:520px; min-width:150px; display:flex; flex-direction:column; gap:10px; }
+      /* Square, as big as the page allows, and the icon fills it -- it is a
+         64px image shown at 400, which is exactly what the instance it is
+         about to become will do with it. */
+      .ni-fin .pic .shot { aspect-ratio:1; max-height:calc(100% - 52px); display:flex;
+        align-items:center; justify-content:center; padding:14px;
+        border:2px solid var(--border-dark); border-radius:var(--border-radius);
+        background:var(--very-dark); }
+      .ni-fin .pic .shot img { width:100%; height:100%; object-fit:contain; image-rendering:pixelated; }
+      .ni-fin .pic button { width:100%; padding:10px 12px; border:1px solid var(--border-dark);
+        background:var(--menu-bg); color:var(--text-color); border-radius:var(--border-radius);
+        cursor:pointer; font-family:var(--text-font); }
+      .ni-fin .pic button:hover { border-color:var(--base-color); }
+      /* Centred against the icon rather than pinned to the top, so the gap is
+         shared out instead of all landing underneath. */
+      .ni-fin .fields { flex:1; min-width:0; display:flex; flex-direction:column; gap:18px; justify-content:center; }
       .ni-fin label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;
-        opacity:0.65; margin-bottom:4px; }
-      .ni-fin input[type=text] { width:100%; box-sizing:border-box; padding:10px 12px; margin:0;
+        opacity:0.65; margin-bottom:6px; }
+      .ni-fin input[type=text] { width:100%; box-sizing:border-box; padding:13px 14px; margin:0;
         border:1px solid var(--border-dark); border-radius:var(--border-radius);
-        background:var(--very-dark); color:var(--text-color); font-family:var(--text-font); font-size:15px; }
-      .ni-chips { display:flex; gap:10px; flex-wrap:wrap; }
-      .ni-chip { display:flex; align-items:center; gap:8px; padding:8px 12px; cursor:pointer;
-        border:2px solid var(--border-dark); border-radius:var(--border-radius); background:var(--menu-bg); }
+        background:var(--very-dark); color:var(--text-color); font-family:var(--text-font); font-size:17px; }
+      .ni-chips { display:flex; gap:12px; flex-wrap:wrap; }
+      .ni-chip { display:flex; align-items:center; gap:10px; padding:11px 15px; cursor:pointer; flex:1 1 180px;
+        border:2px solid var(--border-dark); border-radius:var(--border-radius); background:var(--menu-bg);
+        transition:var(--smooth-transition); }
       .ni-chip:hover { border-color:var(--base-color); }
-      .ni-chip img { width:24px; height:24px; object-fit:contain; image-rendering:pixelated; }
+      .ni-chip img { width:34px; height:34px; object-fit:contain; image-rendering:pixelated; }
       .ni-chip .k { font-size:10px; text-transform:uppercase; letter-spacing:0.05em; opacity:0.6; }
-      .ni-chip .v { font-size:14px; }`;
+      .ni-chip .v { font-size:16px; }
+      /* What clicking it does, said once per chip rather than only in a
+         tooltip nobody hovers long enough to see. */
+      .ni-chip .c { font-size:10px; opacity:0.55; margin-left:auto; flex:0 0 auto; }
+      .ni-fin .ni-note { font-size:13px; opacity:0.75; line-height:1.6; }`;
     document.head.appendChild(s);
   }
 
@@ -524,9 +573,28 @@
   // are skipped, because the mod decided them.
   function buildFlow(opts, back, prefill) {
     const pre = prefill || {};
-    const finish = (version, loader, onBack, onLoaderBack) => pickFinalize({
+    const onlyVersions = pre.supportedVersions && pre.supportedVersions.length ? pre.supportedVersions : null;
+    const onlyLoaders = pre.supportedLoaders && pre.supportedLoaders.length ? pre.supportedLoaders : null;
+
+    // Going back from the last page is the step before it -- the loaders --
+    // the same as going back from anywhere else. Changing one of the two
+    // things it shows, though, is a detour and not a restart: it reopens that
+    // one page and comes straight back here with the other choice untouched.
+    // Clicking the version used to drop you at the start of the sequence and
+    // make you walk the whole thing again.
+    const finish = (version, loader) => pickFinalize({
       version, loader, prefill: pre,
-      onBack, onLoaderBack,
+      onBack: () => loaderStep(version),
+      onChangeVersion: () => pickVersion({
+        only: onlyVersions,
+        onBack: () => finish(version, loader),
+        onPick: (v) => finish(v, loader),
+      }),
+      onChangeLoader: () => pickLoader({
+        version, only: onlyLoaders,
+        onBack: () => finish(version, loader),
+        onPick: (l) => finish(version, l),
+      }),
       onCreate: (profile, carried) => {
         window.NewInstance.closeAll();
         opts.onCreate
@@ -541,19 +609,18 @@
       },
     });
 
-    const loaderStep = (version, onBack) => pickLoader({
+    const loaderStep = (version) => pickLoader({
       version,
-      onBack,
+      onBack: () => versionStep(),
       // Only the loaders this mod has builds for, when it came from one.
-      only: pre.supportedLoaders && pre.supportedLoaders.length ? pre.supportedLoaders : null,
-      onPick: (loader) => finish(version, loader,
-        () => versionStep(), () => loaderStep(version, onBack)),
+      only: onlyLoaders,
+      onPick: (loader) => finish(version, loader),
     });
 
     const versionStep = () => pickVersion({
       onBack: back,
-      only: pre.supportedVersions && pre.supportedVersions.length ? pre.supportedVersions : null,
-      onPick: (version) => loaderStep(version, () => versionStep()),
+      only: onlyVersions,
+      onPick: (version) => loaderStep(version),
     });
 
     versionStep();
@@ -599,10 +666,10 @@
     }
     list.innerHTML = '';
 
-    // The snapshot card. Its icon is the newest version the icon list names —
-    // which is usually the release these snapshots are building up to, and is
-    // in the list before that release exists — and its banner is the newest
-    // snapshot's own.
+    // The snapshot card. Its icon is the version these snapshots are building
+    // up to -- the newest the icon list names, as long as that one is not out
+    // yet; once it is, the snapshots are past it and the card goes back to the
+    // plain snapshot mark. Its banner is the newest snapshot's own.
     const only = opts.only ? new Set(opts.only) : null;
     const latestSnapshot = only
       ? (data.snapshots.find(sn => only.has(sn.id)) || {}).id
@@ -746,7 +813,13 @@
   // its name and its icon. Everything else has a sensible answer already, and
   // the ones that do not are behind "More settings", which is the old creator.
   //
-  //   pickFinalize({ version, loader, prefill, onBack, onCreate, onMore })
+  //   pickFinalize({ version, loader, prefill, onBack, onCreate, onMore,
+  //                  onChangeVersion, onChangeLoader })
+  //
+  // `onBack` is the step before this one; `onChangeVersion`/`onChangeLoader`
+  // are detours -- reopen that one page and come back here with the rest of
+  // the choices intact. Leave them out (a pack decides both) and the chips
+  // are just a statement of what it will be.
   //
   // `prefill` is what a mod or modpack the instance was started from brought
   // with it. `onCreate(profile, prefill)` is handed the finished thing -- the
@@ -775,11 +848,16 @@
     let icon = pre.icon || null;
     const pic = document.createElement('div');
     pic.className = 'pic';
+    // The frame is what stretches; the icon is centred inside it at the size
+    // it actually is, so it is never blown up into mush.
+    const shot = document.createElement('div');
+    shot.className = 'shot';
     const img = document.createElement('img');
     img.alt = '';
+    shot.appendChild(img);
     const pickIcon = document.createElement('button');
     pickIcon.textContent = 'Change icon…';
-    pic.append(img, pickIcon);
+    pic.append(shot, pickIcon);
     const showIcon = (src) => { if (src) img.src = src; };
     showIcon(icon);
     // No icon of its own: the block its version is remembered for, which is
@@ -807,22 +885,31 @@
     // What was chosen on the way here, each one a way back to that step.
     const chips = document.createElement('div');
     chips.className = 'ni-chips';
-    const chip = (kind, value, art, back) => {
+    const chip = (kind, value, art, change) => {
       const c = document.createElement('div');
       c.className = 'ni-chip';
-      c.title = 'Change it';
       if (art) { const i = document.createElement('img'); i.src = art; c.appendChild(i); }
       const t = document.createElement('div');
       const k = document.createElement('div'); k.className = 'k'; k.textContent = kind;
       const v = document.createElement('div'); v.className = 'v'; v.textContent = value;
       t.append(k, v);
       c.appendChild(t);
-      c.onclick = back;
+      // A pack decides both of these, so there is nothing to change.
+      if (change) {
+        c.title = 'Pick a different one and come back here';
+        const hint = document.createElement('div');
+        hint.className = 'c';
+        hint.textContent = 'Change';
+        c.appendChild(hint);
+        c.onclick = change;
+      } else {
+        c.style.cursor = 'default';
+      }
       chips.appendChild(c);
       return c;
     };
     const vChip = chip('Minecraft', version || 'from the pack', null,
-      () => { if (!opts.pack && opts.onBack) opts.onBack(); });
+      !opts.pack && opts.onChangeVersion ? () => opts.onChangeVersion() : null);
     if (window.VersionIcon) {
       window.VersionIcon.get(version).then(u => {
         if (!u || !vChip.isConnected) return;
@@ -833,7 +920,7 @@
     }
     const loaderArt = (LOADERS.find(l => l.id === loader) || {}).icon;
     chip('Loader', loaderName, loaderArt,
-      () => { if (!opts.pack && opts.onLoaderBack) opts.onLoaderBack(); });
+      !opts.pack && opts.onChangeLoader ? () => opts.onChangeLoader() : null);
 
     const chipWrap = document.createElement('div');
     const chipLabel = document.createElement('label');
@@ -844,8 +931,7 @@
 
     if (pre.projectTitle) {
       const note = document.createElement('div');
-      note.className = 'ni-empty';
-      note.style.padding = '0';
+      note.className = 'ni-note';
       note.textContent = `${pre.projectTitle} will be installed into it once it exists.`;
       fields.appendChild(note);
     }
@@ -903,14 +989,17 @@
       opts.version ? `For Minecraft ${opts.version}.` : 'Pick what the instance runs its mods with.',
       { onBack: opts.onBack, wide: true }
     );
-    list.className = 'ni-cards';
+    list.className = 'ni-cards fill';
     const cancelBtn = card.querySelector('.ni-cancel');
     if (cancelBtn) cancelBtn.remove();
 
     // Started from a mod: only the loaders it has builds for.
     const only = opts.only ? new Set(opts.only.map(x => String(x).toLowerCase())) : null;
     const offered = only ? LOADERS.filter(l => only.has(l.id)) : LOADERS;
-    for (const l of (offered.length ? offered : LOADERS)) {
+    const shown = offered.length ? offered : LOADERS;
+    // A column each: this is the whole page, not the first of many rows.
+    list.style.setProperty('--cols', String(shown.length));
+    for (const l of shown) {
       const tile = makeTile({ name: l.name, sub: l.sub, icon: l.icon });
       tile.onclick = () => opts.onPick && opts.onPick(l.id);
       list.appendChild(tile);
