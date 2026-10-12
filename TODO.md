@@ -53,18 +53,21 @@ the order it is being built in.
 - [x] **The list's remove button becomes an info button** that opens that page.
 
 ### E. Suggestions
-- [ ] **A Suggestions tab in settings**, with a form icon, the blurb about not
+- [x] **A Suggestions tab in settings**, with a form icon, the blurb about not
       needing sketchy websites for things a launcher should include, an input
       section and a submit button.
-- [ ] **A confirm modal** on submit, and a premium account is required — the
+- [x] **A confirm modal** on submit, and a premium account is required — the
       server verifies it.
-- [ ] **`viewSuggestions("password")` in devtools** for admins, against a
+- [x] **`viewSuggestions("password")` in devtools** for admins, against a
       password the server holds in a file that is not in git.
-- [ ] **An admin page** listing suggestions like the accounts page: the
+      (`viewAdmin("password")` too — suggestions are one panel of several.)
+- [x] **An admin page** listing suggestions like the accounts page: the
       submitter's name, their face, the title; clicking one shows the body.
-- [ ] **Admin actions**: time out the submitter (and every account of theirs)
+      It holds no layout of its own: it asks the relay what panels exist and
+      draws them, so a second panel is a change to the relay alone.
+- [x] **Admin actions**: time out the submitter (and every account of theirs)
       from submitting for a set period; accept or deny with a reason.
-- [ ] **A submitter sees their own suggestions and their status.**
+- [x] **A submitter sees their own suggestions and their status.**
 
 ### F. Icons for a project
 - [ ] **Mods, resource packs and the rest should offer their Modrinth or

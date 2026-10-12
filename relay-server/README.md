@@ -41,6 +41,8 @@ ranges, so it plays nicely with your existing nginx/UFW setup.
 | `RELAY_OFFLINE_ICON` | `./offline-icon.png`                           | 64×64 PNG shown for offline/missing servers. |
 | `RELAY_ADMINS`       | `./admins.json`                                | `{ "uuids": ["<uuid>", …] }` (dashes optional) |
 | `RELAY_STATE`        | `./relay-state.json`                           | Tracks recently-used subdomains.         |
+| `RELAY_SUGGESTIONS`  | `./relay-suggestions.json`                     | Suggestions people have sent, and who is timed out. |
+| `RELAY_ADMIN_PASSWORD_FILE` | `./admin-password.txt`                  | The admin panel's password, in plain text. **Not** in the repository — see below. |
 | `CF_API_TOKEN`       | *(unset = relay-only)*                         | Cloudflare API token with **Zone → DNS → Edit** on every domain you want to offer. The token's zones are what admins may pick from. |
 
 ### Direct path (recommended — avoids relaying game traffic)
@@ -63,6 +65,46 @@ Everyone else is limited to `<username>.redstonemc.net` / `<x>.<username>.redsto
 > Admin status is decided **only** from the Mojang `hasJoined` result on the
 > relay — never from anything the launcher sends — so a modified client can't
 > impersonate an admin UUID.
+
+### Suggestions & the admin panel
+
+Anyone signed in with a Microsoft account can send a suggestion from the
+launcher's settings (Mojang's `hasJoined` proves who they are, so every
+suggestion has a real person behind it — and that person is shown what
+happened to theirs). They land in `relay-suggestions.json`.
+
+To read and answer them, create the password file:
+
+```bash
+cd relay-server
+printf '%s' 'something long and random' > admin-password.txt
+chmod 600 admin-password.txt
+```
+
+It is **not** in the repository (`.gitignore` keeps it out) and never leaves
+the VPS: the relay keeps only its SHA-256 and compares in constant time, so a
+wrong guess takes exactly as long as a right one. The file is re-read every
+minute, so the password can be changed on a relay that is already running —
+and with no file, or an empty one, the admin panel is simply closed to
+everybody.
+
+Then, in the launcher (with **Developer mode** on), open devtools on any page
+and type:
+
+```js
+viewAdmin("something long and random")
+```
+
+**The panel's contents live here, not in the launcher.** The window asks the
+relay for its panels and draws whatever comes back, so a new panel is added to
+`ADMIN_PANELS` in `relay.js` — launchers that are already installed pick it up
+as soon as the relay restarts, with no release. What a panel may say is
+documented beside `ADMIN_PANELS`.
+
+Timing somebody out stops the account **and every account that has connected
+from the same place**, so an alt does not walk straight round it. Addresses
+themselves are never stored — only a salted hash of each one, which is enough
+to say "these two accounts came from the same place" and nothing else.
 
 ### Offline server icon
 

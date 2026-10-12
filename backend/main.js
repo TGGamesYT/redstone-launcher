@@ -3559,6 +3559,102 @@ async function relayAccountForSync() {
   return (await accountCredsByIdFresh(id)) || null;
 }
 
+// ── Suggestions ────────────────────────────────────────────────────────────
+// Sent to the relay through a connection whose account Mojang has verified, so
+// a suggestion always has a real person behind it and that person can be told
+// what happened to theirs. A premium account is therefore required, which is
+// the same thing as saying "the relay will not take it otherwise".
+async function suggestCall(req) {
+  const account = await relayAccountForSync();
+  if (!account) {
+    return { ok: false, error: "Sign in with a Microsoft account to send a suggestion." };
+  }
+  const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
+  try {
+    return await relayClient.suggestRelay({
+      host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+      account, rejectUnauthorized, req,
+    });
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+}
+
+ipcMain.handle("suggest:submit", async (event, { title, body } = {}) =>
+  suggestCall({ op: "submit", title, body }));
+ipcMain.handle("suggest:mine", async () => suggestCall({ op: "mine" }));
+
+// ── The admin panel ────────────────────────────────────────────────────────
+// Opened by typing viewAdmin("…") into devtools. Nothing about what is in it
+// lives here: the window asks the relay for its panels and draws them, so a
+// panel added to the relay turns up without a launcher release.
+//
+// The password is never stored — it is typed, passed through to the relay with
+// every call, and held only in the admin window's memory while it is open.
+async function adminCall(req) {
+  const account = await relayAccountForSync();
+  if (!account) {
+    return { ok: false, error: "Sign in with a Microsoft account first." };
+  }
+  const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
+  try {
+    return await relayClient.adminRelay({
+      host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+      account, rejectUnauthorized, req,
+    });
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+}
+
+ipcMain.handle("admin:call", async (event, { password, op, args } = {}) =>
+  adminCall({ ...(args && typeof args === "object" ? args : {}), op, password }));
+
+let adminPanelWindow = null;
+// Checks the password before anything opens, so a wrong one is a message in
+// the console rather than an empty window.
+ipcMain.handle("admin:open", async (event, { password, panel } = {}) => {
+  const r = await adminCall({ op: "panels", password });
+  if (!r || !r.ok) {
+    return { ok: false, error: (r && r.error === "no") ? "That password is not right." : (r && r.error) || "Could not reach the relay." };
+  }
+  if (adminPanelWindow && !adminPanelWindow.isDestroyed()) {
+    adminPanelWindow.focus();
+    adminPanelWindow.webContents.send("admin:session", { password, panels: r.panels || [], panel: panel || null });
+    return { ok: true, panels: (r.panels || []).length };
+  }
+  const win = new BrowserWindow({
+    width: 1100, height: 760, minWidth: 820, minHeight: 520,
+    icon: path.join(iconPath),
+    frame: false,
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  });
+  adminPanelWindow = win;
+  win.on("closed", () => { adminPanelWindow = null; });
+  win.webContents.on("before-input-event", (e, input) => {
+    if (input.type === "keyDown" && (input.key === "F12"
+      || (input.control && input.shift && String(input.key).toLowerCase() === "i"))) {
+      e.preventDefault();
+      win.webContents.toggleDevTools();
+    }
+  });
+  win.webContents.once("did-finish-load", () => {
+    win.webContents.send("admin:session", { password, panels: r.panels || [], panel: panel || null });
+  });
+  win.loadFile("frontend/adminpanel.html");
+  return { ok: true, panels: (r.panels || []).length };
+});
+
+// The admin window's own titlebar buttons. It is not the main window, so
+// close-app/min-app/max-app would be the wrong thing: act on the sender's.
+ipcMain.on("admin:window", (event, what) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return;
+  if (what === "min") win.minimize();
+  else if (what === "max") win.isMaximized() ? win.unmaximize() : win.maximize();
+  else if (what === "close") win.close();
+});
+
 // Which of these accounts have used Redstone Launcher, and when.
 //
 // Only the relay can answer this — nothing on this computer knows about

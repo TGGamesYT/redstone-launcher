@@ -1,3 +1,9 @@
 node_modules
 .vscode
 dist
+# The admin panel's password (not tracked)
+relay-server/admin-password.txt
+relay-server/relay-suggestions.json
+relay-server/relay-seen.json
+relay-server/relay-state.json
+relay-server/sync/

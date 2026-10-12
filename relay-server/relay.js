@@ -48,7 +48,7 @@ process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.
 // served on the SAME public port as Minecraft (25565) — a Minecraft handshake
 // never begins with an HTTP method, so we can tell the two apart from the first
 // bytes and route by the token in the request URL. No extra port to open.
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21 };
 
 // URL token (the "random safety token" in the pack path) -> the host serving it.
 const packRoutes = new Map();
@@ -372,6 +372,269 @@ function lookupSeen(ids) {
   return out;
 }
 
+// ───────────────────────── suggestions ──────────────────────────────────
+// What people would like the launcher to do. Submitting needs a premium
+// account, which this connection has already proved with hasJoined, so a
+// suggestion always has a real person behind it and the same person can be
+// told what happened to it.
+//
+// Reading them all, and acting on them, is the admin panel's job — see the
+// section below this one.
+const SUGGEST_FILE = process.env.RELAY_SUGGESTIONS || path.join(__dirname, "relay-suggestions.json");
+const SUGGEST_MAX_TITLE = 120;
+const SUGGEST_MAX_BODY = 4000;
+const SUGGEST_PER_DAY = 5;
+// Accounts are linked by where they connected from, so that timing somebody
+// out is not undone by signing in with an alt. The address itself is never
+// stored — only a salted hash of it, which is enough to tell "these two
+// accounts came from the same place" and nothing else. The salt is generated
+// once and kept with the data, so the hashes are useless anywhere else.
+const HOSTS_PER_ACCOUNT = 6;
+
+let suggestions = loadJson(SUGGEST_FILE, null) || { salt: crypto.randomBytes(16).toString("hex"), items: [], timeouts: {}, hosts: {} };
+if (!suggestions.salt) suggestions.salt = crypto.randomBytes(16).toString("hex");
+suggestions.items ||= []; suggestions.timeouts ||= {}; suggestions.hosts ||= {};
+let suggestDirty = false;
+setInterval(() => {
+  if (!suggestDirty) return;
+  suggestDirty = false;
+  try { fs.writeFileSync(SUGGEST_FILE, JSON.stringify(suggestions)); } catch { /* ignore */ }
+}, 15_000).unref();
+const saveSuggestions = () => { suggestDirty = true; };
+
+const hostTag = (addr) => crypto.createHash("sha256")
+  .update(suggestions.salt + "|" + String(addr || "")).digest("hex").slice(0, 24);
+
+function noteHost(uuid, addr) {
+  if (!addr) return;
+  const tag = hostTag(addr);
+  const list = suggestions.hosts[uuid] || [];
+  if (!list.includes(tag)) {
+    list.unshift(tag);
+    suggestions.hosts[uuid] = list.slice(0, HOSTS_PER_ACCOUNT);
+    saveSuggestions();
+  }
+}
+
+// Every account that has connected from anywhere this one has.
+function linkedAccounts(uuid) {
+  const mine = new Set(suggestions.hosts[uuid] || []);
+  const out = new Set([uuid]);
+  if (!mine.size) return [...out];
+  for (const [other, tags] of Object.entries(suggestions.hosts)) {
+    if (tags.some(t => mine.has(t))) out.add(other);
+  }
+  return [...out];
+}
+
+const timedOutUntil = (uuid) => {
+  const until = suggestions.timeouts[uuid] || 0;
+  return until > Date.now() ? until : 0;
+};
+
+const publicSuggestion = (s) => ({
+  id: s.id, title: s.title, body: s.body, at: s.at,
+  status: s.status, reason: s.reason || null, decidedAt: s.decidedAt || null,
+});
+// Everything the admin panel draws about one suggestion, including the things
+// it would otherwise have to work out for itself: the panel is a renderer and
+// nothing more, so a row carries no loose ends.
+const adminSuggestion = (s) => ({
+  ...publicSuggestion(s), uuid: s.uuid, name: s.name,
+  who: s.name || s.uuid, timedOut: timedOutUntil(s.uuid) || null,
+});
+
+function handleSuggest(req, who) {
+  const op = String(req.op || "");
+
+  if (op === "submit") {
+    const until = timedOutUntil(who.uuid);
+    if (until) return { ok: false, error: "timed out", until };
+    const title = String(req.title || "").trim().slice(0, SUGGEST_MAX_TITLE);
+    const body = String(req.body || "").trim().slice(0, SUGGEST_MAX_BODY);
+    if (title.length < 4) return { ok: false, error: "Give it a title." };
+    if (body.length < 20) return { ok: false, error: "Say a bit more about it." };
+    const dayAgo = Date.now() - 86400000;
+    const recent = suggestions.items.filter(s => s.uuid === who.uuid && s.at > dayAgo).length;
+    if (recent >= SUGGEST_PER_DAY) return { ok: false, error: `That is ${SUGGEST_PER_DAY} today. Try again tomorrow.` };
+    const item = {
+      id: crypto.randomBytes(8).toString("hex"),
+      uuid: who.uuid, name: who.name || null,
+      title, body, at: Date.now(), status: "pending", reason: null,
+    };
+    suggestions.items.push(item);
+    saveSuggestions();
+    log("suggestion", item.id, "from", who.name || who.uuid);
+    return { ok: true, suggestion: publicSuggestion(item) };
+  }
+
+  if (op === "mine") {
+    const mine = suggestions.items.filter(s => s.uuid === who.uuid)
+      .sort((a, b) => b.at - a.at).map(publicSuggestion);
+    return { ok: true, suggestions: mine, timedOutUntil: timedOutUntil(who.uuid) || null };
+  }
+
+  return { ok: false, error: "unknown op" };
+}
+
+// ───────────────────────── the admin panel ──────────────────────────────
+// Typing viewAdmin("…") into the launcher's devtools opens a window that is
+// nothing but a renderer: it asks here what panels exist and draws whatever
+// comes back. None of the layout lives in the launcher, so a second panel is
+// added in this file and only in this file — no launcher release needed, and
+// an old launcher gets the new panel the moment the relay restarts.
+//
+// A panel describes itself:
+//   id, title            the sidebar entry
+//   empty                what to say when there are no rows
+//   list                 { op }        where the rows come from
+//   key                  the row field that identifies a row
+//   search               row fields a typed search looks through
+//   filters              { field, empty, options: [{ value, label }] }
+//   row                  { head, sub, title, badge }    the left column
+//   detail               an ordered list of blocks for the right pane
+//
+// Blocks: heading, meta, text, note, form. Anything a block names is a field
+// of a row — the rows arrive flat and complete, so the renderer never has to
+// know what a suggestion is.
+//
+// The password lives in a file beside this script that is NOT in the
+// repository — see admin-password.txt in the README. It is compared in
+// constant time against its own hash, so a wrong guess takes exactly as long
+// as a right one, and it is re-read every minute so it can be changed on a
+// relay that is already running.
+const ADMIN_PASSWORD_FILE = process.env.RELAY_ADMIN_PASSWORD_FILE || path.join(__dirname, "admin-password.txt");
+
+let adminPasswordHash = null;
+function reloadAdminPassword() {
+  try {
+    const raw = fs.readFileSync(ADMIN_PASSWORD_FILE, "utf8").trim();
+    adminPasswordHash = raw ? crypto.createHash("sha256").update(raw).digest() : null;
+  } catch { adminPasswordHash = null; }
+}
+reloadAdminPassword();
+setInterval(reloadAdminPassword, 60_000).unref();
+
+function adminOk(password) {
+  if (!adminPasswordHash) return false;
+  const given = crypto.createHash("sha256").update(String(password || "")).digest();
+  try { return crypto.timingSafeEqual(given, adminPasswordHash); } catch { return false; }
+}
+
+const SUGGESTIONS_PANEL = {
+  id: "suggestions",
+  title: "Suggestions",
+  empty: "Nobody has suggested anything yet.",
+  list: { op: "suggestions.list" },
+  key: "id",
+  search: ["title", "body", "who"],
+  filters: {
+    field: "status", empty: "pending",
+    options: [
+      { value: "", label: "All" },
+      { value: "pending", label: "Pending" },
+      { value: "accepted", label: "Accepted" },
+      { value: "denied", label: "Denied" },
+    ],
+  },
+  row: {
+    head: { uuid: "uuid", name: "name" },
+    sub: "who", title: "title",
+    badge: { field: "status", empty: "pending", tone: { accepted: "good", denied: "bad" } },
+  },
+  detail: [
+    { kind: "heading", field: "title" },
+    {
+      kind: "meta", head: { uuid: "uuid", name: "name" },
+      parts: [
+        { field: "who" },
+        { field: "at", as: "date" },
+        { field: "status", empty: "pending" },
+        { field: "timedOut", as: "date", prefix: "timed out until " },
+      ],
+    },
+    { kind: "text", field: "body" },
+    { kind: "note", field: "reason", label: "Reason given" },
+    {
+      kind: "form",
+      inputs: [{ id: "reason", placeholder: "Reason (shown to them)", from: "reason", grow: true }],
+      actions: [
+        { label: "Accept", op: "suggestions.act", args: { action: "accept" }, send: { id: "id" }, with: ["reason"] },
+        { label: "Deny", tone: "bad", op: "suggestions.act", args: { action: "deny" }, send: { id: "id" }, with: ["reason"] },
+        { label: "Reopen", op: "suggestions.act", args: { action: "pending" }, send: { id: "id" }, with: ["reason"] },
+      ],
+    },
+    {
+      kind: "form", label: "The submitter:",
+      inputs: [{ id: "days", placeholder: "Days", value: "7", width: 90, number: true }],
+      actions: [
+        {
+          label: "Time out", tone: "bad", op: "suggestions.timeout", send: { uuid: "uuid" }, with: ["days"],
+          confirm: {
+            text: "Stop {who} — and every account that has connected from the same place — "
+              + "from sending suggestions for {days#day}?",
+            ok: "Time out", danger: true,
+          },
+          refresh: true,
+        },
+        { label: "Lift", op: "suggestions.timeout", args: { days: 0 }, send: { uuid: "uuid" }, refresh: true },
+      ],
+    },
+  ],
+};
+
+const ADMIN_PANELS = [SUGGESTIONS_PANEL];
+
+const ADMIN_OPS = {
+  "suggestions.list": () => ({
+    ok: true,
+    rows: suggestions.items.slice().sort((a, b) => b.at - a.at).map(adminSuggestion),
+  }),
+
+  "suggestions.act": (req) => {
+    const item = suggestions.items.find(s => s.id === String(req.id || ""));
+    if (!item) return { ok: false, error: "no such suggestion" };
+    const action = String(req.action || "");
+    if (!["accept", "deny", "pending"].includes(action)) return { ok: false, error: "bad action" };
+    item.status = action === "pending" ? "pending" : (action === "accept" ? "accepted" : "denied");
+    item.reason = String(req.reason || "").trim().slice(0, 500) || null;
+    item.decidedAt = Date.now();
+    saveSuggestions();
+    return { ok: true, row: adminSuggestion(item) };
+  },
+
+  "suggestions.timeout": (req) => {
+    const target = String(req.uuid || "").replace(/-/g, "").toLowerCase();
+    if (!/^[0-9a-f]{32}$/.test(target)) return { ok: false, error: "bad account" };
+    const days = Math.max(0, Math.min(3650, Number(req.days) || 0));
+    const until = days ? Date.now() + days * 86400000 : 0;
+    // The submitter AND every account that has connected from the same place,
+    // so an alt does not walk straight round it.
+    const all = linkedAccounts(target);
+    for (const u of all) {
+      if (until) suggestions.timeouts[u] = until; else delete suggestions.timeouts[u];
+    }
+    saveSuggestions();
+    log("suggestion timeout", days ? `${days}d` : "lifted", "for", all.length, "account(s)");
+    return {
+      ok: true, refresh: true,
+      message: days
+        ? `Timed out ${all.length} account${all.length === 1 ? "" : "s"} for ${days} day${days === 1 ? "" : "s"}.`
+        : `Lifted the timeout on ${all.length} account${all.length === 1 ? "" : "s"}.`,
+    };
+  },
+};
+
+function handleAdmin(req, who) {
+  if (!adminOk(req.password)) return { ok: false, error: "no" };
+  const op = String(req.op || "");
+  if (op === "panels") return { ok: true, panels: ADMIN_PANELS };
+  const fn = ADMIN_OPS[op];
+  if (!fn) return { ok: false, error: "unknown op" };
+  log("admin", op, "by", who.name || who.uuid);
+  return fn(req, who);
+}
+
 // The control-channel handler, run on a TLS socket (see the demuxing listener
 // below — the same port also serves plain-HTTP resource-pack requests).
 function handleControl(sock) {
@@ -406,6 +669,9 @@ function handleControl(sock) {
       const isAdmin = adminUuids.has(uuid);
       // Verified, so this account really is using the launcher right now.
       markSeen(uuid, profile.name);
+      state.uuid = uuid;
+      state.name = profile.name;
+      try { noteHost(uuid, sock.remoteAddress); } catch { /* not worth failing over */ }
 
       // Sync-only: the verified UUID is all this needs. No address is claimed,
       // so none of the domain rules below apply.
@@ -445,6 +711,23 @@ function handleControl(sock) {
       return;
     }
     if (!state.authed) return sock.destroy();
+    if (type === T.SUGGEST) {
+      let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      let out;
+      try { out = handleSuggest(req, { uuid: state.uuid, name: state.name }); }
+      catch (e) { out = { ok: false, error: String(e && e.message || e) }; }
+      send(T.SUGGEST_DATA, streamId, Buffer.from(JSON.stringify(out)));
+      return;
+    }
+    if (type === T.ADMIN) {
+      let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      let out;
+      try { out = handleAdmin(req, { uuid: state.uuid, name: state.name }); }
+      catch (e) { out = { ok: false, error: String(e && e.message || e) }; }
+      send(T.ADMIN_DATA, streamId, Buffer.from(JSON.stringify(out)));
+      return;
+    }
+
     if (type === T.SEEN) {
       // Any authenticated connection may ask, because the answer is about
       // whether a public account has used this launcher — not about anything

@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Admin</title>
+  <!--
+    The admin panel, which does not know what is in it.
+
+    Opened by typing viewAdmin("…") into devtools on any page. The relay is
+    asked what panels exist and this page draws whatever comes back, so adding
+    a panel is a change to the relay alone — no launcher release, and launchers
+    that are already installed pick it up as soon as the relay restarts.
+
+    What a panel may say is documented beside ADMIN_PANELS in relay.js. In
+    short: rows arrive flat and complete, and a panel points at their fields.
+    The renderer below knows about fields, not about suggestions.
+
+    The password is not kept anywhere. It is typed, checked once before this
+    window opens, and held in this window's memory while it is open so that
+    acting on something does not mean typing it again.
+  -->
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="server.css">
+  <link rel="stylesheet" href="material-icons.css">
+  <script src="defaults.js"></script>
+  <script src="console-commands.js"></script>
+  <script src="pixelart.js"></script>
+  <script src="uimodal.js"></script>
+  <script src="playerhead.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #toolbar .drag-region { flex: 1 1 auto; }
+    .ap-wrap { position: fixed; inset: 38px 0 0 0; display: flex; }
+
+    .ap-panels { width: 180px; flex: 0 0 180px; border-right: 1px solid var(--border-dark);
+      padding: 10px 8px; box-sizing: border-box; overflow-y: auto; }
+    .ap-panels button { display: block; width: 100%; text-align: left; margin: 0 0 6px;
+      background: none; border: 1px solid transparent; }
+    .ap-panels button.on { background: var(--base-color); }
+
+    .ap-list { width: 320px; flex: 0 0 320px; border-right: 1px solid var(--border-dark);
+      display: flex; flex-direction: column; box-sizing: border-box; }
+    .ap-tools { padding: 10px 10px 6px; }
+    .ap-tools input { width: 100%; margin: 0 0 8px; box-sizing: border-box; }
+    .ap-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+    .ap-filter button { flex: 1 1 60px; padding: 5px 0; font-size: 11px; margin: 0; }
+    .ap-filter button.on { background: var(--base-color); }
+    .ap-rows { flex: 1; overflow-y: auto; padding: 8px; }
+
+    .ap-row { display: flex; align-items: center; gap: 10px; padding: 9px 8px;
+      border-radius: var(--border-radius); cursor: pointer; }
+    .ap-row:hover { background: rgba(255, 255, 255, 0.06); }
+    .ap-row.on { background: color-mix(in srgb, var(--base-color) 35%, transparent); }
+    .ap-row img { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 6px; image-rendering: pixelated; }
+    .ap-row .t { min-width: 0; flex: 1; }
+    .ap-row .t .sub { font-size: 12px; opacity: 0.7; }
+    .ap-row .t .title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .ap-badge { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em;
+      border: 1px solid var(--border-dark); border-radius: 5px; padding: 1px 5px; }
+    .ap-badge.good { color: #8fd98f; border-color: #4b7a4b; }
+    .ap-badge.bad { color: #ff9b94; border-color: #7a4b4b; }
+    .ap-badge.plain { opacity: 0.7; }
+
+    .ap-detail { flex: 1; overflow-y: auto; padding: 22px 26px; min-width: 0; }
+    .ap-detail h2 { margin: 0 0 6px; word-break: break-word; }
+    .ap-meta { font-size: 12px; opacity: 0.75; margin-bottom: 16px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .ap-meta img { width: 22px; height: 22px; border-radius: 4px; image-rendering: pixelated; }
+    .ap-text { white-space: pre-wrap; line-height: 1.6; background: var(--menu-bg);
+      border: 1px solid var(--border-dark); border-radius: var(--border-radius); padding: 14px 16px; }
+    .ap-note { margin-top: 12px; font-size: 13px; opacity: 0.85; }
+    .ap-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; align-items: center; }
+    .ap-form input { margin: 0; min-width: 0; }
+    .ap-form input.grow { flex: 1 1 240px; }
+    .ap-form button { margin: 0; }
+    .ap-form button.bad:hover { border-color: #c2504a; color: #ff9b94; }
+    .ap-form .label { font-size: 12px; opacity: 0.7; }
+    .ap-empty { opacity: 0.65; padding: 40px 10px; text-align: center; }
+  </style>
+</head>
+
+<body>
+  <div id="toolbar">
+    <div class="toolbar-buttons-left">
+      <button id="apRefresh" title="Refresh">↻</button>
+    </div>
+    <div class="drag-region">Redstone Launcher — Admin</div>
+    <div class="toolbar-buttons">
+      <button id="min-btn">—</button>
+      <button id="max-btn">◻</button>
+      <button id="close-btn">✕</button>
+    </div>
+  </div>
+
+  <div class="ap-wrap">
+    <div class="ap-panels" id="apPanels"></div>
+    <div class="ap-list">
+      <div class="ap-tools">
+        <input id="apSearch" type="text" placeholder="Search" style="display:none">
+        <div class="ap-filter" id="apFilter"></div>
+      </div>
+      <div class="ap-rows" id="apRows"><div class="ap-empty">Loading…</div></div>
+    </div>
+    <div class="ap-detail" id="apDetail"><div class="ap-empty">Pick one on the left.</div></div>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    document.getElementById('min-btn').onclick = () => ipcRenderer.send('admin:window', 'min');
+    document.getElementById('max-btn').onclick = () => ipcRenderer.send('admin:window', 'max');
+    document.getElementById('close-btn').onclick = () => ipcRenderer.send('admin:window', 'close');
+
+    // Handed over by whoever typed viewAdmin("…"). Never written to disk.
+    let PASSWORD = null;
+    let PANELS = [];
+    let panel = null;      // the descriptor being drawn
+    let rows = [];
+    let current = null;    // the row open in the detail pane
+    let filter = '';
+    let search = '';
+
+    const call = (op, args) => ipcRenderer.invoke('admin:call', { password: PASSWORD, op, args });
+
+    const el = (tag, cls, text) => {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text !== undefined && text !== null) n.textContent = text;
+      return n;
+    };
+    const note = (where, text) => {
+      where.innerHTML = '';
+      where.appendChild(el('div', 'ap-empty', text));
+    };
+    const whenText = (ms) => {
+      const n = Number(ms);
+      if (!n) return '';
+      try { return new Date(n).toLocaleString(); } catch { return new Date(n).toISOString(); }
+    };
+    // A field reference is a row field name; `as: 'date'` means it is a
+    // timestamp. Anything missing comes back as '' so a block can skip it.
+    const fieldText = (row, ref) => {
+      if (!ref || !ref.field) return '';
+      const raw = row[ref.field];
+      const v = (raw === undefined || raw === null || raw === '') ? (ref.empty || '') : raw;
+      if (v === '' || v === null || v === undefined) return '';
+      return ref.as === 'date' ? whenText(v) : String(v);
+    };
+    // {name} in a confirmation reads from the row, then from the form.
+    // {days#day} is the same but counted: "1 day", "3 days".
+    const fill = (text, row, values) => String(text || '').replace(/\{(\w+)(?:#(\w+))?\}/g, (m, k, word) => {
+      let v;
+      if (values && values[k] !== undefined) v = values[k];
+      else if (row && row[k] !== undefined && row[k] !== null) v = row[k];
+      else return m;
+      return word ? `${v} ${word}${Number(v) === 1 ? '' : 's'}` : String(v);
+    });
+    const head = (img, row, spec, size) => {
+      if (!spec || !window.PlayerHead) return;
+      window.PlayerHead.set(img, {
+        uuid: row[spec.uuid] || null, name: row[spec.name] || null, size: size || 34,
+      });
+    };
+
+    ipcRenderer.on('admin:session', (e, s) => {
+      PASSWORD = s.password;
+      PANELS = (s && s.panels) || [];
+      paintPanels();
+      const want = PANELS.find(p => p.id === (s && s.panel)) || PANELS[0] || null;
+      if (want) open(want); else note(document.getElementById('apRows'), 'The relay has no panels.');
+    });
+
+    function paintPanels() {
+      const box = document.getElementById('apPanels');
+      box.innerHTML = '';
+      for (const p of PANELS) {
+        const b = el('button', panel && panel.id === p.id ? 'on' : '', p.title || p.id);
+        b.onclick = () => open(p);
+        box.appendChild(b);
+      }
+    }
+
+    function open(p) {
+      panel = p;
+      rows = [];
+      current = null;
+      filter = (p.filters && p.filters.options && p.filters.options[0]
+        && p.filters.options[0].value) || '';
+      search = '';
+      paintPanels();
+      paintTools();
+      note(document.getElementById('apDetail'), 'Pick one on the left.');
+      load();
+    }
+
+    function paintTools() {
+      const box = document.getElementById('apFilter');
+      box.innerHTML = '';
+      const s = document.getElementById('apSearch');
+      s.style.display = (panel && panel.search && panel.search.length) ? '' : 'none';
+      s.value = '';
+      if (!panel || !panel.filters || !panel.filters.options) return;
+      for (const o of panel.filters.options) {
+        const b = el('button', o.value === filter ? 'on' : '', o.label || o.value || 'All');
+        b.onclick = () => { filter = o.value || ''; paintTools(); paintRows(); };
+        box.appendChild(b);
+      }
+    }
+
+    async function load() {
+      const box = document.getElementById('apRows');
+      note(box, 'Loading…');
+      const op = (panel.list && panel.list.op) || null;
+      if (!op) return note(box, 'That panel has nothing to list.');
+      const r = await call(op, panel.list.args || {});
+      if (!r || !r.ok) {
+        return note(box, (r && r.error === 'no') ? 'That password is not right.'
+          : (r && r.error) || 'Could not reach the relay.');
+      }
+      rows = r.rows || [];
+      paintRows();
+      // Keep the detail pane on the same thing after a refresh.
+      if (current) {
+        const again = rows.find(x => key(x) === key(current));
+        if (again) { current = again; show(again); }
+        else { current = null; note(document.getElementById('apDetail'), 'Pick one on the left.'); }
+      }
+    }
+
+    const key = (row) => String(row && row[(panel && panel.key) || 'id']);
+
+    function visible() {
+      const f = panel.filters;
+      const terms = search.trim().toLowerCase();
+      return rows.filter(row => {
+        if (f && f.field && filter) {
+          const v = row[f.field] || f.empty || '';
+          if (String(v) !== filter) return false;
+        }
+        if (terms && panel.search) {
+          const hay = panel.search.map(k => String(row[k] === undefined || row[k] === null ? '' : row[k]))
+            .join(' ').toLowerCase();
+          if (!hay.includes(terms)) return false;
+        }
+        return true;
+      });
+    }
+
+    function paintRows() {
+      const box = document.getElementById('apRows');
+      box.innerHTML = '';
+      const list = visible();
+      if (!list.length) return note(box, panel.empty || 'Nothing here.');
+      const spec = panel.row || {};
+      for (const row of list) {
+        const node = el('div', 'ap-row' + (current && key(current) === key(row) ? ' on' : ''));
+        if (spec.head) {
+          const img = el('img');
+          head(img, row, spec.head, 34);
+          node.appendChild(img);
+        }
+        const t = el('div', 't');
+        if (spec.sub) t.appendChild(el('div', 'sub', fieldText(row, { field: spec.sub })));
+        if (spec.title) t.appendChild(el('div', 'title', fieldText(row, { field: spec.title })));
+        node.appendChild(t);
+        if (spec.badge) {
+          const v = fieldText(row, spec.badge) || '';
+          const tone = (spec.badge.tone && spec.badge.tone[v]) || 'plain';
+          const badge = el('span', 'ap-badge ' + tone, v ? v[0].toUpperCase() : '?');
+          badge.title = v;
+          node.appendChild(badge);
+        }
+        node.onclick = () => { current = row; paintRows(); show(row); };
+        box.appendChild(node);
+      }
+    }
+
+    function show(row) {
+      const d = document.getElementById('apDetail');
+      d.innerHTML = '';
+      for (const block of (panel.detail || [])) {
+        const node = drawBlock(block, row);
+        if (node) d.appendChild(node);
+      }
+      if (!d.childNodes.length) note(d, 'Nothing to show.');
+    }
+
+    function drawBlock(block, row) {
+      const kind = String(block.kind || '');
+
+      if (kind === 'heading') {
+        const text = fieldText(row, block);
+        return text ? el('h2', '', text) : null;
+      }
+
+      if (kind === 'meta') {
+        const box = el('div', 'ap-meta');
+        if (block.head) {
+          const img = el('img');
+          head(img, row, block.head, 22);
+          box.appendChild(img);
+        }
+        const parts = (block.parts || [])
+          .map(p => { const t = fieldText(row, p); return t ? (p.prefix || '') + t : ''; })
+          .filter(Boolean);
+        if (!parts.length && !block.head) return null;
+        box.appendChild(el('span', '', parts.join(' · ')));
+        return box;
+      }
+
+      if (kind === 'text') {
+        const text = fieldText(row, block);
+        return text ? el('div', 'ap-text', text) : null;
+      }
+
+      if (kind === 'note') {
+        const text = fieldText(row, block);
+        if (!text) return null;
+        return el('div', 'ap-note', (block.label ? block.label + ': ' : '') + text);
+      }
+
+      if (kind === 'form') return drawForm(block, row);
+      return null;
+    }
+
+    function drawForm(block, row) {
+      const box = el('div', 'ap-form');
+      if (block.label) box.appendChild(el('span', 'label', block.label));
+
+      const inputs = {};
+      for (const spec of (block.inputs || [])) {
+        const input = el('input', spec.grow ? 'grow' : '');
+        input.type = 'text';
+        if (spec.placeholder) input.placeholder = spec.placeholder;
+        const from = spec.from ? row[spec.from] : undefined;
+        input.value = (from === undefined || from === null) ? (spec.value || '') : String(from);
+        if (spec.width) input.style.flex = `0 0 ${spec.width}px`;
+        inputs[spec.id] = { input, spec };
+        box.appendChild(input);
+      }
+
+      for (const act of (block.actions || [])) {
+        const b = el('button', act.tone === 'bad' ? 'bad' : '', act.label || act.op);
+        b.onclick = async () => {
+          b.disabled = true;
+          try { await run(act, row, inputs); } finally { b.disabled = false; }
+        };
+        box.appendChild(b);
+      }
+      return box;
+    }
+
+    async function run(act, row, inputs) {
+      const args = Object.assign({}, act.args || {});
+      for (const [reqField, rowField] of Object.entries(act.send || {})) args[reqField] = row[rowField];
+
+      const values = {};
+      for (const id of (act.with || [])) {
+        const held = inputs[id];
+        if (!held) continue;
+        const raw = held.input.value;
+        if (held.spec.number) {
+          const n = Number(raw);
+          if (!Number.isFinite(n)) {
+            return uiAlert(`${held.spec.placeholder || id}?`, 'Admin');
+          }
+          args[id] = n;
+          values[id] = n;
+        } else {
+          args[id] = raw;
+          values[id] = raw;
+        }
+      }
+
+      if (act.confirm) {
+        const ok = await uiConfirm(fill(act.confirm.text, row, values), {
+          title: act.confirm.title || act.label || 'Admin',
+          ok: act.confirm.ok || act.label || 'Yes',
+          danger: !!act.confirm.danger,
+        });
+        if (!ok) return;
+      }
+
+      const r = await call(act.op, args);
+      if (!r || !r.ok) return uiAlert((r && r.error) || 'That did not work.', 'Admin');
+      if (r.message) uiAlert(r.message, 'Admin');
+      // The relay says what the answer means: a replacement row, or that the
+      // list has moved on far enough to be worth fetching again.
+      if (r.row) {
+        const i = rows.findIndex(x => key(x) === key(r.row));
+        if (i >= 0) rows[i] = r.row;
+        if (current && key(current) === key(r.row)) current = r.row;
+        paintRows();
+        if (current) show(current);
+      }
+      if (r.refresh || act.refresh) await load();
+    }
+
+    document.getElementById('apRefresh').onclick = () => { if (panel) load(); };
+    document.getElementById('apSearch').oninput = (e) => { search = e.target.value; paintRows(); };
+  </script>
+</body>
+
+</html>

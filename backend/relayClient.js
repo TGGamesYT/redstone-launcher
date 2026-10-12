@@ -5,7 +5,7 @@ import net from "net";
 import tls from "tls";
 import https from "https";
 
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21 };
 
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
@@ -145,6 +145,62 @@ export function seenRelay({ host, controlPort, account, uuids, rejectUnauthorize
   });
 }
 
+/**
+ * One request, one answer, over a verified connection.
+ *
+ * `ask`/`reply` are the frame types to send and wait for; `req` is the JSON
+ * the relay's handler for them takes. The account is proved with Mojang's
+ * hasJoined before anything is sent, so the relay always knows who asked.
+ */
+function askRelay({ host, controlPort, account, req, ask, reply, rejectUnauthorized = true }) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (fn, v) => { if (done) return; done = true; fn(v); try { sock.end(); } catch { /* ignore */ } };
+    const sock = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () =>
+      sock.write(encodeFrame(T.HELLO, 0, Buffer.from(JSON.stringify({ sync: true })))));
+    const send = (t, s2, p) => { try { sock.write(encodeFrame(t, s2, p)); } catch { /* ignore */ } };
+    const decode = createDecoder(async (type, streamId, payload) => {
+      if (type === T.CHALLENGE) {
+        let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        const ok = await mojangJoin(account.accessToken, account.uuid, info.serverId);
+        if (!ok) return finish(reject, new Error("Could not verify your Minecraft account"));
+        send(T.AUTH, 0, Buffer.from(JSON.stringify({ username: account.name })));
+      } else if (type === T.WELCOME) {
+        send(ask, 0, Buffer.from(JSON.stringify(req || {})));
+      } else if (type === reply) {
+        let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        finish(resolve, info);
+      } else if (type === T.ERROR) {
+        let m = "relay error"; try { m = JSON.parse(payload.toString()).message; } catch { /* ignore */ }
+        finish(reject, new Error(m));
+      }
+    });
+    sock.on("data", decode);
+    sock.on("error", (e) => { if (!done) { done = true; reject(e); } });
+    sock.setTimeout(30000, () => { if (!done) { done = true; sock.destroy(); reject(new Error("Relay timed out")); } });
+  });
+}
+
+/**
+ * Suggestions: { op: 'submit', title, body } or { op: 'mine' }.
+ *
+ * Needs a premium account, which this connection proves, so a suggestion
+ * always has a real person behind it and that person can be told what
+ * happened to it.
+ */
+export function suggestRelay(opts) {
+  return askRelay({ ...opts, ask: T.SUGGEST, reply: T.SUGGEST_DATA });
+}
+
+/**
+ * The admin panel: { op: 'panels', password } for the layout, then whatever
+ * ops the panels that came back name. The relay decides what exists and what
+ * it looks like; the launcher only draws it.
+ */
+export function adminRelay(opts) {
+  return askRelay({ ...opts, ask: T.ADMIN, reply: T.ADMIN_DATA });
+}
+
 // Open a relay session. Resolves { address, port, close() }.
 //   account: { accessToken, uuid, name }  (a verified premium account)
 export function openRelay({ host, controlPort, subdomain, domain, localPort, account, directIp, rejectUnauthorized = true }) {
@@ -218,4 +274,4 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
   });
 }
 
-export default { openRelay, queryRelay, syncRelay, seenRelay };
+export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, adminRelay };

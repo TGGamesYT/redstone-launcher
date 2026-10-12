@@ -26,6 +26,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
   <link rel="stylesheet" href="material-icons.css">
   <!-- The local fallback icon, before anything renders a list with one. -->
   <script src="defaults.js"></script>
+  <script src="console-commands.js"></script>
   <script src="pixelart.js"></script>
   <script src="blockrender.js"></script>
   <script src="modelpicker.js"></script>
@@ -290,6 +291,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <button data-section="general">⚙️</button>
       <button data-section="theme">🎨</button>
       <button data-section="advanced">🛠️</button>
+      <button data-section="suggest" title="Suggest something">📝</button>
     </div>
 
     <!-- === General Section === -->
@@ -459,7 +461,62 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       <h3>Developer</h3>
       <label class="setting-toggle"><input type="checkbox" id="dev-mode"> Developer mode (enables DevTools with F12 / Ctrl+Shift+I, and dev-mod tools)</label>
     </div>
+
+    <!-- === Suggestions === -->
+    <div class="section settings-scrolly" id="suggest" style="display: none;" data-fit-height>
+      <h3 style="margin-top: 30px;">Suggest something</h3>
+      <p style="opacity:0.8;font-size:13px;margin:0 0 16px;max-width:640px;line-height:1.6;">
+        Redstone Launcher aims to give an experience where you don't need to go to some
+        sketchy website for every single different thing that a Minecraft launcher should
+        just include. If something isn't already here, suggest it below.
+      </p>
+
+      <div id="sgForm" style="max-width:640px;">
+        <label class="sg-label" for="sgTitle">What is it?</label>
+        <input type="text" id="sgTitle" maxlength="120" placeholder="A short name for it" autocomplete="off">
+        <label class="sg-label" for="sgBody">Tell us about it</label>
+        <textarea id="sgBody" rows="7" maxlength="4000"
+          placeholder="What should it do, and what are you doing today instead?"></textarea>
+        <div class="sg-row">
+          <span id="sgCount" class="sg-count"></span>
+          <button id="sgSubmit" class="sg-send">Send suggestion</button>
+        </div>
+        <div id="sgNote" class="sg-note"></div>
+      </div>
+
+      <h3 style="margin-top:34px;">Yours</h3>
+      <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:640px;">
+        What you have sent, and what has come of it.
+      </p>
+      <div id="sgMine" class="sg-mine"></div>
+      <div style="height:50px;"></div>
+    </div>
   </div>
+
+  <style>
+    .sg-label { display:block; font-size:12px; opacity:0.8; margin:12px 0 4px; }
+    #sgTitle, #sgBody { width:100%; box-sizing:border-box; padding:9px 11px; margin:0;
+      border:1px solid var(--border-dark); border-radius:var(--border-radius);
+      background:var(--very-dark, #1a1a1a); color:var(--text-color); font-family:var(--text-font); }
+    #sgBody { resize:vertical; min-height:120px; line-height:1.5; }
+    .sg-row { display:flex; align-items:center; gap:12px; margin-top:12px; }
+    .sg-count { font-size:11px; opacity:0.6; }
+    .sg-send { margin-left:auto; }
+    .sg-note { font-size:12px; margin-top:10px; opacity:0.8; line-height:1.5; }
+    .sg-note.bad { color:#ff9b94; opacity:1; }
+    .sg-note.good { color:#8fd98f; opacity:1; }
+    .sg-mine { display:flex; flex-direction:column; gap:8px; max-width:640px; }
+    .sg-item { border:1px solid var(--border-dark); border-radius:var(--border-radius);
+      background:var(--menu-bg); padding:10px 12px; }
+    .sg-item h4 { margin:0 0 4px; font-size:14px; font-weight:normal; }
+    .sg-item .sg-meta { font-size:11px; opacity:0.65; }
+    .sg-item .sg-reason { font-size:12px; margin-top:6px; opacity:0.85; }
+    .sg-badge { font-size:10px; text-transform:uppercase; letter-spacing:0.05em;
+      border:1px solid var(--border-dark); border-radius:6px; padding:2px 6px; margin-left:8px; }
+    .sg-badge.accepted { color:#8fd98f; border-color:#4b7a4b; }
+    .sg-badge.denied { color:#ff9b94; border-color:#7a4b4b; }
+    .sg-badge.pending { opacity:0.7; }
+  </style>
 <p class="app-version">Version <span id="appVersion">…</span></p>
   <script src="nouislider.min.js"></script>
   <script>
@@ -535,8 +592,125 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
           const target = btn.dataset.section;
           const section = document.getElementById(target);
           if (section) section.style.display = 'block';
+          if (target === 'suggest') loadMySuggestions();
         });
       });
+
+      // ── Suggestions ──────────────────────────────────────────────────────
+      // Submitting needs a premium account, because the relay will not take a
+      // suggestion it cannot attribute to a real one — which is also what
+      // makes it possible to tell the person what came of theirs.
+      const sgTitle = document.getElementById('sgTitle');
+      const sgBody = document.getElementById('sgBody');
+      const sgSubmit = document.getElementById('sgSubmit');
+      const sgNote = document.getElementById('sgNote');
+      const sgCount = document.getElementById('sgCount');
+      const sgMine = document.getElementById('sgMine');
+      let sgLocked = false;      // timed out by whoever reads these
+
+      // `owner` is who put the message there, so a note about a timeout can be
+      // taken down once the timeout is gone without wiping a "Sent." that has
+      // just replaced it.
+      let sgNoteOwner = null;
+      const sgSay = (text, kind, owner) => {
+        if (!sgNote) return;
+        sgNote.textContent = text || '';
+        sgNote.className = 'sg-note' + (kind ? ' ' + kind : '');
+        sgNoteOwner = text ? (owner || null) : null;
+      };
+      const countUp = () => {
+        if (sgCount) sgCount.textContent = `${(sgBody.value || '').length} / 4000`;
+      };
+      if (sgBody) { sgBody.addEventListener('input', countUp); countUp(); }
+
+      const WHEN = (ms) => {
+        try { return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); }
+        catch { return new Date(ms).toISOString().slice(0, 10); }
+      };
+
+      async function loadMySuggestions() {
+        if (!sgMine) return;
+        sgMine.innerHTML = '<div style="opacity:0.6;font-size:12px;">Loading…</div>';
+        let r;
+        try { r = await ipcRenderer.invoke('suggest:mine'); } catch { r = null; }
+        if (!r || !r.ok) {
+          sgMine.innerHTML = '';
+          const d = document.createElement('div');
+          d.style.cssText = 'opacity:0.7;font-size:12px;';
+          d.textContent = (r && r.error) || 'Could not reach the suggestions service.';
+          sgMine.appendChild(d);
+          return;
+        }
+        // A timeout outlives this load, so it is remembered rather than just
+        // switching the button off: the button comes back on after a send.
+        sgLocked = !!r.timedOutUntil;
+        if (sgLocked) sgSay(`You cannot send suggestions until ${WHEN(r.timedOutUntil)}.`, 'bad', 'lock');
+        else if (sgNoteOwner === 'lock') sgSay('');
+        if (sgSubmit) sgSubmit.disabled = sgLocked;
+        sgMine.innerHTML = '';
+        if (!r.suggestions.length) {
+          const d = document.createElement('div');
+          d.style.cssText = 'opacity:0.6;font-size:12px;';
+          d.textContent = 'Nothing yet.';
+          sgMine.appendChild(d);
+          return;
+        }
+        for (const it of r.suggestions) {
+          const box = document.createElement('div');
+          box.className = 'sg-item';
+          const h = document.createElement('h4');
+          h.textContent = it.title;
+          const badge = document.createElement('span');
+          badge.className = 'sg-badge ' + (it.status || 'pending');
+          badge.textContent = it.status || 'pending';
+          h.appendChild(badge);
+          const meta = document.createElement('div');
+          meta.className = 'sg-meta';
+          meta.textContent = 'Sent ' + WHEN(it.at)
+            + (it.decidedAt ? ` · decided ${WHEN(it.decidedAt)}` : '');
+          box.append(h, meta);
+          if (it.reason) {
+            const why = document.createElement('div');
+            why.className = 'sg-reason';
+            why.textContent = it.reason;
+            box.appendChild(why);
+          }
+          sgMine.appendChild(box);
+        }
+      }
+
+      if (sgSubmit) {
+        sgSubmit.onclick = async () => {
+          const title = (sgTitle.value || '').trim();
+          const body = (sgBody.value || '').trim();
+          if (title.length < 4) return sgSay('Give it a title first.', 'bad');
+          if (body.length < 20) return sgSay('Say a bit more about it.', 'bad');
+          // Said out loud before it goes anywhere, because it goes to a real
+          // person with your name on it.
+          const sure = await uiConfirm(
+            'This is sent with your Minecraft account name attached, and read by a '
+            + 'person. Make sure it is a real suggestion and nothing offensive.',
+            { title: 'Send this suggestion?', ok: 'Send it' });
+          if (!sure) return;
+          sgSubmit.disabled = true;
+          const was = sgSubmit.textContent;
+          sgSubmit.textContent = 'Sending…';
+          sgSay('');
+          try {
+            const r = await ipcRenderer.invoke('suggest:submit', { title, body });
+            if (!r || !r.ok) {
+              sgSay((r && r.error) || 'That did not go through.', 'bad');
+              return;
+            }
+            sgTitle.value = ''; sgBody.value = ''; countUp();
+            sgSay('Sent. You will see it below with whatever comes of it.', 'good');
+            loadMySuggestions();
+          } finally {
+            sgSubmit.textContent = was;
+            sgSubmit.disabled = sgLocked;
+          }
+        };
+      }
 
 
       const ramSliders = [
