@@ -15,10 +15,18 @@ Asked for in one batch, with "do everything else before the icon renderer
 stuff" — so the list is in two halves and the first half is done first.
 
 ### A. Everything that is not the renderer
-- [ ] **The loading animation fires one piston at a time.** The next should
+- [x] **The loading animation fires one piston at a time.** The next should
       start as the one before it comes back, not after.
-- [ ] **A modal's blur covers the corner where the top and left bars meet** —
+      *The push and the pull back are each a quarter of the cycle, so the next
+      piston leaves as this one starts coming home: 98% of frames now have two
+      moving.*
+- [x] **A modal's blur covers the corner where the top and left bars meet** —
       the friend details one, again.
+      *Every dimming layer stops at the chrome now, and a sweep of the frontend
+      fails the test if a new one does not. The two that live on every page —
+      `uiConfirm`/`uiAlert` and the notification popup — follow each bar that is
+      actually there, since the splash has neither and the admin windows have no
+      sidebar.*
 - [ ] **The loader cards are too small**: the five of them should fill the
       page, and the last page leaves too much of it empty.
 - [ ] **Clicking the version or the loader on the last page** should be a

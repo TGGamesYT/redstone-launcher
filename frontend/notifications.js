@@ -18,6 +18,15 @@ class NotificationPopup {
         align-items: center;
         z-index: 10000;
       }
+      /* Dim the content area only, so the chrome stays sharp and usable. Not
+         every window has both bars (the splash has neither, the admin windows
+         have no sidebar), so each edge follows the bar that's actually there,
+         and the corner is rounded to follow the joint only when both are. */
+      body:has(#toolbar) .notification-overlay { top: 38px; }
+      body:has(.sidebar) .notification-overlay { left: 70px; }
+      body:has(#toolbar):has(.sidebar) .notification-overlay {
+        border-top-left-radius: var(--border-radius, 8px);
+      }
 
       .notification-modal {
         background: var(--secondary-color);

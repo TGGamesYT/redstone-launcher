@@ -38,9 +38,13 @@
   const SIDE = CELLS * TEX;            // 64 px of texture space
   const CYCLE = 2000;                  // ms for all four to fire
   const QUARTER = CYCLE / 4;
-  // Of its own quarter, how long a piston spends going out and coming back.
-  // They add to the whole quarter, so the next one leaves as this one returns.
-  const OUT = 0.5, BACK = 0.5;
+  // How much of the WHOLE cycle a piston spends going out, and coming back.
+  // A quarter each, which is half the cycle in all -- so by the time one is
+  // halfway through, having just reached the end of its stroke, the next is
+  // starting. One is always going out while another is coming back, which is
+  // what makes it read as one thing going round rather than four taking
+  // turns.
+  const OUT = 0.25, BACK = 0.25;
   const ARM = 4;                       // the head's arm is 4 px across
   const FACE = 4;                      // and its wooden face 4 px deep
 
@@ -106,8 +110,8 @@
     PISTONS.forEach((p, i) => {
       // Its own quarter of the cycle: out, then back, then waiting.
       const local = ((t - i / 4) % 1 + 1) % 1;
-      const outEnd = OUT / 4;
-      const backEnd = outEnd + BACK / 4;
+      const outEnd = OUT;
+      const backEnd = OUT + BACK;
       let e = 0;
       if (local < outEnd) e = local / outEnd;
       else if (local < backEnd) e = 1 - (local - outEnd) / (backEnd - outEnd);

@@ -19,6 +19,14 @@
     s.textContent = `
       .uim-overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
         background:rgba(0,0,0,0.55); backdrop-filter:blur(4px); z-index:12000; }
+      /* Dim the content area only, so the chrome stays sharp and usable. This
+         runs on every window, and they don't all have both bars (the splash has
+         neither, the admin windows have no sidebar), so each edge follows the
+         bar that's actually there and the corner is only rounded — to follow the
+         joint between them — when both are. */
+      body:has(#toolbar) .uim-overlay { top:38px; }
+      body:has(.sidebar) .uim-overlay { left:70px; }
+      body:has(#toolbar):has(.sidebar) .uim-overlay { border-top-left-radius:var(--border-radius, 8px); }
       .uim-card { background:linear-gradient(135deg, var(--third-color, #2b2b2b), color-mix(in srgb, var(--third-color, #2b2b2b) 80%, black));
         border:2px solid var(--border-dark, #111); border-radius:var(--border-radius, 8px); padding:18px;
         width:430px; max-width:90%; box-shadow:0 18px 60px rgba(0,0,0,0.7);

@@ -114,8 +114,11 @@
   function showPeek(src, label) {
     hidePeek();
     _peek = document.createElement('div');
-    _peek.style.cssText = 'position:fixed; inset:0; z-index:6300; display:flex;'
+    // Content area only (38px top bar, 70px sidebar), corner rounded to follow
+    // the joint between them, like every other dimmed layer in the launcher.
+    _peek.style.cssText = 'position:fixed; inset:38px 0 0 70px; z-index:6300; display:flex;'
       + 'flex-direction:column; align-items:center; justify-content:center; gap:10px;'
+      + 'border-top-left-radius:var(--border-radius, 8px);'
       + 'background:rgba(0,0,0,0.55); pointer-events:none;';
     const im = document.createElement('img');
     im.src = src;
