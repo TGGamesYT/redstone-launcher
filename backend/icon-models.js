@@ -217,6 +217,41 @@ export async function describeModel({ profileId, version, id, state }) {
     }
   }
 
+  const flat = await MA.renderableModel(st.models, modelId);
+
+  // A block the game draws with Java rather than with a model -- a chest, a
+  // bell, a mob head -- has nothing in the assets but a particle texture, and
+  // came out as a plain cube of it. The shape IS in the game, though: those
+  // blocks are drawn by the same code that draws entities, and their models
+  // are in the layer list beside the mobs'. So before settling for a cube,
+  // look for the layer this block is drawn with.
+  // ...or barely anything: a bell's model is the two-by-three nub it hangs
+  // from, and the bell itself is drawn by the game. Where the model is a
+  // fraction of a block and an entity layer exists, the entity IS the block.
+  if (flat.approximated || flat.kind === 'unrenderable' || tinyModel(flat)) {
+    const asEntity = await blockEntityModel({ profileId, version, id, state: chosen ? chosen.state : state });
+    if (asEntity) return asEntity;
+  }
+
+  // Two blocks that are one thing: a door, a tall flower, a bed. The game
+  // keeps them as two block states, a lower and an upper, and drawing the
+  // lower one on its own gives half a door. Where the chosen state names a
+  // half, the other half is drawn above it.
+  if (chosen && chosen.state) {
+    const tall = await tallSibling(st, id, chosen);
+    if (tall) {
+      return {
+        ...tall,
+        approximated: false,
+        model: modelId,
+        state: chosen.state,
+        rotX: 0, rotY: 0, uvlock: false,
+        tint: await tintFor(st.textures, id),
+        tintAll: false,
+      };
+    }
+  }
+
   // More than one model in one block: a multipart blockstate, where a
   // mushroom block is six separate faces and a wall is a post plus its arms.
   // Each piece has its own turn, so the turns are baked into the pieces
@@ -236,21 +271,6 @@ export async function describeModel({ profileId, version, id, state }) {
     }
   }
 
-  const flat = await MA.renderableModel(st.models, modelId);
-
-  // A block the game draws with Java rather than with a model -- a chest, a
-  // bell, a mob head -- has nothing in the assets but a particle texture, and
-  // came out as a plain cube of it. The shape IS in the game, though: those
-  // blocks are drawn by the same code that draws entities, and their models
-  // are in the layer list beside the mobs'. So before settling for a cube,
-  // look for the layer this block is drawn with.
-  // ...or barely anything: a bell's model is the two-by-three nub it hangs
-  // from, and the bell itself is drawn by the game. Where the model is a
-  // fraction of a block and an entity layer exists, the entity IS the block.
-  if (flat.approximated || flat.kind === 'unrenderable' || tinyModel(flat)) {
-    const asEntity = await blockEntityModel({ profileId, version, id, state: chosen ? chosen.state : state });
-    if (asEntity) return asEntity;
-  }
   if (flat.kind === 'unrenderable') return { error: `${modelId} has no geometry` };
   const withTex = await textureSpecs(st.textures, flat, DEPS.measureSaturation);
 
@@ -272,6 +292,58 @@ export async function describeModel({ profileId, version, id, state }) {
     // tinted or it comes out grey.
     tintAll: !!withTex.approximated && tintFamily(id) === 'water',
   };
+}
+
+// The other half of a two-block block, drawn above this one.
+//
+// The game writes it as two states that differ in one property: half=lower
+// and half=upper for a door or a tall flower, part=foot and part=head for a
+// bed. Nothing says they belong together except that -- so that is the test.
+const HALVES = [['half', 'lower', 'upper'], ['part', 'foot', 'head']];
+
+async function tallSibling(st, id, chosen) {
+  const props = new Map(String(chosen.state).split(',').filter(Boolean)
+    .map(p => { const i = p.indexOf('='); return [p.slice(0, i), p.slice(i + 1)]; }));
+  const rule = HALVES.find(([k, low]) => props.get(k) === low);
+  if (!rule) return null;
+  const [key, , high] = rule;
+  const states = await MA.blockStates(st.models, id);
+  if (!states) return null;
+  const want = [...props].map(([k, v]) => `${k}=${k === key ? high : v}`).sort().join(',');
+  const other = states.find(s => String(s.state).split(',').sort().join(',') === want);
+  if (!other || !other.parts || !other.parts[0]) return null;
+
+  const below = await mergeParts(st, chosen.parts);
+  const above = await mergeParts(st, other.parts);
+  if (!below || !above) return null;
+  const textures = { ...below.textures };
+  const shift = {};
+  for (const [k, v] of Object.entries(above.textures)) { textures['u_' + k] = v; shift['#' + k] = '#u_' + k; }
+  // Where the other half goes. A door's upper half is a block up; a bed's
+  // head is a block along the way it faces.
+  const FACING = { north: [0, 0, -16], south: [0, 0, 16], east: [16, 0, 0], west: [-16, 0, 0] };
+  const step = key === 'part'
+    ? (FACING[props.get('facing')] || [0, 0, -16])
+    : [0, 16, 0];
+  const up = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, step[0], step[1], step[2], 1];
+  const raised = above.elements.map(el => ({
+    ...el,
+    transform: el.transform ? mulMat(up, el.transform) : up,
+    faces: Object.fromEntries(Object.entries(el.faces).map(([d, f]) =>
+      [d, { ...f, texture: shift[f.texture] || f.texture }])),
+  }));
+  return { kind: 'elements', elements: [...below.elements, ...raised], layers: null, textures };
+}
+
+// Column-major 4x4 multiply.
+function mulMat(a, b) {
+  const o = new Array(16).fill(0);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    let v = 0;
+    for (let k = 0; k < 4; k++) v += a[k * 4 + r] * b[c * 4 + k];
+    o[c * 4 + r] = v;
+  }
+  return o;
 }
 
 // Several models drawn as one block, each turned the way its piece says.

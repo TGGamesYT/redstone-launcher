@@ -288,7 +288,16 @@
         // which is why every plant and sapling came out two shades too dark
         // when only the face was looked at. A face may still override it.
         const shadeOff = face.shade === false || (face.shade === undefined && el.shade === false);
-        const shade = shadeOff ? 1 : SHADE[shadedDir(THREE, dir, worldQuat)];
+        // A model can also name the direction its shading should be taken
+        // from, whatever way its faces actually point. Every cross -- grass,
+        // saplings, mushrooms, the plant in a flower pot -- says "up", which
+        // is full brightness, and is why they all came out two shades too
+        // dark: their quads are turned 45 degrees and were being shaded as
+        // though they faced north and west.
+        const override = el.shade_direction_override || el.shadeDirectionOverride;
+        const shade = shadeOff ? 1
+          : (override && SHADE[override] !== undefined ? SHADE[override]
+            : SHADE[shadedDir(THREE, dir, worldQuat)]);
         // The factor is stated in sRGB, not in three's linear working space.
         // `new Color(0.8, 0.8, 0.8)` means 0.8 of LINEAR white, which comes out
         // at 231/255 rather than the 204/255 that "80% brightness" means

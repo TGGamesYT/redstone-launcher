@@ -39,11 +39,12 @@ started.
       variants, water and jungle leaves still come out grey. A `tintindex` is
       the whole test now, and the colour is read out of the game's own
       colormaps in the jar.
-- [ ] **Cross models on a wall are lit wrongly and turned 45°.**
+- [x] **Cross models on a wall are lit wrongly and turned 45°.** The models
+      say which direction to shade from; that was being ignored.
 - [x] **The bell comes out wrong**, with parts missing or cropped off.
 - [x] **One entity is split into several** — breeze, breeze/eyes, breeze/wind.
       Parts are drawn with the mob and are switches, not entries of their own.
-- [ ] **Two-block blocks do not render as one** (beds, doors).
+- [x] **Two-block blocks do not render as one** (beds, doors).
 - [ ] **Trimmed armour shows as the untrimmed armour.**
 - [ ] **Item variants should be offered** the way a mod's pictures are — every
       clock, every compass and so on.
@@ -51,7 +52,7 @@ started.
 - [x] **Mob heads render as plain cubes** rather than the head model.
 - [x] **The red mushroom block renders as nothing** — it is six separate
       faces in a multipart blockstate, and only the first was drawn.
-- [ ] **Mushroom cross models are lit wrongly, and so is the cross model
+- [x] **Mushroom cross models are lit wrongly, and so is the cross model
       inside a flower pot** — fix the lighting itself rather than the cases.
 - [x] **Some entities get the wrong texture**, and an outer layer is often
       rendered as its own thing with the texture all over the place. Each
