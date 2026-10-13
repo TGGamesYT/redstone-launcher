@@ -41,6 +41,11 @@ started.
       as a mob and turned upside down. What actually tells the two apart is
       that a mob is built around its pivot and always has boxes at negative
       coordinates, where a block is built from its own corner and never does.*
+- [x] **Found while working: a rail's default state is a piece of track
+      standing on end.** *Its `shape` has no "straight" among its values and
+      nothing else matched one either, so the file's first state won — which is
+      an ascending rail, seen edge-on and all but invisible. A flat one is the
+      plain state now.*
 - [ ] **Found while working: a sign renders as a plain cube.** Unlike the bed
       and the pot there is nothing to draw it with — the version's layer list
       has no sign in it at all, so there is no model to find.

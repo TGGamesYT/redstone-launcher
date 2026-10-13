@@ -691,6 +691,10 @@ export async function blockStates(stack, blockId) {
 // state matching the most of them wins.
 const PLAIN_VALUE = new Set([
   'axis=y', 'half=bottom', 'type=bottom', 'shape=straight', 'facing=north',
+  // A rail's shape has no "straight" in it, and nothing else here matched one
+  // either, so the file's first state won -- which for a rail is a piece of
+  // track standing on end, seen edge-on and all but invisible.
+  'shape=north_south',
   'powered=false', 'open=false', 'lit=false', 'waterlogged=false', 'snowy=false',
   'attached=false', 'triggered=false', 'extended=false', 'conditional=false',
   'in_wall=false', 'short=false', 'disarmed=false', 'occupied=false',
