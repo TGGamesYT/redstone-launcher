@@ -39,10 +39,15 @@ const fsp = fs.promises;
 
 let DATA_DIR = null;
 let LOG = () => { };
-export function configure({ dataDir, log } = {}) {
+export function configure({ dataDir, log, recolor } = {}) {
   if (dataDir) DATA_DIR = dataDir;
   if (log) LOG = log;
+  if (recolor) RECOLOR = recolor;
 }
+// Swap one palette for another in a PNG. Passed in rather than imported so
+// this module still needs no image library of its own; main.js hands it a
+// sharp-backed one. See palettedTexture below for what it is for.
+let RECOLOR = null;
 
 // ── Where a downloaded client jar is kept ───────────────────────────────────
 // The default-skins build downloads the latest release's jar anyway; keeping it
@@ -293,18 +298,37 @@ export function modelFromItemDef(def) {
  *
  * Returns [{ model, label }], the plainest first.
  */
+// An item definition's `tints`, as one [r,g,b] in 0..1 per layer (null where
+// that layer is left alone). The number is a packed ARGB int, and negative
+// because the alpha byte makes it so -- 0xFFA06540 read as signed.
+function defTints(tints) {
+  if (!Array.isArray(tints) || !tints.length) return null;
+  const out = tints.map(t => {
+    const n = t && typeof t.default === 'number' ? t.default : null;
+    if (n == null) return null;
+    return [(n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF].map(v => v / 255);
+  });
+  return out.some(Boolean) ? out : null;
+}
+
 export function modelsFromItemDef(def) {
   const out = [];
   const seen = new Set();
-  const add = (model, trail) => {
+  const add = (model, trail, tints) => {
     if (!model || seen.has(model)) return;
     seen.add(model);
-    out.push({ model, label: trail.filter(Boolean).join(' ') });
+    out.push({ model, label: trail.filter(Boolean).join(' '), tints: tints || null });
   };
   const walk = (node, trail) => {
     if (!node || typeof node !== 'object') return;
     const type = String(node.type || '').replace(/^minecraft:/, '');
-    if (type === 'model' && node.model) return add(node.model, trail);
+    // Leather armour and a filled map are drawn through a colour the item
+    // carries, not one in the model: the definition says `tints`, one entry
+    // per layer, each with the colour to use when the item has none of its
+    // own. That default is the picture of the plain item -- undyed leather --
+    // and without it a leather chestplate came out as the grey mask it is
+    // drawn from.
+    if (type === 'model' && node.model) return add(node.model, trail, defTints(node.tints));
     if (type === 'special' && node.base) return add(node.base, trail);
     for (const key of ['cases', 'entries', 'models']) {
       for (const child of (Array.isArray(node[key]) ? node[key] : [])) {
@@ -448,10 +472,89 @@ export function pngSize(buf) {
  * the crop here would mean decoding and re-encoding every texture in the main
  * process; a UV scale in the renderer is free.
  */
+// ── Textures the game builds rather than ships ──────────────────────────────
+//
+// An armour trim's picture is not in the jar. `diamond_chestplate_gold_trim`
+// asks for `trims/items/chestplate_trim_gold`, and all the jar holds is
+// `trims/items/chestplate_trim.png` -- a grey mask -- plus a row of eight
+// colours per material under `palettes/trim/`. The game stitches them at load
+// time (its PalettedPermutations atlas source): every pixel of the mask is
+// looked up in the key palette, `palettes/trim_base.png`, and replaced by the
+// colour at the same position in the material's. Without that every trim came
+// out as the plain armour, because layer1 simply was not there.
+//
+// The names are unambiguous: a permutation is the whole tail of the id after
+// the base, so `..._gold` and `..._gold_darker` are each matched by exactly
+// one of them.
+//
+// Where the palettes live has moved. Up to 1.21 the atlas file said outright
+// — `atlases/armor_trims.json`, a `paletted_permutations` source naming its
+// key and every permutation — and from 26.1 the atlas is gone and the files
+// speak for themselves: `palettes/<group>/<name>.png` beside the group's key,
+// `palettes/<group>_base.png`. Both are read, declarations first.
+const _palettes = new WeakMap();
+async function paletteRules(stack, ns) {
+  let byNs = _palettes.get(stack);
+  if (!byNs) { byNs = new Map(); _palettes.set(stack, byNs); }
+  if (byNs.has(ns)) return byNs.get(ns);
+  const p = (async () => {
+    const rules = new Map();                    // suffix -> { name, key, to }
+    const atlasRe = new RegExp(`^assets/${ns}/atlases/[a-z0-9_.-]+\\.json$`);
+    const palRe = new RegExp(`^assets/${ns}/textures/palettes/([a-z0-9_.-]+)/([a-z0-9_.-]+)\\.png$`);
+    const atlases = new Set();
+    for (const s of stack.sources || []) {
+      let names = [];
+      try { names = s.list(); } catch { continue; }
+      for (const path of names) {
+        if (atlasRe.test(path)) { atlases.add(path); continue; }
+        const m = palRe.exec(path);
+        if (m && !rules.has(m[2])) {
+          rules.set(m[2], {
+            name: m[2],
+            key: `assets/${ns}/textures/palettes/${m[1]}_base.png`,
+            to: `assets/${ns}/textures/palettes/${m[1]}/${m[2]}.png`,
+          });
+        }
+      }
+    }
+    for (const path of atlases) {
+      const json = await stack.json(path);
+      for (const src of (json && Array.isArray(json.sources) ? json.sources : [])) {
+        if (!src || !/paletted_permutations$/.test(String(src.type || ''))) continue;
+        for (const [name, pal] of Object.entries(src.permutations || {})) {
+          rules.set(name, { name, key: texturePath(src.palette_key), to: texturePath(pal) });
+        }
+      }
+    }
+    // Longest first, so a name that is another's tail cannot take its place.
+    return [...rules.values()].sort((a, b) => b.name.length - a.name.length);
+  })();
+  byNs.set(ns, p);
+  return p;
+}
+
+async function palettedTexture(stack, id) {
+  if (!RECOLOR) return null;
+  const { ns, name } = splitId(id);
+  for (const rule of await paletteRules(stack, ns)) {
+    if (!name.endsWith('_' + rule.name)) continue;
+    const base = await stack.get(`assets/${ns}/textures/${name.slice(0, -(rule.name.length + 1))}.png`);
+    if (!base) continue;
+    const key = await stack.get(rule.key);
+    const to = await stack.get(rule.to);
+    if (!key || !to) continue;
+    try {
+      const buf = await RECOLOR(base.buf, key.buf, to.buf);
+      if (buf) return { buf, from: base.from };
+    } catch { /* fall through to the next palette */ }
+  }
+  return null;
+}
+
 export async function loadTextures(stack, ids, { measure = null } = {}) {
   const out = {};
   for (const id of new Set(ids.filter(Boolean))) {
-    const hit = await stack.get(texturePath(id));
+    const hit = await stack.get(texturePath(id)) || await palettedTexture(stack, id);
     if (!hit) { out[id] = null; continue; }
     const size = pngSize(hit.buf);
     if (!size || !size.width) { out[id] = null; continue; }
@@ -473,12 +576,17 @@ export async function loadTextures(stack, ids, { measure = null } = {}) {
 //
 // It answers a question the model format cannot: a face with a `tintindex` is
 // meant to be coloured by the game from the biome, but plenty of blocks inherit
-// that flag from a shared parent and are NOT tinted — cherry leaves and pale
-// oak leaves both inherit it from block/leaves. The textures tell them apart.
-// Measured across 1.21.9: grass_block_top 0.000, short_grass 0.005, oak_leaves
-// 0.017, jungle_leaves 0.075 (all tinted in game) against cherry_leaves 0.327
-// and azalea_leaves 0.601 (both not).
-export const TINT_MAX_SATURATION = 0.05;
+// that flag from a shared parent and are NOT tinted — cherry leaves, azalea
+// leaves and pale oak leaves all inherit it from block/leaves. The textures
+// tell them apart, because one meant to be tinted is drawn in greys.
+//
+// Measured as the median pixel: grass_block_top 0.000, short_grass 0.000,
+// jungle_leaves 0.007, oak_leaves 0.016, fern 0.016 — every one of them tinted
+// in game — against pale_oak_leaves 0.060, cherry_leaves 0.301 and
+// azalea_leaves 0.581, none of which are. A fourfold gap either side of the
+// line, where by the AVERAGE pixel jungle leaves (0.075) and pale oak (0.060)
+// come out the wrong way round.
+export const TINT_MAX_SATURATION = 0.04;
 
 /**
  * A flattened model with its textures turned into pixels, in the one shape the

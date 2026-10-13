@@ -7591,17 +7591,26 @@ iconModels.configure({
   enabledResourcePacks: readEnabledResourcePacks,
   // How colourful a texture is, which is what decides whether a face with a
   // `tintindex` really wants tinting. See model-assets.js.
+  //
+  // The TYPICAL pixel, not the average one. A texture meant to be tinted is
+  // drawn in greys, but a few of its pixels need not be: jungle leaves have a
+  // handful of bright ones and average 0.075, which is more colour than pale
+  // oak leaves' 0.060 -- and jungle leaves are tinted where pale oak ones are
+  // not. By the median they are 0.007 against 0.060, which is the right way
+  // round and a wide gap.
   measureSaturation: async (buf) => {
     try {
       const { data } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-      let n = 0, s = 0;
+      const sats = [];
       for (let i = 0; i < data.length; i += 4) {
         if (data[i + 3] < 200) continue;
         const mx = Math.max(data[i], data[i + 1], data[i + 2]);
         const mn = Math.min(data[i], data[i + 1], data[i + 2]);
-        s += mx ? (mx - mn) / mx : 0; n++;
+        sats.push(mx ? (mx - mn) / mx : 0);
       }
-      return n ? s / n : 0;
+      if (!sats.length) return 0;
+      sats.sort((a, b) => a - b);
+      return sats[sats.length >> 1];
     } catch { return null; }
   },
   // How much of an image is painted at all, 0..1. An overlay is drawn ON a
@@ -7626,6 +7635,31 @@ iconModels.configure({
       const i = (py * info.width + px) * 4;
       return [data[i], data[i + 1], data[i + 2]];
     } catch { return null; }
+  },
+  // One palette swapped for another, which is how the game builds the armour
+  // trims: the mask's greys are looked up in `key` and come back out as the
+  // colour at the same place in `to`. A colour that is not in the key is left
+  // alone, and alpha is the mask's throughout. See model-assets.js.
+  recolor: async (maskBuf, keyBuf, toBuf) => {
+    const raw = async (b) => {
+      const { data, info } = await sharp(b).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      return { data, info };
+    };
+    const [mask, key, to] = await Promise.all([raw(maskBuf), raw(keyBuf), raw(toBuf)]);
+    const map = new Map();
+    const n = Math.min(key.data.length, to.data.length) / 4;
+    for (let i = 0; i < n; i++) {
+      const k = i * 4;
+      map.set((key.data[k] << 16) | (key.data[k + 1] << 8) | key.data[k + 2],
+        [to.data[k], to.data[k + 1], to.data[k + 2]]);
+    }
+    const out = Buffer.from(mask.data);
+    for (let i = 0; i < out.length; i += 4) {
+      const hit = map.get((out[i] << 16) | (out[i + 1] << 8) | out[i + 2]);
+      if (hit) { out[i] = hit[0]; out[i + 1] = hit[1]; out[i + 2] = hit[2]; }
+    }
+    return await sharp(out, { raw: { width: mask.info.width, height: mask.info.height, channels: 4 } })
+      .png().toBuffer();
   },
 });
 

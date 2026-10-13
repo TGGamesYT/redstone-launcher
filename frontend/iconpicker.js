@@ -425,6 +425,17 @@
         <div class="ip-section-title">Parts</div>
         <div id="ipAdjParts" style="display:flex; flex-wrap:wrap; gap:4px 12px; font-size:12px;"></div>
       </div>
+      <div id="ipAdjTintWrap" style="display:none;">
+        <div class="ip-section-title">Colour</div>
+        <div class="ip-circle-row">
+          <label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;">
+            <input type="checkbox" id="ipAdjTintOn" checked> Coloured
+          </label>
+          <input type="color" id="ipAdjTint" style="width:44px; height:26px; padding:0; border:1px solid var(--border-dark); background:none; cursor:pointer;">
+          <button type="button" id="ipAdjTintReset" style="font-size:11px; padding:3px 8px;">Default</button>
+        </div>
+        <div id="ipAdjDyes" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;"></div>
+      </div>
       <!-- This is not the last step: the render goes to the cropper after it,
            and "Use this" read as though it were about to be the icon. -->
       <div class="modal-actions"><button id="ipAdjOk">Continue to cropping</button><button id="ipAdjCancel">Cancel</button></div>
@@ -482,6 +493,61 @@
       }
     }
 
+    // What colour the game paints the tinted faces. It has one answer -- the
+    // plains biome, or the item's undyed leather -- and the point of a chosen
+    // icon is that it does not have to be the one the game would pick, so the
+    // colour is offered, along with the sixteen dyes for the things that are
+    // dyed with them.
+    const DYES = [
+      ['White', '#F9FFFE'], ['Light gray', '#9D9D97'], ['Gray', '#474F52'], ['Black', '#1D1D21'],
+      ['Brown', '#835432'], ['Red', '#B02E26'], ['Orange', '#F9801D'], ['Yellow', '#FED83D'],
+      ['Lime', '#80C71F'], ['Green', '#5E7C16'], ['Cyan', '#169C9C'], ['Light blue', '#3AB3DA'],
+      ['Blue', '#3C44AA'], ['Purple', '#8932B8'], ['Magenta', '#C74EBD'], ['Pink', '#F38BAA'],
+    ];
+    const hex2rgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+    const rgb2hex = (c) => '#' + c.map(v => Math.round(Math.max(0, Math.min(1, v)) * 255)
+      .toString(16).padStart(2, '0')).join('');
+    const tintWrap = ov.querySelector('#ipAdjTintWrap');
+    const tintOn = ov.querySelector('#ipAdjTintOn');
+    const tintEl = ov.querySelector('#ipAdjTint');
+    const dyesBox = ov.querySelector('#ipAdjDyes');
+    for (const [name, hex] of DYES) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = name;
+      b.style.cssText = `width:18px;height:18px;padding:0;border:1px solid var(--border-dark);
+        border-radius:3px;background:${hex};cursor:pointer;`;
+      b.onclick = () => {
+        tintEl.value = hex; tintEl.dataset.touched = '1'; tintOn.checked = true; redraw();
+      };
+      dyesBox.appendChild(b);
+    }
+    // The colour it would be left to itself, which is what "Default" goes back
+    // to and what the picker starts on.
+    const ownTint = () => {
+      if (desc && desc.kind === 'layers') {
+        const first = (desc.layerTints || []).find(Boolean);
+        if (first) return rgb2hex(first);
+      }
+      return desc && desc.tint ? rgb2hex(desc.tint) : '#91BD59';
+    };
+    function paintTint() {
+      const any = !!(window.BlockRender && window.BlockRender.tinted && window.BlockRender.tinted(desc));
+      tintWrap.style.display = any ? '' : 'none';
+      // Only the dyed things are dyed; a fern's green is not one of the
+      // sixteen and offering them beside it would say it was.
+      dyesBox.style.display = (desc && (desc.layerTints || []).some(Boolean)) ? '' : 'none';
+      if (any && !tintEl.dataset.touched) tintEl.value = ownTint();
+    }
+    tintEl.oninput = () => { tintEl.dataset.touched = '1'; tintOn.checked = true; redraw(); };
+    tintOn.onchange = redraw;
+    ov.querySelector('#ipAdjTintReset').onclick = () => {
+      delete tintEl.dataset.touched;
+      tintEl.value = ownTint();
+      tintOn.checked = true;
+      redraw();
+    };
+
     // The same model wearing a different skin: a cow is six textures, a
     // cushion sixteen.
     const variantWrap = ov.querySelector('#ipAdjVariantWrap');
@@ -519,7 +585,7 @@
             id: info.item.id, state: info.state || undefined, variant: variantSel.value,
           });
         // The list follows the model: a cold cow's skins are its own.
-        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); showTurn(); redraw(); }
+        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); paintTint(); showTurn(); redraw(); }
       };
     }
 
@@ -552,7 +618,7 @@
           profileId: opts0.instanceId ?? null, version: opts0.version || null,
           id: info.item.id, state: stateSel.value,
         });
-        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); showTurn(); redraw(); }
+        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); paintTint(); showTurn(); redraw(); }
       };
     }
 
@@ -574,6 +640,9 @@
         uvlock: !!desc.uvlock,
         // The switches decide; `off` already holds the ones that start off.
         overlays: true,
+        // The chosen colour, or none at all.
+        tint: tintOn.checked,
+        tintColor: tintOn.checked && tintEl.dataset.touched ? hex2rgb(tintEl.value) : null,
       });
       drawing = job;
       const out = await job;
@@ -587,6 +656,7 @@
 
     paintParts();
     paintVariants();
+    paintTint();
     showTurn();
     loadStates();
     redraw();

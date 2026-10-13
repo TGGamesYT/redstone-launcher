@@ -72,13 +72,14 @@
   // left jungle leaves, water and some of the grasses flatly grey -- they are
   // greyish but not grey enough for the number that had been picked.
   //
-  // The one case the model data cannot tell apart is cherry leaves, which
-  // inherit `tintindex` from block/leaves and are NOT tinted by the game:
-  // every leaf block shares one model file, so there is nothing in it that
-  // separates them. A texture that is already properly coloured is therefore
-  // left alone -- cherry blossom is pink at 0.33, where jungle leaves are
-  // 0.08 and grass is 0.01.
-  const TINT_MAX_SATURATION = 0.25;
+  // What the model data cannot tell apart is cherry, azalea and pale oak
+  // leaves, which inherit `tintindex` from block/leaves and are NOT tinted by
+  // the game: every leaf block shares one model file, so there is nothing in
+  // it that separates them. A texture that is already properly coloured is
+  // therefore left alone. The number is the median pixel's saturation (see
+  // model-assets.js): pale oak leaves sit at 0.060 and cherry at 0.301, where
+  // oak leaves are 0.016 and jungle leaves 0.007.
+  const TINT_MAX_SATURATION = 0.04;
   const wantsTint = (face, spec, opts, flat) =>
     opts.tint !== false
     && ((face.tintindex != null && face.tintindex >= 0) || (flat && flat.tintAll))
@@ -381,7 +382,8 @@
         // The colour comes with the model: the game keeps a table of which
         // block is coloured from which biome map, and the backend has read
         // the right one out of the jar.
-        const t = wantsTint(face, spec, opts, flat) ? (flat.tint || DEFAULT_TINT) : [1, 1, 1];
+        const t = wantsTint(face, spec, opts, flat)
+          ? (opts.tintColor || flat.tint || DEFAULT_TINT) : [1, 1, 1];
         const tint = new THREE.Color();
         tint.setRGB(shade * t[0], shade * t[1], shade * t[2], THREE.SRGBColorSpace);
         // A texture that is part-way see-through is drawn as what it is:
@@ -522,19 +524,46 @@
   // how the game draws them. No 3D, so no three.js either.
   function renderLayers(flat, opts) {
     const size = Math.max(16, Math.min(1024, opts.size || 256));
-    const specs = (flat.layers || []).map(id => (flat.textures || {})[id] || null).filter(Boolean);
-    if (!specs.length) return Promise.resolve(null);
+    const specs = (flat.layers || []).map(id => (flat.textures || {})[id] || null);
+    if (!specs.some(Boolean)) return Promise.resolve(null);
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = size;
     const cx = canvas.getContext('2d');
     cx.imageSmoothingEnabled = false;
-    return specs.reduce((chain, spec) => chain.then(() => new Promise((res) => {
+    // Leather armour is a grey mask the game paints with the item's dye
+    // colour, layer by layer -- the definition's `tints`. The overlay on top
+    // of it (the stitching) carries no tint and keeps its own colours. The
+    // layer is painted on a canvas of its own: multiply puts the colour on,
+    // and destination-in puts the mask's own transparency back, since
+    // multiply leaves the empty pixels filled.
+    const own = Array.isArray(flat.layerTints) ? flat.layerTints : [];
+    // A colour chosen in the dialog replaces the item's own dye colour, and
+    // only on the layers that have one -- the stitching over a leather
+    // chestplate keeps its own.
+    const tints = opts.tintColor ? own.map(t => (t ? opts.tintColor : null)) : own;
+    const paint = (im, side, tint) => {
+      const pad = document.createElement('canvas');
+      pad.width = pad.height = size;
+      const px = pad.getContext('2d');
+      px.imageSmoothingEnabled = false;
+      px.drawImage(im, 0, 0, side, side, 0, 0, size, size);
+      if (tint) {
+        px.globalCompositeOperation = 'multiply';
+        px.fillStyle = `rgb(${tint.map(v => Math.round(v * 255)).join(',')})`;
+        px.fillRect(0, 0, size, size);
+        px.globalCompositeOperation = 'destination-in';
+        px.drawImage(im, 0, 0, side, side, 0, 0, size, size);
+      }
+      cx.drawImage(pad, 0, 0);
+    };
+    return specs.reduce((chain, spec, i) => chain.then(() => new Promise((res) => {
+      if (!spec) return res();
       const im = new Image();
       im.onload = () => {
         // The first frame only, for an animated item like a clock or compass.
         const side = Math.min(im.naturalWidth, im.naturalHeight / Math.max(1, spec.frames || 1))
           || im.naturalWidth;
-        try { cx.drawImage(im, 0, 0, side, side, 0, 0, size, size); } catch { }
+        try { paint(im, side, opts.tint === false ? null : tints[i]); } catch { }
         res();
       };
       im.onerror = () => res();
@@ -552,5 +581,23 @@
     return renderElements(THREE, flat, opts);
   }
 
-  window.BlockRender = { render };
+  // Is there anything in this model the tint colour would change? A flat item
+  // says so in its definition; a block says so face by face, and a face only
+  // counts if its texture is grey enough to be meant for it. Asked by the
+  // adjust dialog, which offers the colour only where it does something.
+  function tinted(flat) {
+    if (!flat) return false;
+    if (flat.kind === 'layers') return (flat.layerTints || []).some(Boolean);
+    if (flat.tintAll) return true;
+    for (const el of (flat.elements || [])) {
+      for (const face of Object.values((el && el.faces) || {})) {
+        if (!face) continue;
+        const spec = textureKey(face.texture, flat.textures || {});
+        if (wantsTint(face, spec, {}, flat)) return true;
+      }
+    }
+    return false;
+  }
+
+  window.BlockRender = { render, tinted };
 })();

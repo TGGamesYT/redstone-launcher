@@ -156,14 +156,30 @@ stuff" — so the list is in two halves and the first half is done first.
       own x rotation stays Minecraft's.*
 - [ ] **Chest variants do nothing**, and a double chest should be drawn as
       both halves.
-- [ ] **All the armour trims render as the plain item.**
+- [x] **All the armour trims render as the plain item.**
+      *A trim's picture is not in the jar. `..._gold_trim` asks for
+      `trims/items/chestplate_trim_gold`, and all the jar holds is the grey
+      mask and a row of eight colours per material; the game stitches them at
+      load time, and now so does this. Where the palettes live moved in 26.1 —
+      an atlas file used to declare them and now the folder speaks for itself —
+      so both are read.*
 - [x] **Every clock variant is also its own search result.**
       *From 1.21.4 an item is a definition file and the models beside it are
       the pictures it chooses between. The definitions are the catalogue now;
       "clock" finds one thing instead of 65, "chestplate" seven instead of 84,
       and the faces and trims are still there as variants.*
-- [ ] **Bush, fern and large fern have no tint**, and the tint should be
+- [x] **Bush, fern and large fern have no tint**, and the tint should be
       changeable in the render settings. Leather armour too, in its colours.
+      *They had no tint because they had no block: a bare name was handed its
+      ITEM's model, which is a flat sprite with nothing tinted on it. Leather
+      armour is dyed rather than tinted — the colour is in the item's
+      definition, one per layer, and was going unread. Both are now a colour
+      in the adjust dialog, with the sixteen dyes beside it for the things
+      that are dyed, and an off switch.
+      Which blocks are tinted at all is read better too: the median pixel
+      rather than the average one, because jungle leaves have a few bright
+      pixels and averaged out MORE colourful than pale oak leaves, which are
+      not tinted at all. Pale oak leaves stay grey, cherry stays pink.*
 - [x] **A face pointing at the camera should be fully lit**, which settles the
       lighting generally.
       *Whichever is brighter wins, the shade table or how squarely the face
@@ -189,8 +205,15 @@ stuff" — so the list is in two halves and the first half is done first.
       mapped onto its head.
 - [ ] **A cross model on the second block of a two-block block is turned 45°**,
       and a two-block block with no upper half draws something there anyway.
-- [ ] **The dried ghast's default rotation is wrong**, which matters because it
+- [x] **The dried ghast's default rotation is wrong**, which matters because it
       is a version's default icon.
+      *It had no rotation at all, and no textures of its own either: the icon
+      list names it `block/dried_ghast`, which looks like a model and is one —
+      but that model is only the template its blockstate fills in, with every
+      texture still a `#north`. A path under block/ is now read as the block
+      where a blockstate goes by that name, so the ghast faces the viewer, the
+      observer and the bee nest show their fronts, and the pieces that are only
+      ever part of something else stay the models they are.*
 
 ## 0. Round 22
 

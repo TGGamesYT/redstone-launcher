@@ -38,7 +38,7 @@ const STACK_TTL = 10 * 60 * 1000;
 let DEPS = null;
 export function configure(deps) {
   DEPS = deps;
-  MA.configure({ dataDir: deps.dataDir, log: deps.log });
+  MA.configure({ dataDir: deps.dataDir, log: deps.log, recolor: deps.recolor });
   VI.configure({ dataDir: deps.dataDir, log: deps.log });
 }
 const log = (...a) => { try { DEPS.log(...a); } catch { } };
@@ -196,17 +196,32 @@ async function textureSpecs(stack, flat, measure) {
   return MA.resolveModelTextures(stack, flat, { measure });
 }
 
+// The blockstate an id belongs to. A bare id -- "minecraft:anvil" -- is one
+// already. A path that names the block folder outright, "block/dried_ghast",
+// looks like a model and is one, but the model is only the template the
+// blockstate's variants fill in: its textures are all `#north`, and which
+// picture `#north` is depends on the state. Where a blockstate goes by that
+// name it IS the block, and that is what carries the textures, the turn and
+// the states. The leftovers that are only ever a piece of something --
+// block/oak_stairs_inner, block/cube_all -- have no blockstate of their own,
+// so the lookup comes back empty and they stay the models they are.
+const blockIdOf = (id) => {
+  const { ns, name } = MA.splitId(id);
+  return /(^|\/)block\//.test(`/${name}`) ? `${ns}:${name.replace(/^.*\bblock\//, '')}` : id;
+};
+
 /** A block or item model, ready to render. */
 export async function describeModel({ profileId, version, id, state, variant }) {
   const st = await stackFor({ profileId, version });
   if (!st) return { error: 'no assets for this version yet' };
 
   let modelId = id, rotX = 0, rotY = 0, uvlock = false, chosen = null;
-  let itemVariants = null;
+  let itemVariants = null, layerTints = null;
   const { ns, name } = MA.splitId(id);
   const explicitItem = /(^|:)items?\//.test(id) || /\/items?\//.test(id);
   // A path that names the block folder outright is a model, not a blockstate.
   const blockPath = /(^|:)block\//.test(id) || /\/block\//.test(id);
+  const stateId = blockIdOf(id);
 
   // A bare id -- "minecraft:anvil" -- is a BLOCK, through its blockstate.
   // That is how the catalogue lists blocks; an item is listed with `item/` in
@@ -216,7 +231,7 @@ export async function describeModel({ profileId, version, id, state, variant }) 
   // why an anvil's facing, a creaking heart's state and an icicle's size did
   // nothing: the states were listed, the choice was passed in, and nothing
   // ever looked at it.
-  const states = explicitItem || blockPath ? null : await MA.blockStates(st.models, id);
+  const states = explicitItem ? null : await MA.blockStates(st.models, stateId);
   if (states && states.length) {
     const pick = state != null
       ? (states.find(s => s.state === state) || await MA.chooseState(st.models, states))
@@ -238,6 +253,7 @@ export async function describeModel({ profileId, version, id, state, variant }) 
       itemVariants = all;
       const want = variant && all.find(v => v.model === variant);
       modelId = (want || all[0]).model;
+      layerTints = (want || all[0]).tints || null;
     }
   }
 
@@ -253,7 +269,7 @@ export async function describeModel({ profileId, version, id, state, variant }) 
   // from, and the bell itself is drawn by the game. Where the model is a
   // fraction of a block and an entity layer exists, the entity IS the block.
   if (flat.approximated || flat.kind === 'unrenderable' || tinyModel(flat)) {
-    const asEntity = await blockEntityModel({ profileId, version, id, state: chosen ? chosen.state : state });
+    const asEntity = await blockEntityModel({ profileId, version, id: stateId, state: chosen ? chosen.state : state });
     if (asEntity) return asEntity;
   }
 
@@ -262,7 +278,7 @@ export async function describeModel({ profileId, version, id, state, variant }) 
   // lower one on its own gives half a door. Where the chosen state names a
   // half, the other half is drawn above it.
   if (chosen && chosen.state) {
-    const tall = await tallSibling(st, id, chosen);
+    const tall = await tallSibling(st, stateId, chosen);
     if (tall) {
       return {
         ...tall,
@@ -315,6 +331,8 @@ export async function describeModel({ profileId, version, id, state, variant }) 
     variantOf: itemVariants ? modelId : null,
     // The colour the game would paint the tinted faces, for this block.
     tint: await tintFor(st.textures, id),
+    // ...and, for a flat item, one colour per layer, from its definition.
+    layerTints,
     // Water has no model at all -- it is drawn by the fluid renderer, and all
     // that is in the jar is a particle texture. What stands in for it here is
     // a cube of that texture, which carries no tintindex because there is no
@@ -525,7 +543,7 @@ async function tintFor(stack, id) {
 export async function modelStates({ profileId, version, id }) {
   const st = await stackFor({ profileId, version });
   if (!st) return [];
-  const states = await MA.blockStates(st.models, id);
+  const states = await MA.blockStates(st.models, blockIdOf(id));
   if (!states) return [];
   const best = await MA.chooseState(st.models, states);
   return states.map(s => ({
