@@ -175,6 +175,7 @@ export class EntityModels {
     this.log = log;
     this.classes = new Map();         // obf -> parsed class (or null)
     this.statics = new Map();         // obf -> Map(fieldObf -> value)
+    this._enumSize = new Map();       // obf -> how many constants, or null
     this.native = buildNativeTable();
     // Every map builder the interpreter has made. createRoots() ends with a
     // stream over the finished map that is of no interest here; if that part
@@ -487,7 +488,29 @@ export class EntityModels {
         const nat = this.nativeStatic(c);
         if (nat !== undefined) { push(nat); break; }
         const v = await this.staticField(c.owner, c.name, depth);
-        push(v === undefined ? new JOpaque(`${c.owner}.${c.name}`) : v);
+        if (v instanceof JArray) { push(v); break; }
+        // An enum's `$VALUES`: the one static field of a class whose type is an
+        // array of that class. Its contents come from the enum's <clinit>,
+        // which builds every constant through a constructor the interpreter
+        // does not model, so it stays unset -- and `X.values()` is
+        // `$VALUES.clone()`, so taking the length of the result gave the
+        // "length of a non-array" that lenient mode reads as zero. Every loop
+        // over `Direction.values()` or `EquipmentSlot.values()` then ran no
+        // times at all, and whatever those loops registered was missing from
+        // the catalogue with only a line in the log to say so.
+        //
+        // The count is in the class itself: one static field of its own type
+        // per constant. The constants stay opaque, which is what they were
+        // going to be anyway; it is the length that was wrong.
+        //
+        // It is asked for even when <clinit> DID leave something behind, since
+        // what it leaves is the opaque that `values()` handed it.
+        if (c.descriptor === `[L${c.owner};`) {
+          const n = await this.enumSize(c.owner);
+          if (n != null) { push(enumArray(n, this.maps.realClass(c.owner) || c.owner)); break; }
+        }
+        if (v !== undefined) { push(v); break; }
+        push(new JOpaque(`${c.owner}.${c.name}`));
         break;
       }
       case 'putstatic': {
@@ -577,6 +600,32 @@ export class EntityModels {
       return;
     }
 
+    // `X.values()` on an enum compiles to `$VALUES.clone()`, and $VALUES is
+    // filled in by the enum's <clinit>, which builds every constant with a
+    // constructor the interpreter does not model -- so the field stayed
+    // opaque, taking its length gave the "length of a non-array" that lenient
+    // mode reads as zero, and every loop over `Direction.values()` or
+    // `EquipmentSlot.values()` ran no times at all, with whatever it
+    // registered simply missing from the catalogue.
+    //
+    // Nothing needs running: an enum has exactly one static field of its own
+    // type per constant, so the length is there in the class's field table.
+    // The elements themselves stay opaque, which is what they were going to
+    // be anyway -- what was wrong was the count.
+    if (isStatic && c.descriptor === `()[L${c.owner};`) {
+      const n = await this.enumSize(c.owner);
+      if (n != null) { push(enumArray(n, realOwner)); return; }
+    }
+
+    // `array.clone()`, which is how `values()` hands its array out without
+    // letting the caller write into the enum's own copy.
+    if (!isStatic && realName === 'clone' && self instanceof JArray) {
+      const copy = new JArray(self.v.length, null);
+      copy.v = self.v.slice();
+      push(copy);
+      return;
+    }
+
     // java.lang.Math and Mth are worth having; nothing else from the JDK is.
     const jdk = jdkCall(realOwner, realName, args);
     if (jdk !== undefined) { if (jdk !== NO_RESULT) push(jdk); return; }
@@ -606,6 +655,22 @@ export class EntityModels {
     bail(`unmodelled call ${realOwner}.${realName}${c.descriptor}`);
   }
 
+  // How many constants an enum has: its own static fields of its own type.
+  async enumSize(ownerObf) {
+    if (this._enumSize.has(ownerObf)) return this._enumSize.get(ownerObf);
+    let n = null;
+    try {
+      const cls = await this.loadClass(ownerObf);
+      if (cls && Array.isArray(cls.fields)) {
+        const want = `L${ownerObf};`;
+        const count = cls.fields.filter(f => f.static && f.descriptor === want).length;
+        if (count > 0) n = count;
+      }
+    } catch { /* not readable: leave it unknown */ }
+    this._enumSize.set(ownerObf, n);
+    return n;
+  }
+
   async findMethod(ownerObf, name, descriptor) {
     let at = ownerObf;
     for (let hops = 0; at && hops < 10; hops++) {
@@ -633,6 +698,13 @@ export class EntityModels {
         return new JOpaque(realOwner);
     }
   }
+}
+
+// An enum's constants, as many as there are and each one carrying nothing.
+function enumArray(n, what) {
+  const a = new JArray(n, null);
+  for (let k = 0; k < n; k++) a.v[k] = new JOpaque(`${what} constant`);
+  return a;
 }
 
 // A reference produced by `new` that has not had its constructor run yet.

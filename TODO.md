@@ -9,6 +9,40 @@ started.
 
 ---
 
+## 0. Round 26
+
+- [x] **A pack with only `panorama_overlay.png` is not offered.** The overlay
+      alone is still a picture of that pack's title screen.
+      *It is offered now, as the flat picture it is — there is no cube behind
+      it to look around, so it goes straight to the cropper, and it is labelled
+      "title screen" rather than "panorama".*
+- [x] **`entity models: carried on past length of JOpaque(…​.clone)`**, on
+      `EquipmentSlot`, `Direction` and `Direction$Axis`.
+      *`X.values()` compiles to `$VALUES.clone()`, and `$VALUES` is filled in by
+      the enum's `<clinit>`, which builds every constant through a constructor
+      the interpreter does not model. So the field stayed opaque, taking its
+      length gave the "length of a non-array" that lenient mode reads as zero,
+      and every loop over `Direction.values()` ran no times at all. Nothing
+      needs running: an enum has exactly one static field of its own type per
+      constant, so the count is in the class's own field table. Both versions
+      now read their whole layer catalogue with nothing waved through.*
+- [x] **`Failed to parse servers.dat: PartialReadError`**, with fifteen frames
+      of stack, three times over.
+      *The file is empty. A zero-byte buffer comes out of the NBT reader as
+      "Read error for undefined : undefined" from inside the protocol compiler,
+      with no mention of which file it was. The smallest real servers.dat is
+      nineteen bytes — a compound holding an empty list — so anything shorter is
+      a file that was never finished, and is read as no servers at all. A
+      genuinely corrupt one is still reported, once per file and in one line.*
+- [x] **A skins-page entry called "undefined" that cannot be deleted.**
+      *A record with no picture in it, merged in from the relay or left by an
+      older version. Nothing checked that what came back was a skin, and having
+      no id either, nothing could be done with it — renaming, applying and
+      deleting all look it up by id and found nothing. The library drops
+      anything with no picture, on the way in and on the way through the merge,
+      and fills in an id and a name for an old entry that lacks them. The file
+      is written back once, so the next sync carries the tidy list.*
+
 ## 0. Round 25
 
 - [x] **The two-block plants' lower halves look wrong**, and so does short

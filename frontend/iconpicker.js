@@ -984,8 +984,14 @@
         ipcRenderer.invoke('icon:packPanoramas', { profileId: opts.instanceId }).then(r => {
           for (const p of (r && r.panoramas) || []) {
             if (!p || !p.forward) continue;
-            const label = `${p.name} panorama` + (p.enabled ? ' (on)' : p.kind === 'mod' ? ' (mod)' : '');
-            const cell = addVersionCell(label, p.forward, () => openPanorama(p, editThenPick), true);
+            // A pack that replaces only the title screen's overlay has a
+            // picture but no cube to look around, so that picture goes
+            // straight to the cropper.
+            const flat = !!p.overlayOnly || !(p.faces && p.faces.length === 6);
+            const label = `${p.name} ${flat ? 'title screen' : 'panorama'}`
+              + (p.enabled ? ' (on)' : p.kind === 'mod' ? ' (mod)' : '');
+            const cell = addVersionCell(label, p.forward,
+              () => (flat ? editThenPick(p.forward) : openPanorama(p, editThenPick)), true);
             const img = cell && cell.querySelector('img');
             if (img) img.onerror = () => cell.remove();
             // The heading says "This version", which stops being the whole
@@ -1042,7 +1048,9 @@
             if (p && p.error) console.info('[icon picker] no panorama:', p.error);
             return;
           }
-          const cell = addCell(`${version} panorama`, p.forward, () => openPanorama(p, editThenPick), true);
+          const flat = !(p.faces && p.faces.length === 6);
+          const cell = addCell(`${version} ${flat ? 'title screen' : 'panorama'}`, p.forward,
+            () => (flat ? editThenPick(p.forward) : openPanorama(p, editThenPick)), true);
           // Belt and braces: if the data URL somehow won't decode, drop the
           // cell rather than leaving it empty.
           const img = cell && cell.querySelector('img');

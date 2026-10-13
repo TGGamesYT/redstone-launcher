@@ -3577,7 +3577,9 @@ function mergeSkinLists(mine, theirs, deleted) {
 
   // Ours first, so local names and ordering win for anything on both sides.
   for (const s of [...(mine || []), ...(theirs || [])]) {
-    if (!s || buried(s)) continue;
+    // A record with no picture in it is not a skin, whichever side it came
+    // from. See isSkinRecord.
+    if (!isSkinRecord(s) || buried(s)) continue;
     const idKey = s.id != null ? `id:${s.id}` : null;
     const have = (idKey && byId.get(idKey)) || (s.pixelHash && byHash.get(s.pixelHash)) || null;
     if (have) {
@@ -7237,6 +7239,12 @@ const PANORAMA_BASES = [
 ];
 // All six, or nothing. Five faces and a hole is not a panorama, and a 1x1 is
 // the placeholder some jars ship rather than a face.
+//
+// The OVERLAY is a picture in its own right, though -- the vignette the title
+// screen lays over the panorama -- and a pack that replaces only that still
+// has something worth taking an icon from. It cannot be looked around, having
+// no cube behind it, so it comes back as faces: [] with the overlay set, and
+// whoever offers it shows it as the flat picture it is.
 const usableFace = (data) => {
   const size = pngSize(data);
   return !!(size && size.width >= 16 && size.height >= 16);
@@ -7261,12 +7269,17 @@ function panoramaFromDir(root) {
         found.push(data);
       } catch { break; }
     }
-    if (found.length !== 6) continue;
     let overlay = null;
     try {
       const f = path.join(root, ...base.split("/").filter(Boolean), OVERLAY_NAME);
-      if (fs.existsSync(f)) overlay = fs.readFileSync(f);
+      if (fs.existsSync(f)) { const b = fs.readFileSync(f); if (usableFace(b)) overlay = b; }
     } catch { /* no overlay */ }
+    if (found.length !== 6) {
+      if (!overlay) continue;
+      const only = [];
+      only.overlay = overlay;
+      return only;
+    }
     found.overlay = overlay;
     return found;
   }
@@ -7289,17 +7302,27 @@ async function panoramaFromArchive(file) {
       if (!e) break;
       entries.push(e);
     }
-    if (entries.length !== 6) continue;
-    const found = [];
-    for (const e of entries) {
-      let data = null;
-      try { data = await e.buffer(); } catch { break; }
-      if (!usableFace(data)) break;
-      found.push(data);
-    }
-    if (found.length !== 6) continue;
+    let overlay = null;
     const ov = byPath.get(`${base}${OVERLAY_NAME}`);
-    if (ov) { try { found.overlay = await ov.buffer(); } catch { /* no overlay */ } }
+    if (ov) {
+      try { const b = await ov.buffer(); if (usableFace(b)) overlay = b; } catch { /* no overlay */ }
+    }
+    const found = [];
+    if (entries.length === 6) {
+      for (const e of entries) {
+        let data = null;
+        try { data = await e.buffer(); } catch { break; }
+        if (!usableFace(data)) break;
+        found.push(data);
+      }
+    }
+    if (found.length !== 6) {
+      if (!overlay) continue;
+      const only = [];
+      only.overlay = overlay;
+      return only;
+    }
+    found.overlay = overlay;
     return found;
   }
   return null;
@@ -7411,7 +7434,11 @@ ipcMain.handle("icon:packPanoramas", async (event, { profileId } = {}) => {
         kind: c.kind,
         enabled: c.on,
         faces: urls,
-        forward: urls[0],
+        // Nothing to look around in an overlay on its own: the picture it
+        // offers IS the overlay, and the picker takes it straight to the
+        // cropper rather than into the panorama viewer.
+        overlayOnly: urls.length < 6,
+        forward: urls.length === 6 ? urls[0] : (urls.overlay || null),
         overlay: urls.overlay || null,
       });
     } catch (e) {
@@ -7494,7 +7521,14 @@ ipcMain.handle("icon:versionPanorama", async (event, { version }) => {
 
     const out = await panoramaToDataUrls(faces);
     // Face 0 is the one the title screen starts on, i.e. "facing forward".
-    const answer = { faces: [...out], forward: out[0], overlay: out.overlay || null };
+    // With no faces at all -- a pack or a version that ships only the overlay
+    // -- the overlay is the picture there is.
+    const answer = {
+      faces: [...out],
+      forward: out.length === 6 ? out[0] : (out.overlay || null),
+      overlay: out.overlay || null,
+    };
+    if (!answer.forward) return { error: `${v} has no panorama` };
     _panoMemo.set(v, answer);
     iconCacheWrite("version-panoramas", v, ".json", Buffer.from(JSON.stringify(answer), "utf8"));
     return answer;
@@ -8156,17 +8190,40 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
 const serversDatPath = (profileId) =>
   path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
 
-async function readServersList(profileId) {
-  const filePath = serversDatPath(profileId);
-  if (!fs.existsSync(filePath)) return [];
+// The smallest servers.dat there can be is nineteen bytes: a compound holding
+// an empty list. Anything shorter is not a short server list, it is a file that
+// was never finished -- a zero-byte one is what an interrupted write leaves
+// behind, and the game itself is happy with no file at all.
+//
+// It matters because of how the NBT reader fails: a zero-byte buffer comes back
+// as `PartialReadError: Read error for undefined : undefined` from inside the
+// protocol compiler, with fifteen frames of stack and no mention of which file
+// it was reading -- printed afresh every time anything looks at the list, which
+// is on opening an instance, on syncing and on listing servers.
+const SERVERS_DAT_MIN = 19;
+// One complaint per file rather than one per read.
+const _serversDatBad = new Set();
+
+async function parseServersDat(filePath) {
+  let buf = null;
+  try { buf = fs.readFileSync(filePath); } catch { return []; }
+  if (buf.length < SERVERS_DAT_MIN) return [];       // never written, not corrupt
   try {
-    const parsed = await nbt.parse(fs.readFileSync(filePath));
-    const simplified = nbt.simplify(parsed.parsed);
+    const simplified = nbt.simplify((await nbt.parse(buf)).parsed);
+    _serversDatBad.delete(filePath);
     return Array.isArray(simplified.servers) ? simplified.servers : [];
   } catch (err) {
-    devtoolsLog("Failed to parse servers.dat:", err);
+    if (!_serversDatBad.has(filePath)) {
+      _serversDatBad.add(filePath);
+      devtoolsLog(`servers.dat at ${filePath} could not be read (${err && err.message}); `
+        + "treating it as an empty list");
+    }
     return [];
   }
+}
+
+async function readServersList(profileId) {
+  return parseServersDat(serversDatPath(profileId));
 }
 
 async function writeServersList(profileId, serversList) {
@@ -8268,17 +8325,7 @@ function relinkToShared(target, shared) {
 
 const serverKey = (s) => `${String(s.ip || "").trim().toLowerCase()}|${String(s.name || "").trim()}`;
 
-async function readServersFrom(filePath) {
-  if (!fs.existsSync(filePath)) return [];
-  try {
-    const parsed = await nbt.parse(fs.readFileSync(filePath));
-    const simplified = nbt.simplify(parsed.parsed);
-    return Array.isArray(simplified.servers) ? simplified.servers : [];
-  } catch (err) {
-    devtoolsLog("Failed to parse servers.dat at", filePath, err);
-    return [];
-  }
-}
+const readServersFrom = (filePath) => parseServersDat(filePath);
 // Everything that actually gets written, so an unchanged list can be left
 // alone. Rewriting matters more than it looks: the write below is atomic
 // (temp + rename), and a rename REPLACES the file's inode — which severs every
@@ -11315,8 +11362,52 @@ function skinBucketsToScan(lib, uuid) {
   return Object.keys(lib).filter(u => Array.isArray(lib[u]));
 }
 
+// A record in the library that is not a skin.
+//
+// The library is merged from this computer, from an account's other computers
+// through the relay, and from older versions of this launcher, and nothing was
+// checking that what came back actually held a picture. One that did not
+// turned up on the skins page as a card called "undefined" with nothing in it
+// -- and, having no id either, nothing could be done with it: renaming,
+// applying and deleting all look the skin up by id and found nothing.
+const isSkinRecord = (s) => !!(s && typeof s === "object"
+  && typeof s.base64 === "string" && s.base64.length > 32);
+
+// What a skin needs to be shown and acted on. An entry saved by an older
+// version may have no id or no name; both are filled in rather than left for
+// the page to print as "undefined".
+function tidySkinRecord(s, i) {
+  if (s.id != null && typeof s.name === "string" && s.name) return s;
+  return {
+    ...s,
+    id: s.id != null ? s.id : `old-${s.pixelHash || i}-${s.addedAt || 0}`,
+    name: (typeof s.name === "string" && s.name) ? s.name : "Skin",
+  };
+}
+
 function loadSkinLib() {
-  try { return JSON.parse(fs.readFileSync(skinLibraryPath, "utf8")) || {}; } catch { return {}; }
+  let obj;
+  try { obj = JSON.parse(fs.readFileSync(skinLibraryPath, "utf8")) || {}; } catch { return {}; }
+  // Repaired on the way in, and written back once, so the next sync pushes
+  // the tidy list rather than carrying the junk around forever.
+  let changed = false;
+  for (const [k, v] of Object.entries(obj)) {
+    // Only an account's own bucket. `__pool_order__` is a list of ids and
+    // `__deleted__` a map of tombstones; neither holds skins, and filtering
+    // the order as though it did would throw the whole pooled order away.
+    if (!Array.isArray(v) || k === POOL_ORDER_KEY || k === DELETED_KEY) continue;
+    const clean = v.filter(isSkinRecord).map(tidySkinRecord);
+    if (clean.length !== v.length || clean.some((s, i) => s !== v[i])) {
+      if (clean.length !== v.length) {
+        devtoolsLog(`skins: dropped ${v.length - clean.length} entr${v.length - clean.length === 1 ? "y" : "ies"}`
+          + ` from the library with no picture in them`);
+      }
+      obj[k] = clean;
+      changed = true;
+    }
+  }
+  if (changed) { try { saveSkinLib(obj); } catch { /* it is still right in memory */ } }
+  return obj;
 }
 function saveSkinLib(obj) {
   fs.mkdirSync(texturesDir, { recursive: true });
