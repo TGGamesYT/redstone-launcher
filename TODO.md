@@ -9,6 +9,39 @@ started.
 
 ---
 
+## 0. Round 27
+
+- [x] **Vanilla / modded / resource-pack switches** over the block, item and
+      entity list. Vanilla on by default; modded shows what the instance's mods
+      add; resource packs off by default, and on means the models are drawn
+      with the instance's enabled packs and mods on top.
+      *The index remembers which source every entry was found in, so the first
+      two are a filter. The third changes the stack itself: with it off the jar
+      goes FIRST, so the packs and mods are still there for anything vanilla
+      does not have and nothing vanilla has gets replaced. Thumbnails are keyed
+      by the version, the instance and that switch now, so one drawn with a
+      pack on is not served back for a different instance.*
+- [x] **An instance made from a mod or modpack does not offer the pack's own
+      icon** the way it offers a mod's or a resource pack's.
+      *Installing a pack now records the pack's icon apart from the instance's,
+      so it is still there after the instance's has been changed, and the
+      picker offers it under "This version". An instance installed before this
+      falls back to the icon it was given, which for a pack is the pack's.*
+- [x] **Modded blocks render backwards.**
+      *The turn that brings a block's front round to the camera was "prefer the
+      state called facing=south", which is right only because vanilla authors a
+      front on the model's NORTH face. A mod that authored its front on the
+      south face and turned it in the blockstate instead got turned away again.
+      Which side is the front is now read off the model -- the one painted
+      unlike the other three -- and the state picked is whichever turn lands it
+      on south. Every vanilla block comes out exactly as before.*
+- [x] **A wither rose, potted or not, renders as the wither.**
+      *A cross is two upright planes with no thickness, so by VOLUME it was
+      nothing, which is the test for "this model is only a placeholder, look
+      for the entity the game draws it with" -- and the rose's own words cover
+      the layer called `wither`. Measured by surface area instead, a bell's
+      fitting is 2% of a block where a wither rose is 60%.*
+
 ## 0. Round 26
 
 - [x] **A pack with only `panorama_overlay.png` is not offered.** The overlay

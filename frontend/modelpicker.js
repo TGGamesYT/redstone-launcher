@@ -27,7 +27,16 @@
   // key -> data URL, for this session. The disk cache behind it survives
   // restarts; this one saves even the round trip.
   const memo = new Map();
-  const keyOf = (it, state) => `${it.kind}|${it.id}|${state || ''}`;
+  // What a thumbnail was drawn FROM, not just what of. The same id is a
+  // different picture on a different version, in an instance whose mods
+  // supply it, and again with that instance's packs allowed to override it --
+  // and the cache is on disk, so without this a block drawn once came back
+  // wrong for every other instance and never refreshed.
+  const keyOf = (it, state, ctx) => [
+    it.kind, it.id, state || '',
+    (ctx && ctx.version) || '-',
+    (ctx && ctx.overrides) ? `i${ctx.instanceId ?? '-'}` : '-',
+  ].join('|');
 
   // One drawing queue. Two WebGL contexts racing makes both slower, and
   // Chromium starts dropping contexts past a dozen or so.
@@ -56,21 +65,23 @@
   const described = new Map();
 
   async function describe(it, ctx, state) {
-    const key = keyOf(it, state);
+    const key = keyOf(it, state, ctx);
     if (described.has(key)) return described.get(key);
     const p = it.kind === 'entity'
       ? ipcRenderer.invoke('model:entity', {
         profileId: ctx.instanceId, version: ctx.version, name: it.id.replace(/^entity:/, ''),
+        overrides: !!ctx.overrides,
       })
       : ipcRenderer.invoke('model:describe', {
         profileId: ctx.instanceId, version: ctx.version, id: it.id, state,
+        overrides: !!ctx.overrides,
       });
     described.set(key, p);
     return p;
   }
 
   async function draw(it, ctx, state) {
-    const key = keyOf(it, state);
+    const key = keyOf(it, state, ctx);
     if (memo.has(key)) return memo.get(key);
     const p = (async () => {
       const desc = await describe(it, ctx, state);
@@ -104,7 +115,12 @@
       // the game would not have drawn.
       let desc = null;
       try { desc = await describe(it, ctx, state); } catch { /* the picture will do */ }
-      ctx.onPick(url, { desc: desc && !desc.error ? desc : null, item: it, state: state || '' });
+      ctx.onPick(url, {
+        desc: desc && !desc.error ? desc : null, item: it, state: state || '',
+        // So the adjust dialog's own re-describes (a variant, another state)
+        // come back from the same sources this was drawn from.
+        overrides: !!ctx.overrides,
+      });
     };
     return cell;
   }
@@ -132,15 +148,15 @@
     return io;
   }
 
-  async function prefill(cells) {
+  async function prefill(cells, ctx) {
     // One round trip for every thumbnail already on disk, before any drawing
     // starts. This is what makes a second visit instant.
     if (!ipcRenderer) return;
-    const keys = cells.map(c => keyOf(c._item, c._state));
+    const keys = cells.map(c => keyOf(c._item, c._state, ctx));
     let got = {};
     try { got = await ipcRenderer.invoke('model:thumbs', { keys }); } catch { return; }
     for (const c of cells) {
-      const k = keyOf(c._item, c._state);
+      const k = keyOf(c._item, c._state, ctx);
       const url = got[k];
       if (!url) continue;
       memo.set(k, Promise.resolve(url));
@@ -153,8 +169,17 @@
     const ctx = {
       instanceId: opts.instanceId ?? null,
       version: opts.version || null,
+      // Which sources the catalogue is drawn from, and whether this
+      // instance's packs are allowed to override what the jar has. See
+      // stackFor in backend/icon-models.js.
+      vanilla: true,
+      modded: true,
+      overrides: false,
       onPick: opts.onPick || (() => { }),
     };
+    // The source switches only make sense for an instance: a bare version has
+    // nothing but its jar.
+    const hasInstance = ctx.instanceId != null;
     container.innerHTML = `
       <div class="mp-bar">
         <input type="text" class="mp-search" placeholder="Search blocks, items and mobs…" />
@@ -164,12 +189,20 @@
           <label><input type="checkbox" data-kind="entity" checked> Mobs</label>
         </div>
       </div>
+      <div class="mp-bar mp-sources" ${hasInstance ? '' : 'style="display:none;"'}>
+        <div class="mp-kinds">
+          <label title="Everything the game itself has"><input type="checkbox" data-src="vanilla" checked> Vanilla</label>
+          <label title="Everything this instance's mods add"><input type="checkbox" data-src="modded" checked> Modded</label>
+          <label title="Draw them with this instance's enabled resource packs and mods on top"><input type="checkbox" data-src="overrides"> Resource packs</label>
+        </div>
+      </div>
       <div class="ip-grid mp-grid"></div>
       <div class="mp-more" style="display:none;"></div>`;
     const search = container.querySelector('.mp-search');
     const grid = container.querySelector('.mp-grid');
     const more = container.querySelector('.mp-more');
-    const kindBoxes = [...container.querySelectorAll('.mp-kinds input')];
+    const kindBoxes = [...container.querySelectorAll('.mp-kinds input[data-kind]')];
+    const srcBoxes = [...container.querySelectorAll('.mp-kinds input[data-src]')];
     let io = watcher(ctx);
     let seq = 0, offset = 0, total = 0, query = '';
 
@@ -190,6 +223,7 @@
         r = await ipcRenderer.invoke('model:list', {
           profileId: ctx.instanceId, version: ctx.version,
           query, kinds: kinds(), limit: PAGE, offset,
+          vanilla: ctx.vanilla, modded: ctx.modded, overrides: ctx.overrides,
         });
       } catch { r = null; }
       if (mine !== seq) { loading = false; return; }  // a newer search overtook
@@ -202,7 +236,7 @@
       const cells = r.items.map(it => cellFor(it, ctx, ''));
       for (const c of cells) { grid.appendChild(c); if (io) io.observe(c); }
       offset += r.items.length;
-      await prefill(cells);
+      await prefill(cells, ctx);
       loading = false;
       if (mine !== seq) return;
       if (offset < total) {
@@ -244,6 +278,16 @@
       timer = setTimeout(() => { query = search.value.trim(); load(true); }, DEBOUNCE);
     });
     for (const b of kindBoxes) b.addEventListener('change', () => load(true));
+    for (const b of srcBoxes) {
+      b.addEventListener('change', () => {
+        ctx[b.dataset.src] = b.checked;
+        // Turning the pack overrides on or off changes the PICTURES, not just
+        // which of them are listed, so what has already been drawn is no
+        // longer the answer.
+        if (b.dataset.src === 'overrides') { memo.clear(); described.clear(); }
+        load(true);
+      });
+    }
     load(true);
     return { reload: () => load(true) };
   }
@@ -256,6 +300,7 @@
       .mp-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 6px; }
       .mp-bar .mp-search { flex:1 1 180px; min-width:140px; margin:0; }
       .mp-kinds { display:flex; gap:10px; font-size:12px; opacity:0.85; }
+      .mp-sources { margin-top:-2px; }
       .mp-kinds label { display:flex; align-items:center; gap:4px; }
       .mp-kinds input { width:auto; margin:0; }
       /* The picker's own .ip-grid rules cover this when it is mounted there,

@@ -109,16 +109,27 @@ async function instanceSources(profileId) {
 }
 
 // ── The stack for an instance (or for a bare version) ───────────────────────
+// `overrides` decides whether this instance's packs and mods are allowed to
+// REPLACE what the jar has.
+//
+// With them in front, which is how the game draws, a resource pack's stone is
+// the stone you see. That is right for an icon of the instance, and wrong for
+// an icon of the game: somebody picking a block out of the catalogue mostly
+// means the block, not whatever the pack they installed last week did to it.
+// So it is a switch, off by default, and with it off the jar goes FIRST --
+// the packs and the mods are still there, behind it, so a modded block is
+// still found and still drawn with the mod's own textures. Only the things
+// vanilla also has stop being overridden.
 const _stacks = new Map();
-export async function stackFor({ profileId = null, version } = {}) {
-  const key = `${profileId == null ? '-' : profileId}|${version || '-'}`;
+export async function stackFor({ profileId = null, version, overrides = true } = {}) {
+  const key = `${profileId == null ? '-' : profileId}|${version || '-'}|${overrides ? 'o' : '-'}`;
   const hit = _stacks.get(key);
   if (hit && Date.now() - hit.at < STACK_TTL) return hit.value;
 
   const value = await (async () => {
     const jar = await jarSource(version);
     const own = await instanceSources(profileId);
-    const sources = [...own, jar].filter(Boolean);
+    const sources = (overrides ? [...own, jar] : [jar, ...own]).filter(Boolean);
     if (!sources.length) return null;
     const models = MA.makeStack(sources);
 
@@ -128,13 +139,10 @@ export async function stackFor({ profileId = null, version } = {}) {
     let textures = models;
     if (version && !atLeast(version, FLATTENING)) {
       const legacy = await jarSource(LEGACY_TEXTURE_VERSION);
-      textures = MA.makeStack([
-        ...own,
-        MA.legacyTextureAlias(legacy),
-        MA.legacyTextureAlias(jar),
-      ].filter(Boolean));
+      const borrowed = [MA.legacyTextureAlias(legacy), MA.legacyTextureAlias(jar)];
+      textures = MA.makeStack((overrides ? [...own, ...borrowed] : [...borrowed, ...own]).filter(Boolean));
     }
-    return { models, textures, index: MA.indexStack(models), version, profileId };
+    return { models, textures, index: MA.indexStack(models), version, profileId, overrides };
   })();
 
   if (_stacks.size >= STACK_CACHE_MAX) _stacks.delete(_stacks.keys().next().value);
@@ -211,8 +219,8 @@ const blockIdOf = (id) => {
 };
 
 /** A block or item model, ready to render. */
-export async function describeModel({ profileId, version, id, state, variant }) {
-  const st = await stackFor({ profileId, version });
+export async function describeModel({ profileId, version, id, state, variant, overrides }) {
+  const st = await stackFor({ profileId, version, overrides });
   if (!st) return { error: 'no assets for this version yet' };
 
   let modelId = id, rotX = 0, rotY = 0, uvlock = false, chosen = null;
@@ -270,7 +278,7 @@ export async function describeModel({ profileId, version, id, state, variant }) 
   // fraction of a block and an entity layer exists, the entity IS the block.
   if (flat.approximated || flat.kind === 'unrenderable' || tinyModel(flat)) {
     const asEntity = await blockEntityModel({
-      profileId, version, id: stateId, state: chosen ? chosen.state : state, variant,
+      profileId, version, id: stateId, state: chosen ? chosen.state : state, variant, overrides,
     });
     if (asEntity) return asEntity;
   }
@@ -451,13 +459,22 @@ async function mergeParts(st, parts) {
 
 // Is a block's own geometry so small that it cannot be the block? A bell is
 // drawn by the game and all the assets have is the fitting it hangs from.
+//
+// Measured as surface area, not volume. A cross -- a flower, a sapling, a
+// wither rose -- is two upright planes with no thickness at all, so by volume
+// it is nothing and was being treated as a placeholder: a wither rose went
+// looking for an entity layer, found the one called `wither` (its own words
+// cover it), and came out as the boss. By area a bell's fitting is 2% of a
+// block where a wither rose is 60%.
+const TINY_AREA = 0.12;
 function tinyModel(flat) {
   if (flat.kind !== 'elements' || !Array.isArray(flat.elements) || !flat.elements.length) return false;
-  let v = 0;
+  let a = 0;
   for (const el of flat.elements) {
-    v += Math.abs((el.to[0] - el.from[0]) * (el.to[1] - el.from[1]) * (el.to[2] - el.from[2]));
+    const d = [0, 1, 2].map(i => Math.abs(el.to[i] - el.from[i]));
+    a += 2 * (d[0] * d[1] + d[1] * d[2] + d[0] * d[2]);
   }
-  return v < 16 * 16 * 16 * 0.12;
+  return a < 6 * 16 * 16 * TINY_AREA;
 }
 
 // Which entity layer draws this block, if one does.
@@ -506,7 +523,7 @@ async function blockEntityLayer(version, id) {
 }
 const PIECE_WORDS = new Set(['base', 'side', 'head', 'foot', 'top', 'bottom', 'lid', 'skull']);
 
-async function blockEntityModel({ profileId, version, id, state, variant }) {
+async function blockEntityModel({ profileId, version, id, state, variant, overrides }) {
   let layerName = null;
   try { layerName = await blockEntityLayer(version, id); } catch { return null; }
   if (!layerName) return null;
@@ -522,7 +539,7 @@ async function blockEntityModel({ profileId, version, id, state, variant }) {
   const asLayer = want && layerName === 'chest' && CHEST_HALF.test(want)
     ? 'double_chest_left' : layerName;
   const desc = await describeEntity({
-    profileId, version, name: asLayer, texture: want || undefined, textureFor: bare,
+    profileId, version, name: asLayer, texture: want || undefined, textureFor: bare, overrides,
   });
   if (!desc || desc.error) return null;
   return { ...desc, model: `entity:${layerName}`, state: state || null, fromEntity: layerName };
@@ -581,8 +598,8 @@ async function tintFor(stack, id) {
 }
 
 /** Every state a block has, for the picker's state chooser. */
-export async function modelStates({ profileId, version, id }) {
-  const st = await stackFor({ profileId, version });
+export async function modelStates({ profileId, version, id, overrides }) {
+  const st = await stackFor({ profileId, version, overrides });
   if (!st) return [];
   const states = await MA.blockStates(st.models, blockIdOf(id));
   if (!states) return [];
@@ -603,15 +620,25 @@ export async function modelStates({ profileId, version, id }) {
  * that is the thing with a name people know ("oak_stairs", not
  * "block/oak_stairs_inner"), and it is what carries the states.
  */
-export async function listModels({ profileId, version, query = '', kinds = null, limit = 200, offset = 0 }) {
-  const st = await stackFor({ profileId, version });
+export async function listModels({
+  profileId, version, query = '', kinds = null, limit = 200, offset = 0,
+  vanilla = true, modded = true, overrides = false,
+}) {
+  const st = await stackFor({ profileId, version, overrides });
   if (!st) return { items: [], total: 0 };
   const want = new Set(kinds && kinds.length ? kinds : ['block', 'item', 'entity']);
   const q = String(query || '').trim().toLowerCase();
 
+  // Where a thing came from. An instance with a hundred mods in it has tens of
+  // thousands of blocks, and somebody looking for an oak door does not want to
+  // wade through them -- or the other way about. The index remembers which
+  // source each entry was found in, so the two can be asked for separately.
+  const wanted = (entry) => ((entry && entry.source === 'jar') ? vanilla : modded);
+
   const items = [];
   if (want.has('block')) {
     for (const s of st.index.states.values()) {
+      if (!wanted(s)) continue;
       items.push({ kind: 'block', id: s.id, name: s.name, ns: s.ns, from: s.from });
     }
   }
@@ -626,17 +653,20 @@ export async function listModels({ profileId, version, query = '', kinds = null,
     const defs = [...st.index.items.values()];
     if (defs.length) {
       for (const d of defs) {
+        if (!wanted(d)) continue;
         items.push({ kind: 'item', id: `${d.ns}:item/${d.name}`, name: d.name, ns: d.ns, from: d.from });
       }
     } else {
       for (const m of st.index.models.values()) {
-        if (m.kind !== 'item') continue;
+        if (m.kind !== 'item' || !wanted(m)) continue;
         if (MA.looksLikeTemplate(m.name)) continue;
         items.push({ kind: 'item', id: m.id, name: m.name, ns: m.ns, from: m.from });
       }
     }
   }
-  if (want.has('entity')) {
+  // Every entity model is read out of the client jar's own classes, so there
+  // are no modded ones to list: with vanilla off there is nothing to show.
+  if (want.has('entity') && vanilla) {
     const ents = await entityLayers(version);
     for (const name of ents.keys()) {
       // `breeze/eyes` is not an entity, it is part of the breeze -- and it is
@@ -711,10 +741,10 @@ export async function entityLayers(version) {
 // when the entity actually has the gear, and nothing in the model data says
 // which is which -- so a saddle would otherwise end up on every pig.
 
-export async function describeEntity({ profileId, version, name, texture, textureFor }) {
-  const both = await doubleChest({ profileId, version, name, texture })
-    || await bedModel({ profileId, version, name, texture, textureFor })
-    || await piecesModel({ profileId, version, name, texture });
+export async function describeEntity({ profileId, version, name, texture, textureFor, overrides }) {
+  const both = await doubleChest({ profileId, version, name, texture, overrides })
+    || await bedModel({ profileId, version, name, texture, textureFor, overrides })
+    || await piecesModel({ profileId, version, name, texture, overrides });
   if (both) return both;
   const layers = await entityLayers(version);
   // A few things are only ever their parts: a conduit is its cage, its eye
@@ -724,7 +754,7 @@ export async function describeEntity({ profileId, version, name, texture, textur
       ? { elements: [], texWidth: 64, texHeight: 64 }
       : null);
   if (!L) return { error: `no entity layer called ${name}` };
-  const st = await stackFor({ profileId, version });
+  const st = await stackFor({ profileId, version, overrides });
   const tx = st ? st.textures : null;
   // `textureFor` is the name to dress it in when that is not the layer's own:
   // an ender chest is the chest model wearing chest/ender.png.
@@ -851,7 +881,7 @@ export async function describeEntity({ profileId, version, name, texture, textur
 
   // A minecart's load is a block rather than a layer, so it is fetched and
   // placed rather than read off the model.
-  const load = await minecartLoad({ profileId, version, name, slot });
+  const load = await minecartLoad({ profileId, version, name, slot, overrides });
   if (load) {
     elements.push(...load.elements);
     Object.assign(textures, load.textures);
@@ -1189,10 +1219,10 @@ const m4 = {
  * again, and an offset of 8, which is the one that stands the block on the
  * cart's floor.
  */
-async function minecartLoad({ profileId, version, name, slot }) {
+async function minecartLoad({ profileId, version, name, slot, overrides }) {
   const m = MINECART_RE.exec(String(name || ''));
   if (!m) return null;
-  const block = await describeModel({ profileId, version, id: `minecraft:${m[1]}` });
+  const block = await describeModel({ profileId, version, id: `minecraft:${m[1]}`, overrides });
   if (!block || block.error || block.kind !== 'elements' || !block.elements.length) return null;
   // Something drawn in a mob's own space would need its own placement; only a
   // block goes in a cart.
@@ -1253,12 +1283,12 @@ async function minecartLoad({ profileId, version, name, slot }) {
 const DOUBLE_CHEST = /^double_chest_(left|right)$/;
 const CHEST_HALF = /^(.*)_(left|right)\.png$/;
 
-async function doubleChest({ profileId, version, name, texture }) {
+async function doubleChest({ profileId, version, name, texture, overrides }) {
   if (!DOUBLE_CHEST.test(String(name || ''))) return null;
   const layers = await entityLayers(version);
   const halves = { left: layers.get('double_chest_left'), right: layers.get('double_chest_right') };
   if (!halves.left || !halves.right) return null;
-  const st = await stackFor({ profileId, version });
+  const st = await stackFor({ profileId, version, overrides });
   const tx = st ? st.textures : null;
   if (!tx) return null;
 
@@ -1331,12 +1361,12 @@ async function doubleChest({ profileId, version, name, texture }) {
 const BED_LAYER = /^bed_(head|foot)$/;
 const BED_TEX = /^assets\/[a-z0-9_.-]+\/textures\/entity\/bed\/([a-z0-9_]+)\.png$/;
 
-async function bedModel({ profileId, version, name, texture, textureFor }) {
+async function bedModel({ profileId, version, name, texture, textureFor, overrides }) {
   if (!BED_LAYER.test(String(name || ''))) return null;
   const layers = await entityLayers(version);
   const halves = { head: layers.get('bed_head'), foot: layers.get('bed_foot') };
   if (!halves.head || !halves.foot) return null;
-  const st = await stackFor({ profileId, version });
+  const st = await stackFor({ profileId, version, overrides });
   const tx = st ? st.textures : null;
   if (!tx) return null;
 
@@ -1397,7 +1427,7 @@ async function bedModel({ profileId, version, name, texture, textureFor }) {
 // one thing, all of them are drawn, in the one block they share.
 //
 // Not the bed: its two are a block APART, which is bedModel's job.
-async function piecesModel({ profileId, version, name, texture }) {
+async function piecesModel({ profileId, version, name, texture, overrides }) {
   const key = String(name || '');
   const cut = key.lastIndexOf('_');
   if (cut < 1) return null;
@@ -1412,7 +1442,7 @@ async function piecesModel({ profileId, version, name, texture }) {
   // They have to belong to the same block, which means the same space.
   if (!siblings.every(k => layers.get(k) && layers.get(k).blockSpace)) return null;
 
-  const st = await stackFor({ profileId, version });
+  const st = await stackFor({ profileId, version, overrides });
   const tx = st ? st.textures : null;
   if (!tx) return null;
 
@@ -1546,7 +1576,7 @@ export async function versionIcon({ version, profileId = null }) {
  * (69 bytes), so anything that small is not an answer.
  */
 export async function panoramaFromFiles({ profileId, version }) {
-  const st = await stackFor({ profileId, version });
+  const st = await stackFor({ profileId, version, overrides: true });
   if (!st) return null;
   // The version's OWN files, not the texture stack: below 1.14 that stack
   // reads out of the 1.13 jar first, so every old version was handed 1.13's

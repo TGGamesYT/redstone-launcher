@@ -2169,6 +2169,12 @@ async function mrpack(mrpackPath, onProgress, hooks) {
     loader,
     loaderVersion,
     icon,
+    // The pack's OWN icon, kept apart from `icon` so it is still there after
+    // somebody has changed the instance's. The icon picker offers it under
+    // "This version", the same as a mod's or a resource pack's -- an instance
+    // made from a pack had no way back to the pack's own picture.
+    modpackIcon: icon || null,
+    modpackName: indexJson.name || null,
     modpack: true,
     installing: true,
     created: Date.now(),
@@ -2648,6 +2654,10 @@ async function curseforgeImport(zipPath, onProgress, hooks) {
     loader,
     loaderVersion,
     icon,
+    // See the .mrpack installer: the pack's own icon, kept so the picker can
+    // offer it after the instance's has been changed.
+    modpackIcon: icon || null,
+    modpackName: manifest.name || null,
     modpack: true,
     // Which kind of pack it came from. The "update modpack" flow reads a
     // .mrpack and diffs it against the file list one leaves behind, neither

@@ -579,12 +579,12 @@
         const pick = (list || []).find(v => keyOf(v) === variantSel.value);
         const next = info.item && info.item.kind === 'entity'
           ? await ipcRenderer.invoke('model:entity', {
-            profileId: opts0.instanceId ?? null, version: opts0.version || null,
+            profileId: opts0.instanceId ?? null, version: opts0.version || null, overrides: !!info.overrides,
             name: (pick && pick.layer) || String(info.item.id).replace(/^entity:/, ''),
             texture: (pick && pick.path) || null,
           })
           : await ipcRenderer.invoke('model:describe', {
-            profileId: opts0.instanceId ?? null, version: opts0.version || null,
+            profileId: opts0.instanceId ?? null, version: opts0.version || null, overrides: !!info.overrides,
             id: info.item.id, state: info.state || undefined,
             variant: (pick && pick.path) || variantSel.value,
           });
@@ -601,7 +601,7 @@
       let r = null;
       try {
         r = await ipcRenderer.invoke('model:states', {
-          profileId: opts0.instanceId ?? null, version: opts0.version || null, id: info.item.id,
+          profileId: opts0.instanceId ?? null, version: opts0.version || null, overrides: !!info.overrides, id: info.item.id,
         });
       } catch { /* a block with no states is the usual case */ }
       const list = Array.isArray(r) ? r : ((r && r.states) || []);
@@ -619,7 +619,7 @@
       stateSel.value = info.state || preferred || stateSel.options[0].value;
       stateSel.onchange = async () => {
         const next = await ipcRenderer.invoke('model:describe', {
-          profileId: opts0.instanceId ?? null, version: opts0.version || null,
+          profileId: opts0.instanceId ?? null, version: opts0.version || null, overrides: !!info.overrides,
           id: info.item.id, state: stateSel.value,
         });
         if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); paintTint(); showTurn(); redraw(); }
@@ -1007,14 +1007,31 @@
       // and that is exactly the instance whose icon came from the pack and
       // wants a way back to its version's own. So where the caller is silent
       // and there is an instance, the instance is asked.
-      const versionAsked = (async () => {
-        if (opts.version) return opts.version;
-        if (!opts.instanceId || !ipcRenderer) return null;
-        try {
-          const p = await ipcRenderer.invoke('get-profile-by-id', opts.instanceId);
-          return (p && (p.version || p.gameVersion)) || null;
-        } catch { return null; }
+      const profileAsked = (async () => {
+        if (opts.instanceId == null || !ipcRenderer) return null;
+        try { return await ipcRenderer.invoke('get-profile-by-id', opts.instanceId); }
+        catch { return null; }
       })();
+      const versionAsked = (async () =>
+        opts.version || ((await profileAsked) || {}).version
+        || ((await profileAsked) || {}).gameVersion || null)();
+
+      // The pack an instance was made from has an icon of its own, and an
+      // instance made from one had no way back to it once its icon had been
+      // changed -- a mod's and a resource pack's are both offered, and the
+      // pack the whole instance came from was the one thing that was not.
+      // Installing records it apart from the instance's own icon; an instance
+      // installed before that falls back to the icon it was given, which for a
+      // pack IS the pack's.
+      profileAsked.then(p => {
+        if (!p || !ov.isConnected) return;
+        const url = p.modpackIcon || (p.modpack ? p.icon : null);
+        if (!url) return;
+        const label = `${p.modpackName || p.name || 'Modpack'} (modpack)`;
+        const cell = addVersionCell(label, url, () => editThenPick(url));
+        const img = cell && cell.querySelector('img');
+        if (img) { img.style.cssText = 'padding:4px;object-fit:contain;'; img.onerror = () => cell.remove(); }
+      }).catch(() => { });
 
       // The block this version is remembered for, drawn the way a new
       // instance's default icon is drawn — so what the picker offers and what

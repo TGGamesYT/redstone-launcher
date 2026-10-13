@@ -732,12 +732,52 @@ function plainScore(s) {
 // as the canonical picture of a bee nest, a furnace and a dried ghast while
 // keeping the north-facing one for stairs.
 //
-// So: a block whose sides are not all alike has a front, and `facing=south`
-// points it at the viewer. A block whose four sides carry the same textures —
-// stairs, slabs, a fence gate's post — has no front to turn, and the plain
-// default stands. That is exactly the split the wiki draws by hand, and it
-// needs no table of which blocks have faces.
+// So: a block whose sides are not all alike has a front, and it is turned so
+// that front points at the viewer. A block whose four sides carry the same
+// textures — stairs, slabs, a fence gate's post — has no front to turn, and
+// the plain default stands. That is exactly the split the wiki draws by hand,
+// and it needs no table of which blocks have faces.
+//
+// WHICH state does the turning is read off the model rather than assumed to
+// be `facing=south`. In vanilla a front is authored on the model's north
+// face, so facing=south is the one that brings it round — but that is a
+// convention, not a rule, and a mod that authored its front on the south face
+// and turned it in the blockstate instead came out backwards every time,
+// because the preference for "south" turned it away again. So: find which of
+// the model's four sides is the odd one out, see where each candidate's `y`
+// puts it, and take the one that lands it on south.
 const SIDES = ['north', 'east', 'south', 'west'];
+// Where a side ends up after a blockstate's `y`, which turns the model
+// clockwise seen from above: north -> east -> south -> west.
+const afterTurn = (dir, y) =>
+  SIDES[(SIDES.indexOf(dir) + Math.round(((Number(y) || 0) % 360 + 360) / 90)) % 4];
+
+/** The signature of what each of the four sides is painted with. */
+function sideTextures(flat) {
+  const resolve = (ref) => (flat.textures || {})[String(ref || '').replace(/^#/, '')] || String(ref || '');
+  const out = {};
+  for (const dir of SIDES) {
+    const ids = [];
+    for (const el of (flat.elements || [])) {
+      const f = (el.faces || {})[dir];
+      if (f && f.texture) ids.push(resolve(f.texture));
+    }
+    out[dir] = ids.sort().join('|');
+  }
+  return out;
+}
+
+/**
+ * Which side of this model is its FRONT: the one painted unlike the other
+ * three. Null when none is, or when more than one is — a bee nest has a front
+ * AND a back, and there is nothing in the model to say which is which.
+ */
+export function frontSide(flat) {
+  if (!flat || !Array.isArray(flat.elements)) return null;
+  const sig = sideTextures(flat);
+  const alone = SIDES.filter(d => SIDES.every(o => o === d || sig[o] !== sig[d]));
+  return alone.length === 1 ? alone[0] : null;
+}
 
 /** Do all four sides of this model carry the same textures? */
 export function sidesAlike(flat) {
@@ -746,18 +786,8 @@ export function sidesAlike(flat) {
   // block inherits its elements from, names all six faces after their
   // direction and leaves the parent to point those keys at real textures.
   // What tells a front from a side is what each key RESOLVES to.
-  const resolve = (ref) => (flat.textures || {})[String(ref || '').replace(/^#/, '')] || String(ref || '');
-  let first = null;
-  for (const dir of SIDES) {
-    const ids = [];
-    for (const el of flat.elements) {
-      const f = (el.faces || {})[dir];
-      if (f && f.texture) ids.push(resolve(f.texture));
-    }
-    const sig = ids.sort().join('|');
-    if (first === null) first = sig; else if (sig !== first) return false;
-  }
-  return true;
+  const sig = sideTextures(flat);
+  return SIDES.every(d => sig[d] === sig.north);
 }
 
 /**
@@ -784,16 +814,38 @@ export async function chooseState(stack, states) {
   };
   const base = props(plain);
   if (!base.has('facing')) return plain;
-  const south = states.find(s => {
+  // Every state that differs from the plainest one in `facing` and nothing
+  // else -- those are the turns of the same block.
+  const facings = states.filter(s => {
     const m = props(s);
-    if (m.get('facing') !== 'south' || m.size !== base.size) return false;
+    if (m.size !== base.size || !m.has('facing')) return false;
     for (const [k, v] of base) if (k !== 'facing' && m.get(k) !== v) return false;
     return true;
-  });
-  if (!south || !south.parts || !south.parts[0]) return plain;
+  }).filter(s => s.parts && s.parts[0]);
+  if (!facings.length || !plain.parts || !plain.parts[0]) return plain;
 
-  const flat = await flattenModelJson(stack, south.parts[0].model);
-  return sidesAlike(flat) ? plain : south;
+  const read = new Map();
+  const flatOf = async (id) => {
+    if (!read.has(id)) read.set(id, await flattenModelJson(stack, id));
+    return read.get(id);
+  };
+  // Whether there is a front to turn at all is the PLAINEST state's own
+  // question. Asking a candidate's instead gets the wrong answer for a block
+  // whose facings do not all share a model: a dispenser pointed up or down is
+  // a different model with no front on it, and reading that one said the
+  // dispenser had no front.
+  if (sidesAlike(await flatOf(plain.parts[0].model))) return plain;
+
+  // Each turn in the running, by where it puts that model's own front. South
+  // is the side this view shows.
+  for (const s of facings) {
+    const front = frontSide(await flatOf(s.parts[0].model));
+    if (front && afterTurn(front, s.parts[0].y) === 'south') return s;
+  }
+  // No single odd side out (a bee nest has a front and a back): vanilla's own
+  // convention, which is that the front is authored on north and `facing=south`
+  // is the picture of it.
+  return facings.find(s => props(s).get('facing') === 'south') || plain;
 }
 
 // ── Indexing what a stack holds ─────────────────────────────────────────────
@@ -823,19 +875,19 @@ export function indexStack(stack) {
       const m = MODEL_RE.exec(p);
       if (m) {
         const id = `${m[1]}:${m[2]}/${m[3]}`;
-        models.set(id, { id, ns: m[1], kind: m[2], name: m[3], from: s.label });
+        models.set(id, { id, ns: m[1], kind: m[2], name: m[3], from: s.label, source: s.kind });
         continue;
       }
       const b = STATE_RE.exec(p);
       if (b) {
         const id = `${b[1]}:${b[2]}`;
-        states.set(id, { id, ns: b[1], name: b[2], from: s.label });
+        states.set(id, { id, ns: b[1], name: b[2], from: s.label, source: s.kind });
         continue;
       }
       const d = ITEMDEF_RE.exec(p);
       if (d) {
         const id = `${d[1]}:${d[2]}`;
-        items.set(id, { id, ns: d[1], name: d[2], from: s.label });
+        items.set(id, { id, ns: d[1], name: d[2], from: s.label, source: s.kind });
       }
     }
   }
