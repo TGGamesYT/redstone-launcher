@@ -999,9 +999,21 @@ function flatten(layer, poses) {
       }
     }
   }
+  // Which space this was built in. A mob is built around its PIVOT and so
+  // straddles the origin -- every one of them has boxes at negative
+  // coordinates. A block entity is built from the block's own corner and has
+  // none, with a footprint inside the block.
+  //
+  // Height is not part of the test. A decorated pot's neck reaches a few
+  // sixteenths above the block it is in, and insisting on 0..16 in every
+  // direction had it read as a mob and turned upside down, which is why the
+  // pot's base and its walls were two unrelated pieces. Across every layer in
+  // the game the two readings never disagree: nothing built from a corner has
+  // a negative coordinate, and nothing built around a pivot lacks one.
   const EPS = 0.01;
   const blockSpace = elements.length > 0
-    && lo.every(v => v >= -EPS) && hi.every(v => v <= 16 + EPS);
+    && lo.every(v => v >= -EPS)
+    && hi[0] <= 16 + EPS && hi[2] <= 16 + EPS;
 
   if (!blockSpace) {
     for (const el of elements) el.transform = mMul(ROOT, el.transform);

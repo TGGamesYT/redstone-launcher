@@ -26,6 +26,25 @@ started.
       and the poppy is half as wide as it is tall. Only the pair, and only that
       angle: a brewing stand's bottles and a hanging sign's board keep theirs.*
 
+- [x] **Found while working: a bed, a decorated pot and a dragon head render
+      as plain cubes.** They are blocks the game draws itself, and the assets
+      hold nothing but a particle texture for them.
+      *None of their layers is named for the block — a bed is `bed_head` and
+      `bed_foot`, a pot is `decorated_pot_base` and `decorated_pot_sides`, a
+      dragon head is `dragon_skull` — so the lookup, which wanted a layer made
+      of the block's own words, found nothing. A layer made of those words plus
+      one naming a PIECE of a thing counts now.
+      A bed is drawn as both halves, stood up and laid end to end the way the
+      game does it, in any of its sixteen colours. A pot is its base and its
+      walls together: the base reaches a few sixteenths above the block, and
+      insisting a block entity fit inside 0..16 in every direction had it read
+      as a mob and turned upside down. What actually tells the two apart is
+      that a mob is built around its pivot and always has boxes at negative
+      coordinates, where a block is built from its own corner and never does.*
+- [ ] **Found while working: a sign renders as a plain cube.** Unlike the bed
+      and the pot there is nothing to draw it with — the version's layer list
+      has no sign in it at all, so there is no model to find.
+
 ## 0. Round 24
 
 Sent while Round 23 was still being worked through.

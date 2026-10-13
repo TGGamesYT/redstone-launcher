@@ -484,8 +484,27 @@ async function blockEntityLayer(version, id) {
     if (!kw.length || !kw.every(x => w.includes(x))) continue;
     if (!best || kw.length > words(best).length) best = key;
   }
-  return best;
+  if (best) return best;
+
+  // A block the game draws from layers that are named for its PIECES rather
+  // than for it: a bed is `bed_head` and `bed_foot`, a dragon head is
+  // `dragon_skull`, a decorated pot is `decorated_pot_base` and
+  // `decorated_pot_sides`. None of those is a name the block's own words
+  // cover, so the test above finds nothing and a bed came out as a cube of
+  // oak planks. A piece is the block's own words plus exactly one that names
+  // part of a thing.
+  let pick = null, pickWords = 0;
+  for (const key of layers.keys()) {
+    if (key.includes('/')) continue;
+    const kw = words(key);
+    if (kw.filter(x => PIECE_WORDS.has(x)).length !== 1) continue;
+    const rest = kw.filter(x => !PIECE_WORDS.has(x));
+    if (!rest.length || !rest.every(x => w.includes(x))) continue;
+    if (rest.length > pickWords) { pickWords = rest.length; pick = key; }
+  }
+  return pick;
 }
+const PIECE_WORDS = new Set(['base', 'side', 'head', 'foot', 'top', 'bottom', 'lid', 'skull']);
 
 async function blockEntityModel({ profileId, version, id, state, variant }) {
   let layerName = null;
@@ -693,7 +712,9 @@ export async function entityLayers(version) {
 // which is which -- so a saddle would otherwise end up on every pig.
 
 export async function describeEntity({ profileId, version, name, texture, textureFor }) {
-  const both = await doubleChest({ profileId, version, name, texture });
+  const both = await doubleChest({ profileId, version, name, texture })
+    || await bedModel({ profileId, version, name, texture, textureFor })
+    || await piecesModel({ profileId, version, name, texture });
   if (both) return both;
   const layers = await entityLayers(version);
   // A few things are only ever their parts: a conduit is its cage, its eye
@@ -1292,6 +1313,134 @@ async function doubleChest({ profileId, version, name, texture }) {
       path: `${p.base}_left.png`, label: p.label, layer: name, key: 'double:' + p.base,
     })),
     parts: null,
+  };
+}
+
+// ── A bed ───────────────────────────────────────────────────────────────────
+//
+// A bed is two block entities as well, `bed_head` and `bed_foot`, and the
+// assets hold nothing for it at all -- `block/bed` is a particle texture and
+// nothing else -- so it came out as a cube of oak planks.
+//
+// The two meshes are built lying on their backs: each is sixteen across,
+// sixteen along and six deep, with its legs sticking out behind. The game
+// stands them up with a quarter turn about X and lifts them nine sixteenths,
+// which is exactly a bed's height, and draws the head in the block the foot
+// faces. Both of those are here, with the head at -z, so the legs come out at
+// the two far ends and the mattresses meet in the middle.
+const BED_LAYER = /^bed_(head|foot)$/;
+const BED_TEX = /^assets\/[a-z0-9_.-]+\/textures\/entity\/bed\/([a-z0-9_]+)\.png$/;
+
+async function bedModel({ profileId, version, name, texture, textureFor }) {
+  if (!BED_LAYER.test(String(name || ''))) return null;
+  const layers = await entityLayers(version);
+  const halves = { head: layers.get('bed_head'), foot: layers.get('bed_foot') };
+  if (!halves.head || !halves.foot) return null;
+  const st = await stackFor({ profileId, version });
+  const tx = st ? st.textures : null;
+  if (!tx) return null;
+
+  // Every colour a bed comes in, which is every file in its folder.
+  const sheets = [];
+  for (const src of tx.sources || []) {
+    let names = [];
+    try { names = src.list(); } catch { continue; }
+    for (const p of names) {
+      const m = BED_TEX.exec(p);
+      if (m && !sheets.some(c => c.path === p)) sheets.push({ path: p, label: m[1].replace(/_/g, ' ') });
+    }
+  }
+  if (!sheets.length) return null;
+  sheets.sort((a, b) => a.label.localeCompare(b.label));
+  // The colour the block itself is -- `white_bed` is white -- or whichever was
+  // asked for.
+  const want = String(textureFor || '').replace(/_?bed$/, '');
+  const pick = sheets.find(c => c.path === texture)
+    || (want && sheets.find(c => c.label.replace(/ /g, '_') === want))
+    || sheets.find(c => c.label === 'red') || sheets[0];
+  const url = await stackTexture(tx, pick.path);
+  if (!url) return null;
+
+  // Stood up and lifted to a bed's own height; the head is the block along.
+  const stand = m4.mul(m4.translate(0, 9, 0), m4.rot('x', Math.PI / 2));
+  const place = { foot: stand, head: m4.mul(m4.translate(0, 0, -16), stand) };
+  const elements = [];
+  for (const side of ['foot', 'head']) {
+    for (const el of halves[side].elements) {
+      elements.push({
+        ...el,
+        group: side,
+        transform: m4.mul(place[side], el.transform || m4.id()),
+        faces: Object.fromEntries(
+          Object.entries(el.faces || {}).map(([d, f]) => [d, { ...f, texture: '#0' }])),
+      });
+    }
+  }
+
+  return {
+    kind: 'elements', space: 'block', elements, rotY: 0,
+    textures: { 0: { url, width: halves.head.texWidth, height: halves.head.texHeight, frames: 1 } },
+    texture: pick.path,
+    layer: name,
+    variantKey: pick.path,
+    variants: sheets.map(c => ({ path: c.path, label: c.label, layer: name, key: c.path })),
+    parts: null,
+  };
+}
+
+// ── A block drawn from several pieces ───────────────────────────────────────
+//
+// A decorated pot is `decorated_pot_base` -- its neck, its lid and its floor
+// -- and `decorated_pot_sides`, its four walls, each with a texture of its
+// own. Neither is the pot: the base alone is two flat plates in the air.
+// Where a block's layer is one of a set of siblings named for the pieces of
+// one thing, all of them are drawn, in the one block they share.
+//
+// Not the bed: its two are a block APART, which is bedModel's job.
+async function piecesModel({ profileId, version, name, texture }) {
+  const key = String(name || '');
+  const cut = key.lastIndexOf('_');
+  if (cut < 1) return null;
+  const stem = key.slice(0, cut);
+  if (!PIECE_WORDS.has(stem1(key.slice(cut + 1)))) return null;
+  if (BED_LAYER.test(key)) return null;
+
+  const layers = await entityLayers(version);
+  const siblings = [...layers.keys()].filter(k => !k.includes('/') && k.startsWith(stem + '_')
+    && PIECE_WORDS.has(stem1(k.slice(stem.length + 1))));
+  if (siblings.length < 2) return null;
+  // They have to belong to the same block, which means the same space.
+  if (!siblings.every(k => layers.get(k) && layers.get(k).blockSpace)) return null;
+
+  const st = await stackFor({ profileId, version });
+  const tx = st ? st.textures : null;
+  if (!tx) return null;
+
+  const elements = [];
+  const textures = {};
+  let slot = 0;
+  for (const k of siblings.sort()) {
+    const L = layers.get(k);
+    const hit = await entityTextureFile(tx, k, k === key ? texture : null, layers);
+    if (!hit) continue;
+    textures[slot] = { url: hit.url, width: L.texWidth, height: L.texHeight, frames: 1 };
+    const ref = '#' + slot;
+    slot++;
+    for (const el of L.elements) {
+      elements.push({
+        ...el, group: k.slice(stem.length + 1),
+        faces: Object.fromEntries(
+          Object.entries(el.faces || {}).map(([d, f]) => [d, { ...f, texture: ref }])),
+      });
+    }
+  }
+  if (!elements.length || slot < 2) return null;
+
+  return {
+    kind: 'elements', space: 'block', elements, textures, rotY: 0,
+    texture: null, layer: name, variantKey: null, variants: [],
+    parts: siblings.map(k => ({ key: k.slice(stem.length + 1), label: k.slice(stem.length + 1).replace(/_/g, ' '),
+      n: elements.filter(e => e.group === k.slice(stem.length + 1)).length })).filter(g => g.n),
   };
 }
 
