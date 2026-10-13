@@ -993,6 +993,26 @@ const SAME_AS = {
   overlay: ['overlay', 'outer'],
   armor: ['armor', 'armour'],
   armour: ['armour', 'armor'],
+  leash: ['leash', 'lead'],
+  lead: ['lead', 'leash'],
+};
+// Does this list of words carry that one, or something the game uses for it?
+const carries = (hay, w) => (SAME_AS[w] ? SAME_AS[w].some(x => hay.includes(x)) : hay.includes(w));
+
+// The three layers whose texture has nothing to do with their name.
+//
+// Everywhere else the two line up by word, by folder or by both, which is
+// what the scoring below is for -- but a giant is drawn with the zombie's
+// skin, a shulker's bullet with `shulker/spark.png`, and the spin attack with
+// the trident's riptide sheet. The game hardcodes each of those paths too;
+// there is nothing in the assets to derive them from.
+const TEXTURE_BY_NAME = {
+  giant: 'entity/zombie/zombie.png',
+  shulker_bullet: 'entity/shulker/spark.png',
+  spin_attack: 'entity/trident_riptide.png',
+  // A head with nobody's name on it is Steve's, which is what the game puts
+  // on one too.
+  player_head: 'entity/player/wide/steve.png',
 };
 const sameWords = (a, b) => {
   const A = new Set(words(a)), B = new Set(words(b));
@@ -1020,15 +1040,38 @@ async function entityTexturePaths(stack) {
  * variant -- "temperate", "red", "exploding" -- or the layer's own name when
  * there is only one.
  */
-async function entityTextureChoices(stack, name, layers) {
+async function entityTextureChoices(stack, name, layers, wantBabyOverride) {
   if (!stack) return [];
   const full = String(name);
   const base = full.split('/')[0];
   const sub = full.includes('/') ? full.split('/').slice(1).join('_') : null;
-  const wantBaby = /_baby$/.test(base);
-  const stem = base.replace(/_baby$/, '');
+  const wantBaby = wantBabyOverride !== undefined ? wantBabyOverride : /_baby$/.test(base);
+  // A size on the end of a layer's name is a size, not part of what it is:
+  // `armor_stand_small` wears the armour stand's wood, and a tropical fish
+  // comes in a `_small` and a `_large` with one pair of textures between
+  // them. Stripped, the name matches the file the way the plain one does.
+  // ...and so is where it is standing: a banner's sheet is `banner_base.png`
+  // whether the banner is on a wall or on the ground.
+  const stem = base.replace(/_baby$/, '')
+    .replace(/_(small|large|big|tiny|medium)$/, '')
+    .replace(/^(standing|wall|hanging|floor|ceiling)_/, '');
   const squashed = stem.replace(/_/g, '');
   const bare = new Set(words(stem));
+
+  // Words that belong to a SIBLING layer rather than to this one.
+  //
+  // `player` and `player_slim` are two layers over a folder each, `wide` and
+  // `slim`, and neither folder is named for either layer -- so the plain
+  // player matched both equally and took whichever sorted first, which was
+  // the slim one. A word that is what distinguishes another layer from this
+  // one is that layer's, so a file or folder carrying it is too.
+  const theirs = new Set();
+  for (const k of (layers ? layers.keys() : [])) {
+    if (k === full || k.includes('/')) continue;
+    const kw = words(k);
+    if (!kw.length || ![...bare].every(w => kw.includes(w))) continue;
+    for (const w of kw) if (!bare.has(w)) theirs.add(w);
+  }
 
   const paths = await entityTexturePaths(stack);
   const scored = [];
@@ -1054,6 +1097,13 @@ async function entityTextureChoices(stack, name, layers) {
     // Or the other way about: an ender chest is the chest model wearing
     // `chest/ender.png`, whose name is part of the block's.
     else if (fw.length && fw.every(w => bare.has(w))) score = 40 + fw.length;
+    // Last: the folder and the file TOGETHER say what it is. A tropical fish
+    // is `fish/tropical_a.png` -- neither half names it on its own -- and a
+    // player is `player/wide/steve.png`. Scored below every match on the name
+    // itself, so it only answers where nothing better does.
+    else if (bare.size && [...bare].every(w => carries(fw, w) || carries(words(folder), w))) {
+      score = 20 - fw.length;
+    }
     if (score < 0) continue;
 
     // A sub-layer (breeze/eyes) wants the parent's texture with that word on
@@ -1085,12 +1135,23 @@ async function entityTextureChoices(stack, name, layers) {
     if (extra.includes('temperate') || extra.includes('default') || extra.includes('normal')) score += 4;
     // Fewer extra words is closer to plain.
     score -= extra.filter(w => w !== 'baby').length;
+    // ...and a word that is another layer's is a strike against it.
+    score -= [...fw, ...words(folder)].filter(w => theirs.has(w)).length * 20;
 
     const label = spelt.filter((_, i) => !bare.has(fw[i]) && fw[i] !== 'baby').join(' ')
       || fname.replace(/_/g, ' ');
     scored.push({ path: p, label, score, folder, fname, fw });
   }
   scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  // A baby wearing its grown-up's skin.
+  //
+  // Only a handful of mobs have a texture of their own as babies -- a
+  // skeleton horse does, a cow does not -- and the rest are the same mesh at
+  // two thirds the size in the same picture. Insisting on a name with "baby"
+  // in it therefore left thirty-odd layers with no texture at all, which in
+  // the picker is an entry that errors when you click it. So: the baby's own
+  // if there is one, and the adult's if there is not.
+  if (!scored.length && wantBaby) return entityTextureChoices(stack, name, layers, false);
   if (!scored.length) return scored;
 
   // Which of these are actually OTHER SKINS for this thing.
@@ -1514,6 +1575,12 @@ async function entityTextureFile(stack, name, wantPath, layers) {
   };
   if (wantPath) {
     const got = await take(wantPath);
+    if (got) return got;
+  }
+  // The handful whose texture its name cannot find. See TEXTURE_BY_NAME.
+  const named = TEXTURE_BY_NAME[String(name)];
+  if (named) {
+    const got = await take(`assets/minecraft/textures/${named}`);
     if (got) return got;
   }
   const choices = await entityTextureChoices(stack, name, layers);

@@ -396,8 +396,9 @@
     const ov = document.createElement('div');
     ov.className = 'modal-overlay active';
     ov.style.zIndex = 6150;
-    ov.innerHTML = `<div class="modal-content" style="max-width:520px;">
+    ov.innerHTML = `<div class="modal-content ip-modal" style="max-width:520px;">
       <div class="modal-header"><h2>Adjust the render</h2><button class="modal-close" id="ipAdjX">✕</button></div>
+      <div class="ip-scroll">
       <div id="ipAdjStage" style="display:flex; justify-content:center; align-items:center; min-height:220px;
         background:var(--menu-bg); border:1px solid var(--border-dark); border-radius:var(--border-radius);">
         <img id="ipAdjImg" alt="" style="width:200px; height:200px; object-fit:contain; image-rendering:pixelated;">
@@ -436,8 +437,9 @@
         </div>
         <div id="ipAdjDyes" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;"></div>
       </div>
-      <!-- This is not the last step: the render goes to the cropper after it,
-           and "Use this" read as though it were about to be the icon. -->
+      </div>
+      <!-- Outside the scrolling part, like the heading: the two buttons stay
+           where they are however long the list of parts or variants gets. -->
       <div class="modal-actions"><button id="ipAdjOk">Continue to cropping</button><button id="ipAdjCancel">Cancel</button></div>
     </div>`;
     document.body.appendChild(ov);

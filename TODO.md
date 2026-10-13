@@ -64,6 +64,26 @@ started.
       A see-through surface is drawn front-side only, which is what the game
       does with it too.*
 
+- [x] **The adjust dialog's buttons scroll away.** They belong at the bottom,
+      outside the scrolling part, the way the heading already is.
+      *The dialog is a column now: heading, a scrolling middle, buttons.*
+- [x] **The shulker bullet wears the shulker's texture** — and, found with it,
+      forty-odd layers that had no texture at all.
+      *Every `_baby` layer: only a handful of mobs have a baby texture of their
+      own, and insisting on a name with "baby" in it left thirty of them with
+      nothing, which in the picker is an entry that errors when you click it. A
+      baby wears its grown-up's skin where it has none of its own.
+      A size or a place on the end or the front of a name is not part of what
+      the thing is, so `armor_stand_small` and `wall_banner` find the armour
+      stand's wood and the banner's base. The folder and the file together
+      name a thing even where neither does alone, which is a tropical fish
+      (`fish/tropical_a.png`) and a player (`player/wide/steve.png`). A word
+      that is what distinguishes ANOTHER layer is that layer's, so the plain
+      player stops taking the slim one's folder and a llama stops wearing the
+      trader llama's blanket. And three -- a giant, a shulker's bullet, the
+      spin attack -- plus a nameless player head have textures with nothing to
+      do with their names, which the game hardcodes too.*
+
 ## 0. Round 26
 
 - [x] **A pack with only `panorama_overlay.png` is not offered.** The overlay
