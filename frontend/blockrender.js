@@ -268,7 +268,42 @@
     const all = Array.isArray(flat.elements) ? flat.elements : [];
     const elements = opts.overlays ? all : all.filter(el => !el.over);
 
-    for (const el of elements) {
+    // Which elements are the two halves of a cross — grass, a fern, a sapling,
+    // every small flower: a pair of upright planes, one with no width and one
+    // with no depth, turned 45° about the same point.
+    //
+    // The game turns them so a plant reads from wherever you happen to be
+    // standing in the world. This view is not wherever you happen to be
+    // standing: it looks down the (1,1,1) diagonal, every time, and that turn
+    // puts one plane exactly across the screen and the other exactly edge-on.
+    // So a flower was ONE plane seen flat, stretched 41% wider by the
+    // `rescale` that comes with the turn and squashed to 82% of its height by
+    // the projection: a red disc on a stick, and a patch of short grass as a
+    // wide low mat. Left unturned, the two planes meet the camera at equal
+    // angles and it is a plant again.
+    //
+    // Only the pair, and only the 45° that lines it up with this view. A
+    // single turned plane -- a brewing stand's bottle, a hanging sign's board
+    // -- is left exactly where the model puts it.
+    const unturned = new Set();
+    {
+      const pairs = new Map();
+      elements.forEach((el, i) => {
+        const r = el.rotation;
+        if (!r || r.axis !== 'y' || Math.abs(Math.abs(Number(r.angle)) - 45) > 0.01) return;
+        const f = (el.from || [0, 0, 0]).map(Number), t = (el.to || [16, 16, 16]).map(Number);
+        const thinX = Math.abs(t[0] - f[0]) < 0.01, thinZ = Math.abs(t[2] - f[2]) < 0.01;
+        if (thinX === thinZ) return;               // not a plane standing on edge
+        const key = (r.origin || [8, 8, 8]).join(',');
+        if (!pairs.has(key)) pairs.set(key, { x: [], z: [] });
+        pairs.get(key)[thinX ? 'x' : 'z'].push(i);
+      });
+      for (const g of pairs.values()) {
+        if (g.x.length && g.z.length) for (const i of [...g.x, ...g.z]) unturned.add(i);
+      }
+    }
+
+    for (const [elIndex, el] of elements.entries()) {
       const from = (el.from || [0, 0, 0]).map(Number);
       const to = (el.to || [16, 16, 16]).map(Number);
       const dim = [0, 1, 2].map(i => Math.max(MIN_THICK, to[i] - from[i]));
@@ -292,7 +327,7 @@
         g.matrix.fromArray(el.transform);
         g.add(mesh);
         holder = g;
-      } else if (el.rotation && el.rotation.axis && el.rotation.angle) {
+      } else if (el.rotation && el.rotation.axis && el.rotation.angle && !unturned.has(elIndex)) {
         const o = (el.rotation.origin || [8, 8, 8]).map(Number);
         const g = new THREE.Group();
         g.position.set(o[0], o[1], o[2]);

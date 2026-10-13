@@ -996,29 +996,45 @@
         }).catch((e) => console.info('[icon picker] pack panorama lookup failed:', e && e.message));
       }
 
+      // Which version this is about. The caller usually says, but an instance
+      // started from a mod or a modpack is opened from places that do not --
+      // and that is exactly the instance whose icon came from the pack and
+      // wants a way back to its version's own. So where the caller is silent
+      // and there is an instance, the instance is asked.
+      const versionAsked = (async () => {
+        if (opts.version) return opts.version;
+        if (!opts.instanceId || !ipcRenderer) return null;
+        try {
+          const p = await ipcRenderer.invoke('get-profile-by-id', opts.instanceId);
+          return (p && (p.version || p.gameVersion)) || null;
+        } catch { return null; }
+      })();
+
       // The block this version is remembered for, drawn the way a new
       // instance's default icon is drawn — so what the picker offers and what
       // an instance starts with are the same picture.
-      if (opts.version && window.VersionIcon) {
-        window.VersionIcon.get(opts.version, opts.instanceId ?? null).then(url => {
-          if (!url || !ov.isConnected) return;
-          const cell = addVersionCell(`${opts.version} icon`, url, () => editThenPick(url));
-          const img = cell && cell.querySelector('img');
-          if (img) { img.style.cssText = 'padding:4px;object-fit:contain;'; img.onerror = () => cell.remove(); }
-        }).catch(() => { });
-      }
-
-      if (opts.version) {
+      versionAsked.then(version => {
+        if (!version || !ov.isConnected) return;
+        // The adjust dialog asks for this version's models too.
+        if (!opts0.version) opts0.version = version;
+        if (window.VersionIcon) {
+          window.VersionIcon.get(version, opts.instanceId ?? null).then(url => {
+            if (!url || !ov.isConnected) return;
+            const cell = addVersionCell(`${version} icon`, url, () => editThenPick(url));
+            const img = cell && cell.querySelector('img');
+            if (img) { img.style.cssText = 'padding:4px;object-fit:contain;'; img.onerror = () => cell.remove(); }
+          }).catch(() => { });
+        }
         const addCell = addVersionCell;
-        ipcRenderer.invoke('icon:versionBanner', { version: opts.version }).then(b => {
+        ipcRenderer.invoke('icon:versionBanner', { version }).then(b => {
           // Plenty of versions have no banner at all; that's simply nothing to show.
           if (b && b.dataUrl) {
-            const cell = addCell(`${opts.version} banner`, b.dataUrl, () => editThenPick(b.dataUrl), true);
+            const cell = addCell(`${version} banner`, b.dataUrl, () => editThenPick(b.dataUrl), true);
             const img = cell && cell.querySelector('img');
             if (img) img.onerror = () => cell.remove();
           }
         }).catch(() => { });
-        ipcRenderer.invoke('icon:versionPanorama', { version: opts.version }).then(p => {
+        ipcRenderer.invoke('icon:versionPanorama', { version }).then(p => {
           // No cell at all unless there is an image to put in it. Adding one
           // regardless is what left a grey box with nothing in it, and the
           // reason was only ever in the main process log.
@@ -1026,13 +1042,13 @@
             if (p && p.error) console.info('[icon picker] no panorama:', p.error);
             return;
           }
-          const cell = addCell(`${opts.version} panorama`, p.forward, () => openPanorama(p, editThenPick), true);
+          const cell = addCell(`${version} panorama`, p.forward, () => openPanorama(p, editThenPick), true);
           // Belt and braces: if the data URL somehow won't decode, drop the
           // cell rather than leaving it empty.
           const img = cell && cell.querySelector('img');
           if (img) img.onerror = () => cell.remove();
         }).catch((e) => console.info('[icon picker] panorama lookup failed:', e && e.message));
-      }
+      });
 
       const presets = ov.querySelector('#ipPresets');
       PRESET_ICONS.forEach(file => {

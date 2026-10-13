@@ -9,6 +9,23 @@ started.
 
 ---
 
+## 0. Round 25
+
+- [x] **The two-block plants' lower halves look wrong**, and so does short
+      grass next to the others' tops — render a cross normally and stop
+      messing with it.
+      *The messing was the model's own 45°. A cross is two upright planes
+      turned a quarter of a right angle so a plant reads from wherever you
+      happen to be standing in the world; this view is not wherever you happen
+      to be standing, it looks down the same diagonal every time, and that turn
+      put one plane exactly across the screen and the other exactly edge-on.
+      So a flower was ONE plane seen flat, 41% wider than the block from the
+      `rescale` that comes with the turn and 82% of its height from the
+      projection: a poppy as a red disc on a stick, short grass as a wide low
+      mat. The pair is drawn unturned now, meeting the camera at equal angles,
+      and the poppy is half as wide as it is tall. Only the pair, and only that
+      angle: a brewing stand's bottles and a hanging sign's board keep theirs.*
+
 ## 0. Round 24
 
 Sent while Round 23 was still being worked through.
