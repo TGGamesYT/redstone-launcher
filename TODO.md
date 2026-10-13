@@ -345,10 +345,21 @@ stuff" — so the list is in two halves and the first half is done first.
 - [x] **With one skin saved, Add skin does not take the rest of the row.**
 - [x] **A modpack picked in "from a mod or modpack" does not get the confirm
       page** that a mod gets.
-- [ ] **Some versions have no panorama** — `1.12.2 asset index has 0/6 faces
+- [x] **Some versions have no panorama** — `1.12.2 asset index has 0/6 faces
       downloaded`, `no panorama_0`.
-- [ ] **An instance made from a mod or modpack still has no way back to its
+      *Before 1.13 the title screen was not an asset at all, it was in the jar,
+      so an index with no `panorama_0` in it is an old version rather than a
+      failure and the jar is where to look. It was being read out of the wrong
+      jar, though: below 1.14 the TEXTURE stack reads from the 1.13 jar first,
+      for the blocks and items 1.13 renamed, so every old version was handed
+      1.13's underwater title screen. The version's own files are read now, and
+      1.8 and 1.12 get the beach they ought to.*
+- [x] **An instance made from a mod or modpack still has no way back to its
       version's default icon** — that icon is missing from "This version".
+      *The section is drawn from the version the caller names, and the places
+      that open the picker for one of those instances do not always name one.
+      Where the caller is silent and there is an instance, the instance is
+      asked, so its version's own icon, banner and panorama are all there.*
 
 ## 0. Round 21
 

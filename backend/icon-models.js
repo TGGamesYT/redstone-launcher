@@ -1399,9 +1399,13 @@ export async function versionIcon({ version, profileId = null }) {
 export async function panoramaFromFiles({ profileId, version }) {
   const st = await stackFor({ profileId, version });
   if (!st) return null;
+  // The version's OWN files, not the texture stack: below 1.14 that stack
+  // reads out of the 1.13 jar first, so every old version was handed 1.13's
+  // title screen instead of its own. The borrow is there for blocks and items
+  // that 1.13 renamed; the title screen's path never moved.
   const out = [];
   for (let i = 0; i < 6; i++) {
-    const hit = await st.textures.get(
+    const hit = await st.models.get(
       `assets/minecraft/textures/gui/title/background/panorama_${i}.png`);
     if (!hit) return null;
     const size = MA.pngSize(hit.buf);
