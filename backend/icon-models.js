@@ -202,37 +202,42 @@ export async function describeModel({ profileId, version, id, state, variant }) 
   if (!st) return { error: 'no assets for this version yet' };
 
   let modelId = id, rotX = 0, rotY = 0, uvlock = false, chosen = null;
-  // An item is a definition file before it is a model: one clock is twelve
-  // models and one chestplate is itself plus a trim for every material. The
-  // definition says which, and all of them are offered.
   let itemVariants = null;
-  {
-    const { ns, name } = MA.splitId(id);
+  const { ns, name } = MA.splitId(id);
+  const explicitItem = /(^|:)items?\//.test(id) || /\/items?\//.test(id);
+  // A path that names the block folder outright is a model, not a blockstate.
+  const blockPath = /(^|:)block\//.test(id) || /\/block\//.test(id);
+
+  // A bare id -- "minecraft:anvil" -- is a BLOCK, through its blockstate.
+  // That is how the catalogue lists blocks; an item is listed with `item/` in
+  // its id. The item definition used to be consulted first for any name
+  // without a folder, and almost every block is also an item, so almost every
+  // block was quietly handed its ITEM's model and none of its states. That is
+  // why an anvil's facing, a creaking heart's state and an icicle's size did
+  // nothing: the states were listed, the choice was passed in, and nothing
+  // ever looked at it.
+  const states = explicitItem || blockPath ? null : await MA.blockStates(st.models, id);
+  if (states && states.length) {
+    const pick = state != null
+      ? (states.find(s => s.state === state) || await MA.chooseState(st.models, states))
+      : await MA.chooseState(st.models, states);
+    chosen = pick;
+    modelId = pick.parts[0].model;
+    rotX = pick.parts[0].x || 0;
+    rotY = pick.parts[0].y || 0;
+    uvlock = !!pick.parts[0].uvlock;
+  } else if (!blockPath) {
+    // No blockstate, so it is an item -- and an item is a definition file
+    // before it is a model: one clock is twelve models and one chestplate is
+    // itself plus a trim for every material. The definition says which, and
+    // all of them are offered.
     const bare = name.replace(/^items?\//, '');
-    const def = /(^|:)items?\//.test(id) || !name.includes('/')
-      ? await st.models.json(MA.itemDefPath(`${ns}:${bare}`))
-      : null;
-    if (def) {
-      const all = MA.modelsFromItemDef(def);
-      if (all.length) {
-        itemVariants = all;
-        const want = variant && all.find(v => v.model === variant);
-        modelId = (want || all[0]).model;
-      }
-    }
-  }
-  // "minecraft:stone" with no folder means a BLOCK, through its blockstate.
-  if (!itemVariants && !/\/(block|item)\//.test(id) && !/^[^:]*:?(block|item)\//.test(id)) {
-    const states = await MA.blockStates(st.models, id);
-    if (states && states.length) {
-      const pick = state != null
-        ? (states.find(s => s.state === state) || await MA.chooseState(st.models, states))
-        : await MA.chooseState(st.models, states);
-      chosen = pick;
-      modelId = pick.parts[0].model;
-      rotX = pick.parts[0].x || 0;
-      rotY = pick.parts[0].y || 0;
-      uvlock = !!pick.parts[0].uvlock;
+    const def = await st.models.json(MA.itemDefPath(`${ns}:${bare}`));
+    const all = def ? MA.modelsFromItemDef(def) : [];
+    if (all.length) {
+      itemVariants = all;
+      const want = variant && all.find(v => v.model === variant);
+      modelId = (want || all[0]).model;
     }
   }
 

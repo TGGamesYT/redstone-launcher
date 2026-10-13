@@ -132,8 +132,13 @@ stuff" — so the list is in two halves and the first half is done first.
       begin with. The armour it never wears was in another folder, so it is
       gone. A creeper's charge arrives as a layer rather than a texture, and
       the words that mean "only sometimes" are listed deliberately.*
-- [ ] **Block states that change the texture do nothing** — the anvil's
+- [x] **Block states that change the texture do nothing** — the anvil's
       facing, the creaking heart, the icicle, the bell's block form.
+      *The state was listed, the choice was passed in, and nothing ever looked
+      at it: a bare id like `minecraft:anvil` was being handed its ITEM's model
+      before the blockstate was even consulted, and almost every block is also
+      an item. A bare id is a block now; an item is listed with `item/` in its
+      id and still reads its own definition.*
 - [ ] **A bell has three entries** (item, block, block entity); an item model
       that is the same as its block's should not be a second entry, and the
       one that is kept is the one with the states.
