@@ -139,12 +139,16 @@ stuff" — so the list is in two halves and the first half is done first.
       before the blockstate was even consulted, and almost every block is also
       an item. A bare id is a block now; an item is listed with `item/` in its
       id and still reads its own definition.*
-- [ ] **A bell has three entries** (item, block, block entity); an item model
+- [x] **A bell has three entries** (item, block, block entity); an item model
       that is the same as its block's should not be a second entry, and the
       one that is kept is the one with the states.
-- [ ] **An item model that is a block, or more than one picture, should still
+      *Anything sharing a block's name is dropped and the block is kept — it is
+      the one you can turn, set and adjust.*
+- [x] **An item model that is a block, or more than one picture, should still
       be adjustable** — and turning and tilting a flat item does nothing, so
       the dialog should not offer it.
+      *Turn and tilt are hidden for a flat item. (A multi-picture item was
+      already adjustable through its variants.)*
 - [x] **Tilt does not go all the way round**, and it tilts from the original
       angle rather than the current one.
       *The slider is ±180, and a tilt is about the screen's horizontal applied
@@ -153,7 +157,11 @@ stuff" — so the list is in two halves and the first half is done first.
 - [ ] **Chest variants do nothing**, and a double chest should be drawn as
       both halves.
 - [ ] **All the armour trims render as the plain item.**
-- [ ] **Every clock variant is also its own search result.**
+- [x] **Every clock variant is also its own search result.**
+      *From 1.21.4 an item is a definition file and the models beside it are
+      the pictures it chooses between. The definitions are the catalogue now;
+      "clock" finds one thing instead of 65, "chestplate" seven instead of 84,
+      and the faces and trims are still there as variants.*
 - [ ] **Bush, fern and large fern have no tint**, and the tint should be
       changeable in the render settings. Leather armour too, in its colours.
 - [x] **A face pointing at the camera should be fully lit**, which settles the

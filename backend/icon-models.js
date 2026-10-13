@@ -557,17 +557,24 @@ export async function listModels({ profileId, version, query = '', kinds = null,
     }
   }
   if (want.has('item')) {
-    // Both spellings of an item: the model, and 1.21.4's definition file.
-    const seen = new Set();
-    for (const m of st.index.models.values()) {
-      if (m.kind !== 'item') continue;
-      if (MA.looksLikeTemplate(m.name)) continue;
-      seen.add(`${m.ns}:${m.name}`);
-      items.push({ kind: 'item', id: m.id, name: m.name, ns: m.ns, from: m.from });
-    }
-    for (const d of st.index.items.values()) {
-      if (seen.has(`${d.ns}:${d.name}`)) continue;
-      items.push({ kind: 'item', id: `${d.ns}:item/${d.name}`, name: d.name, ns: d.ns, from: d.from });
+    // From 1.21.4 an item is a definition file, and the models beside it are
+    // the pictures that file chooses between: a clock is twelve of them, a
+    // chestplate is itself and a trim for every material. Listing the models
+    // made every one of those its own search result -- "clock" found 65
+    // things, "chestplate" 84 -- when they are already offered as variants of
+    // the one item. So where there are definitions, the definitions ARE the
+    // catalogue. Older versions have no definitions and list models, as before.
+    const defs = [...st.index.items.values()];
+    if (defs.length) {
+      for (const d of defs) {
+        items.push({ kind: 'item', id: `${d.ns}:item/${d.name}`, name: d.name, ns: d.ns, from: d.from });
+      }
+    } else {
+      for (const m of st.index.models.values()) {
+        if (m.kind !== 'item') continue;
+        if (MA.looksLikeTemplate(m.name)) continue;
+        items.push({ kind: 'item', id: m.id, name: m.name, ns: m.ns, from: m.from });
+      }
     }
   }
   if (want.has('entity')) {
@@ -578,6 +585,27 @@ export async function listModels({ profileId, version, query = '', kinds = null,
       // as a thing to pick.
       if (name.includes('/')) continue;
       items.push({ kind: 'entity', id: 'entity:' + name, name, ns: 'minecraft', from: 'client jar' });
+    }
+  }
+
+  // One thing, one entry.
+  //
+  // A bell was three: the block, the item you hold, and the shape the game
+  // draws it with. They are the same bell, and only one of them carries its
+  // states, so that is the one kept -- the block.
+  //
+  // So anything that shares a block's name goes, and that is deliberate even
+  // where the two are drawn differently -- a bell in your hand is a flat
+  // sprite, not the bell in the world. Two entries called "bell" is still two
+  // entries called "bell", and the one worth having is the one you can turn,
+  // set and adjust.
+  {
+    const blocks = new Set(items.filter(i => i.kind === 'block').map(i => `${i.ns}:${i.name}`));
+    if (blocks.size) {
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        if (it.kind !== 'block' && blocks.has(`${it.ns}:${it.name}`)) items.splice(i, 1);
+      }
     }
   }
 
@@ -965,6 +993,7 @@ async function entityTextureChoices(stack, name, layers) {
 }
 
 const asDataUrl = (buf) => 'data:image/png;base64,' + buf.toString('base64');
+
 
 // How much of a texture is painted at all, 0..1, remembered per file. What it
 // is for is at the call site: telling an overlay from another skin.

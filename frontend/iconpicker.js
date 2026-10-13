@@ -402,10 +402,12 @@
         background:var(--menu-bg); border:1px solid var(--border-dark); border-radius:var(--border-radius);">
         <img id="ipAdjImg" alt="" style="width:200px; height:200px; object-fit:contain; image-rendering:pixelated;">
       </div>
-      <div class="ip-section-title">Turn</div>
-      <input type="range" id="ipAdjYaw" min="-180" max="180" step="5" value="0" style="width:100%;">
-      <div class="ip-section-title">Tilt</div>
-      <input type="range" id="ipAdjPitch" min="-180" max="180" step="5" value="0" style="width:100%;">
+      <div id="ipAdjTurnWrap">
+        <div class="ip-section-title">Turn</div>
+        <input type="range" id="ipAdjYaw" min="-180" max="180" step="5" value="0" style="width:100%;">
+        <div class="ip-section-title">Tilt</div>
+        <input type="range" id="ipAdjPitch" min="-180" max="180" step="5" value="0" style="width:100%;">
+      </div>
       <div class="ip-section-title">Detail</div>
       <div class="ip-circle-row">
         <input type="range" id="ipAdjSize" min="0" max="3" step="1" value="1" style="flex:1;">
@@ -450,6 +452,15 @@
     let desc = base;
     startOff(desc);
     let url = null;
+
+    // A flat item is a picture, not a shape: the game draws a stick by
+    // stacking its texture layers and so does this, with no camera involved.
+    // Turning and tilting one did nothing at all, so they are not offered.
+    const turnWrap = ov.querySelector('#ipAdjTurnWrap');
+    const showTurn = () => {
+      const flatPicture = desc && desc.kind === 'layers';
+      turnWrap.style.display = flatPicture ? 'none' : '';
+    };
 
     const partsWrap = ov.querySelector('#ipAdjPartsWrap');
     const partsBox = ov.querySelector('#ipAdjParts');
@@ -508,7 +519,7 @@
             id: info.item.id, state: info.state || undefined, variant: variantSel.value,
           });
         // The list follows the model: a cold cow's skins are its own.
-        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); redraw(); }
+        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); showTurn(); redraw(); }
       };
     }
 
@@ -541,7 +552,7 @@
           profileId: opts0.instanceId ?? null, version: opts0.version || null,
           id: info.item.id, state: stateSel.value,
         });
-        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); redraw(); }
+        if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); showTurn(); redraw(); }
       };
     }
 
@@ -576,6 +587,7 @@
 
     paintParts();
     paintVariants();
+    showTurn();
     loadStates();
     redraw();
   }
