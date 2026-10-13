@@ -269,7 +269,9 @@ export async function describeModel({ profileId, version, id, state, variant }) 
   // from, and the bell itself is drawn by the game. Where the model is a
   // fraction of a block and an entity layer exists, the entity IS the block.
   if (flat.approximated || flat.kind === 'unrenderable' || tinyModel(flat)) {
-    const asEntity = await blockEntityModel({ profileId, version, id: stateId, state: chosen ? chosen.state : state });
+    const asEntity = await blockEntityModel({
+      profileId, version, id: stateId, state: chosen ? chosen.state : state, variant,
+    });
     if (asEntity) return asEntity;
   }
 
@@ -360,6 +362,14 @@ async function tallSibling(st, id, chosen) {
   const want = [...props].map(([k, v]) => `${k}=${k === key ? high : v}`).sort().join(',');
   const other = states.find(s => String(s.state).split(',').sort().join(',') === want);
   if (!other || !other.parts || !other.parts[0]) return null;
+
+  // An upper half that is nothing in the game is nothing here either. A
+  // pitcher crop's top is a model with no geometry at all until stage 3 --
+  // the plant is not tall yet -- and standing in a cube of its particle
+  // texture, which is what any model without geometry falls back to, put a
+  // block of soil in the air above the seedling.
+  const upper = await MA.renderableModel(st.models, other.parts[0].model);
+  if (!upper || upper.approximated || upper.kind !== 'elements') return null;
 
   const below = await mergeParts(st, chosen.parts);
   const above = await mergeParts(st, other.parts);
@@ -477,12 +487,24 @@ async function blockEntityLayer(version, id) {
   return best;
 }
 
-async function blockEntityModel({ profileId, version, id, state }) {
+async function blockEntityModel({ profileId, version, id, state, variant }) {
   let layerName = null;
   try { layerName = await blockEntityLayer(version, id); } catch { return null; }
   if (!layerName) return null;
   const bare = String(id).split(':').pop();
-  const desc = await describeEntity({ profileId, version, name: layerName, textureFor: bare });
+  // A block drawn by the game rather than from a model is listed as a BLOCK,
+  // so its variants arrive through describeModel's `variant` -- which means a
+  // texture here, and means a layer of its own where the variant names one.
+  // Without this a chest's ender, trapped and copper sheets did nothing at
+  // all: the choice was made, passed in and dropped.
+  const want = variant && String(variant);
+  // A chest's half-sheets belong to the double chest's model rather than the
+  // single chest's, since half a chest is not a picture of anything.
+  const asLayer = want && layerName === 'chest' && CHEST_HALF.test(want)
+    ? 'double_chest_left' : layerName;
+  const desc = await describeEntity({
+    profileId, version, name: asLayer, texture: want || undefined, textureFor: bare,
+  });
   if (!desc || desc.error) return null;
   return { ...desc, model: `entity:${layerName}`, state: state || null, fromEntity: layerName };
 }
@@ -646,7 +668,7 @@ export async function listModels({ profileId, version, query = '', kinds = null,
 }
 
 const _layerCache = new Map();
-async function entityLayers(version) {
+export async function entityLayers(version) {
   if (_layerCache.has(version)) return _layerCache.get(version);
   const p = (async () => {
     const got = await entityModelsFor(version);
@@ -671,6 +693,8 @@ async function entityLayers(version) {
 // which is which -- so a saddle would otherwise end up on every pig.
 
 export async function describeEntity({ profileId, version, name, texture, textureFor }) {
+  const both = await doubleChest({ profileId, version, name, texture });
+  if (both) return both;
   const layers = await entityLayers(version);
   // A few things are only ever their parts: a conduit is its cage, its eye
   // and its shell, with no layer of its own to hang them on.
@@ -843,14 +867,28 @@ export async function describeEntity({ profileId, version, name, texture, textur
   const family = CART_FAMILY.test(name)
     ? [...layers.keys()].filter(k => CART_FAMILY.test(k)).sort()
     : null;
+  // A chest's `normal_left` and `normal_right` sheets are not two more chests:
+  // they are the two halves of ONE double chest, and on a single chest they
+  // drew a side that is not there. Each pair becomes one entry that draws the
+  // double chest whole.
   const variants = family && family.length > 1
     ? family.map(k => ({
       path: tex0 ? tex0.path : null, label: k.replace(/_/g, ' '), layer: k, key: 'layer:' + k,
     }))
-    : skins.map(c => ({
-      path: c.path, label: c.label, layer: c.layer || null,
-      key: (c.layer ? c.layer + '|' : '') + c.path,
-    }));
+    : skins.flatMap(c => {
+      const h = CHEST_HALF.exec(c.path);
+      if (h && h[2] === 'right') return [];
+      if (h && skins.some(o => o.path === `${h[1]}_right.png`)) {
+        return [{
+          path: c.path, label: `${c.label.replace(/\s*left$/, '')} double`.trim(),
+          layer: 'double_chest_left', key: 'double:' + h[1],
+        }];
+      }
+      return [{
+        path: c.path, label: c.label, layer: c.layer || null,
+        key: (c.layer ? c.layer + '|' : '') + c.path,
+      }];
+    });
 
   return {
     kind: 'elements', space: inBlock ? 'block' : 'entity', elements, textures,
@@ -949,6 +987,10 @@ async function entityTextureChoices(stack, name, layers) {
     const fname = file.slice(file.lastIndexOf('/') + 1).replace(/\.png$/, '');
     const fw = words(fname);
     const extra = fw.filter(w => !bare.has(w));
+    // The words as they are written, which is what a label should read as:
+    // matching is done on stems, so "christmas" matches "christma", but a
+    // label built from the stems said "christma".
+    const spelt = String(fname).toLowerCase().split(/[_/]+/).filter(Boolean);
 
     let score = -1;
     if (fname === stem) score = 100;
@@ -993,7 +1035,8 @@ async function entityTextureChoices(stack, name, layers) {
     // Fewer extra words is closer to plain.
     score -= extra.filter(w => w !== 'baby').length;
 
-    const label = extra.filter(w => w !== 'baby').join(' ') || fname.replace(/_/g, ' ');
+    const label = spelt.filter((_, i) => !bare.has(fw[i]) && fw[i] !== 'baby').join(' ')
+      || fname.replace(/_/g, ' ');
     scored.push({ path: p, label, score, folder, fname, fw });
   }
   scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
@@ -1172,6 +1215,84 @@ async function minecartLoad({ profileId, version, name, slot }) {
     });
   }
   return { elements, textures, label: m[1].replace(/_/g, ' ') };
+}
+
+// ── A double chest ──────────────────────────────────────────────────────────
+//
+// A double chest is TWO block entities, each drawing its own half: the game
+// has a `double_chest_left` model and a `double_chest_right` one, each fifteen
+// wide and each with its lock against the edge it meets the other at, and it
+// draws them in neighbouring blocks. Drawn alone, a half is a chest with a
+// missing side and a lock in the corner, and neither half had a texture at all
+// because the sheets are called `normal_left` and `normal_right`, which no
+// rule turns `double_chest_left` into.
+//
+// So either half draws the whole thing: this half where it is, the other one a
+// block along.
+const DOUBLE_CHEST = /^double_chest_(left|right)$/;
+const CHEST_HALF = /^(.*)_(left|right)\.png$/;
+
+async function doubleChest({ profileId, version, name, texture }) {
+  if (!DOUBLE_CHEST.test(String(name || ''))) return null;
+  const layers = await entityLayers(version);
+  const halves = { left: layers.get('double_chest_left'), right: layers.get('double_chest_right') };
+  if (!halves.left || !halves.right) return null;
+  const st = await stackFor({ profileId, version });
+  const tx = st ? st.textures : null;
+  if (!tx) return null;
+
+  // The sheets a chest has, in pairs: `normal_left` goes with `normal_right`.
+  const choices = await entityTextureChoices(tx, 'chest', layers);
+  const pairs = [];
+  for (const c of choices) {
+    const m = CHEST_HALF.exec(c.path);
+    if (!m || m[2] !== 'left') continue;
+    if (choices.some(o => o.path === `${m[1]}_right.png`)) {
+      pairs.push({ base: m[1], label: `${c.label.replace(/\s*left$/, '')} double`.trim() });
+    }
+  }
+  if (!pairs.length) return null;
+  const asked = texture && CHEST_HALF.exec(texture);
+  const pick = (asked && pairs.find(p => p.base === asked[1])) || pairs[0];
+
+  const sheets = {};
+  for (const side of ['left', 'right']) {
+    const hit = await stackTexture(tx, `${pick.base}_${side}.png`);
+    if (!hit) return null;
+    sheets[side] = hit;
+  }
+
+  const textures = {
+    0: { url: sheets.right, width: halves.right.texWidth, height: halves.right.texHeight, frames: 1 },
+    1: { url: sheets.left, width: halves.left.texWidth, height: halves.left.texHeight, frames: 1 },
+  };
+  // The right half sits in its own block and the left half in the next one
+  // along, which is what makes the two fifteen-wide halves one thirty-wide
+  // chest with the locks meeting in the middle.
+  const over = m4.translate(16, 0, 0);
+  const elements = [];
+  for (const [side, slot, shift] of [['right', 0, null], ['left', 1, over]]) {
+    for (const el of halves[side].elements) {
+      elements.push({
+        ...el,
+        group: side,
+        transform: shift ? m4.mul(shift, el.transform || m4.id()) : el.transform,
+        faces: Object.fromEntries(
+          Object.entries(el.faces || {}).map(([d, f]) => [d, { ...f, texture: '#' + slot }])),
+      });
+    }
+  }
+
+  return {
+    kind: 'elements', space: 'block', elements, textures, rotY: 0,
+    texture: `${pick.base}_left.png`,
+    layer: name,
+    variantKey: 'double:' + pick.base,
+    variants: pairs.map(p => ({
+      path: `${p.base}_left.png`, label: p.label, layer: name, key: 'double:' + p.base,
+    })),
+    parts: null,
+  };
 }
 
 // A mob's layers include things it is only sometimes wearing. A creeper's

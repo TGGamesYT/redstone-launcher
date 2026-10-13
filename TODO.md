@@ -154,8 +154,16 @@ stuff" — so the list is in two halves and the first half is done first.
       *The slider is ±180, and a tilt is about the screen's horizontal applied
       last, so a turned model leans back instead of going sideways. The model's
       own x rotation stays Minecraft's.*
-- [ ] **Chest variants do nothing**, and a double chest should be drawn as
+- [x] **Chest variants do nothing**, and a double chest should be drawn as
       both halves.
+      *A chest is listed as a BLOCK, because that is what it is, and a block's
+      variant was only ever read as an item's — so the choice was made, passed
+      in and dropped. It reaches the block entity now, and ender, trapped,
+      christmas and the four coppers all work.
+      `normal_left` and `normal_right` were two more of those variants, which
+      drew half a chest with its lock in the corner. They are not a chest each:
+      they are the two halves of one double chest, fifteen wide apiece, and the
+      pair is now one entry that draws it whole.*
 - [x] **All the armour trims render as the plain item.**
       *A trim's picture is not in the jar. `..._gold_trim` asks for
       `trims/items/chestplate_trim_gold`, and all the jar holds is the grey
@@ -185,7 +193,10 @@ stuff" — so the list is in two halves and the first half is done first.
       *Whichever is brighter wins, the shade table or how squarely the face
       meets the camera — so nothing changes at the standing angle and a face
       lifts as it comes round.*
-- [ ] **A cross model's rotation settings do nothing.**
+- [x] **A cross model's rotation settings do nothing.**
+      *Because it was not a cross model. `short_grass` is a bare name, and a
+      bare name was handed its ITEM's model — a flat sprite, which has nothing
+      to turn. It is the block now, and the slider turns it.*
 - [x] **Parts that only render from one side** — the axolotl's tail, a
       chicken's legs, some fish tails. *All one cause: mobs are drawn with
       culling off in the game, and were not here.*
@@ -217,8 +228,14 @@ stuff" — so the list is in two halves and the first half is done first.
       lights the mob up and leaves it recognisable. The game has the same two
       and no more, and nothing in the assets separates them from an ordinary
       overlay, so they are named here too.*
-- [ ] **A cross model on the second block of a two-block block is turned 45°**,
+- [x] **A cross model on the second block of a two-block block is turned 45°**,
       and a two-block block with no upper half draws something there anyway.
+      *Same cause as above for the turn: tall grass, large ferns and the tall
+      flowers were all being drawn from their item sprite. The something in the
+      air was a pitcher crop: its top half is a model with NO geometry until
+      the plant is tall enough, and a model without geometry falls back to a
+      cube of its particle texture, so a seedling had a block of soil floating
+      over it. An upper half that is nothing in the game is nothing here.*
 - [x] **The dried ghast's default rotation is wrong**, which matters because it
       is a version's default icon.
       *It had no rotation at all, and no textures of its own either: the icon
