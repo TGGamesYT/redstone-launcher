@@ -502,6 +502,7 @@
   <!-- three.js (r163, matching skinview3d) exposed as window.THREE for raycast painting on the 3D model -->
   <script type="module">import * as THREE from './three.module.js'; window.THREE = THREE;</script>
   <script src="skinview3d.bundle.js"></script>
+  <script src="skin-animations.js"></script>
   <script>
     // Wrapped so the editor's locals (hexToRgb, render, view, …) don't collide
     // with globals defined by sidebar.js / notifications.js loaded afterwards.
@@ -2025,7 +2026,7 @@
       if (!has) {
         // The wrap draws over the current skin, so that's what an empty wrap is.
         try {
-          if (!imgViewer && typeof skinview3d !== 'undefined') imgViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-img-3d'), width: 240, height: 340 });
+          if (!imgViewer && typeof skinview3d !== 'undefined') { imgViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-img-3d'), width: 240, height: 340 }); giveItPhysics(imgViewer); }
           if (imgViewer) imgViewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' });
         } catch { }
       }
@@ -2163,7 +2164,7 @@
       // the modal's own 3D model.
       const tmp = composeWrap(work);
       const url = tmp.toDataURL();
-      if (!imgViewer && typeof skinview3d !== 'undefined') { try { imgViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-img-3d'), width: 240, height: 340 }); } catch { } }
+      if (!imgViewer && typeof skinview3d !== 'undefined') { try { imgViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-img-3d'), width: 240, height: 340 }); giveItPhysics(imgViewer); } catch { } }
       if (imgViewer) { try { imgViewer.loadSkin(url, { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
       if (viewer) { try { viewer.loadSkin(url, { model: variant === 'slim' ? 'slim' : 'default' }); setTimeout(applyPartVisibility, 20); } catch { } }
     }
@@ -2270,6 +2271,35 @@
       if (liveTex) { refreshGridCanvas(); liveTex.needsUpdate = true; }
       else if (viewer) update3D(true);
     }
+    // ── Weight on the renders that are only looked at ─────────────────────
+    //
+    // Dragging one of these moved the camera and nothing else: no weight, the
+    // figure never reacted to being turned, and wherever it was let go of is
+    // where it stayed. That is the same thing the skins page's big render and
+    // the friend-details one have, and it lives in skin-animations.js, so all
+    // of them move the same way.
+    //
+    // The PAINTABLE model is deliberately left out. Springing back to the
+    // front while you are drawing on the back of a head is not help, and a
+    // flick that keeps turning under the brush is worse.
+    const _physics = new WeakMap();
+    function giveItPhysics(v) {
+      const SA = window.SkinAnimations;
+      if (!v || !SA || !SA.orbitPhysics || _physics.has(v)) return;
+      // The same pitch stops as elsewhere, so a drag upwards cannot put the
+      // camera over the top of the head.
+      try {
+        v.controls.minPolarAngle = Math.PI / 2 - 0.55;
+        v.controls.maxPolarAngle = Math.PI / 2 + 0.55;
+      } catch { }
+      let p = null;
+      // Its own channel, not the page-wide setSpin: there are several of these
+      // and each one reacts to its own turning.
+      try { p = SA.orbitPhysics(v, { onSpin: () => { } }); } catch { return; }
+      _physics.set(v, p);
+      if (SA.spinOnly) { try { v.animation = SA.spinOnly(() => p.rate()); } catch { } }
+    }
+
     function build3D() {
       if (typeof skinview3d === 'undefined') return;
       viewer = new skinview3d.SkinViewer({ canvas: document.getElementById('ed-3d'), width: 260, height: 340 });
@@ -2777,7 +2807,7 @@
       efm.config = efmDefaultConfig();
       efmRenderSources(); efmRenderSlots();
       if (!efm.viewer && typeof skinview3d !== 'undefined') {
-        try { efm.viewer = new skinview3d.SkinViewer({ canvas: document.getElementById('efm-3d'), width: 280, height: 330 }); } catch { }
+        try { efm.viewer = new skinview3d.SkinViewer({ canvas: document.getElementById('efm-3d'), width: 280, height: 330 }); giveItPhysics(efm.viewer); } catch { }
       }
       efmRefreshViewer();
     }
@@ -3316,7 +3346,7 @@
         await crLoadIntoWork('data:image/png;base64,' + r.base64);
         workFromCreator = true;
         variant = crState.skin_type === 'slim' ? 'slim' : 'classic';
-        if (!crViewer && typeof skinview3d !== 'undefined') { try { crViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('cr-3d'), width: 360, height: 480 }); } catch { } }
+        if (!crViewer && typeof skinview3d !== 'undefined') { try { crViewer = new skinview3d.SkinViewer({ canvas: document.getElementById('cr-3d'), width: 360, height: 480 }); giveItPhysics(crViewer); } catch { } }
         if (crViewer) { try { crViewer.loadSkin(work.toDataURL(), { model: variant === 'slim' ? 'slim' : 'default' }); } catch { } }
       }, 250);
     }

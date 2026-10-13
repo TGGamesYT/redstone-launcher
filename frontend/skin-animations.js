@@ -472,9 +472,9 @@
   // it is turning in. So the pitch is always pulled back toward level, and the
   // harder it is spinning the harder that pull is -- a slow look around stays
   // where you put it, a fast flick levels itself out while it runs down.
-  const LEVEL_PULL = 0.045;     // the pull at full spin
+  const LEVEL_PULL = 0.035;     // the pull at full spin
   const LEVEL_FULL = 0.14;      // radians/frame of yaw that counts as "fast"
-  const LEVEL_DAMP = 0.84;      // heavy enough that it barely overshoots
+  const LEVEL_DAMP = 0.88;      // heavy enough that it barely overshoots
   // Zero when it is not turning, deliberately: looking at the top of a head and
   // letting go has to STAY there, or being able to tilt at all is pointless.
   // Settling back to the front is the homing's job, not this one's.
@@ -485,7 +485,16 @@
   const HOME_DAMP = 0.94;       // <1 leaves overshoot; lower = stiffer
   const HOME_PHI = Math.PI / 2; // level
   const MAX_VEL = 0.35;
-  const SPIN_DAMP = 0.97;       // free-spin decay after a flick
+  // Free-spin decay after a flick, per frame at 60Hz. It was 0.97, which halves
+  // the speed every 0.4s and has the figure standing still inside two and a
+  // half seconds: the levelling finishes in a quarter of a second and the spin
+  // is nearly gone by the time it does, so the two read as one thing and the
+  // flick looked like it had been stopped rather than left to run. They are
+  // separate -- a flick with no lift in it runs down at exactly the same rate
+  // as one that gets levelled -- so what was wrong was only how long it lasts.
+  // At 0.988 a hard flick is still visibly turning when the three and a half
+  // seconds are up and the spring takes it home.
+  const SPIN_DAMP = 0.988;
   const MAX_OMEGA = 14;         // rad/s; past this nothing looks any different
 
   const normAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -517,6 +526,11 @@
     let lastTheta = null, lastPhi = null;
     let homing = false, dragging = false, hovering = false, dead = false;
     let lastW = 0;
+    // When it last came to rest facing forward with nobody touching it, so
+    // whoever schedules gestures can tell "left alone" from "just let go of".
+    // A render that is being turned, hovered, flung or on its way home is not
+    // left alone, and a gesture starting then is the thing that looks wrong.
+    let restingSince = 0;
 
     const stopLoop = () => { if (raf) { cancelAnimationFrame(raf); raf = null; } };
 
@@ -613,6 +627,7 @@
           v.controls.update();
           velTheta = velPhi = 0;
           homing = false;
+          if (!hovering) restingSince = nowMs();
           return;                        // settled
         }
         // A flick that has run out of speed just stops there and waits. It used
@@ -625,6 +640,7 @@
         // figure tipped where the flick left it.
         if (!homing && speed < 0.002 && offP < 0.01) {
           velTheta = velPhi = 0;
+          if (offT < 0.01 && !hovering) restingSince = nowMs();
           // Never stop off-centre with nothing left to bring it back. If the
           // figure is turned and no return is pending, schedule one -- the loop
           // may pause, but the render may not be stranded.
@@ -635,6 +651,7 @@
       raf = requestAnimationFrame(step);
     };
 
+    restingSince = nowMs();          // nothing has touched it yet
     const startLoop = () => { if (!raf && !dead) raf = requestAnimationFrame(step); };
     function armReturn() {
       clearTimeout(idleTimer);
@@ -654,7 +671,7 @@
     // return is right.
     const cancelReturn = () => { clearTimeout(idleTimer); idleTimer = null; };
 
-    const onEnter = () => { hovering = true; cancelReturn(); };
+    const onEnter = () => { hovering = true; restingSince = 0; cancelReturn(); };
     // Not while it is being dragged. The pointer leaves the canvas constantly
     // mid-drag -- the render is a narrow column and a sideways drag runs off it
     // in a few dozen pixels -- and arming the return there started the loop,
@@ -662,7 +679,7 @@
     // the flick when the pointer came up. The drag's own end arms it.
     const onLeave = () => { hovering = false; if (!dragging) armReturn(); };
     const onStart = () => {
-      dragging = true; cancelReturn(); homing = false; stopLoop();
+      dragging = true; restingSince = 0; cancelReturn(); homing = false; stopLoop();
       velTheta = velPhi = 0; lastTheta = lastPhi = null;
     };
     const onChange = () => { if (dragging) sampleDrag(); };
@@ -682,6 +699,9 @@
       // The apparent turn rate, for an animation that wants to read it rather
       // than be told through setSpin.
       rate: () => lastW,
+      // How long it has stood still facing forward with nobody on it, in ms.
+      // 0 while it is being turned, hovered, flung or brought back.
+      restingFor: () => (restingSince ? nowMs() - restingSince : 0),
       // Bring it home now, without waiting.
       home() { cancelReturn(); homing = true; startLoop(); },
       stop() {
@@ -921,6 +941,9 @@
     // Through the conductor, so it eases in and -- the part that was missing --
     // eases back into the idle afterwards instead of freezing on the last frame.
     c.play(clip, { loop: !!loop, immediate: true });
+    // Playing one by hand is still one having been played: whoever schedules
+    // the random ones starts its wait again rather than firing on top of it.
+    try { window.dispatchEvent(new CustomEvent('skin-animation-played', { detail: { name } })); } catch { }
     console.log(`Playing "${name}" (${clip.length}s, ${loop ? 'looping' : 'once'}).`
       + (loop ? ' playerRenderAnimPlay(null) to stop.' : ''));
     return true;

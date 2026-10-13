@@ -477,13 +477,30 @@ the order it is being built in.
       next one fires while the first retracts, round and round. Real textures.
 
 ### K. The skin renders
-- [ ] **Not every skin render has the physics** — the skin editor's does not.
-- [ ] **Stabilising a fling eats its momentum.** It should keep spinning and be
+- [x] **Not every skin render has the physics** — the skin editor's does not.
+      *The three in the editor that are only looked at — the image import, the
+      merge preview and the creator — have it now. The paintable one is
+      deliberately left out: springing back to the front while you are drawing
+      on the back of a head is not help, and a flick carrying on under the
+      brush is worse.*
+- [x] **Stabilising a fling eats its momentum.** It should keep spinning and be
       levelled separately.
-- [ ] **A random animation must not start while the render is being moved.**
+      *They were already separate — a flick with no lift in it runs down at
+      exactly the same rate as one that gets levelled — so what was wrong was
+      how long a flick lasts at all: it halved every 0.4s and was standing
+      still inside two and a half seconds, which is about as long as the
+      levelling takes, so the two read as one thing. A flick is still turning
+      at 1.7 rad/s two seconds later now, and still going when the spring takes
+      it home.*
+- [x] **A random animation must not start while the render is being moved.**
       Only after it has been left alone in the default position for a while, and
       then at random intervals; playing one by hand from devtools resets the
       timer.
+      *Being dragged was the whole test, which let a gesture start on a figure
+      still spinning from a flick, halfway home, or turned to its back and sat
+      on. The physics now says when it last came to rest facing forward with
+      nobody on it, and a gesture wants six seconds of that. One played by hand
+      from devtools starts the wait again.*
 
 ---
 

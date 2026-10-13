@@ -1499,10 +1499,15 @@
       if (!v || v._lifeWired || typeof skinview3d === "undefined") return;
       v._lifeWired = true;
       const S = skinview3d;
-      // A gesture shouldn't start while the model is being turned around. The
-      // camera physics below owns that fact, so it is asked rather than
-      // tracked twice.
-      const beingTurned = () => !!(v._physics && v._physics.dragging);
+      // A gesture shouldn't start while the model is being played with. Being
+      // DRAGGED is not the whole of that: a flick left running, a figure
+      // halfway home or one turned to its back and hovered over are all "in
+      // use", and a wave starting then is the thing that looked wrong. The
+      // camera physics owns when it last came to rest facing forward, so it is
+      // asked rather than tracked twice -- and it has to have been that way
+      // for a while, not merely this instant.
+      const CALM_BEFORE = 6000;
+      const leftAlone = () => !v._physics || v._physics.restingFor() > CALM_BEFORE;
 
       // ONE animation owns the player. skin-animations.js supplies a conductor
       // that idles, eases into a clip when asked, plays it once and eases back
@@ -1526,7 +1531,7 @@
         var playGesture = () => {
           // Don't interrupt someone busy turning the model around, and don't
           // animate a tab nobody is looking at.
-          if (beingTurned() || document.hidden || cond.busy) { scheduleGesture(); return; }
+          if (!leftAlone() || document.hidden || cond.busy) { scheduleGesture(); return; }
           // The conductor holds this until the idle reaches its calm point, so
           // the clip always begins from the same resting arms.
           cond.play(SA.clips[SA.randomName()]);
@@ -1544,7 +1549,7 @@
         let backTimer = null;
         toIdle();
         var playGesture = () => {
-          if (beingTurned() || document.hidden) { scheduleGesture(); return; }
+          if (!leftAlone() || document.hidden) { scheduleGesture(); return; }
           try { v.animation = BUILT_IN_GESTURES[Math.floor(Math.random() * BUILT_IN_GESTURES.length)](); } catch { }
           clearTimeout(backTimer);
           backTimer = setTimeout(() => { toIdle(); scheduleGesture(); }, rand(2600, 5200));
@@ -1552,12 +1557,17 @@
       }
 
       document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleGesture(); });
+      // One played by hand from devtools counts: the wait starts again rather
+      // than a random one landing on top of it.
+      window.addEventListener("skin-animation-played", () => scheduleGesture());
       scheduleGesture();
 
       // ── Weight, and the way back to facing forward ────────────────────────
       // Both of these live in skin-animations.js now: the friend details render
       // needs exactly the same thing and had none of it, and one copy of a
       // spring is enough. Everything about how it behaves is documented there.
+      // `leftAlone` above reads this; it is set up after the scheduler only
+      // because the scheduler asks for it when a gesture is due, never now.
       v._physics = (SA && SA.orbitPhysics) ? SA.orbitPhysics(v) : null;
     }
 
