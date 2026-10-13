@@ -722,7 +722,7 @@ export async function entityLayers(version) {
   const p = (async () => {
     const got = await entityModelsFor(version);
     if (!got) return new Map();
-    try { return await got.em.layers(); } catch (err) { log('icon models: ' + (err && err.message)); return new Map(); }
+    try { return await got.em.layers(); } catch (err) { log('icon models: ' + (err && err.stack || err)); return new Map(); }
   })();
   _layerCache.set(version, p);
   return p;
@@ -1526,8 +1526,37 @@ async function entityTextureFile(stack, name, wantPath, layers) {
 
 
 // ── The version's own icon ──────────────────────────────────────────────────
+// ── Keeping what was drawn ──────────────────────────────────────────────────
+//
+// Both caches are pictures of a model, and a change to how a model is drawn --
+// which is most of what this file is -- makes every one of them wrong. They
+// are keyed by what was drawn, not by how, so the old picture came straight
+// back and a fix looked like it had not landed.
+//
+// So the number below goes into both names. Raise it whenever the renderer or
+// the model reading changes what comes out, and every cached picture stops
+// matching at once; the stale files are swept the first time either cache is
+// used, so the folder does not keep every generation forever.
+const RENDER_GENERATION = 2;
+
 const iconCacheFile = (version) =>
-  path.join(DEPS.dataDir, 'cache', 'version-icons', `${String(version).replace(/[^\w.\-]/g, '_')}.png`);
+  path.join(DEPS.dataDir, 'cache', 'version-icons',
+    `${String(version).replace(/[^\w.\-]/g, '_')}.g${RENDER_GENERATION}.png`);
+
+// Anything from an older generation, dropped once per run.
+const _swept = new Set();
+function sweepOldRenders(dir) {
+  if (_swept.has(dir)) return;
+  _swept.add(dir);
+  const root = path.join(DEPS.dataDir, 'cache', dir);
+  const keep = `.g${RENDER_GENERATION}.png`;
+  fsp.readdir(root).then(names => {
+    for (const n of names) {
+      if (n.endsWith(keep)) continue;
+      fsp.unlink(path.join(root, n)).catch(() => { });
+    }
+  }).catch(() => { /* nothing cached yet */ });
+}
 
 /**
  * What a version's default instance icon should be.
@@ -1541,6 +1570,7 @@ export async function versionIcon({ version, profileId = null }) {
   const r = await VI.resolveVersionIcon(version);
   if (r.kind !== 'model') return r;
 
+  sweepOldRenders('version-icons');
   try {
     const cached = await fsp.readFile(iconCacheFile(version));
     return { ...r, dataUrl: 'data:image/png;base64,' + cached.toString('base64') };
@@ -1600,9 +1630,11 @@ export async function panoramaFromFiles({ profileId, version }) {
 // from disk next time, which is what stops the picker filling in slowly every
 // single time it is opened.
 const thumbFile = (key) =>
-  path.join(DEPS.dataDir, 'cache', 'model-thumbs', String(key).replace(/[^\w.\-]/g, '_').slice(0, 180) + '.png');
+  path.join(DEPS.dataDir, 'cache', 'model-thumbs',
+    String(key).replace(/[^\w.\-]/g, '_').slice(0, 180) + `.g${RENDER_GENERATION}.png`);
 
 export async function thumbGet({ key }) {
+  sweepOldRenders('model-thumbs');
   try {
     const buf = await fsp.readFile(thumbFile(key));
     return 'data:image/png;base64,' + buf.toString('base64');

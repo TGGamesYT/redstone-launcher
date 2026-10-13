@@ -42,6 +42,28 @@ started.
       the layer called `wither`. Measured by surface area instead, a bell's
       fitting is 2% of a block where a wither rose is 60%.*
 
+- [x] **No entity renders at all on 1.20.1 or 1.19.4** (and none below 1.17).
+      *One bad layer took the whole catalogue with it: a ModelLayerLocation
+      whose name the interpreter could not work out threw out of `String()`,
+      and that exception escaped the lot. A location with no name it can read
+      is dropped now, and 1.20.1, 1.19.4 and 1.17.1 all read their catalogues —
+      163, 163 and 154 layers where they had none.
+      Below 1.17 there is nothing to read: the model layer system is what
+      `createRoots` belongs to, and before it every model was built in its own
+      class's constructor. That is a separate job.*
+- [x] **A fix to the renderer does not show, because the picture is cached.**
+      *Both caches -- a version's icon and the picker's thumbnails -- are keyed
+      by WHAT was drawn, never by how. They carry a generation number now, which
+      goes up whenever the drawing changes, and the stale files are swept the
+      first time either is used.*
+- [x] **A slime's back shows through its front.**
+      *A mob is drawn both-sided, because a cutout box is routinely painted on
+      one side only. A cutout is opaque, though, so it never showed what was
+      behind it -- where a see-through one does, and the far side of the
+      slime's gel, writing no depth, landed on top of the face in front of it.
+      A see-through surface is drawn front-side only, which is what the game
+      does with it too.*
+
 ## 0. Round 26
 
 - [x] **A pack with only `panorama_overlay.png` is not offered.** The overlay

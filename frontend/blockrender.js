@@ -465,8 +465,17 @@
           // axolotl's tail and a fish's fins are flat plates with one painted
           // side — so culling the back of that one painted face leaves the leg
           // visible from one direction and simply gone from the other.
-          side: (opts.doubleSide || flat.space === 'entity')
-            ? THREE.DoubleSide : THREE.FrontSide,
+          //
+          // ...except a SEE-THROUGH one. A slime is a solid body inside a
+          // translucent cube, and the cube's own far side, drawn both-sided
+          // and writing no depth, came out over the body in front of it: the
+          // back of the slime on top of its face. The reason for drawing both
+          // sides is that a cutout box is routinely painted on one side only,
+          // and a cutout is opaque -- it never shows what is behind it, so it
+          // never had the problem. The game culls these too.
+          side: (seeThrough && !opts.doubleSide) ? THREE.FrontSide
+            : (opts.doubleSide || flat.space === 'entity')
+              ? THREE.DoubleSide : THREE.FrontSide,
           depthWrite: !seeThrough && !glow,
         });
         if (!map) m.visible = false;      // a texture that could not be read

@@ -130,7 +130,16 @@ class JOpaque {
 // A ModelLayerLocation: "zombie", "creeper/armor", and so on.
 class JLoc {
   constructor(model, layer) { this.model = model; this.layer = layer || 'main'; }
-  toString() { return this.layer === 'main' ? this.model : `${this.model}/${this.layer}`; }
+  // Both halves are whatever the interpreter had when the location was made,
+  // and in lenient mode either can be a value it could not work out. Naming
+  // one of those is nonsense, but it must not be a crash: a single bad
+  // location used to throw out of String() and take the whole catalogue with
+  // it, which is why some versions had no entities at all.
+  toString() {
+    const m = typeof this.model === 'string' ? this.model : '';
+    const l = typeof this.layer === 'string' ? this.layer : 'main';
+    return l === 'main' ? m : `${m}/${l}`;
+  }
 }
 class JMap {
   constructor(entries) { this.entries = entries || []; }
@@ -234,11 +243,16 @@ export class EntityModels {
     let entries = result instanceof JMap ? result.entries : [];
     for (const b of this.builders) if (b.entries.length > entries.length) entries = b.entries;
 
+    let unnamed = 0;
     for (const [k, v] of entries) {
       if (!(k instanceof JLoc) || !(v instanceof JLayer)) continue;
       const name = String(k);
+      // A location the interpreter could not name is not a layer anybody can
+      // ask for, so it is dropped rather than filed under "".
+      if (!name || name.startsWith('/')) { unnamed++; continue; }
       try { out.set(name, { ...flatten(v, poseFor(name)), name }); } catch { /* skip */ }
     }
+    if (unnamed) this.log(`entity models: ${unnamed} layer(s) had no name the interpreter could read`);
     this._layers = out;
     return out;
   }
