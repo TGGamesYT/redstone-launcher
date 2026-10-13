@@ -849,6 +849,13 @@ const OVERLAY_WORDS = new Set([
 // difference. Only a trailing "s" after a letter, so "glass" stays "glass".
 const stem1 = (w) => (/[a-z]{3}s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w);
 const words = (s) => String(s).toLowerCase().split(/[_/]+/).filter(Boolean).map(stem1);
+// Words the game uses interchangeably between a layer's name and its texture's.
+const SAME_AS = {
+  outer: ['outer', 'overlay'],
+  overlay: ['overlay', 'outer'],
+  armor: ['armor', 'armour'],
+  armour: ['armour', 'armor'],
+};
 const sameWords = (a, b) => {
   const A = new Set(words(a)), B = new Set(words(b));
   if (A.size !== B.size) return false;
@@ -909,10 +916,17 @@ async function entityTextureChoices(stack, name, layers) {
 
     // A sub-layer (breeze/eyes) wants the parent's texture with that word on
     // it; the parent itself wants the one without.
+    //
+    // The word the layer uses and the word the file uses are not always the
+    // same one: the game's `bogged/outer` and `stray/outer` are drawn with
+    // bogged_overlay.png and stray_overlay.png. Where they mean the same
+    // thing, either will do -- otherwise the overlay found no texture of its
+    // own and wore the body's, which is why a bogged's clothes and its bones
+    // were the same picture.
     const isOverlay = extra.some(w => OVERLAY_WORDS.has(w));
     if (sub) {
       const subWords = words(sub);
-      if (!subWords.every(w => fw.includes(w))) continue;
+      if (!subWords.every(w => SAME_AS[w] ? SAME_AS[w].some(x => fw.includes(x)) : fw.includes(w))) continue;
       score += 30;
     } else if (isOverlay) {
       continue;                                  // not the entity's own skin

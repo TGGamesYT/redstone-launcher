@@ -179,7 +179,12 @@ stuff" — so the list is in two halves and the first half is done first.
       its model.*
 - [ ] **Minecart variants have no block in them** and are not offered as
       variants.
-- [ ] **The bogged's parts all use one texture.**
+- [x] **The bogged's parts all use one texture.**
+      *The word on the layer and the word on the file are not always the same
+      one: `bogged/outer` is drawn with `bogged_overlay.png`. Where the two
+      mean the same thing either will do, so the clothes find their own
+      picture instead of falling back to the body's. Same for the stray, the
+      drowned and the wither.*
 - [ ] **The wither's armour layer is in the wrong place** — the right texture,
       mapped onto its head.
 - [ ] **A cross model on the second block of a two-block block is turned 45°**,
