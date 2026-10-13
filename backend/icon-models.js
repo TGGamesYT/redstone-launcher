@@ -754,9 +754,10 @@ export async function describeEntity({ profileId, version, name, texture, textur
     // Something it only sometimes wears travels with the model but is not
     // drawn unless asked for -- see SOMETIMES.
     const sometimes = !worn(key.slice(name.length + 1).replace(/[_/]+/g, ' '));
+    const glow = !!(pt && SWIRLS.test(pt.path));
     for (const el of part.elements.filter(mine)) {
       elements.push({
-        ...el, group: key, ...(sometimes ? { over: true } : {}),
+        ...el, group: key, ...(sometimes ? { over: true } : {}), ...(glow ? { glow: true } : {}),
         faces: Object.fromEntries(
           Object.entries(el.faces).map(([d, f]) => [d, { ...f, texture: ref }])),
       });
@@ -789,9 +790,10 @@ export async function describeEntity({ profileId, version, name, texture, textur
     textures[slot] = { url: hit, width: L.texWidth, height: L.texHeight, frames: 1 };
     const ref = '#' + slot;
     slot++;
+    const glow = SWIRLS.test(c.path);
     for (const el of L.elements.filter(mine)) {
       elements.push({
-        ...el, group: key, over: true,
+        ...el, group: key, over: true, ...(glow ? { glow: true } : {}),
         // A hair bigger, or it fights with the body it is lying on.
         from: el.from.map(v => v - OVERLAY_GROW),
         to: el.to.map(v => v + OVERLAY_GROW),
@@ -800,6 +802,15 @@ export async function describeEntity({ profileId, version, name, texture, textur
       });
     }
     overlayGroups.push({ key, label: c.label, off: true });
+  }
+
+  // A minecart's load is a block rather than a layer, so it is fetched and
+  // placed rather than read off the model.
+  const load = await minecartLoad({ profileId, version, name, slot });
+  if (load) {
+    elements.push(...load.elements);
+    Object.assign(textures, load.textures);
+    overlayGroups.push({ key: 'load', label: load.label });
   }
 
   // What it is made of, so whoever is looking at it can switch a part off
@@ -826,15 +837,35 @@ export async function describeEntity({ profileId, version, name, texture, textur
   // front already is the front. A chest turned through it showed its back.
   const inBlock = !!L.blockSpace;
 
+  // The six minecarts are one mesh and one texture and differ only in what
+  // they carry, so they are each other's variants rather than six identical
+  // entries. Nothing else works that way, so nothing else is looked for.
+  const family = CART_FAMILY.test(name)
+    ? [...layers.keys()].filter(k => CART_FAMILY.test(k)).sort()
+    : null;
+  const variants = family && family.length > 1
+    ? family.map(k => ({
+      path: tex0 ? tex0.path : null, label: k.replace(/_/g, ' '), layer: k, key: 'layer:' + k,
+    }))
+    : skins.map(c => ({
+      path: c.path, label: c.label, layer: c.layer || null,
+      key: (c.layer ? c.layer + '|' : '') + c.path,
+    }));
+
   return {
     kind: 'elements', space: inBlock ? 'block' : 'entity', elements, textures,
     rotY: inBlock ? 0 : 180,
     // Which skin this is wearing, and the others it could be: a cow is six
     // textures on one model, a cushion sixteen.
     texture: tex0 ? tex0.path : null,
+    layer: name,
+    // Which entry of `variants` this one is. A texture is not enough on its
+    // own: every minecart wears the same one.
+    variantKey: (variants.find(v => (family ? v.layer === name : v.path === (tex0 && tex0.path)))
+      || variants[0] || {}).key || null,
     // `layer` is set when this skin belongs to a model of its own -- a cold
     // cow is not quite a cow -- so that picking it brings that model too.
-    variants: skins.map(c => ({ path: c.path, label: c.label, layer: c.layer || null })),
+    variants,
     parts: groups.length > 1 ? groups : null,
   };
 }
@@ -1048,6 +1079,101 @@ async function stackTexture(stack, p) {
 // How far an overlay is grown so it does not fight with the body underneath.
 const OVERLAY_GROW = 0.02;
 
+// ── What a minecart is carrying ─────────────────────────────────────────────
+//
+// A chest minecart's model is the plain cart: the chest in it is a BLOCK the
+// game draws inside, from the entity's own block state rather than from any
+// layer. So the cart came out empty and the six of them were six identical
+// carts. The name says which block it is -- strip `_minecart` -- and the
+// game's own placement is three quarters size, turned a quarter, sitting with
+// its base on the cart's floor.
+const MINECART_RE = /^(.+)_minecart$/;
+const CART_FAMILY = /^([a-z0-9_]+_)?minecart$/;
+const CART_SCALE = 0.75;
+// Column-major 4x4s, the shape the renderer takes an element's transform in.
+const m4 = {
+  id: () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+  mul: (a, b) => {
+    const o = new Array(16).fill(0);
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+      let s = 0;
+      for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k];
+      o[c * 4 + r] = s;
+    }
+    return o;
+  },
+  translate: (x, y, z) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1],
+  scale: (s) => [s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1],
+  rot: (axis, rad) => {
+    const c = Math.cos(rad), s = Math.sin(rad);
+    if (axis === 'x') return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1];
+    if (axis === 'z') return [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1];   // y
+  },
+  // A turn about a point rather than about the origin.
+  about: (axis, rad, o) => m4.mul(m4.mul(m4.translate(o[0], o[1], o[2]), m4.rot(axis, rad)),
+    m4.translate(-o[0], -o[1], -o[2])),
+};
+
+/**
+ * The block a minecart carries, as elements in the cart's own space.
+ *
+ * The cart's boxes are the game's entity coordinates with the 6/16 the game
+ * lifts the body by already taken off; the block is drawn in the entity's
+ * coordinates outright. So the placement is the game's -- three quarters
+ * size, a quarter turn, `(displayOffset - 8)/16` up -- with that 6 taken off
+ * again, and an offset of 8, which is the one that stands the block on the
+ * cart's floor.
+ */
+async function minecartLoad({ profileId, version, name, slot }) {
+  const m = MINECART_RE.exec(String(name || ''));
+  if (!m) return null;
+  const block = await describeModel({ profileId, version, id: `minecraft:${m[1]}` });
+  if (!block || block.error || block.kind !== 'elements' || !block.elements.length) return null;
+  // Something drawn in a mob's own space would need its own placement; only a
+  // block goes in a cart.
+  if (block.space === 'entity') return null;
+
+  const s = CART_SCALE;
+  // q -> ( s*q.z - 8s, s*q.y - 6, -s*q.x + 8s ), which is the game's
+  // scale, translate and quarter turn rolled into one.
+  const place = [0, 0, -s, 0, 0, s, 0, 0, s, 0, 0, 0, -8 * s, -6, 8 * s, 1];
+  // The state the block was chosen in carries a turn of its own, about the
+  // middle of the block.
+  const base = block.rotY || block.rotX
+    ? m4.mul(m4.mul(place, m4.about('y', -(block.rotY || 0) * Math.PI / 180, [8, 8, 8])),
+      m4.about('x', -(block.rotX || 0) * Math.PI / 180, [8, 8, 8]))
+    : place;
+
+  const textures = {};
+  const key = (k) => `c${slot}_${k}`;
+  for (const [k, v] of Object.entries(block.textures || {})) if (v) textures[key(k)] = v;
+  const elements = [];
+  for (const el of block.elements) {
+    // An element with a turn of its own -- a hopper's spout, a cross -- keeps
+    // it by having it folded into the matrix, since the renderer takes one or
+    // the other and the matrix is the one that can say all of this.
+    // A block entity -- the chest -- already carries a matrix per box, from
+    // the part tree it hangs off; an ordinary element carries at most a turn.
+    const own = Array.isArray(el.transform) && el.transform.length === 16
+      ? el.transform
+      : (el.rotation && el.rotation.axis && el.rotation.angle
+        ? m4.about(el.rotation.axis, Number(el.rotation.angle) * Math.PI / 180,
+          (el.rotation.origin || [8, 8, 8]).map(Number))
+        : null);
+    const { rotation, ...rest } = el;
+    elements.push({
+      ...rest,
+      group: 'load',
+      transform: own ? m4.mul(base, own) : base,
+      faces: Object.fromEntries(Object.entries(el.faces || {}).map(([d, f]) => [d, {
+        ...f, texture: '#' + key(String(f.texture || '').replace(/^#/, '')),
+      }])),
+    });
+  }
+  return { elements, textures, label: m[1].replace(/_/g, ' ') };
+}
+
 // A mob's layers include things it is only sometimes wearing. A creeper's
 // `armor` is the charge that a lightning strike leaves on it; a drowned's
 // `outer` is its clothes and seaweed, which it always has. Both are extra
@@ -1065,6 +1191,20 @@ const SOMETIMES = new Set([
   'harness', 'decor', 'ropes', 'carpet', 'chest',
 ]);
 const worn = (label) => !String(label).split(/[\s_/]+/).some(w => SOMETIMES.has(w.toLowerCase()));
+
+// The two sheets the game does not draw as a skin.
+//
+// A charged creeper's crackle and the wither's shield are the game's "energy
+// swirl": the texture is scrolled across the mob and added to what is behind
+// it, so it is a glow over the mob rather than paint on it. Neither sheet is
+// unwrapped to the model at all -- wither_armor.png is a scatter of little
+// skull faces over the whole square -- so drawing it as a skin put a skull on
+// the wither's head and called it armour.
+//
+// The game has the same two and no more (its CreeperPowerLayer and
+// WitherArmorLayer, the only two EnergySwirlLayers), and nothing in the assets
+// separates them from an ordinary overlay, so they are named here as well.
+const SWIRLS = /\/(creeper_armor|wither_armor)\.png$/;
 
 async function entityTextureFile(stack, name, wantPath, layers) {
   if (!stack) return null;

@@ -400,14 +400,21 @@
         // centre, so nothing about where they sit decides the order, and
         // whichever went first cut the other away.
         const seeThrough = !!(map && map.userData && map.userData.translucent);
+        // A charged creeper's crackle and the wither's shield are not paint on
+        // the mob: the game scrolls them across it and ADDS them to what is
+        // behind, so they read as a glow. Drawn as a skin, the wither's sheet
+        // of little skull faces lands on its heads, which is what it looked
+        // like. Added instead, it lights the mob up and leaves it recognisable.
+        const glow = !!el.glow;
         const m = new THREE.MeshBasicMaterial({
           map: map || null,
           color: tint,
-          transparent: seeThrough,
+          blending: glow ? THREE.AdditiveBlending : THREE.NormalBlending,
+          transparent: seeThrough || glow,
           // Cutout rather than blending, which is what leaves, grass and glass
           // panes need; without it their transparent corners punch holes in
           // whatever is behind them.
-          alphaTest: seeThrough ? 0 : 0.02,
+          alphaTest: (seeThrough || glow) ? 0 : 0.02,
           // Front faces only for a BLOCK, so it is not see-through. With both
           // sides drawn, glass and leaves showed the INSIDE of their own far
           // faces through their transparent parts, which reads as a wireframe
@@ -425,7 +432,7 @@
           // visible from one direction and simply gone from the other.
           side: (opts.doubleSide || flat.space === 'entity')
             ? THREE.DoubleSide : THREE.FrontSide,
-          depthWrite: !seeThrough,
+          depthWrite: !seeThrough && !glow,
         });
         if (!map) m.visible = false;      // a texture that could not be read
         materials.push(m); disposables.push(m);

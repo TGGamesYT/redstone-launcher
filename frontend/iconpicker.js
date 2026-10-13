@@ -557,13 +557,16 @@
       variantWrap.style.display = list.length > 1 ? '' : 'none';
       if (list.length < 2) return;
       variantSel.innerHTML = '';
+      // A texture path is not a key on its own: every minecart wears the same
+      // one, so the backend names each entry and that is what is picked by.
+      const keyOf = (v) => v.key || v.path;
       for (const v of list) {
         const o = document.createElement('option');
-        o.value = v.path;
-        o.textContent = v.label || v.path.split('/').pop().replace(/\.png$/, '');
+        o.value = keyOf(v);
+        o.textContent = v.label || String(v.path || '').split('/').pop().replace(/\.png$/, '');
         variantSel.appendChild(o);
       }
-      variantSel.value = desc.texture || desc.variantOf || list[0].path;
+      variantSel.value = desc.variantKey || desc.texture || desc.variantOf || keyOf(list[0]);
       variantSel.onchange = async () => {
         // A mob's variants are textures on one model; an item's are whole
         // models -- every trim on a chestplate, every hand position on a
@@ -573,16 +576,17 @@
         // cold chicken has no beak, a warm cow no horns. Those carry the layer
         // they belong to, and it is asked for instead, or the new skin goes on
         // the old shape.
-        const pick = (list || []).find(v => v.path === variantSel.value);
+        const pick = (list || []).find(v => keyOf(v) === variantSel.value);
         const next = info.item && info.item.kind === 'entity'
           ? await ipcRenderer.invoke('model:entity', {
             profileId: opts0.instanceId ?? null, version: opts0.version || null,
             name: (pick && pick.layer) || String(info.item.id).replace(/^entity:/, ''),
-            texture: variantSel.value,
+            texture: (pick && pick.path) || null,
           })
           : await ipcRenderer.invoke('model:describe', {
             profileId: opts0.instanceId ?? null, version: opts0.version || null,
-            id: info.item.id, state: info.state || undefined, variant: variantSel.value,
+            id: info.item.id, state: info.state || undefined,
+            variant: (pick && pick.path) || variantSel.value,
           });
         // The list follows the model: a cold cow's skins are its own.
         if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); paintTint(); showTurn(); redraw(); }

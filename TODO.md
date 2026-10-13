@@ -193,16 +193,30 @@ stuff" — so the list is in two halves and the first half is done first.
       chicken has no beak; the warm cow has no horns.
       *Those variants carry the layer they belong to, and picking one brings
       its model.*
-- [ ] **Minecart variants have no block in them** and are not offered as
+- [x] **Minecart variants have no block in them** and are not offered as
       variants.
+      *The block in a cart is not in the model: the game draws the entity's own
+      block state inside it. The name says which — strip `_minecart` — and it
+      goes in at the game's three quarters size, turned a quarter and standing
+      on the cart's floor. The seven of them are one mesh and one texture, so
+      they are each other's variants now, which needed the variant list to be
+      keyed by name rather than by texture.*
 - [x] **The bogged's parts all use one texture.**
       *The word on the layer and the word on the file are not always the same
       one: `bogged/outer` is drawn with `bogged_overlay.png`. Where the two
       mean the same thing either will do, so the clothes find their own
       picture instead of falling back to the body's. Same for the stray, the
       drowned and the wither.*
-- [ ] **The wither's armour layer is in the wrong place** — the right texture,
+- [x] **The wither's armour layer is in the wrong place** — the right texture,
       mapped onto its head.
+      *It is not a skin. A charged creeper's crackle and the wither's shield
+      are the game's "energy swirl": the sheet is scrolled across the mob and
+      ADDED to what is behind it, and it is not unwrapped to the model at all —
+      wither_armor.png is a scatter of little skull faces over the whole
+      square. Drawn as a skin it painted one on the wither's head; added, it
+      lights the mob up and leaves it recognisable. The game has the same two
+      and no more, and nothing in the assets separates them from an ordinary
+      overlay, so they are named here too.*
 - [ ] **A cross model on the second block of a two-block block is turned 45°**,
       and a two-block block with no upper half draws something there anyway.
 - [x] **The dried ghast's default rotation is wrong**, which matters because it
