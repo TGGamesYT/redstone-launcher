@@ -31,7 +31,7 @@
   <script src="uimodal.js"></script>
   <script src="playerhead.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; }
+    body { margin: 0; overflow: hidden; font-family: Verdana, sans-serif; font-size: 13px; }
     #toolbar .drag-region { flex: 1 1 auto; }
     .ap-wrap { position: fixed; inset: 38px 0 0 0; display: flex; }
 
@@ -40,6 +40,9 @@
     .ap-panels button { display: block; width: 100%; text-align: left; margin: 0 0 6px;
       background: none; border: 1px solid transparent; }
     .ap-panels button.on { background: var(--base-color); }
+    .ap-nav-heading { margin: 0 0 8px 8px; font-size: 10px; opacity: .65; text-transform: uppercase; }
+    .ap-nav-divider { height: 1px; margin: 12px 4px; background: var(--border-dark); }
+    .ap-nav-caption { margin: 12px 8px; font-size: 10px; line-height: 1.5; opacity: .6; }
 
     .ap-list { width: 320px; flex: 0 0 320px; border-right: 1px solid var(--border-dark);
       display: flex; flex-direction: column; box-sizing: border-box; }
@@ -80,6 +83,22 @@
     .ap-form button.bad:hover { border-color: #c2504a; color: #ff9b94; }
     .ap-form .label { font-size: 12px; opacity: 0.7; }
     .ap-empty { opacity: 0.65; padding: 40px 10px; text-align: center; }
+
+    .ap-api-view { display: none; flex: 1; flex-direction: column; min-width: 0; padding: 12px;
+      box-sizing: border-box; background: var(--very-dark); }
+    .ap-api-view.on { display: flex; }
+    .ap-api-toolbar { min-height: 54px; box-sizing: border-box; display: flex; align-items: center; gap: 12px;
+      padding: 0 14px; border: 1px solid var(--border-dark); border-bottom: 0;
+      border-radius: var(--border-radius) var(--border-radius) 0 0; background: var(--secondary-color); }
+    .ap-api-title { flex: 1; min-width: 0; }
+    .ap-api-title strong { display: block; font-size: 13px; }
+    .ap-api-title span { display: block; margin-top: 3px; font-size: 10px; opacity: .65; }
+    .ap-api-action { padding: 7px 11px; margin: 0; border: 1px solid #393b43; border-radius: 8px;
+      background: var(--very-dark); color: var(--text-color); font: inherit; font-size: 11px; cursor: pointer; }
+    .ap-api-action:hover { background: var(--base-color); }
+    .ap-api-frame { display: block; width: 100%; min-height: 0; flex: 1 1 auto; border: 1px solid var(--border-dark);
+      border-radius: 0 0 var(--border-radius) var(--border-radius); background: #fff; }
+    @media (max-width: 760px) { .ap-panels { width: 150px; flex-basis: 150px; } }
   </style>
 </head>
 
@@ -106,6 +125,13 @@
       <div class="ap-rows" id="apRows"><div class="ap-empty">Loading…</div></div>
     </div>
     <div class="ap-detail" id="apDetail"><div class="ap-empty">Pick one on the left.</div></div>
+    <section class="ap-api-view" id="apApiView" aria-label="RedstoneAPI administration">
+      <div class="ap-api-toolbar">
+        <div class="ap-api-title"><strong>Website News Admin</strong><span>RedstoneAPI · Live publishing</span></div>
+        <button class="ap-api-action" id="apApiReload" type="button" title="Reload the administration page">Reload</button>
+      </div>
+      <iframe class="ap-api-frame" id="apApiFrame" src="about:blank" data-src="https://rlscapi.muaves.com/admin" title="RedstoneAPI News administration" referrerpolicy="no-referrer" sandbox="allow-scripts allow-forms allow-same-origin"></iframe>
+    </section>
   </div>
 
   <script>
@@ -123,6 +149,7 @@
     let current = null;    // the row open in the detail pane
     let filter = '';
     let search = '';
+    let showingApi = false;
 
     const call = (op, args) => ipcRenderer.invoke('admin:call', { password: PASSWORD, op, args });
 
@@ -177,14 +204,27 @@
     function paintPanels() {
       const box = document.getElementById('apPanels');
       box.innerHTML = '';
+      box.appendChild(el('div', 'ap-nav-heading', 'Relay tools'));
       for (const p of PANELS) {
-        const b = el('button', panel && panel.id === p.id ? 'on' : '', p.title || p.id);
+        const b = el('button', !showingApi && panel && panel.id === p.id ? 'on' : '', p.title || p.id);
+        b.type = 'button';
         b.onclick = () => open(p);
         box.appendChild(b);
       }
+      box.appendChild(el('div', 'ap-nav-divider'));
+      box.appendChild(el('div', 'ap-nav-heading', 'Website'));
+      const apiButton = el('button', showingApi ? 'on' : '', 'News administration');
+      apiButton.type = 'button';
+      apiButton.onclick = openApiAdmin;
+      box.appendChild(apiButton);
+      box.appendChild(el('p', 'ap-nav-caption', 'Manage live website news using the RedstoneAPI admin page.'));
     }
 
     function open(p) {
+      showingApi = false;
+      document.getElementById('apApiView').classList.remove('on');
+      document.querySelector('.ap-list').style.display = '';
+      document.getElementById('apDetail').style.display = '';
       panel = p;
       rows = [];
       current = null;
@@ -195,6 +235,16 @@
       paintTools();
       note(document.getElementById('apDetail'), 'Pick one on the left.');
       load();
+    }
+
+    function openApiAdmin() {
+      showingApi = true;
+      paintPanels();
+      document.querySelector('.ap-list').style.display = 'none';
+      document.getElementById('apDetail').style.display = 'none';
+      document.getElementById('apApiView').classList.add('on');
+      const frame = document.getElementById('apApiFrame');
+      if (frame.src === 'about:blank') frame.src = frame.dataset.src;
     }
 
     function paintTools() {
@@ -400,7 +450,13 @@
       if (r.refresh || act.refresh) await load();
     }
 
-    document.getElementById('apRefresh').onclick = () => { if (panel) load(); };
+    const reloadApiPage = () => {
+      const frame = document.getElementById('apApiFrame');
+      if (frame.src === 'about:blank') frame.src = frame.dataset.src;
+      else frame.contentWindow.location.reload();
+    };
+    document.getElementById('apApiReload').onclick = reloadApiPage;
+    document.getElementById('apRefresh').onclick = () => { if (showingApi) reloadApiPage(); else if (panel) load(); };
     document.getElementById('apSearch').oninput = (e) => { search = e.target.value; paintRows(); };
   </script>
 </body>
