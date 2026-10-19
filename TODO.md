@@ -9,6 +9,52 @@ started.
 
 ---
 
+## 0. Round 30
+
+- [ ] **The pick-colour tool does not work on the 3D render** in the skin
+      editor.
+- [ ] **The "update all" modal resizes when a changelog opens.** With one item
+      in it, opening the dropdown makes the modal taller and everything moves.
+- [ ] **The new version is red on red** in the "old -> new" line, which is hard
+      to read.
+- [ ] **The changelog dropdown should animate** open and closed rather than
+      appearing instantly.
+- [ ] **A toggle next to each mod** so it can be left out of "update all".
+- [ ] **Some mods take 5-10 seconds to open in Remod**, and freeze the app
+      while they do.
+- [ ] **Dev mods are caught up on every app start and every launch**, even
+      when none of the jars has changed.
+- [x] **The running-instances pop-down has no animation.**
+      *It fades and lifts into place now, and the caret turns with it.*
+- [x] **The progress bar shows beside the status pill as well**, where it
+      belongs only under the instance's name in the pop-down.
+      *A second bar, fed by the same events, sat to the left of the pill. It
+      said what the pop-down already says, and because it grew and shrank with
+      its own text it kept changing the pill's width — which moves the
+      pop-down anchored to it. Gone; the pop-down is the one place progress is
+      shown.*
+- [x] **A row's hover is instant and far too strong a colour.**
+      *It was `--menu-hover-bg`, the sidebar's hover, which is far too much
+      for a row this small. A light wash, eased in.*
+- [x] **The progress bar makes the pop-down change width** as it goes, so it
+      shifts left and right.
+      *Two causes: the pill moving (above), and the panel sizing itself to its
+      content, so "Checking assets" growing into "Downloading files — 5.0 MB
+      of 20.0 MB" moved the whole thing. The panel has a fixed width now and
+      the status line truncates.*
+- [x] **Clicking "N instances" does not open the pop-down while installing.**
+      *Every progress frame rebuilt the pill's contents, so the element under
+      the cursor was replaced between mousedown and click and the click never
+      landed — exactly when you most wanted it. The pill and the rows are
+      built once now and only their text changes.
+      Found with it: a row outlives its action now, so the guard that stops a
+      double click had to be let go of afterwards, or Stop and Cancel worked
+      once per row and never again.*
+- [ ] **A "Run again" item in an instance's three-dot menu**, which launches it
+      whether or not it is already running.
+- [ ] **An instance named `<LOADER> <VERSION>` should be renamed** when its
+      version or its loader is changed.
+
 ## 0. Round 29
 
 Sent while Round 28's section D was being built.

@@ -423,46 +423,20 @@ function updateMaxIcon(isMaximized) {
 ipcRenderer.on("window-maximized", () => updateMaxIcon(true));
 ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
 
-// Global launch progress indicator, shown in the top-right toolbar on every
-// page while an instance is downloading/preparing.
-(function setupToolbarProgress() {
+// The running-instance pill sits here; it lays itself out.
+//
+// There used to be a second progress bar in this spot, to the LEFT of the
+// pill, fed by the same launch-progress events. It said the same thing the
+// pop-down already says under the instance's name, and because it grew and
+// shrank with the text it kept changing the pill's width -- which moves the
+// pop-down anchored to it about while you are reading it. The pop-down is the
+// one place progress is shown now.
+(function setupInstanceSlot() {
   const container = document.getElementById('instance-processes');
   if (!container) return;
-  // Lay the progress bar and the running-instance label out in a single row,
-  // vertically centred — otherwise they stack and drift out of the toolbar.
   container.style.display = 'flex';
   container.style.alignItems = 'center';
   container.style.gap = '10px';
-  let bar = null, label = null, fill = null, hideTimer = null;
-  function ensureBar() {
-    if (bar) return;
-    bar = document.createElement('div');
-    bar.className = 'toolbar-progress';
-    bar.innerHTML = '<span class="tp-label"></span><span class="tp-track"><span class="tp-fill"></span></span>';
-    label = bar.querySelector('.tp-label');
-    fill = bar.querySelector('.tp-fill');
-    container.insertBefore(bar, container.firstChild); // to the LEFT of the running-instance label
-  }
-  ipcRenderer.on('launch-progress', (e, data) => {
-    if (!data) return;
-    if (data.done) {
-      if (bar) {
-        fill.style.width = '100%';
-        clearTimeout(hideTimer);
-        // Remove almost immediately so it doesn't linger after work finishes.
-        hideTimer = setTimeout(() => { if (bar) { bar.remove(); bar = null; } }, 250);
-      }
-      return;
-    }
-    ensureBar();
-    clearTimeout(hideTimer);
-    const pct = data.total ? Math.min(100, Math.round((data.current / data.total) * 100)) : null;
-    fill.style.width = pct === null ? '100%' : pct + '%';
-    let text = data.label || 'Loading';
-    if (pct !== null && !data.bytes) text += ` ${data.current}/${data.total}`;
-    else if (pct !== null) text += ` ${pct}%`;
-    label.textContent = text;
-  });
 })();
 
   ipcRenderer.send("get-players");
@@ -598,10 +572,8 @@ function instanceBarStyle() {
       .ib-pill:hover { background:rgba(255,255,255,0.08); }
       .ib-pill.flat { cursor:default; opacity:0.8; }
       .ib-pill.flat:hover { background:none; }
-      .ib-pill img { width:18px; height:18px; flex:0 0 18px; border-radius:4px; object-fit:contain;
-        image-rendering:pixelated; }
       .ib-pill .t { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .ib-pill .caret { font-size:16px; opacity:0.7; line-height:1; transition:transform 0.15s ease; }
+      .ib-pill .caret { font-size:16px; opacity:0.7; line-height:1; transition:transform 0.18s ease; }
       .ib-wrap.open .ib-pill .caret { transform:rotate(180deg); }
       /* A dot that says something is happening without taking any room. */
       .ib-dot { width:7px; height:7px; border-radius:50%; flex:0 0 7px; background:#49c96d; }
@@ -613,27 +585,39 @@ function instanceBarStyle() {
          and an absolutely-positioned panel was clipped to the height of the
          toolbar by it. Fixed escapes that -- overflow does not clip a fixed
          descendant -- and the toolbar makes no containing block to trap it.
-         Its position is set from the pill's rect when it opens. */
-      .ib-panel { position:fixed; z-index:7200; display:none;
-        min-width:290px; max-width:380px; max-height:60vh; overflow-y:auto; padding:6px;
-        background:var(--menu-bg); border:1px solid var(--border-dark);
-        border-radius:var(--border-radius); box-shadow:0 12px 34px rgba(0,0,0,0.55); }
-      .ib-wrap.open .ib-panel { display:block; }
+         Its position is set from the pill's rect when it opens.
+         The width is FIXED too: it used to size to its content, so the status
+         line growing from "Checking assets" to "Downloading files - 5.0 MB of
+         20.0 MB" made the whole panel shuffle about while you were reading it. */
+      .ib-panel { position:fixed; z-index:7200; width:330px; max-height:60vh; overflow-y:auto;
+        padding:6px; background:var(--menu-bg); border:1px solid var(--border-dark);
+        border-radius:var(--border-radius); box-shadow:0 12px 34px rgba(0,0,0,0.55);
+        opacity:0; visibility:hidden; transform:translateY(-6px) scale(0.985);
+        transform-origin:top right; pointer-events:none;
+        transition:opacity 0.16s ease, transform 0.16s ease, visibility 0s linear 0.16s; }
+      .ib-wrap.open .ib-panel { opacity:1; visibility:visible; transform:none; pointer-events:auto;
+        transition:opacity 0.16s ease, transform 0.16s ease, visibility 0s; }
       .ib-row { display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:var(--border-radius);
-        cursor:pointer; }
-      .ib-row:hover { background:var(--menu-hover-bg); }
+        cursor:pointer; transition:background 0.15s ease; }
+      /* --menu-hover-bg is the sidebar's hover, which is far too strong for a
+         row this small; a light wash reads as "this one" without shouting. */
+      .ib-row:hover { background:rgba(255,255,255,0.07); }
       .ib-row img { width:28px; height:28px; flex:0 0 28px; border-radius:6px; object-fit:contain;
         background:var(--very-dark); image-rendering:pixelated; }
       .ib-row .n { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .ib-row .s { font-size:11px; opacity:0.72; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .ib-row .mid { flex:1; min-width:0; }
-      /* A thread of a progress bar under the status line, only while there is
-         progress to show. */
-      .ib-bar { height:2px; margin-top:4px; border-radius:2px; background:rgba(255,255,255,0.14); overflow:hidden; }
+      /* A thread of a progress bar under the status line. It lives HERE and
+         nowhere else: there used to be a second one beside the pill in the
+         toolbar, which both said the same thing twice and changed the pill's
+         width as it went, moving the panel anchored to it. */
+      .ib-bar { height:2px; margin-top:4px; border-radius:2px; background:rgba(255,255,255,0.14);
+        overflow:hidden; display:none; }
+      .ib-bar.on { display:block; }
       .ib-bar > i { display:block; height:100%; background:var(--base-color); transition:width 0.2s ease; }
       .ib-act { flex:0 0 auto; border:none; background:rgba(255,0,0,0.55); color:var(--text-color);
         border-radius:var(--border-radius); padding:5px 8px; cursor:pointer; font:inherit; font-size:11px;
-        user-select:none; white-space:nowrap; }
+        user-select:none; white-space:nowrap; transition:background 0.15s ease; }
       .ib-act:hover { background:rgba(255,0,0,0.8); }`;
     document.head.appendChild(s);
 }
@@ -649,12 +633,26 @@ async function createInstanceInfoBar(container) {
     pill.className = "ib-pill";
     pill.setAttribute("role", "button");
     pill.tabIndex = 0;
+    // The pill's parts are made ONCE and only their text changes afterwards.
+    // Rebuilding them on every progress frame meant the element under the
+    // cursor was replaced between mousedown and click, so the click never
+    // landed -- which is why the pop-down would not open while something was
+    // downloading, exactly when you most wanted it.
+    const dot = document.createElement("span");
+    const pillText = document.createElement("span");
+    pillText.className = "t";
+    const caret = document.createElement("i");
+    caret.className = "material-icons caret";
+    caret.textContent = "expand_more";
+    pill.append(dot, pillText, caret);
+
     const panel = document.createElement("div");
     panel.className = "ib-panel";
     wrap.append(pill, panel);
     container.appendChild(wrap);
 
     const names = new Map();        // id -> profile name, so a refresh is not a round trip
+    const rows = new Map();         // id -> the row's elements, kept across repaints
     let entries = [];
     let open = false;
 
@@ -665,8 +663,8 @@ async function createInstanceInfoBar(container) {
     };
     const setOpen = (v) => {
         open = !!v && entries.length > 0;
+        if (open) place();              // before the class, so it animates from the right spot
         wrap.classList.toggle("open", open);
-        if (open) place();
     };
     window.addEventListener("resize", () => { if (open) place(); });
     pill.onclick = (e) => { e.stopPropagation(); if (entries.length) setOpen(!open); };
@@ -679,9 +677,6 @@ async function createInstanceInfoBar(container) {
         try { const p = await ipcRenderer.invoke("get-profile-by-id", id); n = p && p.name; } catch { /* gone */ }
         names.set(id, n || String(id));
         return names.get(id);
-    }
-    async function profileOf(id) {
-        try { return await ipcRenderer.invoke("get-profile-by-id", id); } catch { return null; }
     }
 
     // Bytes read nothing as "3847201/9120033"; files read fine as "1200/4000".
@@ -721,84 +716,96 @@ async function createInstanceInfoBar(container) {
         return out;
     }
 
+    // Make a row, once. Everything after that is setRow().
+    function makeRow(id) {
+        const row = document.createElement("div");
+        row.className = "ib-row";
+        const img = document.createElement("img");
+        img.alt = "";
+        const mid = document.createElement("div");
+        mid.className = "mid";
+        const n = document.createElement("div");
+        n.className = "n";
+        const st = document.createElement("div");
+        st.className = "s";
+        const bar = document.createElement("div");
+        bar.className = "ib-bar";
+        const fill = document.createElement("i");
+        bar.appendChild(fill);
+        mid.append(n, st, bar);
+        const act = document.createElement("div");   // see the pill above
+        act.className = "ib-act";
+        act.setAttribute("role", "button");
+        act.tabIndex = 0;
+        row.append(img, mid, act);
+        row.onclick = () => {
+            setOpen(false);
+            window.location.href = `instances.html?i=${encodeURIComponent(id)}`;
+        };
+        ipcRenderer.invoke("get-profile-by-id", id).then(p => {
+            if (p && window.instanceIconInto) window.instanceIconInto(img, p);
+            else img.style.visibility = "hidden";
+        }).catch(() => { img.style.visibility = "hidden"; });
+        return { row, n, st, bar, fill, act };
+    }
+
+    function setRow(r, e, name) {
+        if (r.n.textContent !== name) r.n.textContent = name;
+        const status = statusOf(e);
+        if (r.st.textContent !== status) r.st.textContent = status;
+        const frac = fractionOf(e);
+        r.bar.classList.toggle("on", frac != null);
+        if (frac != null) r.fill.style.width = (frac * 100).toFixed(1) + "%";
+        const label = e.starting ? "Cancel" : "Stop";
+        if (r.act.textContent !== label) r.act.textContent = label;
+        r.act.onclick = async (ev) => {
+            ev.stopPropagation();
+            if (r.act.dataset.busy) return;
+            r.act.dataset.busy = "1";
+            r.act.style.opacity = "0.5";
+            try {
+                if (e.starting) await ipcRenderer.invoke("cancel-launch", { profileId: e.id });
+                else await ipcRenderer.invoke("stop-instance-by-pid", e.pid);
+            } catch { /* it may have gone by itself */ }
+            // The row outlives the action now -- an instance that is cancelled
+            // while starting and then launched again is the SAME row -- so the
+            // guard has to be let go of, or its button would work once and
+            // never again.
+            delete r.act.dataset.busy;
+            r.act.style.opacity = "";
+            await refreshInstances(true);
+        };
+    }
+
     async function paint() {
         // ── the pill ──
-        pill.innerHTML = "";
-        pill.classList.toggle("flat", entries.length === 0);
-        if (!entries.length) {
-            setOpen(false);
-            const t = document.createElement("span");
-            t.className = "t";
-            t.textContent = "No running instances";
-            pill.appendChild(t);
-        } else {
-            const dot = document.createElement("span");
-            dot.className = "ib-dot" + (entries.some(e => e.starting) ? " busy" : "");
-            const t = document.createElement("span");
-            t.className = "t";
-            t.textContent = entries.length === 1
-                ? await nameOf(entries[0].id)
+        const any = entries.length > 0;
+        pill.classList.toggle("flat", !any);
+        dot.className = any ? ("ib-dot" + (entries.some(e => e.starting) ? " busy" : "")) : "";
+        dot.style.display = any ? "" : "none";
+        caret.style.display = any ? "" : "none";
+        const text = !any ? "No running instances"
+            : entries.length === 1 ? await nameOf(entries[0].id)
                 : `${entries.length} instances`;
-            const caret = document.createElement("i");
-            caret.className = "material-icons caret";
-            caret.textContent = "expand_more";
-            pill.append(dot, t, caret);
-            if (entries.length === 1) pill.title = statusOf(entries[0]);
-        }
+        if (pillText.textContent !== text) pillText.textContent = text;
+        pill.title = entries.length === 1 ? statusOf(entries[0]) : "";
+        if (!any) setOpen(false);
 
         // ── the panel ──
-        panel.innerHTML = "";
+        const live = new Set(entries.map(e => e.id));
+        for (const [id, r] of rows) {
+            if (!live.has(id)) { r.row.remove(); rows.delete(id); }
+        }
+        let prev = null;
         for (const e of entries) {
-            const row = document.createElement("div");
-            row.className = "ib-row";
-            const img = document.createElement("img");
-            img.alt = "";
-            const mid = document.createElement("div");
-            mid.className = "mid";
-            const n = document.createElement("div");
-            n.className = "n";
-            n.textContent = await nameOf(e.id);
-            const s = document.createElement("div");
-            s.className = "s";
-            s.textContent = statusOf(e);
-            mid.append(n, s);
-            const frac = fractionOf(e);
-            if (frac != null) {
-                const bar = document.createElement("div");
-                bar.className = "ib-bar";
-                const fill = document.createElement("i");
-                fill.style.width = (frac * 100).toFixed(1) + "%";
-                bar.appendChild(fill);
-                mid.appendChild(bar);
-            }
-            const act = document.createElement("div");   // see the pill above
-            act.className = "ib-act";
-            act.setAttribute("role", "button");
-            act.tabIndex = 0;
-            act.textContent = e.starting ? "Cancel" : "Stop";
-            act.onclick = async (ev) => {
-                ev.stopPropagation();
-                if (act.dataset.busy) return;
-                act.dataset.busy = "1";
-                act.style.opacity = "0.5";
-                try {
-                    if (e.starting) await ipcRenderer.invoke("cancel-launch", { profileId: e.id });
-                    else await ipcRenderer.invoke("stop-instance-by-pid", e.pid);
-                } catch { /* it may have gone by itself */ }
-                await refreshInstances(true);
-            };
-            row.append(img, mid, act);
-            row.onclick = () => {
-                setOpen(false);
-                window.location.href = `instances.html?i=${encodeURIComponent(e.id)}`;
-            };
-            panel.appendChild(row);
-            // The icon is looked up after the row exists, so one slow profile
-            // does not hold the whole list up.
-            profileOf(e.id).then(p => {
-                if (p && window.instanceIconInto) window.instanceIconInto(img, p);
-                else img.style.visibility = "hidden";
-            }).catch(() => { img.style.visibility = "hidden"; });
+            let r = rows.get(e.id);
+            if (!r) { r = makeRow(e.id); rows.set(e.id, r); }
+            setRow(r, e, await nameOf(e.id));
+            // Keep the panel in the order the entries are in, without
+            // detaching a row that is already where it should be.
+            const want = prev ? prev.nextSibling : panel.firstChild;
+            if (r.row !== want) panel.insertBefore(r.row, want);
+            prev = r.row;
         }
     }
 
@@ -806,13 +813,11 @@ async function createInstanceInfoBar(container) {
         x.id === b[i].id && x.pid === b[i].pid && x.starting === b[i].starting
         && x.label === b[i].label && x.current === b[i].current && x.total === b[i].total);
 
-    let painting = null;
     async function refreshInstances(force) {
         const next = await read();
         if (!force && same(next, entries)) return;
         entries = next;
-        painting = paint();
-        await painting;
+        await paint();
     }
 
     // Progress frames arrive as they happen, so the status line keeps up
