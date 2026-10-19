@@ -50,6 +50,10 @@
       sessionStorage.setItem(STORE, JSON.stringify(remembered));
     } catch { /* full or unavailable; it only costs a lookup */ }
   };
+  // The kept render's path on disk, as the main process spells it. Turning a
+  // file: URL back into a path is platform-dependent string surgery, and the
+  // answer is already to hand.
+  const filePaths = new Map();
 
   async function get(version, instanceId = null) {
     const v = String(version || '').trim();
@@ -66,7 +70,7 @@
       // reads directly and keeps in its own cache, so coming back to a page
       // costs nothing. (`dataUrl` is still honoured for an older main
       // process, and for anything that hands the bytes over itself.)
-      if (r.fileUrl) return r.fileUrl;
+      if (r.fileUrl) { if (r.file) filePaths.set(key, r.file); return r.fileUrl; }
       if (r.dataUrl) return r.dataUrl;
       if (r.kind !== 'model' || !r.draw) return FALLBACK[r.kind] || FALLBACK.release;
       if (!window.BlockRender) return FALLBACK.release;
@@ -86,9 +90,21 @@
   /** What an instance on this version should start with, as a stored icon. */
   async function forNewInstance(version, instanceId = null) {
     const url = await get(version, instanceId);
-    // A bundled fallback is a path, not data; an instance icon has to be
-    // self-contained because it ends up in serverinfo.json and in shortcuts.
+    // A bundled fallback is a path and a kept render is a file: URL; an
+    // instance icon has to be self-contained, because it ends up in
+    // serverinfo.json and in desktop shortcuts.
     if (!url || url.startsWith('data:')) return url;
+    // A kept render is read by the main process rather than fetched here:
+    // Chromium will not fetch the file scheme from a page, so asking for the
+    // bytes that way would quietly answer nothing and the instance would be
+    // made with no icon at all.
+    const onDisk = filePaths.get(`${String(version || '').trim()}|${instanceId ?? ''}`);
+    if (onDisk) {
+      try {
+        const data = await ipcRenderer.invoke('icon:dataUrl', { filePath: onDisk });
+        if (data) return data;
+      } catch { /* fall through to the fetch below */ }
+    }
     try {
       const blob = await (await fetch(url)).blob();
       return await new Promise((res, rej) => {
