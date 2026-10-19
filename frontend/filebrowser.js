@@ -101,6 +101,9 @@
       }
 
       container.querySelector('.fb-explorer').onclick = () => {
+        // A caller whose root is not an instance or a server folder (Remod's
+        // unpacked workspace) says how to open its own.
+        if (opts.openFolder) { opts.openFolder(curDir); return; }
         if (chan === 'client-fs') ipcRenderer.send('open-instance-folder', { profileId: idVal, sub: curDir });
         else ipcRenderer.send('open-folder', { id: idVal, isClient: false, sub: curDir });
       };

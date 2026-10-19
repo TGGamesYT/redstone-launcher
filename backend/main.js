@@ -18,6 +18,7 @@ import serverManager from './serverManager.js';
 import upnp from './upnp.js';
 import relayClient from './relayClient.js';
 import fileManager from './fileManager.js';
+import remod from './remod.js';
 import shortcuts from './shortcuts.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
@@ -3420,6 +3421,141 @@ ipcMain.handle("server-fs:read-nbt", (event, { name, path: rel }) => readNbtAt(s
 ipcMain.handle("server-fs:write-nbt", (event, { name, path: rel, json, gzip, type }) => writeNbtAt(serverRoot(name), rel, json, gzip, type));
 ipcMain.handle("client-fs:read-nbt", (event, { id, path: rel }) => readNbtAt(clientRoot(id), rel));
 ipcMain.handle("client-fs:write-nbt", (event, { id, path: rel, json, gzip, type }) => writeNbtAt(clientRoot(id), rel, json, gzip, type));
+
+// ── Remod: editing an installed mod jar or resource pack ───────────────────
+//
+// A mod's declared name, description, version, authors and icon live inside
+// the archive, in whichever manifest its loader reads, so changing them means
+// unpacking it, editing that manifest and packing it back up in exactly the
+// same shape. The unpacked copy sits in a workspace under remod/ until Save,
+// which is also what "Edit assets" browses: the file browser is pointed at
+// the workspace through its own channel, so it needs no new code at all.
+const remodRoot = () => path.join(dataDir, "remod");
+const remodSessions = new Map();   // ticket -> { dir, archive, format, type, id, tab, filename }
+const remodDir = (ticket) => {
+  const s = remodSessions.get(String(ticket));
+  return s ? path.join(s.dir, "files") : path.join(remodRoot(), "__none__");
+};
+
+// Where an installed mod / pack / shader lives, for either kind of target.
+function contentPath(type, id, tab, filename) {
+  const dir = type === "server"
+    ? path.join(dataDir, "servers", String(id), tab || "mods")
+    : path.join(dataDir, "client", String(id), tab || "mods");
+  const full = path.join(dir, filename || "");
+  // A crafted filename must not reach out of the folder.
+  if (!filename || path.dirname(full) !== dir) return null;
+  return full;
+}
+
+ipcMain.handle("remod:open", async (event, { type, id, tab, filename }) => {
+  try {
+    const archive = contentPath(type, id, tab, filename);
+    if (!archive || !fs.existsSync(archive)) return { error: "That file is no longer there" };
+    const ticket = crypto.randomUUID();
+    const dir = path.join(remodRoot(), ticket);
+    const files = path.join(dir, "files");
+    const { dirs } = remod.unpack(archive, files);
+    const found = remod.detectFormat(files);
+    const info = remod.readFields(files, found);
+    const icon = remod.readIcon(files, found);
+    remodSessions.set(ticket, { dir, archive, format: found, type, id, tab, filename, dirs });
+    return {
+      ticket, filename,
+      // Not every archive declares anything: a shader pack is a zip of glsl
+      // and there is no manifest to edit. Renaming it and editing its files
+      // still works, so it opens anyway, just without the fields.
+      kind: (found && found.kind) || "file",
+      format: (found && found.id) || null,
+      manifest: (found && found.file) || null,
+      fields: info.fields, supports: info.supports,
+      icon: icon ? icon.dataUrl : null, iconPath: icon ? icon.path : null,
+    };
+  } catch (e) { return { error: e.message }; }
+});
+
+ipcMain.handle("remod:set-icon", async (event, { ticket, dataUrl }) => {
+  const s = remodSessions.get(String(ticket));
+  if (!s) return { error: "That edit is no longer open" };
+  try {
+    const b64 = String(dataUrl || "").replace(/^data:image\/[\w+.-]+;base64,/, "");
+    if (!b64) return { error: "No picture" };
+    // Through sharp, so whatever the picker hands over (a jpeg, a cropped
+    // canvas) lands in the archive as the PNG every manifest expects.
+    const png = await sharp(Buffer.from(b64, "base64")).png().toBuffer();
+    const r = remod.writeIcon(path.join(s.dir, "files"), s.format, png);
+    if (r && r.error) return r;
+    const icon = remod.readIcon(path.join(s.dir, "files"), s.format);
+    return { success: true, path: r.path, icon: icon ? icon.dataUrl : null };
+  } catch (e) { return { error: e.message }; }
+});
+
+// Write the fields back, re-zip in the same structure, and put the archive
+// where it belongs — under a new name if one was asked for.
+ipcMain.handle("remod:save", async (event, { ticket, fields, filename }) => {
+  const s = remodSessions.get(String(ticket));
+  if (!s) return { error: "That edit is no longer open" };
+  const files = path.join(s.dir, "files");
+  try {
+    if (fields && Object.keys(fields).length) {
+      const r = remod.writeFields(files, s.format, fields);
+      if (r && r.error) return r;
+    }
+    // A rename keeps whatever .disabled suffix the file had: that suffix is
+    // how the launcher stores "switched off", not part of the name.
+    const wasOff = /\.disabled$/i.test(s.filename);
+    let want = String(filename || s.filename).replace(/\.disabled$/i, "").trim();
+    if (!want || /[\\/]/.test(want) || want === "." || want === "..") return { error: "That is not a file name" };
+    const dest = contentPath(s.type, s.id, s.tab, want + (wasOff ? ".disabled" : ""));
+    if (!dest) return { error: "That is not a file name" };
+    if (dest !== s.archive && fs.existsSync(dest)) return { error: "There is already a file called that" };
+
+    remod.repack(files, s.archive, { dirs: s.dirs });
+    let finalName = s.filename;
+    if (dest !== s.archive) {
+      fs.renameSync(s.archive, dest);
+      finalName = path.basename(dest);
+      // options.txt lists an enabled resource pack by file name, so a rename
+      // that did not reach it would switch the pack off.
+      if (s.type !== "server" && s.tab === "resourcepacks") {
+        const was = "file/" + s.filename, now = "file/" + finalName;
+        const packs = readEnabledResourcePacks(s.id);
+        if (packs.includes(was)) writeEnabledResourcePacks(s.id, packs.map(p => (p === was ? now : p)));
+      }
+    }
+    fs.rmSync(s.dir, { recursive: true, force: true });
+    remodSessions.delete(String(ticket));
+    return { success: true, filename: finalName };
+  } catch (e) { return { error: e.message }; }
+});
+
+ipcMain.handle("remod:cancel", (event, { ticket }) => {
+  const s = remodSessions.get(String(ticket));
+  if (!s) return { success: true };
+  try { fs.rmSync(s.dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  remodSessions.delete(String(ticket));
+  return { success: true };
+});
+
+ipcMain.handle("remod:open-folder", (event, { ticket, sub }) => {
+  const s = remodSessions.get(String(ticket));
+  if (!s) return { error: "That edit is no longer open" };
+  const p = fileManager.safePath(path.join(s.dir, "files"), sub || "");
+  if (p) shell.openPath(p);
+  return { success: true };
+});
+
+// The same file-browser backend as an instance's Files tab, rooted at the
+// workspace instead.
+ipcMain.handle("remod-fs:list", (event, { id, path: rel }) => fileManager.listFiles(remodDir(id), rel));
+ipcMain.handle("remod-fs:read", (event, { id, path: rel }) => fileManager.readFile(remodDir(id), rel));
+ipcMain.handle("remod-fs:write", (event, { id, path: rel, text }) => fileManager.writeFile(remodDir(id), rel, text));
+ipcMain.handle("remod-fs:delete", (event, { id, path: rel }) => fileManager.deleteFile(remodDir(id), rel));
+ipcMain.handle("remod-fs:mkdir", (event, { id, path: rel, folder }) => fileManager.newFolder(remodDir(id), rel, folder));
+ipcMain.handle("remod-fs:newfile", (event, { id, path: rel, file }) => fileManager.newFile(remodDir(id), rel, file));
+ipcMain.handle("remod-fs:copy", (event, { id, path: rel }) => fileManager.copyEntry(remodDir(id), rel));
+ipcMain.handle("remod-fs:read-nbt", (event, { id, path: rel }) => readNbtAt(remodDir(id), rel));
+ipcMain.handle("remod-fs:write-nbt", (event, { id, path: rel, json, gzip, type }) => writeNbtAt(remodDir(id), rel, json, gzip, type));
 
 // ── Server resource packs (ordered) + merge-and-host through the relay ──
 // A server keeps an ordered list of .zip packs in servers/<name>/resourcepacks.

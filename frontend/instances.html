@@ -2502,7 +2502,7 @@
 
         // Card for an installed mod/resourcepack/shader with enable/disable +
         // update controls. `refresh` re-renders the tab after a change.
-        function createContentCard(p, tabName, refresh, running, devMods) {
+        function createContentCard(p, tabName, refresh, running, devMods, devOn) {
           const li = document.createElement("li");
           li.className = "profile-item";
           if (p.disabled) li.style.opacity = "0.45";
@@ -2627,6 +2627,25 @@
               window.location.href = "modrinth_project.html";
             };
             actions.appendChild(ver);
+          }
+
+          // Remod: edit what the file itself declares — its name, description,
+          // version, icon — and its assets. Developer mode only, and only for
+          // something that is actually an archive.
+          if (devOn && /\.(jar|zip)(\.disabled)?$/i.test(p.filename || "")) {
+            const ed = document.createElement("button");
+            ed.className = "card-action-btn";
+            ed.innerHTML = `<i class="material-icons">edit</i>`;
+            ed.disabled = !!running;
+            ed.title = running ? "Close the game to change this" : "Edit this file (Remod)";
+            ed.onclick = (e) => {
+              e.stopPropagation();
+              window.Remod.open({
+                type: "instance", id: profile.id, tab: tabName, filename: p.filename,
+                onSaved: () => refresh(),
+              });
+            };
+            actions.appendChild(ed);
           }
 
           // Delete: remove the file from the instance.
@@ -3105,6 +3124,9 @@
                 if (tabName === "mods") devState = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id });
                 if (!ensureStillActive()) return;
                 const devMods = (devState && devState.mods) || [];
+                // Developer mode puts a Remod (edit) button on every archive.
+                const devOn = !!(await ipcRenderer.invoke("get-setting", "devMode"));
+                if (!ensureStillActive()) return;
 
                 let lastPainted = [];
                 const buildBar = () => {
@@ -3176,7 +3198,7 @@
                   // Registered dev mods are surfaced ON their real mod card (not as a
                   // separate row): the card whose file is <modId>-dev.jar is tagged
                   // "(devmod)" and gets the change-folder / change-version controls.
-                  for (const p of items) ul.appendChild(createContentCard(p, tabName, renderContentTab, running, devMods));
+                  for (const p of items) ul.appendChild(createContentCard(p, tabName, renderContentTab, running, devMods, devOn));
                   tabContent.appendChild(ul);
                   tabContent.scrollTop = keepScroll;   // a refresh shouldn't jump to the top
                   if (window.fitHeights) window.fitHeights();
@@ -3959,6 +3981,7 @@
 
   <script src="filetree.js"></script>
   <script src="filebrowser.js"></script>
+  <script src="remod.js"></script>
   <script src="fitheight.js"></script>
   <script src="modpack-install.js"></script>
   <script src="newinstance.js"></script>

@@ -1037,9 +1037,11 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       if (!selectedServer) return;
       // Dev mods: the enable toggle shows only with global Developer mode on; the
       // Manage button shows only when THIS server has dev mods enabled.
+      // Developer mode also puts a Remod (edit) button on every jar below.
+      const devOn = !!(await ipcRenderer.invoke('get-setting', 'devMode'));
       const wrap = $('srvDevModsWrap'), enableCb = $('srvDevModsEnable'), manageBtn = $('srvDevMods');
       if (wrap && enableCb && manageBtn) {
-        const dev = await ipcRenderer.invoke('get-setting', 'devMode');
+        const dev = devOn;
         wrap.style.display = dev ? 'flex' : 'none';
         const dm = await ipcRenderer.invoke('devmod:get', { type: 'server', id: selectedServer.name });
         enableCb.checked = !!(dm && dm.enabled);
@@ -1120,6 +1122,21 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
             loadServerMods();
           };
           li.appendChild(upBtn);
+        }
+        // Remod: edit what the jar itself declares, and its assets. Developer
+        // mode only — `dev` was read at the top of this function.
+        if (devOn) {
+          const ed = document.createElement('button');
+          ed.innerHTML = '<i class="material-icons">edit</i>';
+          ed.title = 'Edit this file (Remod)';
+          ed.onclick = (ev) => {
+            ev.stopPropagation();
+            window.Remod.open({
+              type: 'server', id: selectedServer.name, tab: 'mods', filename: e.name,
+              onSaved: () => loadServerMods(),
+            });
+          };
+          li.appendChild(ed);
         }
         const del = document.createElement('button');
         del.innerHTML = '<i class="material-icons">delete</i>';
@@ -1363,6 +1380,10 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
     updatePresence('Managing servers');
   </script>
   <script src="filetree.js"></script>
+  <!-- This page has its own inline files explorer; FileBrowser is here for
+       Remod's "Edit assets", which mounts it on the unpacked archive. -->
+  <script src="filebrowser.js"></script>
+  <script src="remod.js"></script>
   <script src="iconpicker.js"></script>
   <script src="fitheight.js"></script>
   <script src="modpack-install.js"></script>

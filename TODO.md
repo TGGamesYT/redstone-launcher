@@ -9,6 +9,23 @@ started.
 
 ---
 
+## 0. Round 29
+
+Sent while Round 28's section D was being built.
+
+- [ ] **"Update all" should ask first.** A modal listing the mods that would be
+      updated, each one's changelog shown when it is clicked.
+- [ ] **An instance getting ready to launch should show in the status bar**
+      top-right, on every page, the same way a running one does — downloading
+      or checking counts as running for this.
+- [ ] **That status bar's menu should be a proper pop-down**, not the dropdown
+      that only appears when more than one instance is running: each entry says
+      what the instance is doing, and clicking it opens that instance.
+- [ ] **The custom-setup finalize page scrolls.** Its content is slightly
+      taller than the room it has, so it becomes scrollable for a few pixels.
+- [ ] **Cancel in finalize's "more settings" goes back to the first modal** of
+      the creation flow rather than back to finalize.
+
 ## 0. Round 28
 
 Asked for in one batch, with "write a todo and do everything".
@@ -130,11 +147,39 @@ Asked for in one batch, with "write a todo and do everything".
       as switching the mod back on. A disabled jar's mod id was never read
       either: the lookup stripped `.disabled` off the path first and asked
       about a file that does not exist.*
-- [ ] **Remod.** With developer mode on, an Edit button on a mod jar or a
+- [x] **Remod.** With developer mode on, an Edit button on a mod jar or a
       resource pack: its declared name, description, version and icon (and a
       pack's description and icon), the file's name, and an "Edit assets"
       button that unpacks it into the in-launcher file browser. Save re-zips it
       in the SAME structure so it still works.
+      *None of that is launcher metadata — it is declared inside the archive,
+      in whichever manifest the loader reads — so the file is unpacked into a
+      workspace, that manifest is edited, and the workspace is packed back up.
+      Six manifests: `fabric.mod.json`, `quilt.mod.json`, Forge's and
+      NeoForge's `mods.toml`, the old `mcmod.info`, a plugin's `plugin.yml`
+      and a pack's `pack.mcmeta`. Each one is offered exactly the fields it
+      actually holds, so a resource pack is asked for a description and a
+      picture and not for a version no pack format reads. The TOML ones are
+      edited as text rather than parsed and re-emitted — a mods.toml is
+      hand-written, with comments and an order its author chose — and the edit
+      is confined to the first `[[mods]]` block, because `version` means
+      something else in a `[[dependencies]]` one.
+      "Edit assets" is the launcher's own file browser, pointed at the
+      unpacked copy, so editing a JSON in a tree or adding and deleting files
+      works on a mod's insides with no new code. Nothing touches the installed
+      file until Save; closing the dialog throws the workspace away.
+      Packing back up reproduces the archive: every path relative to the root,
+      forward slashes, no wrapper folder, and a folder entry wherever the
+      original had one — which an unpacked folder cannot tell you, so the list
+      is carried across from the unpack. The new zip is written beside its
+      destination and moved into place, so a failure halfway through leaves
+      the installed mod alone. Verified on the real test mod and test pack:
+      every entry comes back byte-identical bar the manifest that was edited,
+      and the mod still indexes and flattens exactly as it did.
+      Renaming is there too, and it keeps the `.disabled` suffix out of it —
+      that suffix is how the launcher stores "switched off", not part of the
+      name — and a renamed resource pack is renamed in `options.txt` with it,
+      or it would have switched itself off.*
 
 ## 0. Round 27
 
