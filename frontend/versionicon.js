@@ -12,8 +12,10 @@
  *   await VersionIcon.get(v, instanceId)   -> the same, with that instance's
  *                                             packs and mods in the picture
  *
- * Drawing happens once per version: the main process keeps the PNG, so every
- * instance made on that version afterwards costs a single read.
+ * Drawing happens once per version: the main process keeps the PNG and hands
+ * back a file: URL to it afterwards, so a second look costs nothing at all --
+ * no drawing, nothing sent between the processes, and the window's own cache
+ * holds the picture across pages.
  */
 (function () {
   if (window.VersionIcon) return;
@@ -29,18 +31,43 @@
   };
 
   const pending = new Map();
+  // What each version resolved to, kept for the session so going back to a
+  // page does not ask the main process all over again. sessionStorage rather
+  // than memory: every page change is a new window, and the answer -- a file:
+  // URL or a bundled path -- is a short string that does not go stale while
+  // the launcher is open.
+  const STORE = 'versionIconUrls';
+  const remembered = (() => {
+    try { return JSON.parse(sessionStorage.getItem(STORE) || '{}') || {}; }
+    catch { return {}; }
+  })();
+  const remember = (key, url) => {
+    try {
+      // Only a reference. A data: URL is the whole picture and has no
+      // business in a 5 MB store.
+      if (!url || url.startsWith('data:')) return;
+      remembered[key] = url;
+      sessionStorage.setItem(STORE, JSON.stringify(remembered));
+    } catch { /* full or unavailable; it only costs a lookup */ }
+  };
 
   async function get(version, instanceId = null) {
     const v = String(version || '').trim();
     if (!v || !ipcRenderer) return null;
     const key = `${v}|${instanceId ?? ''}`;
     if (pending.has(key)) return pending.get(key);
+    if (remembered[key]) return remembered[key];
     const p = (async () => {
       let r;
       try { r = await ipcRenderer.invoke('icon:versionIcon', { version: v, profileId: instanceId }); }
       catch { return null; }
       if (!r) return null;
-      if (r.dataUrl) return r.dataUrl;                     // drawn before
+      // Drawn before: a file: URL to the picture on disk, which the window
+      // reads directly and keeps in its own cache, so coming back to a page
+      // costs nothing. (`dataUrl` is still honoured for an older main
+      // process, and for anything that hands the bytes over itself.)
+      if (r.fileUrl) return r.fileUrl;
+      if (r.dataUrl) return r.dataUrl;
       if (r.kind !== 'model' || !r.draw) return FALLBACK[r.kind] || FALLBACK.release;
       if (!window.BlockRender) return FALLBACK.release;
       const d = r.draw;
@@ -52,6 +79,7 @@
       return url;
     })();
     pending.set(key, p);
+    p.then(url => remember(key, url)).catch(() => { });
     return p;
   }
 

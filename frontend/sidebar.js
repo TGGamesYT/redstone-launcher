@@ -565,8 +565,19 @@ function instanceBarStyle() {
     const s = document.createElement("style");
     s.id = "ib-style";
     s.textContent = `
-      .ib-wrap { position:relative; display:flex; align-items:center; gap:8px; }
-      .ib-pill { display:flex; align-items:center; gap:8px; padding:5px 8px; border:none; cursor:pointer;
+      .ib-wrap { position:relative; display:flex; flex-direction:column; align-items:stretch; gap:0; }
+      /* The whole of what is going on, under the pill: just the bar, because
+         what it is doing is already written inside the pop-down. Two pixels,
+         so the toolbar's height does not change when it appears. */
+      .ib-progress { height:2px; margin:0 8px; border-radius:2px; background:rgba(255,255,255,0.14);
+        overflow:hidden; display:none; }
+      .ib-progress.on { display:block; }
+      .ib-progress > i { display:block; height:100%; width:0; background:var(--base-color);
+        transition:width 0.2s ease; }
+      /* Indeterminate: something is happening but not how much of it. */
+      .ib-progress.guess > i { width:35%; animation:ib-slide 1.1s ease-in-out infinite; }
+      @keyframes ib-slide { 0% { margin-left:-35%; } 100% { margin-left:100%; } }
+      .ib-pill { display:flex; align-items:center; gap:8px; padding:5px 8px 3px; border:none; cursor:pointer;
         background:none; color:var(--text-color); font:inherit; border-radius:var(--border-radius);
         max-width:260px; transition:background 0.15s ease; user-select:none; }
       .ib-pill:hover { background:rgba(255,255,255,0.08); }
@@ -646,9 +657,14 @@ async function createInstanceInfoBar(container) {
     caret.textContent = "expand_more";
     pill.append(dot, pillText, caret);
 
+    const progress = document.createElement("div");
+    progress.className = "ib-progress";
+    const progressFill = document.createElement("i");
+    progress.appendChild(progressFill);
+
     const panel = document.createElement("div");
     panel.className = "ib-panel";
-    wrap.append(pill, panel);
+    wrap.append(pill, progress, panel);
     container.appendChild(wrap);
 
     const names = new Map();        // id -> profile name, so a refresh is not a round trip
@@ -657,7 +673,9 @@ async function createInstanceInfoBar(container) {
     let open = false;
 
     const place = () => {
-        const r = pill.getBoundingClientRect();
+        // The whole widget, so the panel clears the progress bar under the
+        // pill rather than opening over it.
+        const r = wrap.getBoundingClientRect();
         panel.style.top = (r.bottom + 6) + "px";
         panel.style.right = Math.max(6, window.innerWidth - r.right) + "px";
     };
@@ -790,6 +808,15 @@ async function createInstanceInfoBar(container) {
         if (pillText.textContent !== text) pillText.textContent = text;
         pill.title = entries.length === 1 ? statusOf(entries[0]) : "";
         if (!any) setOpen(false);
+
+        // One bar for everything starting at once: the furthest along, since
+        // that is the one about to finish. No text -- the pop-down says what
+        // each of them is doing.
+        const busy = entries.filter(e => e.starting);
+        const fracs = busy.map(fractionOf).filter(f => f != null);
+        progress.classList.toggle("on", busy.length > 0);
+        progress.classList.toggle("guess", busy.length > 0 && !fracs.length);
+        if (fracs.length) progressFill.style.width = (Math.max(...fracs) * 100).toFixed(1) + "%";
 
         // ── the panel ──
         const live = new Set(entries.map(e => e.id));

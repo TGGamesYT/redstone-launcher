@@ -9,6 +9,39 @@ started.
 
 ---
 
+## 0. Round 31
+
+- [x] **wide -> slim -> wide does not give back the original pixels**, and the
+      conversion should only happen if the arm parts that get stretched were
+      modified.
+      *Narrowing an arm THROWS A COLUMN AWAY — that is what making it narrower
+      is — so widening cannot invent it again: it repeats an edge, and what
+      comes back is not what went in. The arms are remembered as they were in
+      each model now, and going back to a model you have already been in puts
+      those pixels back rather than converting. Converting is for when the
+      arms were actually worked on in the other model, where there is
+      something new to carry across — which is exactly the rule asked for.
+      Only the four arm boxes are remembered and compared, so painting
+      anywhere else neither blocks the restore nor gets undone by it.*
+- [x] **The colour-shift dialog should take typed numbers**, not only sliders.
+      *A number box beside each slider, each driving the other. A shift is
+      often a round figure somebody already has in mind, and finding 30
+      degrees of hue by dragging is a nuisance.*
+- [x] **The loading bar should show under the "X instances" pill too** — the
+      bar only, not the text.
+      *Two pixels under the pill, so the toolbar's height does not change when
+      it appears. The furthest along of whatever is starting, since that is
+      the one about to finish, and an indeterminate sweep when there is no
+      figure to show. What each one is doing stays in the pop-down.*
+- [x] **Version icons are re-rendered every time the launcher opens.**
+      *The drawing WAS kept — the second ask takes a millisecond where the
+      first takes seven seconds — but the answer was the picture itself, sent
+      back as base64, so every list of instances shipped its icons across
+      between the processes and decoded them again on every page. The answer
+      is a file: URL now: the window reads the PNG straight off disk and keeps
+      it in its own cache. Which version resolved to which URL is remembered
+      for the session as well, so a page revisit does not even ask.*
+
 ## 0. Round 30
 
 - [x] **The pick-colour tool does not work on the 3D render** in the skin

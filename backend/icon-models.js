@@ -21,6 +21,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import * as MA from './model-assets.js';
 import * as VI from './version-icons.js';
 import { EntityModels } from './entity-models.js';
@@ -1671,8 +1672,14 @@ export async function versionIcon({ version, profileId = null }) {
 
   sweepOldRenders('version-icons');
   try {
-    const cached = await fsp.readFile(iconCacheFile(version));
-    return { ...r, dataUrl: 'data:image/png;base64,' + cached.toString('base64') };
+    const f = iconCacheFile(version);
+    await fsp.access(f);
+    // A file: URL rather than the bytes. The picture is already on disk and
+    // the window can read it straight off, so the second time a page wants it
+    // nothing crosses between the processes and the browser has it cached --
+    // where sending it back as base64 meant every list of instances shipped
+    // its icons over again, and decoded them again, on every page.
+    return { ...r, fileUrl: pathToFileURL(f).href, file: f };
   } catch { /* not rendered yet */ }
 
   const id = r.modelKind === 'item'

@@ -80,6 +80,13 @@
     .ed-row label { flex: 0 0 auto; opacity: 0.85; }
     .ed-row input[type=range] { flex: 1; margin: 0; }
     .ed-row input[type=color] { width: 42px; height: 30px; padding: 0; border: none; background: none; cursor: pointer; }
+    /* The number beside a slider, typed into directly. Narrow enough that the
+       slider still has the room, wide enough for "-180". */
+    .ed-row input.sc-num { flex: 0 0 auto; width: 52px; margin: 0; padding: 3px 5px; font-size: 11px;
+      text-align: right; background: var(--very-dark); color: var(--text-color);
+      border: 1px solid var(--border-dark); border-radius: var(--border-radius);
+      font-family: var(--text-font); }
+    .ed-row .sc-unit { flex: 0 0 auto; width: 10px; font-size: 11px; opacity: 0.7; }
     .ed-seg { display: flex; gap: 6px; }
     .ed-seg button { flex: 1; background: var(--menu-bg); border: 2px solid var(--border-dark); border-radius: var(--border-radius); color: var(--text-color); cursor: pointer; padding: 6px 0; font-size: 12px; }
     .ed-seg button.active { background: var(--base-color); border-color: var(--text-color); }
@@ -1540,10 +1547,10 @@
       const ov = document.createElement('div'); ov.className = 'ed-modal-overlay'; ov.style.display = 'flex'; ov.style.zIndex = 6500;
       const box = document.createElement('div'); box.className = 'ed-modal'; box.style.width = '360px';
       box.innerHTML = `<div class="ed-modal-head"><h3 style="margin:0;">Shift the selection's colours</h3></div>
-        <div class="ed-row"><label style="width:74px;">Hue</label><input type="range" id="sc-h" min="-180" max="180" value="0"><span id="sc-hv" style="width:38px;font-size:11px;">0°</span></div>
-        <div class="ed-row"><label style="width:74px;">Saturation</label><input type="range" id="sc-s" min="-100" max="100" value="0"><span id="sc-sv" style="width:38px;font-size:11px;">0</span></div>
-        <div class="ed-row"><label style="width:74px;">Brightness</label><input type="range" id="sc-l" min="-100" max="100" value="0"><span id="sc-lv" style="width:38px;font-size:11px;">0</span></div>
-        <div class="ed-row" style="margin-top:10px;"><label style="width:74px;">Tint</label><input type="color" id="sc-t" value="#ff0000"><input type="range" id="sc-ta" min="0" max="100" value="0" style="flex:1;"><span id="sc-tav" style="width:38px;font-size:11px;">0%</span></div>
+        <div class="ed-row"><label style="width:74px;">Hue</label><input type="range" id="sc-h" min="-180" max="180" value="0"><input type="number" class="sc-num" id="sc-hv" min="-180" max="180" step="1" value="0"><span class="sc-unit">°</span></div>
+        <div class="ed-row"><label style="width:74px;">Saturation</label><input type="range" id="sc-s" min="-100" max="100" value="0"><input type="number" class="sc-num" id="sc-sv" min="-100" max="100" step="1" value="0"><span class="sc-unit"></span></div>
+        <div class="ed-row"><label style="width:74px;">Brightness</label><input type="range" id="sc-l" min="-100" max="100" value="0"><input type="number" class="sc-num" id="sc-lv" min="-100" max="100" step="1" value="0"><span class="sc-unit"></span></div>
+        <div class="ed-row" style="margin-top:10px;"><label style="width:74px;">Tint</label><input type="color" id="sc-t" value="#ff0000"><input type="range" id="sc-ta" min="0" max="100" value="0" style="flex:1;"><input type="number" class="sc-num" id="sc-tav" min="0" max="100" step="1" value="0"><span class="sc-unit">%</span></div>
         <div class="ed-btn-row" style="margin-top:14px;"><button class="ed-btn primary" id="sc-ok">Apply</button><button class="ed-btn" id="sc-cancel">Cancel</button></div>`;
       ov.appendChild(box); document.body.appendChild(ov);
       const q = (id) => box.querySelector(id);
@@ -1551,17 +1558,34 @@
         hue: +q('#sc-h').value, sat: +q('#sc-s').value, light: +q('#sc-l').value,
         tint: q('#sc-t').value, tintAmount: +q('#sc-ta').value,
       });
+      // The number beside each slider is the slider: a shift is often a round
+      // figure somebody already has in mind -- 30 degrees of hue, -10 of
+      // brightness -- and finding that by dragging is a nuisance.
+      const PAIRS = [['#sc-h', '#sc-hv'], ['#sc-s', '#sc-sv'], ['#sc-l', '#sc-lv'], ['#sc-ta', '#sc-tav']];
+      const clampTo = (el, v) => Math.max(+el.min, Math.min(+el.max, v));
       // Preview by restoring the original pixels and re-applying every time, so
       // dragging a slider back and forth doesn't compound.
       const preview = () => {
-        const o = read();
-        q('#sc-hv').textContent = o.hue + '°'; q('#sc-sv').textContent = o.sat;
-        q('#sc-lv').textContent = o.light; q('#sc-tav').textContent = o.tintAmount + '%';
+        for (const [slider, num] of PAIRS) {
+          if (document.activeElement !== q(num)) q(num).value = q(slider).value;
+        }
         dctx().putImageData(before, 0, 0);
-        applyColourShift(o);
+        applyColourShift(read());
         compose(); render(); liveUpdate();
       };
       ['#sc-h', '#sc-s', '#sc-l', '#sc-t', '#sc-ta'].forEach(id => { q(id).oninput = preview; });
+      for (const [slider, num] of PAIRS) {
+        q(num).oninput = () => {
+          // An empty or half-typed box is somebody mid-edit, not a value.
+          if (q(num).value === '' || q(num).value === '-') return;
+          q(slider).value = String(clampTo(q(slider), +q(num).value));
+          preview();
+        };
+        // Put a number that was out of range, or never finished, back to what
+        // the slider actually is.
+        q(num).onblur = () => { q(num).value = q(slider).value; };
+        q(num).onkeydown = (e) => { if (e.key === 'Enter') q(num).blur(); };
+      }
       const close = (commit) => {
         const o = read();
         dctx().putImageData(before, 0, 0);      // back to the real pixels
@@ -1862,14 +1886,78 @@
       // pixels are currently laid out for, or undoing would put the old arms
       // back under the new label.
       if (changing) pushUndo();
+      const from = variant;
       variant = v;
       document.getElementById('ed-variant-classic').classList.toggle('active', v === 'classic');
       document.getElementById('ed-variant-slim').classList.toggle('active', v === 'slim');
-      if (changing) await convertLayersTo(v);
+      if (changing) {
+        armMemory[from] = captureArms();        // how this model looked, to come back to
+        // Untouched since arriving here, and we have been in the other model
+        // before? Then put those arms back, exactly. Otherwise convert: there
+        // is work in these arms that has to come across.
+        const putBack = armArrival && armsUnchangedSince(armArrival) && restoreArms(armMemory[v]);
+        if (putBack) { compose(); render(); liveUpdate(); }
+        else await convertLayersTo(v);
+        armArrival = captureArms();
+      } else {
+        // Being told what a skin IS, rather than changing it: a freshly
+        // opened skin has nothing to remember, and last skin's arms must not
+        // be put onto it.
+        forgetArms();
+      }
       buildFaces();      // arm faces are narrower for slim
       renderOverlay();
       update3D(true);
     }
+
+    // ── Remembering the arms, so a model change can be undone exactly ──────
+    //
+    // Converting wide to slim THROWS A COLUMN AWAY -- that is what making an
+    // arm narrower is -- so converting back cannot invent it again: it widens
+    // by repeating an edge, and the skin you get is not the skin you started
+    // with. So the arms are remembered as they were in each model, and going
+    // back to a model you have already been in puts those pixels back instead
+    // of converting. Converting is for when the arms were actually WORKED ON
+    // in the other model, where there is something new to carry across.
+    //
+    // Only the four arm boxes, because they are the only thing a model change
+    // touches: everything else painted meanwhile stays exactly as it is.
+    const ARM_BOXES = [[40, 16], [40, 32], [32, 48], [48, 48]];
+    let armMemory = {};      // variant -> Map(layer id -> the four boxes)
+    let armArrival = null;   // the arms as they were on arriving in `variant`
+
+    function captureArms() {
+      const out = new Map();
+      for (const l of layers) out.set(l.id, ARM_BOXES.map(([x, y]) => l.ctx.getImageData(x, y, 16, 16)));
+      return out;
+    }
+    // Are the arms still what they were when this was taken? Compared pixel
+    // for pixel rather than hashed: a wrong answer here silently restores the
+    // wrong arms, which is worse than the work of checking 4 KB a layer.
+    function armsUnchangedSince(mem) {
+      if (!mem || mem.size !== layers.length) return false;   // a layer came or went
+      for (const l of layers) {
+        const boxes = mem.get(l.id);
+        if (!boxes) return false;
+        for (let i = 0; i < ARM_BOXES.length; i++) {
+          const [x, y] = ARM_BOXES[i];
+          const now = l.ctx.getImageData(x, y, 16, 16).data, was = boxes[i].data;
+          if (now.length !== was.length) return false;
+          for (let k = 0; k < now.length; k++) if (now[k] !== was[k]) return false;
+        }
+      }
+      return true;
+    }
+    function restoreArms(mem) {
+      if (!mem || mem.size !== layers.length) return false;
+      for (const l of layers) if (!mem.has(l.id)) return false;
+      for (const l of layers) {
+        const boxes = mem.get(l.id);
+        ARM_BOXES.forEach(([x, y], i) => l.ctx.putImageData(boxes[i], x, y));
+      }
+      return true;
+    }
+    const forgetArms = () => { armMemory = {}; armArrival = null; };
 
     // Every layer moves, not just the flattened image: converting only `work`
     // would leave the stack holding the old arms, and the next compose() would
