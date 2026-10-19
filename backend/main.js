@@ -3452,6 +3452,39 @@ ipcMain.handle("client-fs:write-nbt", (event, { id, path: rel, json, gzip, type 
 // same shape. The unpacked copy sits in a workspace under remod/ until Save,
 // which is also what "Edit assets" browses: the file browser is pointed at
 // the workspace through its own channel, so it needs no new code at all.
+// Zip work for Remod, run in a utilityProcess. AdmZip is synchronous and a
+// mod of any size took five to ten seconds to unpack, with every window in
+// the launcher frozen for the whole of it.
+function remodJob(job) {
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = utilityProcess.fork(
+        path.join(app.getAppPath(), "backend", "remod-worker.js"),
+        [], { serviceName: "remod-zip" });
+    } catch (err) { reject(err); return; }
+    let settled = false;
+    const done = (fn, v) => {
+      if (settled) return;
+      settled = true;
+      try { worker.kill(); } catch { /* already gone */ }
+      fn(v);
+    };
+    // A jar that will not open should not hold the dialog open forever.
+    const timer = setTimeout(() => done(reject, new Error("that file took too long to open")), 2 * 60 * 1000);
+    worker.on("message", (m) => {
+      clearTimeout(timer);
+      if (m && m.ok) done(resolve, m);
+      else done(reject, new Error((m && m.error) || "the worker said nothing useful"));
+    });
+    worker.on("exit", (code) => {
+      clearTimeout(timer);
+      done(reject, new Error(`the remod worker exited (${code})`));
+    });
+    worker.postMessage(job);
+  });
+}
+
 const remodRoot = () => path.join(dataDir, "remod");
 const remodSessions = new Map();   // ticket -> { dir, archive, format, type, id, tab, filename }
 const remodDir = (ticket) => {
@@ -3477,7 +3510,7 @@ ipcMain.handle("remod:open", async (event, { type, id, tab, filename }) => {
     const ticket = crypto.randomUUID();
     const dir = path.join(remodRoot(), ticket);
     const files = path.join(dir, "files");
-    const { dirs } = remod.unpack(archive, files);
+    const { dirs } = await remodJob({ type: "unpack", archive, dest: files });
     const found = remod.detectFormat(files);
     const info = remod.readFields(files, found);
     const icon = remod.readIcon(files, found);
@@ -3532,7 +3565,7 @@ ipcMain.handle("remod:save", async (event, { ticket, fields, filename }) => {
     if (!dest) return { error: "That is not a file name" };
     if (dest !== s.archive && fs.existsSync(dest)) return { error: "There is already a file called that" };
 
-    remod.repack(files, s.archive, { dirs: s.dirs });
+    await remodJob({ type: "repack", dir: files, archive: s.archive, dirs: s.dirs });
     let finalName = s.filename;
     if (dest !== s.archive) {
       fs.renameSync(s.archive, dest);
@@ -9474,8 +9507,12 @@ async function swapDevMod(type, id, modId, folder, pinnedJar) {
     const destName = `${modId}-dev.jar`;
     const off = clearDevModJars(tgt.modsDir, destName, modId, info);
     const dest = destName + (off ? ".disabled" : "");
+    // Taken BEFORE the copy: a build that is still being written would be
+    // stamped as whatever it happened to be mid-write otherwise, and the next
+    // catch-up would think the finished one was already in.
+    const from = buildStamp(jar);
     fs.copyFileSync(jar, path.join(tgt.modsDir, dest));
-    return { success: true, jar: path.basename(jar), dest, disabled: off };
+    return { success: true, jar: path.basename(jar), dest, disabled: off, from };
   } catch (e) { return { success: false, error: e.message }; }
 }
 
@@ -9502,6 +9539,7 @@ function startDevWatch(type, id) {
           // watcher was set up.
           const cur = ((loadDevModsStore()[devModKey(type, id)] || {}).mods || []).find(x => x.folder === m.folder) || m;
           const r = await swapDevMod(type, id, m.modId, m.folder, cur.pinnedJar);
+          if (r.success) rememberDevBuild(type, id, m.folder, r.from);
           if (r.success && type === "instance") broadcastLog(id, `[dev-mod] swapped ${m.modId} -> ${r.jar}`);
           else if (r.success) devtoolsLog(`[dev-mod] ${type} ${id}: swapped ${m.modId} -> ${r.jar}`);
         }, 700); // debounce — a build writes several files
@@ -9515,16 +9553,62 @@ function startDevWatch(type, id) {
 // watcher only sees changes while the launcher is RUNNING, so a mod rebuilt while
 // it was closed would otherwise stay stale — this catches up at startup and again
 // right before each launch.
+// What a build was when it was last copied in, so the catch-up can tell
+// whether there is anything to do. Comparing the two FILES instead cannot:
+// a copy has the same size by definition, and its timestamp is the moment it
+// was made, which for a small jar can be the same millisecond the build was
+// written -- so a rebuild would read as already in place.
+const buildStamp = (file) => {
+  try { const st = fs.statSync(file); return `${path.basename(file)}|${st.size}|${Math.round(st.mtimeMs)}`; }
+  catch { return null; }
+};
+
+// Is this build already where it belongs? Only when it is the one that was
+// copied, unchanged since, and the copy is still in the instance. A rebuild,
+// a different jar pinned, or a mod deleted out of the instance all fail that
+// and get copied again.
+function devModInPlace(type, id, modId, src, had) {
+  if (!had) return false;
+  const now = buildStamp(src);
+  if (!now || now !== had) return false;
+  const dir = devModTarget(type, id).modsDir;
+  const dest = path.join(dir, `${modId}-dev.jar`);
+  return fs.existsSync(dest) || fs.existsSync(dest + ".disabled");
+}
+
 async function syncDevMods(type, id) {
   const entry = loadDevModsStore()[devModKey(type, id)];
   if (!entry || !entry.enabled || !Array.isArray(entry.mods)) return;
   for (const m of entry.mods) {
     if (!m.folder || !m.modId) continue;
     try {
+      // The catch-up runs at startup AND before every launch, and it used to
+      // copy the jar again whatever had happened -- which meant waiting for
+      // the file to settle first, up to six seconds a mod, for nothing.
+      const src = (m.pinnedJar && fs.existsSync(path.join(m.folder, m.pinnedJar)))
+        ? path.join(m.folder, m.pinnedJar)
+        : newestJar(m.folder);
+      if (src && devModInPlace(type, id, m.modId, src, m.builtFrom)) continue;
       const r = await swapDevMod(type, id, m.modId, m.folder, m.pinnedJar);
-      if (r && r.success) devtoolsLog(`[dev-mod] ${type} ${id}: caught up ${m.modId} -> ${r.jar}`);
+      if (r && r.success) {
+        devtoolsLog(`[dev-mod] ${type} ${id}: caught up ${m.modId} -> ${r.jar}`);
+        rememberDevBuild(type, id, m.folder, r.from);
+      }
     } catch (e) { devtoolsLog("[dev-mod] catch-up failed:", e.message); }
   }
+}
+
+// Note which build is in the instance now, so the next catch-up can tell
+// there is nothing to do.
+function rememberDevBuild(type, id, folder, stamp) {
+  if (!stamp) return;
+  try {
+    const store = loadDevModsStore(); const k = devModKey(type, id);
+    const m = store[k] && Array.isArray(store[k].mods) ? store[k].mods.find(x => x.folder === folder) : null;
+    if (!m || m.builtFrom === stamp) return;
+    m.builtFrom = stamp;
+    saveDevModsStore(store);
+  } catch { /* a note that cannot be written only costs one extra copy */ }
 }
 function startAllDevWatchers() {
   const store = loadDevModsStore();
@@ -9559,6 +9643,7 @@ ipcMain.handle("devmod:add", (event, { type, id, folder, modId }) => {
   store[k].mods.push({ folder, modId });
   saveDevModsStore(store);
   const swap = swapDevMod(type, id, modId, folder);
+  Promise.resolve(swap).then(r => { if (r && r.success) rememberDevBuild(type, id, folder, r.from); }).catch(() => { });
   startDevWatch(type, id);
   return { success: true, mods: store[k].mods, swap };
 });
@@ -9583,13 +9668,15 @@ ipcMain.handle("devmod:swapTo", (event, { type, id, modId, folder, jar }) => {
     // Picking a build is not the same as switching the mod back on.
     const off = clearDevModJars(tgt.modsDir, destName, modId, info);
     const dest = destName + (off ? ".disabled" : "");
+    const from = buildStamp(src);
     fs.copyFileSync(src, path.join(tgt.modsDir, dest));
     // Remember the choice, or the next rebuild/refresh/startup would put the
-    // newest jar back and the pick would look like it never happened.
+    // newest jar back and the pick would look like it never happened -- and
+    // which build is in, so the next catch-up knows there is nothing to do.
     const store = loadDevModsStore(); const k = devModKey(type, id);
     if (store[k] && Array.isArray(store[k].mods)) {
       const m = store[k].mods.find(x => x.folder === folder);
-      if (m) { m.pinnedJar = jar; saveDevModsStore(store); }
+      if (m) { m.pinnedJar = jar; m.builtFrom = from; saveDevModsStore(store); }
     }
     return { success: true, dest, pinnedJar: jar, disabled: off };
   } catch (e) { return { error: e.message }; }
@@ -9603,6 +9690,7 @@ ipcMain.handle("devmod:unpin", async (event, { type, id, folder }) => {
   delete m.pinnedJar;
   saveDevModsStore(store);
   const r = await swapDevMod(type, id, m.modId, m.folder);
+  if (r && r.success) rememberDevBuild(type, id, m.folder, r.from);
   return r && r.success ? { success: true, dest: r.dest } : { error: (r && r.error) || "Swap failed" };
 });
 ipcMain.handle("devmod:remove", (event, { type, id, folder }) => {

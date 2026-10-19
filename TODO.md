@@ -31,10 +31,22 @@ started.
       *A tick per row, all on to begin with. The button says how many it would
       do and goes dead at none, and the dialog hands back the mods still
       ticked rather than a yes or no, so the caller updates what came back.*
-- [ ] **Some mods take 5-10 seconds to open in Remod**, and freeze the app
+- [x] **Some mods take 5-10 seconds to open in Remod**, and freeze the app
       while they do.
-- [ ] **Dev mods are caught up on every app start and every launch**, even
+      *AdmZip is synchronous, and that unpacking was happening on the main
+      process's one thread, so every window in the launcher was frozen for the
+      whole of it. Unpacking and packing both run in a utilityProcess now, the
+      same way a launch and the default-skin extraction already do.*
+- [x] **Dev mods are caught up on every app start and every launch**, even
       when none of the jars has changed.
+      *The catch-up copied the jar again whatever had happened — which meant
+      first waiting for the file to settle, up to six seconds a mod, for
+      nothing. It notes which build it copied and skips when that build is
+      unchanged and still in the instance. Comparing the two FILES cannot
+      answer this: a copy has the same size by definition, and its timestamp
+      is the moment it was made, which for a small jar can be the same
+      millisecond the build was written — so a rebuild would read as already
+      in place.*
 - [x] **The running-instances pop-down has no animation.**
       *It fades and lifts into place now, and the caret turns with it.*
 - [x] **The progress bar shows beside the status pill as well**, where it
