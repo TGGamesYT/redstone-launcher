@@ -128,9 +128,37 @@ Asked for in one batch, with "write a todo and do everything".
       fast". It halves in about half a second now and is done inside two and a
       half: a flick that carries, rather than one that is stopped dead or one
       that never stops.*
-- [ ] **Slim and wide do not convert.** Changing which one a skin is leaves the
+- [x] **Slim and wide do not convert.** Changing which one a skin is leaves the
       pixels where they were.
-- [ ] **Saving a skin from the editor as slim does not save it as slim.**
+      *The two models are not the same picture with a different label on it: a
+      slim arm is three pixels across where a wide one is four, so the arm's
+      faces sit at different places in the texture and the front and back
+      faces are a column narrower. Setting the label and leaving the pixels
+      alone left the arms unwrapped from the wrong parts of the image.
+      WHICH column an arm loses was not guessed. Mojang ship the same nine
+      characters in both models, drawn by their own artists, so the answer is
+      in the client jar: scoring both possibilities for every face across all
+      nine says the right arm's front keeps columns 1,2,3 and the left arm's
+      keeps 0,1,2 — each arm narrows on the side facing the body — and the
+      back faces mirror the front ones. Against their slim art the conversion
+      matches 93% of the texels a slim arm reads, where leaving the pixels
+      where they are matches 83%; the two characters that prefer the old way
+      are the two Mojang made by truncating the wide art rather than
+      converting it, so their "slim" arm reads different pixels than any
+      remap would.
+      Round trips are exact: a slim skin through the wide model and back is
+      the same skin, byte for byte, because widening puts back a copy of the
+      column narrowing took. Nothing outside the four arm boxes is touched,
+      and a 64x32 skin — which has no slim form — is left alone.*
+- [x] **Saving a skin from the editor as slim does not save it as slim.**
+      *Picking a model in the editor only moved the face rectangles it paints
+      through; the pixels stayed laid out for the old one, so what was saved
+      was a wide image wearing a slim label. It converts now, and converts
+      every LAYER rather than the flattened image — converting only the
+      flattened one would leave the stack holding the old arms and the next
+      compose() would put them straight back. The change is undoable, and the
+      undo step carries the model with it so the label and the pixels cannot
+      come apart.*
 - [ ] **Changing an APPLIED skin's model is not noticed** — it needs applying
       again, or undoing.
 

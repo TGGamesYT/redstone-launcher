@@ -793,6 +793,10 @@
     function snapshot() {
       return {
         active: activeLayer,
+        // Which model the pixels are laid out for. Switching model moves them,
+        // so undoing that has to put the label back as well, or the editor
+        // would be reading wide arms through slim rectangles.
+        variant,
         // The selection rides along, so undoing a move puts the marching ants
         // back where they were as well as the pixels.
         selection: selection ? { mask: new Uint8Array(selection.mask), x: selection.x, y: selection.y, w: selection.w, h: selection.h } : null,
@@ -815,6 +819,9 @@
         return l;
       });
       activeLayer = Math.max(0, Math.min(snap.active, layers.length - 1));
+      // Before buildFaces() below, via setVariant, so the face rectangles match
+      // the pixels being put back.
+      if (snap.variant && snap.variant !== variant) setVariant(snap.variant);
       selFloat = null;                    // a lifted selection is part of the past
       selection = snap.selection ? { ...snap.selection, mask: new Uint8Array(snap.selection.mask) } : null;
       refreshSelectionUI();
@@ -1837,15 +1844,44 @@
     setupPToggle('ed-t-grid', 'no_grid', 'grid',
       () => gridOn, (v) => { gridOn = v; renderOverlay(); liveUpdate(); });
 
-    document.getElementById('ed-variant-classic').onclick = () => setVariant('classic');
-    document.getElementById('ed-variant-slim').onclick = () => setVariant('slim');
-    function setVariant(v) {
+    // Picking a model CONVERTS the skin. The two are not the same picture with
+    // a different label on it -- a slim arm is three pixels across where a wide
+    // one is four, so the arm's faces sit at different places in the texture --
+    // and this used only to move the face rectangles, which left the arms
+    // unwrapped from the wrong parts of the image. Loading a skin passes
+    // convert:false, because then the pixels are already the model they say.
+    document.getElementById('ed-variant-classic').onclick = () => setVariant('classic', { convert: true });
+    document.getElementById('ed-variant-slim').onclick = () => setVariant('slim', { convert: true });
+    async function setVariant(v, opts) {
+      const changing = (opts && opts.convert) && v !== variant;
+      // BEFORE the label changes: the snapshot has to record the model the
+      // pixels are currently laid out for, or undoing would put the old arms
+      // back under the new label.
+      if (changing) pushUndo();
       variant = v;
       document.getElementById('ed-variant-classic').classList.toggle('active', v === 'classic');
       document.getElementById('ed-variant-slim').classList.toggle('active', v === 'slim');
+      if (changing) await convertLayersTo(v);
       buildFaces();      // arm faces are narrower for slim
       renderOverlay();
       update3D(true);
+    }
+
+    // Every layer moves, not just the flattened image: converting only `work`
+    // would leave the stack holding the old arms, and the next compose() would
+    // put them straight back.
+    async function convertLayersTo(v) {
+      for (const l of layers) {
+        const r = await ipcRenderer.invoke('skins:convertModel', { base64: l.canvas.toDataURL('image/png'), to: v });
+        if (!r || !r.base64) continue; // a 64x32 skin has no slim form
+        const img = new Image();
+        await new Promise((res) => { img.onload = res; img.onerror = res; img.src = 'data:image/png;base64,' + r.base64; });
+        if (!img.width) continue;
+        l.ctx.clearRect(0, 0, SIZE, SIZE);
+        l.ctx.drawImage(img, 0, 0);
+      }
+      compose();
+      render();
     }
 
     document.getElementById('ed-undo').onclick = undo;

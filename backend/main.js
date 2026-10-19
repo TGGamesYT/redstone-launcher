@@ -19,6 +19,7 @@ import upnp from './upnp.js';
 import relayClient from './relayClient.js';
 import fileManager from './fileManager.js';
 import remod from './remod.js';
+import { convertSkinPixels } from './skin-model.js';
 import shortcuts from './shortcuts.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
@@ -10043,6 +10044,35 @@ async function skinPixelHash(base64) {
   }
 }
 
+// Move a skin's pixels between the wide and slim models. Returns base64 of
+// the converted PNG, or null when there is nothing to do (a 64x32 skin has no
+// slim form, and an unreadable one is better left alone than mangled).
+async function convertSkinBase64(base64, to) {
+  const raw = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
+  if (!raw) return null;
+  try {
+    const { data, info } = await sharp(Buffer.from(raw, "base64"))
+      .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const out = convertSkinPixels(data, info.width, info.height, to);
+    if (!out) return null;
+    const png = await sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } })
+      .png().toBuffer();
+    return png.toString("base64");
+  } catch { return null; }
+}
+
+// A skin whose pixels have changed is not the picture that was uploaded to
+// Mojang any more. Texture ids are permanent and content addressed, so the old
+// image is still up there -- but this skin is no longer it, and saying
+// otherwise would point the cloud badge at a picture that is not on the card.
+function forgetMojangUpload(lib, uuid, skin, wasHash) {
+  delete skin.mojangUrl;
+  delete skin.mojangAt;
+  if (wasHash && wasHash !== skin.pixelHash) {
+    setTombstones(lib, uuid, { ...tombstonesFor(lib, uuid), [wasHash]: Date.now() });
+  }
+}
+
 // ── Grouping a skin library by what the skins actually look like ────────────
 // A library collects variations: the same skin with a different jacket, the
 // same character with and without a hat layer. Those arrive at whatever times
@@ -12167,15 +12197,44 @@ ipcMain.handle("skins:rename", (event, { uuid, id, name }) => {
   return skinViewFor(lib, uuid);
 });
 
-// Correct a saved skin's arm style. Imports can't always tell (MineSkin doesn't
-// publish one, and the pixel check is a good guess rather than a promise), so
-// the edit dialog offers it.
-ipcMain.handle("skins:setVariant", (event, { uuid, id, variant }) => {
+// Change a saved skin's arm style -- and CONVERT it, which is the whole job.
+//
+// The two models are not the same picture with a different label on it: a slim
+// arm is three pixels across where a wide one is four, so the arm's faces sit
+// at different places in the texture. Setting the label and leaving the pixels
+// alone, which is what this used to do, left the arms unwrapped from the wrong
+// parts of the image. The pixels move now; skin-model.js has the mapping and
+// where it came from.
+ipcMain.handle("skins:setVariant", async (event, { uuid, id, variant }) => {
   const lib = loadSkinLib();
   const hit = findSkinEntry(lib, uuid, id);
   const s = hit && hit.skin;
-  if (s) { s.variant = variant === "slim" ? "slim" : "classic"; saveSkinLib(lib); scheduleSkinSync(); }
+  if (!s) return skinViewFor(lib, uuid);
+  const want = variant === "slim" ? "slim" : "classic";
+  const was = s.variant === "slim" ? "slim" : "classic";
+  if (want !== was && s.base64) {
+    const converted = await convertSkinBase64(s.base64, want);
+    // A 64x32 skin has no slim form, so only its label changes -- which is
+    // also the one case where a label on its own is the right answer.
+    if (converted) {
+      const wasHash = s.pixelHash;
+      s.base64 = converted;
+      s.pixelHash = await skinPixelHash(converted);
+      forgetMojangUpload(lib, hit.uuid, s, wasHash);
+      s.updatedAt = Date.now();
+    }
+  }
+  s.variant = want;
+  saveSkinLib(lib);
+  scheduleSkinSync();
   return skinViewFor(lib, uuid);
+});
+
+// The same conversion, for the skin editor: it holds a stack of layers and
+// each one has to move, or the stack and the flattened image disagree.
+ipcMain.handle("skins:convertModel", async (event, { base64, to }) => {
+  const out = await convertSkinBase64(base64, to === "slim" ? "slim" : "classic");
+  return out ? { base64: out } : { unchanged: true };
 });
 
 // Update an existing library skin in place (from the skin editor). Keeps the id
@@ -12190,18 +12249,10 @@ ipcMain.handle("skins:update", async (event, { uuid, id, base64, variant, name, 
     const was = s.pixelHash;
     s.base64 = b;
     s.pixelHash = await skinPixelHash(b);
-    if (was && was !== s.pixelHash) {
-      // The image changed, so what was on Mojang's servers is a different
-      // skin from this one now. Texture ids are permanent and content
-      // addressed -- the old image is still up there and always will be --
-      // but this skin is no longer it, and saying otherwise would make the
-      // cloud badge point at a picture that is not the one on the card.
-      delete s.mojangUrl;
-      delete s.mojangAt;
-      // And the old image is not in the library any more, so it must not be
-      // fetched back off the relay as a skin of its own.
-      setTombstones(lib, hit.uuid, { ...tombstonesFor(lib, hit.uuid), [was]: Date.now() });
-    }
+    // The image changed, so what was on Mojang's servers is a different skin
+    // from this one now, and the old image is not in the library any more --
+    // it must not be fetched back off the relay as a skin of its own.
+    if (was && was !== s.pixelHash) forgetMojangUpload(lib, hit.uuid, s, was);
   }
   if (variant) s.variant = variant;
   if (name) s.name = name;
