@@ -159,8 +159,15 @@ Asked for in one batch, with "write a todo and do everything".
       compose() would put them straight back. The change is undoable, and the
       undo step carries the model with it so the label and the pixels cannot
       come apart.*
-- [ ] **Changing an APPLIED skin's model is not noticed** — it needs applying
+- [x] **Changing an APPLIED skin's model is not noticed** — it needs applying
       again, or undoing.
+      *Changing the model converts the pixels, so the skin on Mojang's servers
+      is no longer this one. The page decides what is applied by pixel hash,
+      so the card simply stopped matching and nothing said so. Converting the
+      applied skin now offers it for applying — the figure on the left shows
+      the converted skin, Apply and Undo appear, and a line says what
+      happened — instead of leaving the library and the account quietly
+      disagreeing.*
 
 ### C. Launching
 - [x] **The Cancel/Stop button goes back to Play** when you leave the instance

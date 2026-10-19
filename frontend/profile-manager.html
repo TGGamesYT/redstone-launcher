@@ -2590,11 +2590,37 @@
 
       const name = (document.getElementById('skinRenameInput').value || '').trim() || renameTarget.skin.name;
       await ipcRenderer.invoke("skins:rename", { uuid: renameTarget.uuid, id: renameTarget.skin.id, name });
-      if (renameVariant !== (renameTarget.skin.variant === 'slim' ? 'slim' : 'classic')) {
-        await ipcRenderer.invoke("skins:setVariant", { uuid: renameTarget.uuid, id: renameTarget.skin.id, variant: renameVariant });
+      const wasVariant = renameTarget.skin.variant === 'slim' ? 'slim' : 'classic';
+      let modelChanged = null;
+      if (renameVariant !== wasVariant) {
+        // Changing the model converts the pixels, so the skin on Mojang's
+        // servers is no longer this one. If it is the skin that is APPLIED,
+        // that has to be offered for applying again rather than quietly
+        // diverging -- which is what used to happen: the card stopped
+        // matching what was applied and nothing said so.
+        const appliedNow = activePixelHash && renameTarget.skin.pixelHash === activePixelHash;
+        const list = await ipcRenderer.invoke("skins:setVariant", { uuid: renameTarget.uuid, id: renameTarget.skin.id, variant: renameVariant });
+        if (appliedNow && Array.isArray(list)) {
+          modelChanged = list.find(x => String(x.id) === String(renameTarget.skin.id)) || null;
+        }
       }
       document.getElementById('skinRenameModal').style.display = 'none';
       renameTarget = null;
+      if (modelChanged) {
+        pendingSelection = {
+          id: modelChanged.id, base64: modelChanged.base64, name: modelChanged.name,
+          variant: modelChanged.variant, pixelHash: modelChanged.pixelHash,
+        };
+        // Preview it the way picking a card does, so the figure on the left is
+        // the converted skin rather than the one still on Mojang's servers.
+        if (window.skinViewer && modelChanged.base64) {
+          try {
+            window.skinViewer.loadSkin("data:image/png;base64," + modelChanged.base64,
+              { model: modelChanged.variant === 'slim' ? 'slim' : 'default' });
+          } catch { /* the preview is not the point */ }
+        }
+        if (window.notify) window.notify('Converted to the ' + (renameVariant === 'slim' ? 'slim' : 'wide') + ' model — press Apply to put it on your account', 'info');
+      }
       updateSKin();
     };
     document.getElementById('skinRenameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('skinRenameSaveBtn').click(); });

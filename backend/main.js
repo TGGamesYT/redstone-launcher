@@ -19,7 +19,7 @@ import upnp from './upnp.js';
 import relayClient from './relayClient.js';
 import fileManager from './fileManager.js';
 import remod from './remod.js';
-import { convertSkinPixels } from './skin-model.js';
+import { convertSkinPixels, slimFromPixels } from './skin-model.js';
 import shortcuts from './shortcuts.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
@@ -11954,20 +11954,11 @@ function rememberScreenVerdict(url, verdict) {
 // Fetch a skin PNG and check whether the detector rejects its pixels. Returns
 // null for OK, a reason string for reject, or "fetch" if the texture 404s and
 // so has nothing to check (also worth dropping -- nothing will render either).
-// Is this a 3px-armed (slim/Alex) skin? A 64x64 slim texture leaves the last
-// column of each arm's front face transparent — x=54 on the right arm, and on
-// the second layer too. MineSkin's LIST response carries no variant field at
-// all (only uuid/shortId/name/texture/timestamp), so reading it off the pixels
-// is the only way to know without a per-skin request; every browsed skin was
-// otherwise saved as wide.
-function slimFromPixels(data, w, h) {
-  if (w < 64 || h < 64) return false;          // 64x32 is always the wide model
-  const alphaAt = (x, y) => data[(y * w + x) * 4 + 3];
-  // Sample down the column that only a wide arm fills.
-  let transparent = 0, total = 0;
-  for (let y = 20; y < 32; y++) { total++; if (alphaAt(55, y) < 8) transparent++; }
-  return total > 0 && transparent / total > 0.75;
-}
+// Is this a 3px-armed (slim/Alex) skin? Read off the pixels, because
+// MineSkin's LIST response carries no variant field at all (only
+// uuid/shortId/name/texture/timestamp) and asking per skin would be a request
+// each; every browsed skin was otherwise saved as wide. The test itself lives
+// in skin-model.js, next to the conversion that has to agree with it.
 
 // Screening decodes every texture anyway, so the variant comes along for free.
 const _skinVariantCache = new Map();
