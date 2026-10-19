@@ -1148,11 +1148,20 @@
           installBtn.onclick = async () => {
             const mrpackFile = v.files.find(f => f.url.endsWith(".mrpack"));
             if (!mrpackFile) return alert("No .mrpack file available for this version");
+            const icon = mod.icon_url || mod.icon || (mod.logo && mod.logo.url) || null;
+            // The last page first: what is about to be made and what the pack
+            // will install. Installing from here used to go straight to the
+            // download with nothing in between.
+            if (window.NewInstance && window.NewInstance.finalizePack) {
+              return window.NewInstance.finalizePack({
+                url: mrpackFile.url, name: mod.title, icon, mode: 'instance',
+                mc: (v.game_versions || [])[0] || null,
+                loader: (v.loaders || [])[0] || 'vanilla',
+              });
+            }
             installBtn.disabled = true;
             installBtn.textContent = "Starting…";
-            // Hands off to the instances page, which follows the install from here.
-            await window.ModpackInstall.start(mrpackFile.url, mod.title,
-              'instance', mod.icon_url || mod.icon || (mod.logo && mod.logo.url) || null);
+            await window.ModpackInstall.start(mrpackFile.url, mod.title, 'instance', icon);
           };
           li.appendChild(installBtn);
 
@@ -1360,6 +1369,8 @@
     updatePresence("Browsing on Modrinth")
   </script>
   <script src="fitheight.js"></script>
+  <script src="iconpicker.js"></script>
+  <script src="newinstance.js"></script>
   <script src="modpack-install.js"></script>
   <script src="sidebar.js"></script>
   <script src="notifications.js"></script>

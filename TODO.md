@@ -42,6 +42,24 @@ started.
       it in its own cache. Which version resolved to which URL is remembered
       for the session as well, so a page revisit does not even ask.*
 
+- [x] **Installing a modpack from the browser should still open the finalize
+      page**, and that page should put the name and the running sections at
+      the top of their column with what it will install below them.
+      *Both browser routes — the project page's picker and the search page's
+      own version list — went straight to the download. They end on the same
+      last page the launcher's own flow does now, through one shared helper
+      rather than a third copy of the wiring.
+      What it installs is read WITHOUT downloading the pack: the mod list is
+      an index a few kilobytes into a file that is often hundreds of
+      megabytes, and the launcher already reads a zip over HTTP by ranges for
+      a version's jar. Two kilobytes of an eight-megabyte pack, measured. A
+      CurseForge pack lists ids rather than names, so that one says how many
+      files it will fetch instead of naming them.
+      Found while building it: that ranged reader could take the whole process
+      down. It pushes into a stream the consumer may abandon the moment it has
+      what it wants, and the aborted fetch then emitted an `error` with
+      nothing listening.*
+
 ## 0. Round 30
 
 - [x] **The pick-colour tool does not work on the 3D render** in the skin

@@ -4676,6 +4676,60 @@ async function runModpackServerInstall({ ticket, url, name, iconUrl }) {
 }
 
 // Kick off an install and return immediately — the caller follows the events.
+// What a modpack would put in an instance, WITHOUT downloading the pack.
+//
+// The mod list lives in the archive's index, which is a few kilobytes at the
+// front of a file that is often hundreds of megabytes. The launcher already
+// reads a zip over HTTP by ranges, for a version's jar, so the same reader
+// fetches the central directory and that one entry and nothing else.
+//
+// A Modrinth pack names every file it installs. A CurseForge one lists
+// project and file ids only -- no names without a lookup each -- so that one
+// answers with a count and says so.
+const _packPreview = new Map();
+ipcMain.handle("modpack:preview", async (event, { url }) => {
+  const key = String(url || "");
+  if (!key) return { error: "no pack" };
+  if (_packPreview.has(key)) return _packPreview.get(key);
+  const answer = await (async () => {
+    try {
+      const src = await iconModels.modelAssets.remoteZipSource("modpack", "pack", key);
+      if (!src) return { error: "that pack could not be opened" };
+      // A raw source answers with bytes; json() belongs to a stack.
+      const readJson = async (name) => {
+        const buf = await src.get(name);
+        if (!buf) return null;
+        try { return JSON.parse(buf.toString("utf8")); } catch { return null; }
+      };
+      const index = await readJson("modrinth.index.json");
+      if (index) {
+        const mods = (index.files || []).map(f => {
+          const p = String(f.path || "");
+          return {
+            path: p,
+            name: p.split("/").pop().replace(/\.(jar|zip)$/i, "").replace(/[_-]/g, " ").trim(),
+            kind: /^mods\//.test(p) ? "mod" : /^resourcepacks\//.test(p) ? "resource pack"
+              : /^shaderpacks\//.test(p) ? "shader pack" : "file",
+            size: f.fileSize || 0,
+          };
+        });
+        return { name: index.name || null, packVersion: index.versionId || null, mods };
+      }
+      const manifest = await readJson("manifest.json");
+      if (manifest) {
+        // CurseForge: ids, not names.
+        return {
+          name: manifest.name || null, packVersion: manifest.version || null,
+          mods: [], unnamed: (manifest.files || []).length,
+        };
+      }
+      return { error: "that pack has no index in it" };
+    } catch (err) { return { error: String((err && err.message) || err) }; }
+  })();
+  _packPreview.set(key, answer);
+  return answer;
+});
+
 ipcMain.handle("modpack:install", (event, { url, ticket, name, as, iconUrl }) => {
   if (!url || !ticket) return { success: false, error: "missing url or ticket" };
   if (modpackInstalls.has(ticket)) return { success: true, already: true };

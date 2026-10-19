@@ -151,9 +151,24 @@
         background:var(--menu-bg); color:var(--text-color); border-radius:var(--border-radius);
         cursor:pointer; font-family:var(--text-font); }
       .ni-fin .pic button:hover { border-color:var(--base-color); }
-      /* Centred against the icon rather than pinned to the top, so the gap is
-         shared out instead of all landing underneath. */
-      .ni-fin .fields { flex:1; min-width:0; display:flex; flex-direction:column; gap:18px; justify-content:center; }
+      /* Name and loader at the TOP of the column, with what is about to be
+         installed filling the room under them -- rather than the two fields
+         floating in the middle of an empty half. */
+      .ni-fin .fields { flex:1; min-width:0; display:flex; flex-direction:column; gap:18px;
+        justify-content:flex-start; align-self:stretch; min-height:0; }
+      /* The mods the pack brings, or the one mod this instance is being made
+         for. Scrolls on its own so a 200-mod pack does not stretch the page. */
+      .ni-fin .ni-contents { flex:1; min-height:0; display:flex; flex-direction:column; }
+      .ni-fin .ni-contents .list { flex:1; min-height:0; overflow-y:auto; margin:0; padding:6px;
+        list-style:none; border:1px solid var(--border-dark); border-radius:var(--border-radius);
+        background:var(--very-dark); }
+      .ni-fin .ni-contents .list li { display:flex; align-items:center; gap:8px; padding:4px 6px;
+        font-size:12.5px; border-radius:var(--border-radius); }
+      .ni-fin .ni-contents .list li .k { margin-left:auto; flex:0 0 auto; font-size:10px; opacity:0.55;
+        text-transform:uppercase; letter-spacing:0.04em; }
+      .ni-fin .ni-contents .list li img { width:20px; height:20px; flex:0 0 20px; border-radius:4px;
+        object-fit:contain; image-rendering:pixelated; }
+      .ni-fin .ni-contents .note { font-size:12px; opacity:0.7; padding:8px 2px; }
       .ni-fin label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;
         opacity:0.65; margin-bottom:6px; }
       .ni-fin input[type=text] { width:100%; box-sizing:border-box; padding:13px 14px; margin:0;
@@ -438,16 +453,8 @@
         window.ModpackInstall.open(asProject, versions, {
           // A modpack gets the same last page a mod does: what is about to be
           // made, with a chance to name it and give it an icon first.
-          onChoose: (picked) => pickFinalize({
-            version: picked.mc || '',
-            loader: picked.loader || 'vanilla',
-            prefill: { name: picked.name, icon: picked.icon, projectTitle: null },
-            pack: true,
+          onChoose: (picked) => window.NewInstance.finalizePack(picked, {
             onBack: () => window.ModpackInstall.open(asProject, versions, { onChoose: null }),
-            onCreate: (profile) => {
-              window.NewInstance.closeAll();
-              window.ModpackInstall.start(picked.url, profile.name, picked.mode, profile.icon || picked.icon);
-            },
           }),
         });
         return;
@@ -572,6 +579,27 @@
     pickVersion,
     pickLoader,
     pickFinalize,
+    /**
+     * The last page for a modpack: what is about to be made, what it will
+     * install, and a chance to name it and give it an icon before anything is
+     * downloaded. `picked` is what ModpackInstall.open hands to onChoose.
+     * `onBack` reopens whatever offered the pack, if anything did.
+     */
+    finalizePack(picked, opts = {}) {
+      ensureStyle();
+      return pickFinalize({
+        version: picked.mc || '',
+        loader: picked.loader || 'vanilla',
+        prefill: { name: picked.name, icon: picked.icon, projectTitle: null },
+        pack: true,
+        packUrl: picked.url,
+        onBack: opts.onBack || null,
+        onCreate: (profile) => {
+          window.NewInstance.closeAll();
+          window.ModpackInstall.start(picked.url, profile.name, picked.mode, profile.icon || picked.icon);
+        },
+      });
+    },
     build: (opts, prefill) => buildFlow(opts, () => window.NewInstance.choose(opts), prefill || null),
     closeAll() { if (openShell && openShell.isConnected) openShell.remove(); openShell = null; },
   };
@@ -979,11 +1007,64 @@
 
     fields.append(nameWrap, chipWrap);
 
-    if (pre.projectTitle) {
-      const note = document.createElement('div');
-      note.className = 'ni-note';
-      note.textContent = `${pre.projectTitle} will be installed into it once it exists.`;
-      fields.appendChild(note);
+    // ── what is going in ──
+    // A pack brings a list of mods; an instance started from one mod brings
+    // that mod. Either way it belongs on this page: it is the rest of the
+    // answer to "what is about to be made".
+    const contents = document.createElement('div');
+    contents.className = 'ni-contents';
+    const contentsLabel = document.createElement('label');
+    const contentsList = document.createElement('ul');
+    contentsList.className = 'list';
+    const contentsNote = document.createElement('div');
+    contentsNote.className = 'note';
+    const showNote = (text) => {
+      contentsNote.textContent = text;
+      contentsList.style.display = 'none';
+      contentsNote.style.display = '';
+    };
+    const showList = (items) => {
+      contentsList.innerHTML = '';
+      for (const it of items) {
+        const li = document.createElement('li');
+        const n = document.createElement('span');
+        n.textContent = it.name;
+        li.appendChild(n);
+        if (it.kind && it.kind !== 'mod') {
+          const k = document.createElement('span');
+          k.className = 'k';
+          k.textContent = it.kind;
+          li.appendChild(k);
+        }
+        contentsList.appendChild(li);
+      }
+      contentsList.style.display = '';
+      contentsNote.style.display = 'none';
+    };
+    contents.append(contentsLabel, contentsList, contentsNote);
+
+    if (opts.pack && opts.packUrl) {
+      contentsLabel.textContent = 'What it installs';
+      showNote('Reading the pack…');
+      ipcRenderer.invoke('modpack:preview', { url: opts.packUrl }).then(r => {
+        if (!contents.isConnected) return;
+        if (!r || r.error) return showNote('Its mod list could not be read before installing.');
+        if (r.mods && r.mods.length) {
+          contentsLabel.textContent = `What it installs (${r.mods.length})`;
+          return showList(r.mods);
+        }
+        // A CurseForge pack lists ids, not names.
+        if (r.unnamed) {
+          contentsLabel.textContent = 'What it installs';
+          return showNote(`${r.unnamed} files, named only by id in this pack — they are fetched during the install.`);
+        }
+        showNote('This pack brings no files of its own.');
+      }).catch(() => { if (contents.isConnected) showNote('Its mod list could not be read before installing.'); });
+      fields.appendChild(contents);
+    } else if (pre.projectTitle) {
+      contentsLabel.textContent = 'What it installs';
+      showList([{ name: pre.projectTitle, kind: pre.projectKind || 'mod' }]);
+      fields.appendChild(contents);
     }
 
     list.append(pic, fields);

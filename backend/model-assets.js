@@ -111,15 +111,22 @@ export async function remoteZipSource(label, kind, url) {
       const end = length ? offset + length - 1 : '';
       // unzipper wants a stream now and the bytes later.
       const out = new Readable({ read() { } });
+      // An 'error' event with nothing listening ends the process, and by the
+      // time one of these fails there may well be nothing listening: unzipper
+      // abandons a stream the moment it has what it wanted, which aborts the
+      // fetch still filling it. A reader that gives up early is normal, so it
+      // must not be fatal.
+      out.on('error', () => { });
       fetch(url, { headers: { range: `bytes=${offset}-${end}` } })
         .then(async (r) => {
           if (!r.ok && r.status !== 206 && r.status !== 200) {
             throw new Error(`range ${offset}-${end}: HTTP ${r.status}`);
           }
+          if (out.destroyed) return;            // abandoned while in flight
           out.push(Buffer.from(await r.arrayBuffer()));
           out.push(null);
         })
-        .catch(err => out.destroy(err));
+        .catch(err => { if (!out.destroyed) out.destroy(err); });
       return out;
     },
   };

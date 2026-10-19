@@ -470,7 +470,16 @@ async function openModpackPicker() {
     const id = proj.project_id || proj.id || proj.slug;
     const versions = await (await fetch(`https://api.modrinth.com/v2/project/${id}/version`)).json();
     if (!Array.isArray(versions) || !versions.length) return alert("No versions found for this modpack.");
-    window.ModpackInstall.open(proj, versions);
+    // The same last page the launcher's own new-instance flow ends on: what
+    // is about to be made and what the pack will install, with a chance to
+    // name it first. Installing from here used to skip straight to the
+    // download.
+    const finish = window.NewInstance && window.NewInstance.finalizePack;
+    window.ModpackInstall.open(proj, versions, finish ? {
+      onChoose: (picked) => window.NewInstance.finalizePack(picked, {
+        onBack: () => openModpackPicker(),
+      }),
+    } : undefined);
   } catch (err) {
     alert("Could not load this modpack's versions: " + (err.message || err));
   }
@@ -776,6 +785,8 @@ installArea.appendChild(li);
 loadProjectDetails();
 </script>
 <script src="marked.min.js"></script>
+  <script src="iconpicker.js"></script>
+  <script src="newinstance.js"></script>
   <script src="modpack-install.js"></script>
   <script src="fitheight.js"></script>
   <script src="sidebar.js"></script>
