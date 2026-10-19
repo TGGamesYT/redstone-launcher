@@ -8042,7 +8042,9 @@ ipcMain.handle("server-mods:updates", async (event, { name, dir }) => {
       // The endpoint answers with the newest matching version, which for an
       // up-to-date mod is the one already installed.
       if (!file || !file.hashes || file.hashes.sha1 === hash) continue;
-      out[filename] = { available: true, url: file.url, latestNumber: version.version_number || null };
+      // The version id comes along so the changelog can be fetched on demand
+      // rather than pulled down for every mod nobody looks at.
+      out[filename] = { available: true, url: file.url, latestNumber: version.version_number || null, versionId: version.id || null };
     }
     return out;
   } catch (err) {
@@ -8351,7 +8353,9 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
         const newest = (Array.isArray(versions) ? versions : []).sort((a, b) => new Date(b.date_published) - new Date(a.date_published))[0];
         if (newest && e.modrinth.datePublished && new Date(newest.date_published) > new Date(e.modrinth.datePublished)) {
           const file = (newest.files || []).find(f => f.primary) || (newest.files || [])[0];
-          e.update = { checkedAt: now, available: true, url: file?.url || null, latestNumber: newest.version_number || null };
+          // The version id comes along so the changelog can be fetched on
+          // demand rather than pulled down for every mod nobody looks at.
+          e.update = { checkedAt: now, available: true, url: file?.url || null, latestNumber: newest.version_number || null, versionId: newest.id || null };
         } else {
           e.update = { checkedAt: now, available: false };
         }
@@ -8392,6 +8396,7 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
     r.updateAvailable = !!(e?.update?.available);
     r.updateUrl = e?.update?.url || null;
     r.latestVersion = e?.update?.latestNumber || null;
+    r.updateVersionId = e?.update?.versionId || null;
     // Warn if this mod flags an installed mod as incompatible.
     r.incompatibleWith = (m?.incompatibleWith || [])
       .filter(pid => pid !== r.projectId && installedProjects[pid])
@@ -9242,6 +9247,29 @@ ipcMain.handle("set-resourcepack-enabled", async (event, { profileId, filename, 
   } catch (err) {
     return { success: false, error: err.message };
   }
+});
+
+// A Modrinth version's changelog, for the "these will be updated" list. Only
+// fetched for the row actually opened, and kept for the rest of the run: a
+// published changelog does not change.
+const _changelogs = new Map();
+ipcMain.handle("modrinth:changelog", async (event, { versionId }) => {
+  const id = String(versionId || "");
+  if (!id) return { error: "No version" };
+  if (_changelogs.has(id)) return _changelogs.get(id);
+  try {
+    const res = await fetch(`https://api.modrinth.com/v2/version/${encodeURIComponent(id)}`, { headers: { "User-Agent": LAUNCHER_UA } });
+    if (!res.ok) return { error: `Modrinth answered ${res.status}` };
+    const v = await res.json();
+    const out = {
+      changelog: v.changelog || "",
+      name: v.name || v.version_number || "",
+      versionNumber: v.version_number || "",
+      datePublished: v.date_published || null,
+    };
+    _changelogs.set(id, out);
+    return out;
+  } catch (e) { return { error: e.message }; }
 });
 
 // Update a mod/pack in place: download the new file, then remove the old one.

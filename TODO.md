@@ -13,18 +13,39 @@ started.
 
 Sent while Round 28's section D was being built.
 
-- [ ] **"Update all" should ask first.** A modal listing the mods that would be
+- [x] **"Update all" should ask first.** A modal listing the mods that would be
       updated, each one's changelog shown when it is clicked.
+      *It used to start downloading the moment it was clicked, so the only way
+      to find out what had changed was to go through the mods one at a time
+      afterwards. It now lists what would be replaced and what each one is
+      going from and to, and opens that version's changelog when the row is
+      clicked — fetched for the row opened and nothing else, since the update
+      check already knows which published version it found. On instances and
+      on servers, both of which get their updates from the same place.*
 - [ ] **An instance getting ready to launch should show in the status bar**
       top-right, on every page, the same way a running one does — downloading
       or checking counts as running for this.
 - [ ] **That status bar's menu should be a proper pop-down**, not the dropdown
       that only appears when more than one instance is running: each entry says
       what the instance is doing, and clicking it opens that instance.
-- [ ] **The custom-setup finalize page scrolls.** Its content is slightly
+- [x] **The custom-setup finalize page scrolls.** Its content is slightly
       taller than the room it has, so it becomes scrollable for a few pixels.
-- [ ] **Cancel in finalize's "more settings" goes back to the first modal** of
+      *3 to 27 pixels, measured in a real browser at the usual window sizes.
+      The icon frame is a square meant to be capped by the height left in its
+      column, and the rule that capped it — a percentage against a column of
+      automatic height — resolves to nothing at all, so it was only ever sized
+      by width. A square bounded on both axes is one constraint more than CSS
+      can express, so its side is measured now: the smaller of the room across
+      the column and the room left down it. Nothing scrolls at any size, and
+      the frame is square at all of them, which it was not before either.*
+- [x] **Cancel in finalize's "more settings" goes back to the first modal** of
       the creation flow rather than back to finalize.
+      *"More settings" is a detour off the last page, the same as changing the
+      version or the loader, and cancelling a detour was dropping you at the
+      very first modal with the whole flow to walk again. It comes back to the
+      last page now — and comes back to it as it was, because the name and the
+      icon are carried through all three detours rather than the page being
+      rebuilt from what the flow started with.*
 
 ## 0. Round 28
 

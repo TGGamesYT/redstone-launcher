@@ -1073,6 +1073,16 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         bar.style.display = updatable.length ? '' : 'none';
         bar.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">upgrade</i> Update all (${updatable.length})`;
         bar.onclick = async () => {
+          // What would be replaced, and what changed in it, before anything is
+          // downloaded.
+          const go = await window.UpdateAll.confirm(updatable.map(e => {
+            const u = updates[e.name] || {}, meta = modInfo[e.name] || {};
+            return {
+              name: meta.name || e.name.replace(/\.disabled$/i, ''), icon: meta.icon,
+              version: meta.version, latestVersion: u.latestNumber, versionId: u.versionId,
+            };
+          }), 'mods');
+          if (!go) return;
           bar.disabled = true;
           let done = 0, failed = 0;
           for (const e of updatable) {
@@ -1384,6 +1394,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
        Remod's "Edit assets", which mounts it on the unpacked archive. -->
   <script src="filebrowser.js"></script>
   <script src="remod.js"></script>
+  <script src="updateall.js"></script>
   <script src="iconpicker.js"></script>
   <script src="fitheight.js"></script>
   <script src="modpack-install.js"></script>

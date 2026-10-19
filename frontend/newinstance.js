@@ -130,11 +130,19 @@
          empty frame looked like something had failed to load. */
       .ni-fin { display:flex; gap:30px; align-items:center; justify-content:center;
         overflow-y:auto; flex:1; min-height:0; padding:4px 2px; }
-      .ni-fin .pic { flex:0 1 48%; max-width:520px; min-width:150px; display:flex; flex-direction:column; gap:10px; }
+      /* Stretched, so its height is a real number for the square below to be
+         measured against. */
+      .ni-fin .pic { flex:0 1 48%; max-width:520px; min-width:150px; display:flex; flex-direction:column;
+        gap:10px; align-self:stretch; justify-content:center; }
       /* Square, as big as the page allows, and the icon fills it -- it is a
          64px image shown at 400, which is exactly what the instance it is
-         about to become will do with it. */
-      .ni-fin .pic .shot { aspect-ratio:1; max-height:calc(100% - 52px); display:flex;
+         about to become will do with it. Its side is set in JS, by fitShot:
+         a square that fits BOTH the width of the column and the height left
+         in it is one axis too many for CSS, and the rule that used to clamp
+         the height silently did nothing -- a percentage against a column of
+         automatic height resolves to none -- which is why the page ended up a
+         few pixels too tall and scrolled. */
+      .ni-fin .pic .shot { flex:0 0 auto; align-self:center; box-sizing:border-box; display:flex;
         align-items:center; justify-content:center; padding:14px;
         border:2px solid var(--border-dark); border-radius:var(--border-radius);
         background:var(--very-dark); }
@@ -582,18 +590,24 @@
     // one page and comes straight back here with the other choice untouched.
     // Clicking the version used to drop you at the start of the sequence and
     // make you walk the whole thing again.
-    const finish = (version, loader) => pickFinalize({
-      version, loader, prefill: pre,
+    // `carry` is what the last page already had typed into it, so a detour
+    // comes back to the page as it was rather than to a blank one.
+    const finish = (version, loader, carry) => pickFinalize({
+      version, loader,
+      // An empty name is carried as empty -- clearing the field is a choice --
+      // but there is no way to clear an ICON here, so a page that never had
+      // one picked falls back to whatever the mod or pack brought.
+      prefill: carry ? { ...pre, name: carry.name, icon: carry.icon || pre.icon || null } : pre,
       onBack: () => loaderStep(version),
-      onChangeVersion: () => pickVersion({
+      onChangeVersion: (state) => pickVersion({
         only: onlyVersions,
-        onBack: () => finish(version, loader),
-        onPick: (v) => finish(v, loader),
+        onBack: () => finish(version, loader, state),
+        onPick: (v) => finish(v, loader, state),
       }),
-      onChangeLoader: () => pickLoader({
+      onChangeLoader: (state) => pickLoader({
         version, only: onlyLoaders,
-        onBack: () => finish(version, loader),
-        onPick: (l) => finish(version, l),
+        onBack: () => finish(version, loader, state),
+        onPick: (l) => finish(version, l, state),
       }),
       onCreate: (profile, carried) => {
         window.NewInstance.closeAll();
@@ -602,10 +616,14 @@
           : (opts.onCustom && opts.onCustom({ ...carried, ...profile }, back));
       },
       // Everything the last page does not ask about is in the old creator,
-      // which opens filled in with what has been chosen so far.
-      onMore: (sofar) => {
+      // which opens filled in with what has been chosen so far. Cancelling it
+      // belongs back HERE: "More settings" is a detour off the last page, the
+      // same as changing the version or the loader, and cancelling a detour
+      // used to drop you at the very first modal with the whole flow to walk
+      // again.
+      onMore: (sofar, state) => {
         window.NewInstance.closeAll();
-        opts.onCustom && opts.onCustom({ ...pre, ...sofar }, back);
+        opts.onCustom && opts.onCustom({ ...pre, ...sofar }, () => finish(version, loader, state));
       },
     });
 
@@ -870,6 +888,32 @@
       window.IconPicker.open({ version, onPick: (d) => { icon = d; showIcon(d); } });
     };
 
+    // The frame is the biggest square that fits the column: the smaller of the
+    // room across it and the room left down it once the button underneath has
+    // had its share. Measured rather than declared, because a square bounded
+    // on both axes is one constraint more than CSS can express.
+    const GAP = 10;
+    const fitShot = () => {
+      if (!shot.isConnected) return;
+      const across = pic.clientWidth;
+      const down = pic.clientHeight - pickIcon.offsetHeight - GAP;
+      const side = Math.floor(Math.min(across, down));
+      if (side < 80) return;                       // mid-layout; the observer fires again
+      shot.style.width = shot.style.height = side + 'px';
+      // The button belongs under the frame, not under the column, or it ends
+      // up wider than the thing it is about.
+      pickIcon.style.width = side + 'px';
+      pickIcon.style.alignSelf = 'center';
+    };
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => fitShot());
+      ro.observe(pic);
+      // Stop watching with the page it belongs to.
+      const stop = new MutationObserver(() => { if (!pic.isConnected) { ro.disconnect(); stop.disconnect(); } });
+      stop.observe(document.body, { childList: true, subtree: true });
+    }
+    requestAnimationFrame(fitShot);
+
     // ── the fields ──
     const fields = document.createElement('div');
     fields.className = 'fields';
@@ -908,8 +952,14 @@
       chips.appendChild(c);
       return c;
     };
+    // What has been typed here so far, so a detour -- changing the version,
+    // changing the loader, opening the old creator -- can come back to it
+    // instead of handing back a blank page. The name is the RAW field, not the
+    // one filled in for it: coming back should still show the placeholder.
+    const state = () => ({ name: name.value, icon });
+
     const vChip = chip('Minecraft', version || 'from the pack', null,
-      !opts.pack && opts.onChangeVersion ? () => opts.onChangeVersion() : null);
+      !opts.pack && opts.onChangeVersion ? () => opts.onChangeVersion(state()) : null);
     if (window.VersionIcon) {
       window.VersionIcon.get(version).then(u => {
         if (!u || !vChip.isConnected) return;
@@ -920,7 +970,7 @@
     }
     const loaderArt = (LOADERS.find(l => l.id === loader) || {}).icon;
     chip('Loader', loaderName, loaderArt,
-      !opts.pack && opts.onChangeLoader ? () => opts.onChangeLoader() : null);
+      !opts.pack && opts.onChangeLoader ? () => opts.onChangeLoader(state()) : null);
 
     const chipWrap = document.createElement('div');
     const chipLabel = document.createElement('label');
@@ -946,7 +996,7 @@
       more.textContent = 'More settings…';
       more.onclick = () => opts.onMore && opts.onMore({
         name: name.value.trim() || autoName, icon, version, loader, ...pre,
-      });
+      }, state());
     }
     const make = document.createElement('button');
     make.textContent = opts.pack ? 'Install it' : 'Create';

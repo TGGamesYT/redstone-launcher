@@ -3153,6 +3153,13 @@
                     allBtn.className = "tab-install-btn secondary";
                     allBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">upgrade</i> Update all (${updatable.length})`;
                     allBtn.onclick = async () => {
+                      // What would be replaced, and what changed in it, before
+                      // anything is downloaded.
+                      const go = await window.UpdateAll.confirm(updatable.map(p => ({
+                        name: p.name, icon: p.icon, version: p.version,
+                        latestVersion: p.latestVersion, versionId: p.updateVersionId,
+                      })), tabName);
+                      if (!go) return;
                       allBtn.disabled = true;
                       let done = 0, failed = 0;
                       for (const p of updatable) {
@@ -3982,6 +3989,7 @@
   <script src="filetree.js"></script>
   <script src="filebrowser.js"></script>
   <script src="remod.js"></script>
+  <script src="updateall.js"></script>
   <script src="fitheight.js"></script>
   <script src="modpack-install.js"></script>
   <script src="newinstance.js"></script>
