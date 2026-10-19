@@ -120,8 +120,16 @@ Asked for in one batch, with "write a todo and do everything".
       published is now fetched again.*
 
 ### D. Mods
-- [ ] **Disabling a dev mod does not disable it** — it picks the new one up and
+- [x] **Disabling a dev mod does not disable it** — it picks the new one up and
       puts it back in the enabled slot.
+      *A mod is disabled by renaming its jar with a `.disabled` suffix, and the
+      dev swap deleted whatever copy of the mod it found and wrote the enabled
+      name back — so switching a dev mod off lasted until the next build,
+      refresh or launch, whichever came first. The build going in keeps the
+      state of the one coming out, and picking a specific build is not taken
+      as switching the mod back on. A disabled jar's mod id was never read
+      either: the lookup stripped `.disabled` off the path first and asked
+      about a file that does not exist.*
 - [ ] **Remod.** With developer mode on, an Edit button on a mod jar or a
       resource pack: its declared name, description, version and icon (and a
       pack's description and icon), the file's name, and an "Edit assets"

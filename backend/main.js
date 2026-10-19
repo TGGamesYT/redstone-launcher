@@ -9231,6 +9231,38 @@ async function waitForStableJar(file, { tries = 40, interval = 150 } = {}) {
   return false;   // still churning after ~6s: leave the old jar in place
 }
 
+// Clear out whatever copy of this mod is already in the folder, and say
+// whether it was switched OFF.
+//
+// A dev mod is disabled the way every other mod is: its jar is renamed with a
+// `.disabled` suffix. The swap used to delete whatever it found and write the
+// enabled name back, so turning a dev mod off lasted exactly until the next
+// build, refresh or launch — which is what "disabling a dev mod doesn't
+// disable it, it just gets the new one and puts it in the enabled place"
+// means. The build that goes in keeps the state the one coming out had.
+function clearDevModJars(modsDir, destName, modId, info) {
+  let found = 0, off = 0;
+  for (const f of fs.readdirSync(modsDir)) {
+    if (!/\.jar(\.disabled)?$/i.test(f)) continue;
+    const full = path.join(modsDir, f);
+    // The dev filename, or any jar declaring the same mod id. Read the file
+    // where it actually is: stripping `.disabled` first asked about a path
+    // that does not exist, so a disabled jar's id never matched.
+    let mine = f.replace(/\.disabled$/i, "") === destName;
+    if (!mine) {
+      const ex = readJarModInfo(full);
+      mine = !!(ex && (ex.id === modId || (info && ex.id === info.id)));
+    }
+    if (!mine) continue;
+    found++;
+    if (/\.disabled$/i.test(f)) off++;
+    try { fs.unlinkSync(full); } catch { /* ignore */ }
+  }
+  // Every copy of it has to be off for the mod to be off: one enabled jar of
+  // it means the mod is on.
+  return found > 0 && off === found;
+}
+
 // Copy the newest matching build into the target's mods folder, replacing any
 // existing jar that declares the same mod id. `pinnedJar` (set by "pick a
 // build") wins over the newest, so a deliberate choice survives a refresh.
@@ -9254,15 +9286,10 @@ async function swapDevMod(type, id, modId, folder, pinnedJar) {
     // Replace any existing jar of the same mod id (matched by the built jar's
     // detected id OR our own dev filename) — but it's fine if none exists.
     const destName = `${modId}-dev.jar`;
-    for (const f of fs.readdirSync(tgt.modsDir)) {
-      if (!/\.jar(\.disabled)?$/i.test(f)) continue;
-      const full = path.join(tgt.modsDir, f);
-      if (f === destName || f === destName + ".disabled") { try { fs.unlinkSync(full); } catch { /* ignore */ } continue; }
-      const ex = readJarModInfo(full.replace(/\.disabled$/i, ""));
-      if (ex && (ex.id === modId || (info && ex.id === info.id))) { try { fs.unlinkSync(full); } catch { /* ignore */ } }
-    }
-    fs.copyFileSync(jar, path.join(tgt.modsDir, destName));
-    return { success: true, jar: path.basename(jar), dest: destName };
+    const off = clearDevModJars(tgt.modsDir, destName, modId, info);
+    const dest = destName + (off ? ".disabled" : "");
+    fs.copyFileSync(jar, path.join(tgt.modsDir, dest));
+    return { success: true, jar: path.basename(jar), dest, disabled: off };
   } catch (e) { return { success: false, error: e.message }; }
 }
 
@@ -9367,14 +9394,10 @@ ipcMain.handle("devmod:swapTo", (event, { type, id, modId, folder, jar }) => {
     fs.mkdirSync(tgt.modsDir, { recursive: true });
     const destName = `${modId}-dev.jar`;
     const info = readJarModInfo(src);
-    for (const f of fs.readdirSync(tgt.modsDir)) {
-      if (!/\.jar(\.disabled)?$/i.test(f)) continue;
-      const full = path.join(tgt.modsDir, f);
-      if (f === destName || f === destName + ".disabled") { try { fs.unlinkSync(full); } catch { } continue; }
-      const ex = readJarModInfo(full.replace(/\.disabled$/i, ""));
-      if (ex && (ex.id === modId || (info && ex.id === info.id))) { try { fs.unlinkSync(full); } catch { } }
-    }
-    fs.copyFileSync(src, path.join(tgt.modsDir, destName));
+    // Picking a build is not the same as switching the mod back on.
+    const off = clearDevModJars(tgt.modsDir, destName, modId, info);
+    const dest = destName + (off ? ".disabled" : "");
+    fs.copyFileSync(src, path.join(tgt.modsDir, dest));
     // Remember the choice, or the next rebuild/refresh/startup would put the
     // newest jar back and the pick would look like it never happened.
     const store = loadDevModsStore(); const k = devModKey(type, id);
@@ -9382,7 +9405,7 @@ ipcMain.handle("devmod:swapTo", (event, { type, id, modId, folder, jar }) => {
       const m = store[k].mods.find(x => x.folder === folder);
       if (m) { m.pinnedJar = jar; saveDevModsStore(store); }
     }
-    return { success: true, dest: destName, pinnedJar: jar };
+    return { success: true, dest, pinnedJar: jar, disabled: off };
   } catch (e) { return { error: e.message }; }
 });
 
