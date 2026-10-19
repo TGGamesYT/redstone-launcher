@@ -13,13 +13,24 @@ started.
 
 - [ ] **The pick-colour tool does not work on the 3D render** in the skin
       editor.
-- [ ] **The "update all" modal resizes when a changelog opens.** With one item
+- [x] **The "update all" modal resizes when a changelog opens.** With one item
       in it, opening the dropdown makes the modal taller and everything moves.
-- [ ] **The new version is red on red** in the "old -> new" line, which is hard
+      *Its height is settled before anything opens and does not change after —
+      worked out from the number of rows, so one mod does not get a dialog
+      full of nothing either.*
+- [x] **The new version is red on red** in the "old -> new" line, which is hard
       to read.
-- [ ] **The changelog dropdown should animate** open and closed rather than
+      *It was `--accent`, which on this dialog's own background is red on red.
+      The new version is told apart by weight and brightness instead of by a
+      colour, so it reads on any theme, and the old one is dimmed.*
+- [x] **The changelog dropdown should animate** open and closed rather than
       appearing instantly.
-- [ ] **A toggle next to each mod** so it can be left out of "update all".
+      *A grid row from `0fr` to `1fr`, which collapses and expands smoothly
+      without anything having to measure the content first.*
+- [x] **A toggle next to each mod** so it can be left out of "update all".
+      *A tick per row, all on to begin with. The button says how many it would
+      do and goes dead at none, and the dialog hands back the mods still
+      ticked rather than a yes or no, so the caller updates what came back.*
 - [ ] **Some mods take 5-10 seconds to open in Remod**, and freeze the app
       while they do.
 - [ ] **Dev mods are caught up on every app start and every launch**, even

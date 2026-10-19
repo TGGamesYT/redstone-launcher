@@ -1074,19 +1074,22 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         bar.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">upgrade</i> Update all (${updatable.length})`;
         bar.onclick = async () => {
           // What would be replaced, and what changed in it, before anything is
-          // downloaded.
-          const go = await window.UpdateAll.confirm(updatable.map(e => {
+          // downloaded. What comes back is what is still ticked, which may be
+          // fewer than went in.
+          const picked = await window.UpdateAll.confirm(updatable.map(e => {
             const u = updates[e.name] || {}, meta = modInfo[e.name] || {};
             return {
               name: meta.name || e.name.replace(/\.disabled$/i, ''), icon: meta.icon,
               version: meta.version, latestVersion: u.latestNumber, versionId: u.versionId,
+              ref: e,
             };
           }), 'mods');
-          if (!go) return;
+          if (!picked.length) return;
+          const chosen = picked.map(x => x.ref);
           bar.disabled = true;
           let done = 0, failed = 0;
-          for (const e of updatable) {
-            bar.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">hourglass_top</i> Updating ${done + 1}/${updatable.length}`;
+          for (const e of chosen) {
+            bar.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">hourglass_top</i> Updating ${done + 1}/${chosen.length}`;
             const u = updates[e.name];
             try {
               const r = await ipcRenderer.invoke('server-mods:update', { name: selectedServer.name, dir: 'mods', filename: e.name, url: u.url });
@@ -1095,7 +1098,7 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
             done++;
           }
           bar.disabled = false;
-          if (window.notify) window.notify(failed ? `${failed} of ${updatable.length} could not be updated` : `Updated ${done} mods`, failed ? 'error' : 'success');
+          if (window.notify) window.notify(failed ? `${failed} of ${chosen.length} could not be updated` : `Updated ${done} mods`, failed ? 'error' : 'success');
           loadServerMods();
         };
       }

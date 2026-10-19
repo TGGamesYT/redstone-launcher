@@ -3154,23 +3154,26 @@
                     allBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">upgrade</i> Update all (${updatable.length})`;
                     allBtn.onclick = async () => {
                       // What would be replaced, and what changed in it, before
-                      // anything is downloaded.
-                      const go = await window.UpdateAll.confirm(updatable.map(p => ({
+                      // anything is downloaded. What comes back is what is
+                      // still ticked, which may be fewer than went in.
+                      const picked = await window.UpdateAll.confirm(updatable.map(p => ({
                         name: p.name, icon: p.icon, version: p.version,
                         latestVersion: p.latestVersion, versionId: p.updateVersionId,
+                        ref: p,
                       })), tabName);
-                      if (!go) return;
+                      if (!picked.length) return;
+                      const chosen = picked.map(x => x.ref);
                       allBtn.disabled = true;
                       let done = 0, failed = 0;
-                      for (const p of updatable) {
-                        allBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">hourglass_top</i> Updating ${done + 1}/${updatable.length}`;
+                      for (const p of chosen) {
+                        allBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">hourglass_top</i> Updating ${done + 1}/${chosen.length}`;
                         try {
                           const r = await ipcRenderer.invoke("update-instance-mod", { profileId: profile.id, tab: tabName, oldFilename: p.filename, fileUrl: p.updateUrl });
                           if (r && r.success === false) failed++;
                         } catch { failed++; }
                         done++;
                       }
-                      if (failed && window.notify) window.notify(`${failed} of ${updatable.length} could not be updated`, "error");
+                      if (failed && window.notify) window.notify(`${failed} of ${chosen.length} could not be updated`, "error");
                       else if (window.notify) window.notify(`Updated ${done} ${tabName}`, "success");
                       renderContentTab();
                     };

@@ -13,22 +13,40 @@
     const s = document.createElement('style');
     s.id = 'ua-style';
     s.textContent = `
-      .modal-content.ua-modal { display:flex; flex-direction:column; overflow:hidden; max-height:82vh; }
+      /* The height is settled BEFORE anything opens and does not change
+         after: opening a changelog used to make the whole dialog taller, so
+         everything -- including the row you had just clicked, and the buttons
+         -- moved out from under the cursor. It is set from the number of
+         rows, so one mod does not get a dialog full of nothing. */
+      .modal-content.ua-modal { display:flex; flex-direction:column; overflow:hidden; }
       .ua-modal .ua-scroll { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
       .ua-modal .modal-actions { flex:0 0 auto; margin-top:12px; }
       .ua-row { border:1px solid var(--border-dark); border-radius:var(--border-radius); margin-bottom:6px; overflow:hidden; }
-      .ua-head { display:flex; align-items:center; gap:10px; padding:8px 10px; cursor:pointer; }
-      .ua-head:hover { background:var(--menu-hover-bg); }
+      .ua-head { display:flex; align-items:center; gap:10px; padding:8px 10px; cursor:pointer;
+        transition:background 0.15s ease; }
+      .ua-head:hover { background:rgba(255,255,255,0.07); }
       .ua-head img { width:30px; height:30px; flex:0 0 30px; border-radius:6px; object-fit:contain;
         background:var(--menu-bg); image-rendering:pixelated; }
       .ua-name { flex:1; min-width:0; font-size:13px; word-break:break-word; }
       .ua-vers { font-size:12px; opacity:0.8; white-space:nowrap; }
-      .ua-vers .ua-to { color:var(--accent); }
-      .ua-head .material-icons { font-size:18px; opacity:0.6; transition:transform 0.15s ease; }
-      .ua-row.open .ua-head .material-icons { transform:rotate(180deg); }
-      .ua-log { display:none; padding:2px 12px 10px; font-size:12px; line-height:1.5;
-        border-top:1px solid var(--border-dark); background:var(--very-dark); }
-      .ua-row.open .ua-log { display:block; }
+      /* NOT --accent: on this dialog's own background that is red on red. A
+         lift in weight and brightness says "this is the new one" on any
+         theme, because it is not a colour at all. */
+      .ua-vers .ua-to { color:var(--text-color); opacity:1; font-weight:600; }
+      .ua-vers .ua-from { opacity:0.6; }
+      .ua-head .ua-caret { font-size:18px; opacity:0.6; transition:transform 0.18s ease; }
+      .ua-row.open .ua-head .ua-caret { transform:rotate(180deg); }
+      /* Animated by its own height: a grid row from 0fr to 1fr collapses and
+         expands smoothly without anybody having to measure the content. */
+      .ua-logwrap { display:grid; grid-template-rows:0fr; transition:grid-template-rows 0.22s ease; }
+      .ua-row.open .ua-logwrap { grid-template-rows:1fr; }
+      .ua-log { overflow:hidden; font-size:12px; line-height:1.5; }
+      .ua-log > .ua-login { padding:8px 12px 10px; border-top:1px solid var(--border-dark);
+        background:var(--very-dark); }
+      /* Left out of "update all". The row stays readable -- it is a choice,
+         not an error. */
+      .ua-row.off { opacity:0.5; }
+      .ua-pick { flex:0 0 auto; width:18px; height:18px; margin:0; cursor:pointer; accent-color:var(--base-color); }
       .ua-log h1, .ua-log h2, .ua-log h3 { font-size:13px; margin:10px 0 4px; }
       .ua-log ul, .ua-log ol { margin:4px 0 4px 18px; padding:0; }
       .ua-log p { margin:4px 0; }
@@ -59,12 +77,15 @@
     /**
      * Ask before updating. `items` is [{ name, icon, version, latestVersion,
      * versionId }]; `what` names the kind of thing for the heading ("mods").
-     * Resolves true to go ahead, false to leave it.
+     *
+     * Resolves with the items to actually update, which is everything still
+     * ticked -- so a caller updates what comes back rather than what it sent
+     * -- or an empty array if the dialog was dismissed.
      */
     confirm(items, what) {
       ensureStyle();
       const list = (items || []).filter(Boolean);
-      if (!list.length) return Promise.resolve(false);
+      if (!list.length) return Promise.resolve([]);
       const noun = list.length === 1 ? (what || 'file').replace(/s$/, '') : (what || 'files');
 
       const ov = document.createElement('div');
@@ -85,27 +106,44 @@
             <button id="uaNo">Cancel</button>
           </div>
         </div>`;
+      // Room for the rows plus one changelog, capped at most of the window.
+      // Worked out once, here, rather than following the content.
+      const box = ov.querySelector('.ua-modal');
+      box.style.height = `min(72vh, ${Math.max(300, list.length * 52 + 300)}px)`;
       document.body.appendChild(ov);
       const scroll = ov.querySelector('.ua-scroll');
 
-      for (const it of list) {
+      // Which ones are actually going to be updated. Everything is in to
+      // begin with; a mod can be left out without leaving the dialog.
+      const chosen = new Set(list.map((_, i) => i));
+
+      list.forEach((it, i) => {
         const row = document.createElement('div');
         row.className = 'ua-row';
         const from = it.version ? esc(it.version) : '';
         const to = it.latestVersion ? esc(it.latestVersion) : 'the newest build';
         row.innerHTML = `
           <div class="ua-head">
+            <input type="checkbox" class="ua-pick" checked title="Update this one">
             <img alt="">
             <span class="ua-name">${esc(it.name)}</span>
-            <span class="ua-vers">${from ? from + ' → ' : ''}<span class="ua-to">${to}</span></span>
-            <i class="material-icons">expand_more</i>
+            <span class="ua-vers">${from ? '<span class="ua-from">' + from + '</span> → ' : ''}<span class="ua-to">${to}</span></span>
+            <i class="material-icons ua-caret">expand_more</i>
           </div>
-          <div class="ua-log"></div>`;
+          <div class="ua-logwrap"><div class="ua-log"><div class="ua-login"></div></div></div>`;
         const img = row.querySelector('img');
         if (it.icon) { img.src = it.icon; img.onerror = () => { img.style.visibility = 'hidden'; }; }
         else img.style.visibility = 'hidden';
 
-        const log = row.querySelector('.ua-log');
+        const pick = row.querySelector('.ua-pick');
+        pick.onclick = (ev) => ev.stopPropagation();   // ticking it is not opening it
+        pick.onchange = () => {
+          if (pick.checked) chosen.add(i); else chosen.delete(i);
+          row.classList.toggle('off', !pick.checked);
+          syncGo();
+        };
+
+        const log = row.querySelector('.ua-login');
         let loaded = false;
         row.querySelector('.ua-head').onclick = async () => {
           row.classList.toggle('open');
@@ -131,14 +169,31 @@
           }
         };
         scroll.appendChild(row);
+      });
+
+      // The button says how many it would do, and goes dead at none.
+      const goBtn = ov.querySelector('#uaGo');
+      function syncGo() {
+        const n = chosen.size;
+        goBtn.textContent = n === list.length ? 'Update all' : `Update ${n}`;
+        goBtn.disabled = n === 0;
+        goBtn.style.opacity = n === 0 ? '0.5' : '';
       }
+      syncGo();
 
       return new Promise((resolve) => {
         let done = false;
-        const finish = (go) => { if (done) return; done = true; ov.remove(); resolve(go); };
+        // Resolves with the items to update -- not a yes/no -- because some
+        // of them may have been unticked.
+        const finish = (go) => {
+          if (done) return;
+          done = true;
+          ov.remove();
+          resolve(go ? list.filter((_, i) => chosen.has(i)) : []);
+        };
         ov.querySelector('#uaX').onclick = () => finish(false);
         ov.querySelector('#uaNo').onclick = () => finish(false);
-        ov.querySelector('#uaGo').onclick = () => finish(true);
+        goBtn.onclick = () => { if (chosen.size) finish(true); };
         ov.addEventListener('mousedown', (ev) => { if (ev.target === ov) finish(false); });
       });
     },
