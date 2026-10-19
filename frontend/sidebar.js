@@ -575,201 +575,263 @@ ipcRenderer.on("alert-message", (event, message) => {
   alert(message);
 });
 
-// Instance process list bar
+// ── The running / starting instances, top right ────────────────────────────
+//
+// It used to show only instances whose game process already existed, so the
+// minutes a big modpack spends checking assets and downloading libraries
+// looked like nothing was happening at all -- and more than one of them got a
+// native <select>, which cannot show an icon, cannot show two lines, and
+// opens as an OS menu nothing else in the launcher looks like.
+//
+// Now: anything STARTING counts as running, with what it is doing on it, and
+// the list is a panel of the launcher's own. A row opens that instance; its
+// button stops it, or cancels the launch when it has not started yet.
+function instanceBarStyle() {
+    if (document.getElementById("ib-style")) return;
+    const s = document.createElement("style");
+    s.id = "ib-style";
+    s.textContent = `
+      .ib-wrap { position:relative; display:flex; align-items:center; gap:8px; }
+      .ib-pill { display:flex; align-items:center; gap:8px; padding:5px 8px; border:none; cursor:pointer;
+        background:none; color:var(--text-color); font:inherit; border-radius:var(--border-radius);
+        max-width:260px; transition:background 0.15s ease; user-select:none; }
+      .ib-pill:hover { background:rgba(255,255,255,0.08); }
+      .ib-pill.flat { cursor:default; opacity:0.8; }
+      .ib-pill.flat:hover { background:none; }
+      .ib-pill img { width:18px; height:18px; flex:0 0 18px; border-radius:4px; object-fit:contain;
+        image-rendering:pixelated; }
+      .ib-pill .t { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .ib-pill .caret { font-size:16px; opacity:0.7; line-height:1; transition:transform 0.15s ease; }
+      .ib-wrap.open .ib-pill .caret { transform:rotate(180deg); }
+      /* A dot that says something is happening without taking any room. */
+      .ib-dot { width:7px; height:7px; border-radius:50%; flex:0 0 7px; background:#49c96d; }
+      .ib-dot.busy { background:#e0a100; animation:ib-pulse 1.1s ease-in-out infinite; }
+      @keyframes ib-pulse { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
+
+      /* Fixed, not absolute: #instance-processes is overflow:hidden so a long
+         instance name truncates instead of shoving the window controls along,
+         and an absolutely-positioned panel was clipped to the height of the
+         toolbar by it. Fixed escapes that -- overflow does not clip a fixed
+         descendant -- and the toolbar makes no containing block to trap it.
+         Its position is set from the pill's rect when it opens. */
+      .ib-panel { position:fixed; z-index:7200; display:none;
+        min-width:290px; max-width:380px; max-height:60vh; overflow-y:auto; padding:6px;
+        background:var(--menu-bg); border:1px solid var(--border-dark);
+        border-radius:var(--border-radius); box-shadow:0 12px 34px rgba(0,0,0,0.55); }
+      .ib-wrap.open .ib-panel { display:block; }
+      .ib-row { display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:var(--border-radius);
+        cursor:pointer; }
+      .ib-row:hover { background:var(--menu-hover-bg); }
+      .ib-row img { width:28px; height:28px; flex:0 0 28px; border-radius:6px; object-fit:contain;
+        background:var(--very-dark); image-rendering:pixelated; }
+      .ib-row .n { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .ib-row .s { font-size:11px; opacity:0.72; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .ib-row .mid { flex:1; min-width:0; }
+      /* A thread of a progress bar under the status line, only while there is
+         progress to show. */
+      .ib-bar { height:2px; margin-top:4px; border-radius:2px; background:rgba(255,255,255,0.14); overflow:hidden; }
+      .ib-bar > i { display:block; height:100%; background:var(--base-color); transition:width 0.2s ease; }
+      .ib-act { flex:0 0 auto; border:none; background:rgba(255,0,0,0.55); color:var(--text-color);
+        border-radius:var(--border-radius); padding:5px 8px; cursor:pointer; font:inherit; font-size:11px;
+        user-select:none; white-space:nowrap; }
+      .ib-act:hover { background:rgba(255,0,0,0.8); }`;
+    document.head.appendChild(s);
+}
+
 async function createInstanceInfoBar(container) {
-    const wrapper = document.createElement("div");
-    wrapper.style.display = "flex";
-    wrapper.style.alignItems = "center";
-    wrapper.style.gap = "10px";
-    wrapper.style.padding = "0px";
-    wrapper.style.background = "none";
-    wrapper.style.borderRadius = "var(--border-radius)";
-    container.appendChild(wrapper);
+    instanceBarStyle();
+    const wrap = document.createElement("div");
+    wrap.className = "ib-wrap";
+    // A div, not a button: the toolbar styles every <button> inside it as a
+    // 36x36 square window control, at a specificity nothing here can beat
+    // without an inline-style arms race.
+    const pill = document.createElement("div");
+    pill.className = "ib-pill";
+    pill.setAttribute("role", "button");
+    pill.tabIndex = 0;
+    const panel = document.createElement("div");
+    panel.className = "ib-panel";
+    wrap.append(pill, panel);
+    container.appendChild(wrap);
 
-    const stopBtn = document.createElement("button");
-    stopBtn.textContent = "◻";
-    Object.assign(stopBtn.style, {
-        padding: "10px",
-        border: "none",
-        borderRadius: "var(--border-radius)",
-        background: "rgba(255, 0, 0, 0.6)",
-        color: "var(--text-color)",
-        cursor: "pointer",
-        transition: "background 0.2s",
-        display: "none",
-    });
-    stopBtn.onmouseover = () => (stopBtn.style.background = "rgba(255, 0, 0, 0.8)");
-    stopBtn.onmouseout = () => (stopBtn.style.background = "rgba(255, 0, 0, 0.6)");
-    wrapper.appendChild(stopBtn);
+    const names = new Map();        // id -> profile name, so a refresh is not a round trip
+    let entries = [];
+    let open = false;
 
-    let previousInstances = null;
-    let currentStopHandler = null;
+    const place = () => {
+        const r = pill.getBoundingClientRect();
+        panel.style.top = (r.bottom + 6) + "px";
+        panel.style.right = Math.max(6, window.innerWidth - r.right) + "px";
+    };
+    const setOpen = (v) => {
+        open = !!v && entries.length > 0;
+        wrap.classList.toggle("open", open);
+        if (open) place();
+    };
+    window.addEventListener("resize", () => { if (open) place(); });
+    pill.onclick = (e) => { e.stopPropagation(); if (entries.length) setOpen(!open); };
+    document.addEventListener("mousedown", (e) => { if (open && !wrap.contains(e.target)) setOpen(false); });
+    document.addEventListener("keydown", (e) => { if (open && e.key === "Escape") setOpen(false); });
 
-    function areInstancesEqual(a, b) {
-        if (!Array.isArray(a) || !Array.isArray(b)) return false;
-        if (a.length !== b.length) return false;
-        for (let i = 0; i < a.length; i++) {
-            if (a[i].id !== b[i].id || a[i].pid !== b[i].pid) return false;
-        }
-        return true;
+    async function nameOf(id) {
+        if (names.has(id)) return names.get(id);
+        let n = null;
+        try { const p = await ipcRenderer.invoke("get-profile-by-id", id); n = p && p.name; } catch { /* gone */ }
+        names.set(id, n || String(id));
+        return names.get(id);
+    }
+    async function profileOf(id) {
+        try { return await ipcRenderer.invoke("get-profile-by-id", id); } catch { return null; }
     }
 
-    async function refreshInstances() {
-        const instances = await ipcRenderer.invoke("get-running-instances");
-        if (previousInstances !== null && areInstancesEqual(instances, previousInstances)) return;
-        previousInstances = Array.isArray(instances) ? instances.slice() : [];
-
-        // Clear previous instance elements
-        wrapper.querySelectorAll(".instance-element").forEach(el => el.remove());
-
-        // Reset stop button visibility and handler
-        stopBtn.style.display = "none";
-        if (currentStopHandler) {
-            stopBtn.removeEventListener("click", currentStopHandler);
-            currentStopHandler = null;
+    // Bytes read nothing as "3847201/9120033"; files read fine as "1200/4000".
+    const human = (n) => {
+        if (!Number.isFinite(n)) return "";
+        if (n < 1024) return n + " B";
+        if (n < 1048576) return (n / 1024).toFixed(0) + " KB";
+        return (n / 1048576).toFixed(1) + " MB";
+    };
+    function statusOf(e) {
+        if (!e.starting) return "Running";
+        const { label, current, total, bytes } = e;
+        if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+            return `${label} — ${bytes ? `${human(current)} of ${human(total)}` : `${current} / ${total}`}`;
         }
+        return label || "Getting ready";
+    }
+    const fractionOf = (e) => (e.starting && Number.isFinite(e.current) && Number.isFinite(e.total) && e.total > 0
+        ? Math.max(0, Math.min(1, e.current / e.total)) : null);
 
-        if (!instances || instances.length === 0) {
-            const label = document.createElement("span");
-            label.textContent = "No running instances";
-            label.className = "instance-element";
-            label.style.color = "var(--text-color)";
-            label.style.opacity = "0.8";
-            Object.assign(label.style, {
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                flexShrink: "0",
+    // Read both lists and fold them into one. An instance that is starting AND
+    // already has a process is running: the starting entry is dropped the
+    // moment the game is up, but the two calls are not atomic.
+    async function read() {
+        let running = [], starting = [];
+        try { running = await ipcRenderer.invoke("get-running-instances") || []; } catch { /* ignore */ }
+        try { starting = await ipcRenderer.invoke("get-launching-instances") || []; } catch { /* older build */ }
+        const out = running.map(r => ({ id: String(r.id), pid: r.pid, starting: false }));
+        const up = new Set(out.map(o => o.id));
+        for (const s of starting) {
+            if (up.has(String(s.id))) continue;
+            out.push({
+                id: String(s.id), pid: null, starting: true,
+                label: s.label, current: s.current, total: s.total, bytes: s.bytes,
             });
-            wrapper.insertBefore(label, stopBtn);
-            return;
         }
+        return out;
+    }
 
-        stopBtn.style.display = "inline-block";
-
-        // Count how many processes per ID
-        const countPerId = {};
-        for (const inst of instances) {
-            countPerId[inst.id] = (countPerId[inst.id] || 0) + 1;
-        }
-
-        const multipleProcesses =
-            instances.length > 1 || Object.values(countPerId).some(c => c > 1);
-
-        if (!multipleProcesses) {
-            // Single instance display
-            const inst = instances[0];
-            const profile = await ipcRenderer.invoke("get-profile-by-id", inst.id);
-            const label = document.createElement("span");
-            label.className = "instance-element";
-            label.textContent = profile?.name || inst.id;
-            label.style.color = "var(--text-color)";
-            label.style.cursor = "pointer";
-            Object.assign(label.style, {
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                flexShrink: "0",
-            });
-            label.onclick = () =>
-                (window.location.href = `instances.html?i=${encodeURIComponent(inst.id)}`);
-            wrapper.insertBefore(label, stopBtn);
-
-            // Stop button handler for single instance
-            currentStopHandler = async () => {
-                await ipcRenderer.invoke("stop-instance-by-pid", inst.pid);
-                await refreshInstances();
-            };
-            stopBtn.addEventListener("click", currentStopHandler);
+    async function paint() {
+        // ── the pill ──
+        pill.innerHTML = "";
+        pill.classList.toggle("flat", entries.length === 0);
+        if (!entries.length) {
+            setOpen(false);
+            const t = document.createElement("span");
+            t.className = "t";
+            t.textContent = "No running instances";
+            pill.appendChild(t);
         } else {
-            // Multiple instances — dropdown
-            const select = document.createElement("select");
-            select.className = "instance-element";
-            // Base style
-            Object.assign(select.style, {
-                marginTop: "15px",
-                display: "flex",
-                appearance: "none",
-                background: "var(--toolbar-bg)",
-                border: "none",
-                color: "var(--text-color)",
-                cursor: "pointer",
-                font: "inherit",
-                padding: "0px 24px 0px 0px",
-                width: "auto",
-                minWidth: "unset",
-                boxShadow: "none",
-                transition: "background 0.2s, color 0.2s",
-            });
+            const dot = document.createElement("span");
+            dot.className = "ib-dot" + (entries.some(e => e.starting) ? " busy" : "");
+            const t = document.createElement("span");
+            t.className = "t";
+            t.textContent = entries.length === 1
+                ? await nameOf(entries[0].id)
+                : `${entries.length} instances`;
+            const caret = document.createElement("i");
+            caret.className = "material-icons caret";
+            caret.textContent = "expand_more";
+            pill.append(dot, t, caret);
+            if (entries.length === 1) pill.title = statusOf(entries[0]);
+        }
 
-            function setArrow(down = true) {
-                select.style.backgroundImage = down
-                    ? "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"6\"><path fill=\"white\" d=\"M0 0l5 6 5-6z\"/></svg>')"
-                    : "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"6\"><path fill=\"white\" d=\"M0 6l5-6 5 6z\"/></svg>')";
+        // ── the panel ──
+        panel.innerHTML = "";
+        for (const e of entries) {
+            const row = document.createElement("div");
+            row.className = "ib-row";
+            const img = document.createElement("img");
+            img.alt = "";
+            const mid = document.createElement("div");
+            mid.className = "mid";
+            const n = document.createElement("div");
+            n.className = "n";
+            n.textContent = await nameOf(e.id);
+            const s = document.createElement("div");
+            s.className = "s";
+            s.textContent = statusOf(e);
+            mid.append(n, s);
+            const frac = fractionOf(e);
+            if (frac != null) {
+                const bar = document.createElement("div");
+                bar.className = "ib-bar";
+                const fill = document.createElement("i");
+                fill.style.width = (frac * 100).toFixed(1) + "%";
+                bar.appendChild(fill);
+                mid.appendChild(bar);
             }
-
-            setArrow(true);
-
-            // Arrow
-            select.style.backgroundImage =
-                "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"6\"><path fill=\"white\" d=\"M0 0l5 6 5-6z\"/></svg>')";
-            select.style.backgroundRepeat = "no-repeat";
-            select.style.backgroundPosition = "right 6px center";
-            select.style.backgroundSize = "10px 6px";
-            for (const inst of instances) {
-                const profile = await ipcRenderer.invoke("get-profile-by-id", inst.id);
-                const showPid = countPerId[inst.id] > 1;
-                const opt = document.createElement("option");
-                opt.value = `${inst.id}-${inst.pid}`;
-                opt.textContent =
-                    profile?.name
-                        ? `${profile.name}${showPid ? ` (${inst.pid})` : ""}`
-                        : `${inst.id}${showPid ? ` (${inst.pid})` : ""}`;
-                select.appendChild(opt);
-            }
-            wrapper.insertBefore(select, stopBtn);
-            let dropdownOpen = false;
-            select.addEventListener("mousedown", e => {
-            const rect = select.getBoundingClientRect();
-
-            // If clicked in text area (not arrow), open instance page instead
-            if (e.clientX < rect.right - 20) {
-                e.preventDefault();
-                const selectedVal = select.value;
-                if (selectedVal) {
-                    const [id] = selectedVal.split("-");
-                    window.location.href = `instances.html?i=${encodeURIComponent(id)}`;
-                }
-                return;
-            }
-
-            // Otherwise toggle arrow state
-            dropdownOpen = !dropdownOpen;
-            setArrow(!dropdownOpen);
-            });
-
-            // Reset arrow when focus leaves dropdown
-            select.addEventListener("blur", () => {
-                dropdownOpen = false;
-                setArrow(true);
-            });
-            // Stop handler for dropdown
-            currentStopHandler = async () => {
-                const selectedVal = select.value;
-                if (!selectedVal) return;
-                const [, pidStr] = selectedVal.split("-");
-                const pid = parseInt(pidStr, 10);
-                if (!Number.isFinite(pid)) return;
-                await ipcRenderer.invoke("stop-instance-by-pid", pid);
-                await refreshInstances();
+            const act = document.createElement("div");   // see the pill above
+            act.className = "ib-act";
+            act.setAttribute("role", "button");
+            act.tabIndex = 0;
+            act.textContent = e.starting ? "Cancel" : "Stop";
+            act.onclick = async (ev) => {
+                ev.stopPropagation();
+                if (act.dataset.busy) return;
+                act.dataset.busy = "1";
+                act.style.opacity = "0.5";
+                try {
+                    if (e.starting) await ipcRenderer.invoke("cancel-launch", { profileId: e.id });
+                    else await ipcRenderer.invoke("stop-instance-by-pid", e.pid);
+                } catch { /* it may have gone by itself */ }
+                await refreshInstances(true);
             };
-            stopBtn.addEventListener("click", currentStopHandler);
+            row.append(img, mid, act);
+            row.onclick = () => {
+                setOpen(false);
+                window.location.href = `instances.html?i=${encodeURIComponent(e.id)}`;
+            };
+            panel.appendChild(row);
+            // The icon is looked up after the row exists, so one slow profile
+            // does not hold the whole list up.
+            profileOf(e.id).then(p => {
+                if (p && window.instanceIconInto) window.instanceIconInto(img, p);
+                else img.style.visibility = "hidden";
+            }).catch(() => { img.style.visibility = "hidden"; });
         }
     }
 
-    // Initial + periodic updates
-    await refreshInstances();
-    setInterval(refreshInstances, 3000);
+    const same = (a, b) => a.length === b.length && a.every((x, i) =>
+        x.id === b[i].id && x.pid === b[i].pid && x.starting === b[i].starting
+        && x.label === b[i].label && x.current === b[i].current && x.total === b[i].total);
+
+    let painting = null;
+    async function refreshInstances(force) {
+        const next = await read();
+        if (!force && same(next, entries)) return;
+        entries = next;
+        painting = paint();
+        await painting;
+    }
+
+    // Progress frames arrive as they happen, so the status line keeps up
+    // between polls instead of being up to three seconds stale.
+    ipcRenderer.on("launch-progress", (_e, p) => {
+        if (!p) return;
+        const id = String(p.profileId);
+        const row = entries.find(x => x.id === id && x.starting);
+        if (p.done) { refreshInstances(); return; }
+        if (!row) { refreshInstances(); return; }   // a launch we had not seen yet
+        if (row.label === p.label && row.current === p.current && row.total === p.total) return;
+        Object.assign(row, { label: p.label, current: p.current, total: p.total, bytes: !!p.bytes });
+        paint();
+    });
+
+    // Initial + periodic updates. The poll is the backstop; the event above is
+    // what actually keeps it current.
+    await refreshInstances(true);
+    setInterval(() => refreshInstances(), 3000);
 }
 
 async function allowCracked(newValue, password) {

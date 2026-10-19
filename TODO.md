@@ -22,12 +22,34 @@ Sent while Round 28's section D was being built.
       clicked — fetched for the row opened and nothing else, since the update
       check already knows which published version it found. On instances and
       on servers, both of which get their updates from the same place.*
-- [ ] **An instance getting ready to launch should show in the status bar**
+- [x] **An instance getting ready to launch should show in the status bar**
       top-right, on every page, the same way a running one does — downloading
       or checking counts as running for this.
-- [ ] **That status bar's menu should be a proper pop-down**, not the dropdown
+      *It only ever listed instances whose game process already existed, so the
+      minutes a big modpack spends checking assets and downloading libraries
+      showed as "No running instances". Anything starting counts now, with
+      what it is doing on it — and the main process keeps the newest progress
+      frame per instance, because a renderer only hears the frames sent while
+      it exists and every page change is a new renderer, so the bar used to
+      have nothing to say until the next frame happened along.*
+- [x] **That status bar's menu should be a proper pop-down**, not the dropdown
       that only appears when more than one instance is running: each entry says
       what the instance is doing, and clicking it opens that instance.
+      *A native `<select>` cannot show an icon, cannot show two lines, and
+      opens as an OS menu that looks like nothing else in the launcher. It is
+      a panel of the launcher's own now, for one instance or for six: a row
+      each with the instance's icon, its name, what it is doing ("Checking
+      assets — 1200 / 4000", "Running") and a thread of a progress bar under
+      it. The row opens that instance; its button stops it, or cancels the
+      launch when the game is not up yet. Progress frames land as they
+      happen, so the line keeps up instead of being up to three seconds
+      stale.
+      Two things it had to get past: the toolbar styles every `<button>`
+      inside it as a 36x36 window control at a specificity nothing here can
+      beat, so the pill and the row buttons are divs; and
+      `#instance-processes` is `overflow:hidden` so a long name truncates
+      rather than shoving the window controls along, which clipped the panel
+      to the height of the toolbar until it was made `position:fixed`.*
 - [x] **The custom-setup finalize page scrolls.** Its content is slightly
       taller than the room it has, so it becomes scrollable for a few pixels.
       *3 to 27 pixels, measured in a real browser at the usual window sizes.

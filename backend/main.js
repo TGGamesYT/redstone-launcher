@@ -296,9 +296,15 @@ function progressLabel(type) {
 // bar disappears the moment work finishes.
 const lastProgressSent = new Map();    // profileId -> timestamp of last send
 const pendingProgress = new Map();     // profileId -> { progress, timer }
+// The newest frame per instance, kept so a page that opens PART WAY through a
+// launch can say what is happening. A renderer only hears the frames that are
+// sent while it exists, and every navigation is a new renderer.
+const latestProgress = new Map();      // profileId -> the last frame sent
 const PROGRESS_MIN_GAP = 80;           // ms between rate-limited frames
 function sendProgressNow(profileId, progress) {
   lastProgressSent.set(profileId, Date.now());
+  if (progress.done) latestProgress.delete(String(profileId));
+  else latestProgress.set(String(profileId), progress);
   if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('launch-progress', { profileId, ...progress });
   }
@@ -3144,8 +3150,23 @@ ipcMain.handle("cancel-launch", (event, { profileId }) => ({ success: cancelLaun
 // is rebuilt whenever you leave it and come back, and it had nowhere to read
 // that from: it started at "Play" every time and only noticed once the game
 // itself was running, which on a big modpack is minutes later.
+// It also carries what each one is DOING, so the status bar can say
+// "Checking assets 1200/4000" on a page that was opened mid-launch rather
+// than waiting for the next frame to arrive.
 ipcMain.handle("get-launching-instances", () =>
-  [...launchWorkers.keys()].map(id => ({ id })));
+  [...launchWorkers.keys()].map(id => {
+    const p = latestProgress.get(String(id)) || null;
+    const meta = instanceMeta.get(id) || instanceMeta.get(String(id)) || null;
+    return {
+      id,
+      name: (meta && meta.name) || null,
+      label: (p && p.label) || "Getting ready",
+      current: p ? p.current : null,
+      total: p ? p.total : null,
+      bytes: !!(p && p.bytes),
+      fileName: (p && p.fileName) || null,
+    };
+  }));
 
 function launchViaWorker(profileId, cfg) {
   return new Promise((resolve, reject) => {
