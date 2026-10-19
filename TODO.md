@@ -13,6 +13,14 @@ started.
 
 Sent while Round 28's section D was being built.
 
+- [x] **The accounts page says "No friends" while the friends are loading.**
+      *An empty list and a list that has not arrived look identical from the
+      outside, and the panel reported the second as the first: switching
+      account emptied the lists and painted "No friends yet. Add someone by
+      their username above." for as long as the round trip took. It says
+      "Loading friends…" now — and the matching line on the incoming and
+      outgoing tabs — until there is an answer to report.*
+
 - [x] **"Update all" should ask first.** A modal listing the mods that would be
       updated, each one's changelog shown when it is clicked.
       *It used to start downloading the moment it was clicked, so the only way

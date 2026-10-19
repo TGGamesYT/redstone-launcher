@@ -555,6 +555,11 @@
     // also tells your friends you are around, which is what the game does too.
     const FR = {
       friends: [], incoming: [], outgoing: [], presence: {}, tab: 'friends', busy: false,
+      // Whether a list is on its way. An empty list and a list that has not
+      // arrived look identical from the outside, and the panel was reporting
+      // the second as the first: switching account emptied the lists and
+      // painted "No friends yet" for as long as the round trip took.
+      loading: false,
       // What is typed in the box over the list. It narrows the list; it is not
       // a status filter, and it is not remembered between visits — a search is
       // a thing you are doing now.
@@ -640,6 +645,13 @@
         d.textContent = text;
         el.appendChild(d);
       };
+
+      // Nothing is known yet, so say nothing about what is in the list.
+      if (FR.loading && !FR.friends.length && !FR.incoming.length && !FR.outgoing.length) {
+        return empty(FR.tab === 'friends' ? 'Loading friends…'
+          : FR.tab === 'incoming' ? 'Loading incoming requests…'
+            : 'Loading outgoing requests…');
+      }
 
       if (FR.tab === 'friends') {
         if (!FR.friends.length) return empty('No friends yet. Add someone by their username above.');
@@ -937,13 +949,18 @@
         clearFriends('Select an account to see its friends.');
         return;
       }
+      // Set BEFORE the clear, so the repaint it triggers says "Loading" rather
+      // than "No friends yet".
+      FR.loading = true;
       if (!quiet) clearFriends();
+      // A second load while one is in flight: the lists are cleared and left
+      // saying "Loading", and the one already running finishes the job.
       if (FR.busy) return;
       FR.busy = true;
+      const want = selectedPlayerId;
       const btn = document.getElementById('frRefresh');
       if (btn) btn.classList.add('spinning');
       try {
-        const want = selectedPlayerId;
         const r = await ipcRenderer.invoke('friends:list', { accountId: want });
         if (String(want) !== String(selectedPlayerId)) return;   // switched mid-flight
         if (!r || !r.success) {
@@ -967,11 +984,29 @@
         if (String(want) !== String(selectedPlayerId)) return;
         if (pr && pr.success) FR.presence = pr.presence || {};
         FR.presenceFor = want;
+        FR.loading = false;          // the answer is in; paint what it says
         paintFriends();
       } finally {
         FR.busy = false;
         if (btn) btn.classList.remove('spinning');
+        // Every early return above leaves its own message on screen; only a
+        // list still showing "Loading" needs the final word -- and only when
+        // this load is still the one being waited for. A load whose account
+        // was switched away from must not paint anything: what it holds
+        // belongs to somebody else, and the switch started a load of its own.
+        if (String(want) === String(selectedPlayerId)) {
+          FR.loading = false;
+          if (stillSayingLoading()) paintFriends();
+        }
       }
+    }
+
+    // Did the panel end the load still saying "Loading"? Then the run fell out
+    // of a path that never repainted, and the real state has to be drawn.
+    function stillSayingLoading() {
+      const el = frList();
+      const first = el && el.firstElementChild;
+      return !!(first && first.classList.contains('fr-empty') && /^Loading/.test(first.textContent || ''));
     }
 
     {
