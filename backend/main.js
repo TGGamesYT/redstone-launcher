@@ -269,13 +269,19 @@ function detectLanOpen(profileId, text) {
 ipcMain.handle("instance:lan-port", (event, { profileId }) => ({ port: lanPorts.get(String(profileId)) || null }));
 
 // Human-readable label for minecraft-launcher-core progress phases.
+// What a phase is actually doing. mclc walks every asset and every library on
+// every launch and only downloads the ones that are missing or wrong, so
+// "Downloading assets" was what it said while it was checking four thousand
+// files it already had -- which is what "it downloads everything every time"
+// looked like from the outside. A real download says so through its own
+// download-status events.
 function progressLabel(type) {
   switch (type) {
-    case 'assets': return 'Downloading assets';
+    case 'assets': return 'Checking assets';
     case 'assets-copy': return 'Copying assets';
     case 'natives': return 'Extracting natives';
     case 'classes':
-    case 'classes-maven-custom': return 'Downloading libraries';
+    case 'classes-maven-custom': return 'Checking libraries';
     case 'forge': return 'Installing Forge';
     default: return 'Preparing ' + (type || 'files');
   }
@@ -436,6 +442,65 @@ function extractCrashFromLog(lines) {
   return { text: text.slice(from).join("\n"), kind: "log-trace" };
 }
 
+// What an exit code means, where it means anything.
+//
+// A JVM that dies on a bad memory access does not write a Minecraft crash
+// report and does not print a Java stack trace -- there is no Java left to
+// print one. All that reaches the launcher is a number, and "it exited with
+// code 3221225477" is not something anybody can act on. These are the codes
+// that come up, in the form Windows and POSIX actually report them.
+const EXIT_MEANING = new Map([
+  [3221225477, "Access violation (0xC0000005) — the game read or wrote memory it does not own. Almost always a graphics driver or a native library rather than the game itself."],
+  [-1073741819, "Access violation (0xC0000005) — the game read or wrote memory it does not own. Almost always a graphics driver or a native library rather than the game itself."],
+  [3221225781, "A DLL it needs is missing (0xC0000135)."],
+  [-1073741515, "A DLL it needs is missing (0xC0000135)."],
+  [3221225725, "Stack overflow (0xC00000FD)."],
+  [-1073741571, "Stack overflow (0xC00000FD)."],
+  [3221226505, "Buffer overrun, caught by Windows (0xC0000409)."],
+  [-1073740791, "Buffer overrun, caught by Windows (0xC0000409)."],
+  [3221225786, "Interrupted (0xC000013A) — Ctrl+C, or the console it was started from closed."],
+  [-1073741510, "Interrupted (0xC000013A) — Ctrl+C, or the console it was started from closed."],
+  [1, "The game stopped itself. The log usually says why."],
+  [137, "Killed — out of memory, most likely."],
+  [139, "Segmentation fault — the game read or wrote memory it does not own."],
+  [134, "Aborted by the JVM."],
+]);
+
+// The JVM's own crash file. When the virtual machine dies on a bad memory
+// access it writes hs_err_pid<n>.log next to the game, and the top of that
+// file names the signal, the thread and -- the line that matters -- the
+// "Problematic frame", which is the library that actually fell over. That is
+// the detail the vanilla launcher shows and this one did not.
+function findJvmCrash(dir, sinceMs) {
+  const out = [];
+  const look = (where) => {
+    let names = [];
+    try { names = fs.readdirSync(where); } catch { return; }
+    for (const n of names) {
+      if (!/^hs_err_pid\d+\.log$/i.test(n)) continue;
+      try {
+        const full = path.join(where, n);
+        const st = fs.statSync(full);
+        if (Date.now() - st.mtimeMs < sinceMs) out.push({ full, t: st.mtimeMs });
+      } catch { /* gone already */ }
+    }
+  };
+  look(dir);
+  look(path.join(dir, "crash-reports"));
+  out.sort((a, b) => b.t - a.t);
+  return out[0] || null;
+}
+
+// The part of an hs_err log worth reading: everything down to the end of the
+// register dump is mostly noise, but the header, the problematic frame and
+// the Java frames above it are the answer.
+function trimJvmCrash(text) {
+  const lines = String(text).split(/\r?\n/);
+  const stop = lines.findIndex(l => /^---------------  P R O C E S S  ---------------/.test(l));
+  const head = lines.slice(0, stop > 0 ? stop : Math.min(lines.length, 120));
+  return head.join("\n").slice(0, 60000);
+}
+
 function reportInstanceCrash(profileId, cfg, code) {
   // 0 is a clean quit; 143/130 are SIGTERM/SIGINT, i.e. the user stopping it.
   if (code === 0 || code === null || code === undefined) return;
@@ -464,8 +529,22 @@ function reportInstanceCrash(profileId, cfg, code) {
       }
     } catch { /* no report is fine */ }
 
-    // No file — most loader crashes never get that far. Dig the failure out of
-    // the log rather than handing the whole tail over.
+    // No Minecraft report. A JVM that died on a bad memory access never got
+    // the chance to write one -- but it wrote its OWN, which names the
+    // library that fell over.
+    if (!report) {
+      const jvm = findJvmCrash(dir, 10 * 60 * 1000);
+      if (jvm) {
+        try {
+          report = trimJvmCrash(fs.readFileSync(jvm.full, "utf8"));
+          reportKind = "jvm";
+          reportPath = jvm.full;
+        } catch { /* unreadable; fall through to the log */ }
+      }
+    }
+
+    // Still nothing — most loader crashes never get that far. Dig the failure
+    // out of the log rather than handing the whole tail over.
     if (!report) {
       const found = extractCrashFromLog(lines);
       if (found) { report = found.text.slice(-60000); reportKind = found.kind; }
@@ -475,6 +554,7 @@ function reportInstanceCrash(profileId, cfg, code) {
       profileId: String(profileId),
       name: (cfg && cfg.name) || String(profileId),
       code,
+      meaning: EXIT_MEANING.get(Number(code)) || null,
       tail,
       report,
       reportKind,
@@ -3057,6 +3137,14 @@ function cancelLaunch(profileId) {
 }
 
 ipcMain.handle("cancel-launch", (event, { profileId }) => ({ success: cancelLaunch(profileId) }));
+
+// Which instances are PREPARING a launch -- downloading assets, libraries, a
+// loader installer. Asked for because the page that shows the Cancel button
+// is rebuilt whenever you leave it and come back, and it had nowhere to read
+// that from: it started at "Play" every time and only noticed once the game
+// itself was running, which on a big modpack is minutes later.
+ipcMain.handle("get-launching-instances", () =>
+  [...launchWorkers.keys()].map(id => ({ id })));
 
 function launchViaWorker(profileId, cfg) {
   return new Promise((resolve, reject) => {

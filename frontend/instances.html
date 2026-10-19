@@ -595,9 +595,23 @@
       ov.style.zIndex = 7000;
       const hasReport = !!info.report;
       const why = info.reportKind === "file" ? "Minecraft wrote a crash report:"
-        : info.reportKind === "log-report" ? "Minecraft printed a crash report to the log:"
-          : info.reportKind === "log-trace" ? "No crash report was written. This is what failed:"
-            : "No crash report was written, so here is the end of the log:";
+        : info.reportKind === "jvm" ? "Java itself fell over before Minecraft could write a report. This is Java's own account of it:"
+          : info.reportKind === "log-report" ? "Minecraft printed a crash report to the log:"
+            : info.reportKind === "log-trace" ? "No crash report was written. This is what failed:"
+              : "No crash report was written, so here is the end of the log:";
+      // The two lines of an hs_err log anybody reads: the signal, and the
+      // library that was running when it arrived.
+      const esc = (s) => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+      const headline = [];
+      if (info.meaning) headline.push(info.meaning);
+      if (info.reportKind === "jvm" && info.report) {
+        const lines = String(info.report).split(/\r?\n/);
+        // "# Problematic frame:" is always followed by the frame itself.
+        const at = lines.findIndex(l => /Problematic frame/i.test(l));
+        const blame = String((at >= 0 ? lines[at + 1] : lines.find(l => /^#\s+[CJjVv]\s/.test(l))) || "")
+          .replace(/^#\s*/, "").trim();
+        if (blame) headline.push(`It fell over in: ${blame}`);
+      }
       ov.innerHTML = `
         <div class="modal-content" style="max-width:820px; width:92%; display:flex; flex-direction:column; max-height:82vh;">
           <div class="modal-header">
@@ -607,6 +621,9 @@
           <p style="margin:0 0 10px; opacity:0.85; font-size:13px;">
             It exited with code ${info.code}. ${why}
           </p>
+          ${headline.length ? `<div style="margin:0 0 10px; padding:8px 10px; font-size:12px; line-height:1.5;
+            background:var(--very-dark); border:1px solid var(--border-dark); border-left:3px solid var(--accent);
+            border-radius:var(--border-radius);">${headline.map(h => `<div>${esc(h)}</div>`).join("")}</div>` : ""}
           <pre id="crashText" style="flex:1; min-height:0; overflow:auto; margin:0; padding:10px;
             background:var(--very-dark); border:1px solid var(--border-dark); border-radius:var(--border-radius);
             font-size:11px; line-height:1.45; white-space:pre-wrap; word-break:break-word;"></pre>
@@ -1868,6 +1885,7 @@
         right.appendChild(playBtn);
 
         let playState = "idle"; // idle | launching | running
+        let pressedAt = 0;        // when Play was last pressed, for the poll
         // Read the flag LIVE rather than off the captured profile: the running-
         // instance poll calls setPlay("idle") every couple of seconds, which
         // re-enabled the button and let a half-installed pack be launched.
@@ -1904,8 +1922,18 @@
         async function refreshPlayState() {
           const running = await ipcRenderer.invoke("get-running-instances");
           const mine = (running || []).filter(r => String(r.id) === String(profile.id));
-          if (mine.length) setPlay("running", mine.map(m => m.pid));
-          else if (playState !== "launching") setPlay("idle");
+          if (mine.length) { setPlay("running", mine.map(m => m.pid)); return; }
+          // Still getting ready? The main process is the one that knows, and
+          // this page is rebuilt every time you leave it and come back -- so
+          // reading it off a variable in here meant the button went back to
+          // Play until the game actually started, with no way to cancel.
+          let busy = [];
+          try { busy = await ipcRenderer.invoke("get-launching-instances"); } catch { /* older build */ }
+          if ((busy || []).some(b => String(b.id) === String(profile.id))) { setPlay("launching"); return; }
+          // Nothing running and nothing preparing. A press that has only just
+          // happened is given a few seconds to reach the main process before
+          // the button is taken back off you.
+          if (playState !== "launching" || Date.now() - pressedAt > 5000) setPlay("idle");
         }
         playBtn.onclick = async () => {
           if (playState === "running") {
@@ -1925,10 +1953,14 @@
           // Belt and braces: half a modpack only launches into a crash report.
           if (stillInstalling()) return;
           if (!selectedPlayerId) { playBtn.innerHTML = "Select a player first!"; return; }
+          pressedAt = Date.now();
           setPlay("launching");
           ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId });
           // Safety net: if it never shows up as running, fall back to idle.
           setTimeout(() => { if (playState === "launching") refreshPlayState(); }, 60000);
+          // ...and ask straight away, so a launch that fails to start at all
+          // does not leave the button saying Cancel for a minute.
+          setTimeout(refreshPlayState, 1500);
         };
         // Poll running state while this detail is open (single shared timer).
         clearInterval(window.__playPollTimer);

@@ -67,12 +67,57 @@ Asked for in one batch, with "write a todo and do everything".
       again, or undoing.
 
 ### C. Launching
-- [ ] **The Cancel/Stop button goes back to Play** when you leave the instance
+- [x] **The Cancel/Stop button goes back to Play** when you leave the instance
       page or reload it, until the game actually starts.
-- [ ] **Every launch re-downloads all the resources.**
-- [ ] **A crash shows only the exit code**, not what went wrong. Even the
+      *The button's state lived in the page, so a reload started from nothing
+      and the launch it belonged to was invisible. The main process is asked
+      which instances are starting up, so the page draws the button from what
+      is actually happening rather than from what it remembers.*
+- [x] **Every launch re-downloads all the resources.**
+      *It never downloaded them -- it HASHED them, which looks the same from
+      the outside and takes about as long. The library's asset check reads and
+      SHA-1s every object in the index on every launch: four thousand files
+      and most of a gigabyte, with the progress bar sitting on a step labelled
+      "assets" throughout. Nothing in its options turns that off, so the check
+      itself now remembers: a file whose size and modified time are what they
+      were when its hash was last verified is taken as still verified, and
+      anything that has moved at all is hashed properly. The steps say
+      "Checking assets" and "Checking libraries" too, because that is what
+      they are.*
+- [x] **A crash shows only the exit code**, not what went wrong. Even the
       vanilla launcher shows the details.
-- [ ] **`3221225477` crashes, very frequently**, and only with this launcher.
+      *A JVM that dies on a bad memory access writes no Minecraft crash report
+      and prints no Java stack trace -- there is no Java left to print one --
+      so all that ever reached the dialog was a number. It now says what the
+      number means, and it reads Java's OWN crash file (`hs_err_pid*.log`,
+      which the game leaves behind and nothing was looking at), down to the
+      end of the header, with the "problematic frame" -- the library that
+      actually fell over -- pulled out and put at the top.*
+- [x] **`3221225477` crashes, very frequently**, and only with this launcher.
+      *A real bug, and it is the launcher's. The library downloader verifies a
+      jar like this:*
+
+      if (!this.checkSum(library.downloads.artifact.sha1, file)) await get(lib)
+
+      *`checkSum` is async, so the test is `!Promise`, which is never true: no
+      library jar has ever been verified. And the downloader resolves when its
+      write stream finishes without ever comparing what arrived against
+      Content-Length, so a transfer cut halfway through leaves a truncated jar
+      that only has to pass `fs.existsSync` -- forever.
+      From 1.19 on the LWJGL natives ARE library jars: lwjgl.dll and glfw.dll
+      are unpacked out of them at startup. A truncated jar is a truncated DLL,
+      and a truncated DLL is an access violation (0xC0000005 = 3221225477) the
+      moment the game touches OpenGL, on every launch, with no crash report.
+      Every library is checked against its published hash now and the wrong
+      ones are replaced, which costs one full read and a stat per launch after
+      that thanks to the memo above.
+      Two more of the same kind, found with it: below 1.19 the natives are
+      unpacked once and the test for "again?" is whether the folder is empty,
+      so an extraction interrupted halfway was never redone -- there is a
+      stamp now, written last, naming the zips the folder was built from. And
+      the client jar was downloaded without being checked and re-downloaded
+      only if it had vanished altogether; one that is not the length Mojang
+      published is now fetched again.*
 
 ### D. Mods
 - [ ] **Disabling a dev mod does not disable it** — it picks the new one up and
