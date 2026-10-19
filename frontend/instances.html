@@ -2133,6 +2133,7 @@
         menu.style.padding = "5px";
         menu.style.zIndex = 1000;
         menu.innerHTML = `
+    <div class="menu-item" data-action="again">Run again</div>
     <div class="menu-item" data-action="open">Open Folder</div>
     <div class="menu-item" data-action="shortcut">Desktop shortcut</div>
     <div class="menu-item" data-action="share" style="display:none;">Share over internet</div>
@@ -2198,6 +2199,15 @@
         menu.querySelectorAll(".menu-item").forEach(item => {
           item.addEventListener("click", async e => {
             e.stopPropagation();
+            // Run again: another copy, whether or not one is already up.
+            // Minecraft is happy to run twice over one game directory -- that
+            // is what a second launcher window does -- so the "already
+            // running" guard is there to catch accidents, and asking for this
+            // deliberately steps past it.
+            if (item.dataset.action === "again") {
+              ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId, again: true });
+              if (window.notify) window.notify("Starting another copy of " + profile.name, "info");
+            }
             if (item.dataset.action === "open") ipcRenderer.send("open-folder", { id: profile.id, isClient: true });
             if (item.dataset.action === "delete" && await uiConfirm(
               `Delete "${profile.name}"? Its worlds, mods, screenshots and logs are deleted with it. This cannot be undone.`,

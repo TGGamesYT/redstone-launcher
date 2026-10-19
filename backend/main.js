@@ -1853,6 +1853,15 @@ ipcMain.on('create-profile', async (event, profile) => {
   event.reply('profile-created', newProfile);
 });
 
+// What the new-instance flow calls an instance when nobody types a name:
+// "Fabric 1.21.9". The labels have to match pickFinalize's, or an instance
+// named by it would not be recognised as unnamed.
+const LOADER_LABEL = { vanilla: 'Vanilla', fabric: 'Fabric', forge: 'Forge', neoforge: 'NeoForge', quilt: 'Quilt' };
+const autoInstanceName = (p) => {
+  const loader = String((p && p.loader) || 'vanilla').toLowerCase();
+  return `${LOADER_LABEL[loader] || (p && p.loader) || 'Vanilla'} ${(p && p.version) || ''}`.trim();
+};
+
 ipcMain.on('edit-profile', (event, updatedProfile) => {
   const profilesPromise = loadProfiles(); // returns a Promise because applySort is async
   // handle the promise here
@@ -1866,7 +1875,18 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
         event.reply('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
         return;
       }
-      profiles[index] = { ...profiles[index], ...updatedProfile };
+      const before = profiles[index];
+      const after = { ...before, ...updatedProfile };
+      // An instance nobody named is called after what it runs -- "Fabric
+      // 1.21.9" -- so when what it runs changes, what it is called should
+      // change with it. Only when the name is still exactly that: a name
+      // somebody chose is theirs, and so is one they are changing right now.
+      if (after.name === before.name
+        && before.name === autoInstanceName(before)
+        && autoInstanceName(after) !== autoInstanceName(before)) {
+        after.name = autoInstanceName(after);
+      }
+      profiles[index] = after;
 
       saveProfiles(profiles);
       event.reply('profiles-updated', profiles);
@@ -2983,7 +3003,12 @@ async function withRetry(fn, { tries = 3, base = 800, label = "op", profileId = 
 }
 
 // Launch profile
-async function launchProfileCore({ profileId, playerId, quickplaybool, quickplayip, quickPlay, shortcutArgs }) {
+// `again` is "Run again": a deliberate second copy of an instance that is
+// already up. Minecraft itself is happy to run twice over one game directory
+// -- that is what a second launcher window does -- so the guard below is a
+// guard against ACCIDENTS, not a rule, and asking for it explicitly skips it.
+// The double-click guard is not skipped: that one is never deliberate.
+async function launchProfileCore({ profileId, playerId, quickplaybool, quickplayip, quickPlay, shortcutArgs, again }) {
   const now = Date.now();
   const lastLaunch = launchingProfiles.get(profileId);
   
@@ -3000,10 +3025,11 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
 
   // Check if already running
   const isRunning = Array.from(runningInstances.values()).some(i => i.id === profileId);
-  if (isRunning) {
+  if (isRunning && !again) {
     broadcastLog(profileId, "[WARN] This profile is already running. Please close it first.");
     return;
   }
+  if (isRunning && again) broadcastLog(profileId, "[INFO] Starting another copy of this instance.");
 
   launchingProfiles.set(profileId, now);
   instanceLogs.delete(profileId); // fresh console for this launch (previous session was kept until now)

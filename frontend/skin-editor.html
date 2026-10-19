@@ -2350,7 +2350,12 @@
     // Paint directly on the 3D model: raycast the click against the player mesh,
     // read the hit UV, convert to a texel and stamp it (needs window.THREE r163).
     let drawing3d = false;
-    function texelFromHit(e) {
+    // `wantVisible` is for the eyedropper: it should pick the colour you can
+    // SEE, so a hit on a texel that is fully transparent -- which on most
+    // skins is the whole second layer -- is not the answer, and the ray
+    // carries on to the surface showing through it. Painting keeps the
+    // nearest hit, because drawing on the jacket is drawing on the jacket.
+    function texelFromHit(e, wantVisible) {
       if (!window.THREE || !viewer || !viewer.playerObject || !viewer.camera) return null;
       const c = document.getElementById('ed-3d');
       const rect = c.getBoundingClientRect();
@@ -2372,7 +2377,13 @@
           const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
           if (rc.ray.direction.dot(n) >= 0) continue; // facing away → back face, skip
         }
-        return { x: Math.floor(h.uv.x * SIZE), y: Math.floor((1 - h.uv.y) * SIZE) };
+        const t = { x: Math.floor(h.uv.x * SIZE), y: Math.floor((1 - h.uv.y) * SIZE) };
+        if (wantVisible) {
+          let a = 0;
+          try { a = wctx.getImageData(t.x, t.y, 1, 1).data[3]; } catch { /* off the canvas */ }
+          if (a === 0) continue;         // see-through here; look further in
+        }
+        return t;
       }
       return null;
     }
@@ -2388,9 +2399,10 @@
       });
     }
     function paint3D(e, isDown) {
-      const t = texelFromHit(e);
+      const picking = tool === 'eyedropper';
+      const t = texelFromHit(e, picking);
       if (!t) return;
-      if (tool === 'eyedropper') { if (isDown) pickColor(t.x, t.y); return; }
+      if (picking) { if (isDown) pickColor(t.x, t.y); return; }
       if (tool === 'fill') { if (isDown) { pushUndo(); doFill(t.x, t.y, true); render(); liveUpdate(); if (fillWith === 'brush') rememberColor(); } return; }
       stampAt(t.x, t.y, strokeMode(), true);
       render(); liveUpdate();
@@ -2408,8 +2420,8 @@
       // we do nothing and the orbit controls rotate as normal.
       c.addEventListener('pointerdown', (e) => {
         if (crModalOpen()) return; // a modal (image import, …) is open → don't paint
-        const t = texelFromHit(e);
-        if (!t) return; // empty space → rotate
+        const t = texelFromHit(e, tool === 'eyedropper');
+        if (!t) return; // empty space (or, for the eyedropper, nothing visible) → rotate
         e.preventDefault(); e.stopImmediatePropagation();
         try { c.setPointerCapture(e.pointerId); } catch { }
         if (tool !== 'eyedropper' && tool !== 'fill') pushUndo();

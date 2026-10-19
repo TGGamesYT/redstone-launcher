@@ -11,8 +11,14 @@ started.
 
 ## 0. Round 30
 
-- [ ] **The pick-colour tool does not work on the 3D render** in the skin
+- [x] **The pick-colour tool does not work on the 3D render** in the skin
       editor.
+      *The ray hits the second layer first, and on most skins the jacket is
+      fully transparent over the body — so the pick read a texel with no
+      colour in it and gave up without saying anything. The eyedropper now
+      carries on through anything see-through to the surface actually showing,
+      which is the colour you were pointing at. Painting still takes the
+      nearest hit: drawing on the jacket is drawing on the jacket.*
 - [x] **The "update all" modal resizes when a changelog opens.** With one item
       in it, opening the dropdown makes the modal taller and everything moves.
       *Its height is settled before anything opens and does not change after —
@@ -73,10 +79,23 @@ started.
       Found with it: a row outlives its action now, so the guard that stops a
       double click had to be let go of afterwards, or Stop and Cancel worked
       once per row and never again.*
-- [ ] **A "Run again" item in an instance's three-dot menu**, which launches it
+- [x] **A "Run again" item in an instance's three-dot menu**, which launches it
       whether or not it is already running.
-- [ ] **An instance named `<LOADER> <VERSION>` should be renamed** when its
+      *Minecraft is happy to run twice over one game directory — that is what
+      a second launcher window does — so the "already running" guard is there
+      to catch accidents, and asking for this deliberately steps past it. The
+      double-click guard is not stepped past: that one is never deliberate.*
+- [x] **An instance named `<LOADER> <VERSION>` should be renamed** when its
       version or its loader is changed.
+      *An instance nobody named is called after what it runs, so when what it
+      runs changes the name follows. Only when the name is still exactly that:
+      a name somebody chose is theirs, and so is one they are typing in the
+      same edit.*
+- [ ] **Changing the theme turns the global gradient on** by itself.
+- [ ] **Turning the gradient off leaves the background white** until the page
+      is reloaded or you navigate away.
+- [ ] **With the gradient on, the notch where the top and left bars meet
+      vanishes.**
 
 ## 0. Round 29
 
