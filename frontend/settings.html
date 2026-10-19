@@ -15,7 +15,11 @@ if (cached.baseColor) {
   document.documentElement.style.setProperty('--text-font', cached.font);
   if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
 }
-if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColors && cached.gradientColors.length > 0) {
+// The gradient is drawn whenever it is ON. It used to need predefinedThemeSync
+// as well, which is a different setting entirely -- whether picking a theme
+// also picks its gradient -- so this page drew itself differently from every
+// other one.
+if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
   const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
   document.documentElement.style.setProperty('--app-gradient', gradientStr);
   document.documentElement.classList.add('gradient-enabled');
@@ -922,25 +926,21 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
               }
             });
 
+            // "Predefined Theme Sync" means a theme brings its own gradient
+            // COLOURS. It does not mean picking a theme decides whether you
+            // have a gradient at all: it used to switch one on for anybody
+            // with the sync ticked, and switch one OFF -- one they had built
+            // themselves -- for everybody else. Whether the gradient is on is
+            // the gradient toggle's business and nothing else's.
             const predefinedThemeSyncCheckbox = document.getElementById('predefined-theme-sync');
             if (predefinedThemeSyncCheckbox && predefinedThemeSyncCheckbox.checked) {
               const gradientColors = themeGradients[key];
               if (gradientColors) {
                 currentGradientColors = gradientColors;
-                gradientEnabledState = true;
-                gradientEnabled.checked = true;
-                gradientControls.style.display = 'block';
                 renderGradientColors();
-                updateGradientPreview();
-                themeUpdate.gradientEnabled = true;
                 themeUpdate.gradientColors = gradientColors;
+                if (gradientEnabledState) updateGradientPreview();
               }
-            } else {
-              gradientEnabledState = false;
-              gradientEnabled.checked = false;
-              gradientControls.style.display = 'none';
-              document.documentElement.style.setProperty('--app-gradient', 'none');
-              themeUpdate.gradientEnabled = false;
             }
 
             ipcRenderer.send('save-settings', themeUpdate);
@@ -1063,14 +1063,20 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
       renderGradientColors();
       updateGradientPreview();
 
+      // Turning it off has to take the class off too. Setting --app-gradient
+      // to none on its own left <html> with the class and no gradient, and
+      // <body> see-through over it -- a white window until the next page load.
+      function showGradient(on) {
+        document.documentElement.classList.toggle('gradient-enabled', !!on);
+        document.body.classList.toggle('gradient-enabled', !!on);
+        if (!on) document.documentElement.style.setProperty('--app-gradient', 'none');
+      }
+
       gradientEnabled.addEventListener('change', () => {
         gradientEnabledState = gradientEnabled.checked;
         gradientControls.style.display = gradientEnabledState ? 'block' : 'none';
-        if (gradientEnabledState) {
-          updateGradientPreview();
-        } else {
-          document.documentElement.style.setProperty('--app-gradient', 'none');
-        }
+        showGradient(gradientEnabledState);
+        if (gradientEnabledState) updateGradientPreview();
         saveGradientSettings();
       });
 
@@ -1323,13 +1329,8 @@ if (cached.gradientEnabled && cached.predefinedThemeSync && cached.gradientColor
         ipcRenderer.send('save-settings', updateObj);
         const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
         localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
-        if (!predefinedThemeSync.checked) {
-          gradientEnabledState = false;
-          gradientEnabled.checked = false;
-          gradientControls.style.display = 'none';
-          document.documentElement.style.setProperty('--app-gradient', 'none');
-          ipcRenderer.send('save-settings', { gradientEnabled: false });
-        }
+        // Nothing else: telling the launcher to stop matching the gradient to
+        // the theme is not telling it to throw the gradient away.
       });
     }
 

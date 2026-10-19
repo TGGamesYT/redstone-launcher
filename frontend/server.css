@@ -643,8 +643,38 @@ body {
   border-top-left-radius: var(--border-radius);
 }
 
-body:not(.gradient-enabled) {
+/* Keyed off <html> alone, not off a class on <body> as well. Two elements
+   had to be kept in step by every piece of code that touched the gradient,
+   and the settings page's own head script only ever set the one on <html> --
+   so turning the gradient off there left <body> transparent over an <html>
+   with no gradient left on it, which is a white window until the next page
+   load. One class decides it now. */
+html:not(.gradient-enabled) body {
   background: var(--very-dark);
+}
+
+/* The notch where the top bar meets the side bar.
+   With no gradient it is free: <html> paints its top tenth in the toolbar's
+   colour, and the bit of that showing through the rounded corner <body> cuts
+   out of itself is what joins the two bars. Turn the gradient on and <html>
+   paints the gradient instead, so the corner fills with gradient and the
+   notch is gone. This draws it back -- just the wedge, so the gradient still
+   shows everywhere <body> is see-through. The circle is centred on the inside
+   of the corner: transparent within the radius, where the panel's own curve
+   is, and the toolbar's colour outside it. */
+html.gradient-enabled::before {
+  content: "";
+  position: fixed;
+  left: 70px;
+  top: 38px;
+  width: var(--border-radius);
+  height: var(--border-radius);
+  background: radial-gradient(circle at 100% 100%,
+      transparent 0,
+      transparent calc(var(--border-radius) - 0.5px),
+      var(--toolbar-bg) var(--border-radius));
+  pointer-events: none;
+  z-index: 0;
 }
 
 h1,

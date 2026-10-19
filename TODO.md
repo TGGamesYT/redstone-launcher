@@ -87,15 +87,43 @@ started.
       double-click guard is not stepped past: that one is never deliberate.*
 - [x] **An instance named `<LOADER> <VERSION>` should be renamed** when its
       version or its loader is changed.
-      *An instance nobody named is called after what it runs, so when what it
-      runs changes the name follows. Only when the name is still exactly that:
-      a name somebody chose is theirs, and so is one they are typing in the
-      same edit.*
-- [ ] **Changing the theme turns the global gradient on** by itself.
-- [ ] **Turning the gradient off leaves the background white** until the page
+      *Not only a name that is ONLY that. "my 1.21 instance" becomes "my 1.19
+      instance" and "vaniLLA instance" becomes "fabrIC instance": whichever of
+      the two changed is swapped out wherever it appears, written the way it
+      was written — the usual spelling stays usual, all-lower and all-upper
+      carry across whole, and anything else is traced letter by letter. A name
+      with neither in it is left exactly as it is, because then it is not
+      about either, and so is one being typed in the same edit. The version is
+      matched bounded, or the "1.21" of an instance on 1.21 would rewrite the
+      middle of "1.21.9" in its own name.*
+- [x] **Changing the theme turns the global gradient on** by itself.
+      *"Predefined Theme Sync" means a theme brings its own gradient COLOURS.
+      It was also deciding whether you had a gradient at all: switching one on
+      for anybody with the sync ticked, and switching one OFF — one they had
+      built themselves — for everybody else. Whether the gradient is on is the
+      gradient toggle's business and nothing else's, and turning the sync off
+      no longer throws the gradient away with it.*
+- [x] **Turning the gradient off leaves the background white** until the page
       is reloaded or you navigate away.
-- [ ] **With the gradient on, the notch where the top and left bars meet
+      *Turning it off set `--app-gradient` to none but left the
+      `gradient-enabled` class on, so `<html>` had the class and no gradient
+      and `<body>` was see-through over it — a white window. The class comes
+      off with it now, and the CSS is keyed off ONE element instead of a class
+      on `<html>` and a matching one on `<body>` that every piece of code
+      touching the gradient had to keep in step. (The settings page's own head
+      script only ever set the one on `<html>`, and it also refused to draw
+      the gradient at all unless the theme-sync setting was on, which is a
+      different setting entirely.)*
+- [x] **With the gradient on, the notch where the top and left bars meet
       vanishes.**
+      *With no gradient the notch is free: `<html>` paints its top tenth in
+      the toolbar's colour, and the bit of that showing through the rounded
+      corner `<body>` cuts out of itself is what joins the two bars. Turn the
+      gradient on and `<html>` paints the gradient instead, so the corner
+      fills with gradient. It is drawn back as just that wedge — a circle
+      centred on the inside of the corner, transparent within the radius and
+      the toolbar's colour outside it — so the gradient still shows
+      everywhere `<body>` is see-through.*
 
 ## 0. Round 29
 

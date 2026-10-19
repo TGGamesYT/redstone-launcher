@@ -1854,13 +1854,68 @@ ipcMain.on('create-profile', async (event, profile) => {
 });
 
 // What the new-instance flow calls an instance when nobody types a name:
-// "Fabric 1.21.9". The labels have to match pickFinalize's, or an instance
-// named by it would not be recognised as unnamed.
+// "Fabric 1.21.9". The labels have to match pickFinalize's.
 const LOADER_LABEL = { vanilla: 'Vanilla', fabric: 'Fabric', forge: 'Forge', neoforge: 'NeoForge', quilt: 'Quilt' };
-const autoInstanceName = (p) => {
+const loaderLabel = (p) => {
   const loader = String((p && p.loader) || 'vanilla').toLowerCase();
-  return `${LOADER_LABEL[loader] || (p && p.loader) || 'Vanilla'} ${(p && p.version) || ''}`.trim();
+  return LOADER_LABEL[loader] || (p && p.loader) || 'Vanilla';
 };
+
+// Write `word` the way `sample` was written: "vaniLLA" -> "fabrIC". Position
+// by position for as far as the sample goes, and after that however it ended,
+// so a longer replacement carries on in the same vein.
+function matchCase(sample, word) {
+  const src = String(sample), out = [];
+  let last = /[A-Z]/.test(src.slice(-1)) ;
+  for (let i = 0; i < word.length; i++) {
+    const c = word[i];
+    if (i < src.length) {
+      const s = src[i];
+      if (/[a-z]/.test(s)) { out.push(c.toLowerCase()); last = false; continue; }
+      if (/[A-Z]/.test(s)) { out.push(c.toUpperCase()); last = true; continue; }
+    }
+    out.push(last ? c.toUpperCase() : c.toLowerCase());
+  }
+  return out.join("");
+}
+
+const escapeRe = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Rename an instance to keep up with what it runs.
+//
+// An instance called "Fabric 1.21.9" is named after its loader and its
+// version, and so is "my 1.21 instance" and "vaniLLA instance" -- the name
+// just has other words around it. Whichever of the two changed is swapped out
+// wherever it appears, in the case it was written in. A name with neither in
+// it is left exactly as it is, because then it is not about either.
+function renamedForChange(before, after) {
+  let name = String(after.name || "");
+  if (!name) return name;
+
+  if (String(before.version || "") !== String(after.version || "") && before.version) {
+    // Bounded, or the "1.21" of an instance on 1.21 would rewrite the middle
+    // of "1.21.9" in its own name.
+    const re = new RegExp(`(?<![\\w.])${escapeRe(before.version)}(?![\\w.])`, "g");
+    name = name.replace(re, String(after.version || ""));
+  }
+
+  const wasLoader = loaderLabel(before), nowLoader = loaderLabel(after);
+  if (wasLoader.toLowerCase() !== nowLoader.toLowerCase()) {
+    const re = new RegExp(`\\b${escapeRe(wasLoader)}\\b`, "gi");
+    name = name.replace(re, (hit) => {
+      // However it was written. Spelt the usual way, the replacement is spelt
+      // the usual way too -- "Fabric" becomes "NeoForge", not "Neoforge" --
+      // and all-lower or all-upper carry across whole. Anything else is
+      // somebody's own capitalisation, so it is traced letter by letter:
+      // "vaniLLA" becomes "fabrIC".
+      if (hit === wasLoader) return nowLoader;
+      if (hit === hit.toLowerCase()) return nowLoader.toLowerCase();
+      if (hit === hit.toUpperCase()) return nowLoader.toUpperCase();
+      return matchCase(hit, nowLoader);
+    });
+  }
+  return name;
+}
 
 ipcMain.on('edit-profile', (event, updatedProfile) => {
   const profilesPromise = loadProfiles(); // returns a Promise because applySort is async
@@ -1877,15 +1932,10 @@ ipcMain.on('edit-profile', (event, updatedProfile) => {
       }
       const before = profiles[index];
       const after = { ...before, ...updatedProfile };
-      // An instance nobody named is called after what it runs -- "Fabric
-      // 1.21.9" -- so when what it runs changes, what it is called should
-      // change with it. Only when the name is still exactly that: a name
-      // somebody chose is theirs, and so is one they are changing right now.
-      if (after.name === before.name
-        && before.name === autoInstanceName(before)
-        && autoInstanceName(after) !== autoInstanceName(before)) {
-        after.name = autoInstanceName(after);
-      }
+      // An instance named after what it runs should keep saying what it
+      // runs. Not only "Fabric 1.21.9": "my 1.21 instance" too. Skipped when
+      // a name is being typed in this same edit -- that one is theirs.
+      if (after.name === before.name) after.name = renamedForChange(before, after);
       profiles[index] = after;
 
       saveProfiles(profiles);
