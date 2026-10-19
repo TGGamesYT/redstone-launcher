@@ -554,8 +554,44 @@
     // cushion sixteen.
     const variantWrap = ov.querySelector('#ipAdjVariantWrap');
     const variantSel = ov.querySelector('#ipAdjVariant');
+    // The list belongs to the THING, not to the variant of it you are looking
+    // at. Some of a mob's skins come with a model of their own -- a cold cow
+    // is its own layer -- and that layer's own list of skins is just itself,
+    // so picking "cold" rebuilt the dropdown with one entry in it and then
+    // hid it for having only one. It is built once and kept; a later
+    // description only replaces it if it has MORE to offer.
+    let varList = (base && base.variants) || [];
+
+    // A player wears whatever skin you give it.
+    //
+    // The nine in the jar are the game's own, and the thing anybody actually
+    // wants on a player, a player head or a slim player is one of THEIRS. So
+    // every skin in the library is offered alongside them, as the picture
+    // itself rather than as a path into the jar -- which is how the editor's
+    // "copy faces from a skin" picker takes one too.
+    const PLAYER_LAYER = /^(player|player_slim|player_head)$/;
+    const wearsSkins = () => !!(info.item && (
+      PLAYER_LAYER.test(String(info.item.id).replace(/^entity:/, ''))
+      || /(^|:)(player_head|player_wall_head)$/.test(String(info.item.id))));
+    async function addLibrarySkins() {
+      if (!wearsSkins() || !ipcRenderer) return;
+      let lib = [];
+      try { lib = await ipcRenderer.invoke('skins:allLibrary'); } catch { return; }
+      const mine = (lib || []).filter(sk => sk && sk.base64).map(sk => ({
+        path: /^data:/.test(sk.base64) ? sk.base64 : 'data:image/png;base64,' + sk.base64,
+        label: sk.name || 'Saved skin',
+        layer: null,
+        key: 'skin:' + sk.id,
+      }));
+      if (!mine.length || !ov.isConnected) return;
+      varList = [...varList, ...mine];
+      paintVariants();
+    }
+
     function paintVariants() {
-      const list = (desc && desc.variants) || [];
+      const fresh = (desc && desc.variants) || [];
+      if (fresh.length > varList.length) varList = fresh;
+      const list = varList;
       variantWrap.style.display = list.length > 1 ? '' : 'none';
       if (list.length < 2) return;
       variantSel.innerHTML = '';
@@ -568,7 +604,14 @@
         o.textContent = v.label || String(v.path || '').split('/').pop().replace(/\.png$/, '');
         variantSel.appendChild(o);
       }
-      variantSel.value = desc.variantKey || desc.texture || desc.variantOf || keyOf(list[0]);
+      // Whichever of them this is. A variant that brought its own layer with
+      // it answers under that layer's name, so the key is tried first and the
+      // texture and the model after it.
+      const here = list.find(v => [desc.variantKey, desc.variantOf].includes(keyOf(v)))
+        || list.find(v => v.path && v.path === desc.texture)
+        || list.find(v => keyOf(v) === desc.variantOf)
+        || list[0];
+      variantSel.value = keyOf(here);
       variantSel.onchange = async () => {
         // A mob's variants are textures on one model; an item's are whole
         // models -- every trim on a chestplate, every hand position on a
@@ -662,6 +705,7 @@
 
     paintParts();
     paintVariants();
+    addLibrarySkins();
     paintTint();
     showTurn();
     loadStates();

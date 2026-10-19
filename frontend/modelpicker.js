@@ -208,9 +208,37 @@
 
     const kinds = () => kindBoxes.filter(b => b.checked).map(b => b.dataset.kind);
 
+    // The scrolling box the grid lives in, so a reload can put you back where
+    // you were. Toggling a switch rebuilds the list, which emptied the grid and
+    // threw the scroll to the top -- and left it there even when exactly the
+    // same things came back.
+    const scroller = () => {
+      let n = grid.parentElement;
+      while (n && n !== document.body) {
+        const o = getComputedStyle(n).overflowY;
+        if ((o === 'auto' || o === 'scroll') && n.scrollHeight > n.clientHeight) return n;
+        n = n.parentElement;
+      }
+      return null;
+    };
+
+    // Set while a reload is working its way back to where it was.
+    let restore = null;
+    const putBack = () => {
+      if (!restore || !restore.box.isConnected) return;
+      const { box, wasAt } = restore;
+      box.scrollTop = Math.min(wasAt, Math.max(0, box.scrollHeight - box.clientHeight));
+    };
+
     async function load(reset) {
       const mine = ++seq;
       loading = true;
+      const box = reset ? scroller() : null;
+      const wasAt = box ? box.scrollTop : 0;
+      const hadRoom = box ? box.scrollHeight : 0;
+      // How many were on show before. A reload starts at the first page
+      // again, so getting back to where you were means loading back to it.
+      const wasShowing = reset ? offset : 0;
       if (reset) {
         offset = 0;
         grid.innerHTML = '';
@@ -239,6 +267,22 @@
       await prefill(cells, ctx);
       loading = false;
       if (mine !== seq) return;
+      if (restore && !reset) {
+        if (offset < restore.want && offset < total) { putBack(); load(false); return; }
+        putBack();
+        // The grid fills in as thumbnails arrive, so the height it ends at is
+        // not the height it starts at; once more on the next frame.
+        const again = restore;
+        requestAnimationFrame(() => { if (again === restore) putBack(); });
+        restore = null;
+      }
+      // Back where you were: the pages you had, then the place you were at.
+      if (box && wasAt && box.isConnected) {
+        restore = { box, wasAt, hadRoom, want: wasShowing };
+        if (offset < wasShowing && offset < total) { putBack(); load(false); return; }
+        putBack();
+        restore = null;
+      }
       if (offset < total) {
         more.style.display = '';
         more.innerHTML = `<button class="mp-moreBtn">Show more (${total - offset} left)</button>`;

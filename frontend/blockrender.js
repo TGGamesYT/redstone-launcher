@@ -101,25 +101,51 @@
   //
   // Measured once per image, from the image itself, because nothing in the
   // model data says it.
-  function hasPartialAlpha(img) {
+  // ...and WHERE in the image it is, because one sheet can hold both.
+  //
+  // A slime is a solid body inside a translucent cube and the two are painted
+  // on one 64x32: the body, its eyes and its mouth out of the opaque part, the
+  // gel out of the part at two thirds alpha. Asking the sheet as a whole makes
+  // the eyes translucent too, and a translucent surface writes no depth, so
+  // the eyes landed on top of the gel in front of them however the gel was
+  // drawn. The answer is per BOX: what does the unwrap this face uses actually
+  // contain?
+  function alphaMap(img) {
     try {
       const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-      if (!w || !h || w * h > 1024 * 1024) return false;
+      if (!w || !h || w * h > 1024 * 1024) return null;
       const cv = document.createElement('canvas');
       cv.width = w; cv.height = h;
       const cx = cv.getContext('2d', { willReadFrequently: true });
       cx.drawImage(img, 0, 0);
       const d = cx.getImageData(0, 0, w, h).data;
-      let part = 0, solid = 0;
-      for (let i = 3; i < d.length; i += 4) {
-        const a = d[i];
-        if (a >= 250) solid++;
-        else if (a > 8) part++;
+      const part = new Uint8Array(w * h);
+      let partN = 0, solidN = 0;
+      for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+        const a = d[i + 3];
+        if (a >= 250) solidN++;
+        else if (a > 8) { part[p] = 1; partN++; }
       }
-      // A stray part-way pixel is an antialiased edge somebody left in, not an
-      // intent to be see-through. A real one is a good fraction of what shows.
-      return part > 0 && part >= (solid + part) * 0.25;
-    } catch { return false; }
+      return { w, h, part, partN, solidN };
+    } catch { return null; }
+  }
+
+  // Is this part of the sheet painted see-through? A stray part-way pixel is
+  // an antialiased edge somebody left in, not an intent to be see-through, so
+  // it has to be a good fraction of what the region shows.
+  function regionTranslucent(map, u1, v1, u2, v2) {
+    if (!map || !map.partN) return false;
+    // UVs are 0..16 of the texture, and may run either way round.
+    const x0 = Math.max(0, Math.floor(Math.min(u1, u2) / 16 * map.w));
+    const x1 = Math.min(map.w, Math.ceil(Math.max(u1, u2) / 16 * map.w));
+    const y0 = Math.max(0, Math.floor(Math.min(v1, v2) / 16 * map.h));
+    const y1 = Math.min(map.h, Math.ceil(Math.max(v1, v2) / 16 * map.h));
+    if (x1 <= x0 || y1 <= y0) return false;
+    let part = 0, n = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) { if (map.part[y * map.w + x]) part++; n++; }
+    }
+    return part > 0 && part >= n * 0.25;
   }
 
   async function makeTexture(THREE, spec, cache) {
@@ -135,7 +161,7 @@
         t.generateMipmaps = false;
         t.colorSpace = THREE.SRGBColorSpace;
         t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-        t.userData.translucent = hasPartialAlpha(t.image);
+        t.userData.alpha = alphaMap(t.image);
         res(t);
       }, undefined, () => res(null));
     });
@@ -434,7 +460,11 @@
         // breeze's wind and the breeze itself raced: the two are on the same
         // centre, so nothing about where they sit decides the order, and
         // whichever went first cut the other away.
-        const seeThrough = !!(map && map.userData && map.userData.translucent);
+        //
+        // Asked of the part of the sheet THIS face is unwrapped onto, not of
+        // the sheet as a whole: a slime's body and its gel share one picture.
+        const seeThrough = regionTranslucent(
+          map && map.userData && map.userData.alpha, uv[0], uv[1], uv[2], uv[3]);
         // A charged creeper's crackle and the wither's shield are not paint on
         // the mob: the game scrolls them across it and ADDS them to what is
         // behind, so they read as a glow. Drawn as a skin, the wither's sheet

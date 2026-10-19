@@ -492,9 +492,12 @@
   // flick looked like it had been stopped rather than left to run. They are
   // separate -- a flick with no lift in it runs down at exactly the same rate
   // as one that gets levelled -- so what was wrong was only how long it lasts.
-  // At 0.988 a hard flick is still visibly turning when the three and a half
-  // seconds are up and the spring takes it home.
-  const SPIN_DAMP = 0.988;
+  // 0.988 went too far the other way: the render kept gliding for the whole
+  // wait and read as frictionless, nothing like the small card renders beside
+  // it. 0.975 halves the speed in about half a second and is done inside two
+  // and a half -- a flick that carries, rather than one that is stopped or one
+  // that never stops.
+  const SPIN_DAMP = 0.975;
   const MAX_OMEGA = 14;         // rad/s; past this nothing looks any different
 
   const normAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));

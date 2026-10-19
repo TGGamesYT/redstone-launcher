@@ -791,6 +791,26 @@ export function sidesAlike(flat) {
 }
 
 /**
+ * How much further to turn a model so its front faces the viewer, given the
+ * turn its state already applies.
+ *
+ * `chooseState` does this by PICKING a state, which works where the block has
+ * a facing to pick. Plenty do not: a mod's block is often one variant with no
+ * facing at all, and a front authored on the model's north face then points
+ * away with nothing to choose that would bring it round. 0 when there is
+ * nothing to turn, or when the model has a front and a back and no way to
+ * tell which is which.
+ */
+export async function frontTurn(stack, modelId, y) {
+  const flat = await flattenModelJson(stack, modelId);
+  if (!flat || sidesAlike(flat)) return 0;
+  const front = frontSide(flat);
+  if (!front) return 0;
+  const at = afterTurn(front, y);
+  return ((SIDES.indexOf('south') - SIDES.indexOf(at)) * 90 + 360) % 360;
+}
+
+/**
  * The state to draw a block in: preferredState, but turned so a block with a
  * front shows it. Needs the models, so unlike preferredState it is async;
  * preferredState stays as the answer when there is nothing to read.

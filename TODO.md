@@ -9,6 +9,80 @@ started.
 
 ---
 
+## 0. Round 28
+
+Asked for in one batch, with "write a todo and do everything".
+
+### A. The icon renderer, finishing Round 27
+- [x] **A slime's eyes still draw over everything.**
+      *The body and the gel are painted on ONE sheet -- the body out of the
+      opaque part, the gel out of the part at two thirds alpha -- so asking
+      the sheet as a whole made the eyes translucent too, and a translucent
+      surface writes no depth. Which part of the sheet a face is unwrapped
+      onto is what decides it now.*
+- [x] **Below 1.17 there are no entities at all** — use the oldest version
+      whose models DO resolve and draw those shapes.
+      *`createRoots` belongs to the model-layer system, which arrived in 1.17;
+      before it every model was built in its own class's constructor and there
+      is no catalogue to walk. 1.16 and older borrow 1.17.1's shapes and wear
+      their own version's textures, so 1.12 has its old cow, its old villager
+      and its old zombie.*
+- [x] **Changing the render variant empties the variant list** and the dropdown
+      disappears — picking anything but the default on the player loses it.
+      *Twice over. Asking for a named texture answered with that texture and no
+      list of the others, so there was nothing to rebuild from; and the list
+      belongs to the THING, not to the variant of it you are looking at -- a
+      cold cow is its own layer and its own list is just itself. The list is
+      built once and kept, and only replaced by a longer one.*
+- [x] **Let the player model and the player head wear any skin**, chosen the
+      way the editor's "copy faces from a skin" picker chooses one.
+      *Every skin in the library is a variant of the player, the slim player
+      and the player head, handed over as the picture itself rather than as a
+      path into the jar.*
+- [x] **Modded renders are still backwards.** Picking another facing does not
+      fix it; turning it 180° by hand does.
+      *Because there was no other facing to pick: a mod's block is usually one
+      variant and one model, and a front authored on the model's north face
+      then points away with no state that would bring it round. The turn is
+      applied directly now where there is no facing to do it with. Only where
+      exactly one side is painted unlike the other three, so a crafting table,
+      which has a front AND a back, is left alone.*
+- [x] **Toggling a source switch scrolls the model list back to the top** and
+      does not put you back, even when the count is unchanged.
+      *A reload starts at the first page again, so getting back means loading
+      back: it fetches as many pages as were showing before and then returns
+      to where you were.*
+
+### B. The skin pages
+- [x] **The big skin render and the friend-details one are too slidy** when
+      flung — nothing like the small card renders.
+      *The decay had gone too far the other way answering "a flick dies too
+      fast". It halves in about half a second now and is done inside two and a
+      half: a flick that carries, rather than one that is stopped dead or one
+      that never stops.*
+- [ ] **Slim and wide do not convert.** Changing which one a skin is leaves the
+      pixels where they were.
+- [ ] **Saving a skin from the editor as slim does not save it as slim.**
+- [ ] **Changing an APPLIED skin's model is not noticed** — it needs applying
+      again, or undoing.
+
+### C. Launching
+- [ ] **The Cancel/Stop button goes back to Play** when you leave the instance
+      page or reload it, until the game actually starts.
+- [ ] **Every launch re-downloads all the resources.**
+- [ ] **A crash shows only the exit code**, not what went wrong. Even the
+      vanilla launcher shows the details.
+- [ ] **`3221225477` crashes, very frequently**, and only with this launcher.
+
+### D. Mods
+- [ ] **Disabling a dev mod does not disable it** — it picks the new one up and
+      puts it back in the enabled slot.
+- [ ] **Remod.** With developer mode on, an Edit button on a mod jar or a
+      resource pack: its declared name, description, version and icon (and a
+      pack's description and icon), the file's name, and an "Edit assets"
+      button that unpacks it into the in-launcher file browser. Save re-zips it
+      in the SAME structure so it still works.
+
 ## 0. Round 27
 
 - [x] **Vanilla / modded / resource-pack switches** over the block, item and

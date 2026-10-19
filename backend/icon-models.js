@@ -249,6 +249,15 @@ export async function describeModel({ profileId, version, id, state, variant, ov
     rotX = pick.parts[0].x || 0;
     rotY = pick.parts[0].y || 0;
     uvlock = !!pick.parts[0].uvlock;
+    // A block with a front and no `facing` to turn it with -- which is most
+    // of a mod's blocks, where one variant and one model is the usual shape
+    // -- gets the turn applied here instead, so its front faces the viewer
+    // the same as a furnace's does. Picking a state could not do it: there
+    // was no other state to pick.
+    if (pick.parts.length === 1 && !/(^|,)facing=/.test(String(pick.state || ''))) {
+      try { rotY = (rotY + await MA.frontTurn(st.models, modelId, rotY)) % 360; }
+      catch { /* the model could not be read; leave it where it is */ }
+    }
   } else if (!blockPath) {
     // No blockstate, so it is an item -- and an item is a definition file
     // before it is a model: one clock is twelve models and one chestplate is
@@ -716,13 +725,28 @@ export async function listModels({
   return { items: match.slice(offset, offset + limit), total: match.length };
 }
 
+// The oldest version whose entity models can be read at all.
+//
+// `createRoots` belongs to the model-layer system, which arrived in 1.17;
+// before that every model was built in its own class's constructor and there
+// is no catalogue to walk. So 1.16 and older had no mobs in the picker at all
+// -- which is worse than showing them the shapes 1.17 has, since a cow is a
+// cow and the textures still come from the version being asked about.
+const OLDEST_ENTITY_VERSION = '1.17.1';
+
 const _layerCache = new Map();
 export async function entityLayers(version) {
   if (_layerCache.has(version)) return _layerCache.get(version);
   const p = (async () => {
-    const got = await entityModelsFor(version);
-    if (!got) return new Map();
-    try { return await got.em.layers(); } catch (err) { log('icon models: ' + (err && err.stack || err)); return new Map(); }
+    const own = await (async () => {
+      const got = await entityModelsFor(version);
+      if (!got) return new Map();
+      try { return await got.em.layers(); }
+      catch (err) { log('icon models: ' + (err && err.stack || err)); return new Map(); }
+    })();
+    if (own.size || !version || atLeast(version, OLDEST_ENTITY_VERSION)) return own;
+    log(`icon models: ${version} has no layer definitions; using ${OLDEST_ENTITY_VERSION}'s shapes`);
+    return entityLayers(OLDEST_ENTITY_VERSION);
   })();
   _layerCache.set(version, p);
   return p;
@@ -1574,8 +1598,16 @@ async function entityTextureFile(stack, name, wantPath, layers) {
     return hit ? { url: asDataUrl(hit.buf), path: p } : null;
   };
   if (wantPath) {
+    // A skin from outside the game's own files -- one of yours, out of the
+    // library -- comes as the picture itself rather than as a path to it.
+    if (/^data:image\//.test(String(wantPath))) {
+      return { url: String(wantPath), path: String(wantPath), choices: [] };
+    }
     const got = await take(wantPath);
-    if (got) return got;
+    // The other skins come back with it. Without them, asking for one of a
+    // mob's variants answered with that variant and NOTHING ELSE, so the
+    // dropdown you had just used emptied itself and disappeared.
+    if (got) return { ...got, choices: await entityTextureChoices(stack, name, layers) };
   }
   // The handful whose texture its name cannot find. See TEXTURE_BY_NAME.
   const named = TEXTURE_BY_NAME[String(name)];
