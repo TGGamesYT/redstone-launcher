@@ -9,6 +9,40 @@ started.
 
 ---
 
+## 0. Round 32
+
+- [x] **"What it installs" is a bare list of file names**, where it should be
+      a proper list with the mods' and packs' icons.
+      *A Modrinth pack's every download is a CDN path carrying the project's
+      own id, so one bulk request turns the file names into titles and icons —
+      no lookup per mod, and no hashes to resolve. A pack whose names cannot
+      be fetched still lists what it installs, by file name. An instance made
+      for a single mod shows that mod with its own picture.*
+- [x] **"Add New Player" should offer accounts already signed in elsewhere**
+      on this computer first, as cards with skin renders, and only fall
+      through to the sign-in dialog when there is nothing to offer.
+      *Somebody who has used another launcher is already signed in there and
+      the refresh token is on disk, so making them scan a QR code to get back
+      an account the launcher could see all along is work for nothing.
+      Accounts this launcher already has are left out — offering one of those
+      would be offering nothing — so with none to offer, or only ones already
+      here, it opens the ordinary dialog exactly as before.*
+- [x] **The sign-in dialog jumps wider when the QR code appears**, and "use a
+      browser window instead" is an ugly link.
+      *It is wide enough for the code from the start, and using a browser is a
+      button beside Cancel, because it is a thing you do rather than a
+      footnote.*
+- [x] **Holding an account in the list should let it be dragged up or down.**
+      *Half a second, so an ordinary click still selects and a scroll still
+      scrolls — moving before the hold is up is taken as a scroll and never
+      picks the row up. The order is saved by account id rather than by
+      position, so a list a render behind what is on disk cannot drop an
+      account it did not know about.*
+- [x] **The friend-details render allows zooming.**
+      *The skins page's render already refused it; this one had been left out.
+      It is a picture of somebody to turn around, not something to scroll
+      into.*
+
 ## 0. Round 31
 
 - [x] **wide -> slim -> wide does not give back the original pixels**, and the

@@ -162,12 +162,19 @@
       .ni-fin .ni-contents .list { flex:1; min-height:0; overflow-y:auto; margin:0; padding:6px;
         list-style:none; border:1px solid var(--border-dark); border-radius:var(--border-radius);
         background:var(--very-dark); }
-      .ni-fin .ni-contents .list li { display:flex; align-items:center; gap:8px; padding:4px 6px;
-        font-size:12.5px; border-radius:var(--border-radius); }
-      .ni-fin .ni-contents .list li .k { margin-left:auto; flex:0 0 auto; font-size:10px; opacity:0.55;
-        text-transform:uppercase; letter-spacing:0.04em; }
-      .ni-fin .ni-contents .list li img { width:20px; height:20px; flex:0 0 20px; border-radius:4px;
-        object-fit:contain; image-rendering:pixelated; }
+      /* The same row a mod gets everywhere else in the launcher: its icon,
+         its name, and what kind of thing it is -- rather than a bare list of
+         file names. */
+      .ni-fin .ni-contents .list li { display:flex; align-items:center; gap:10px; padding:6px 8px;
+        font-size:13px; border-radius:var(--border-radius); }
+      .ni-fin .ni-contents .list li + li { margin-top:4px; }
+      .ni-fin .ni-contents .list li img { width:32px; height:32px; flex:0 0 32px; border-radius:6px;
+        object-fit:cover; background:var(--menu-bg); }
+      .ni-fin .ni-contents .list li .t { min-width:0; overflow:hidden; text-overflow:ellipsis;
+        white-space:nowrap; }
+      .ni-fin .ni-contents .list li .k { margin-left:auto; flex:0 0 auto; font-size:10px; opacity:0.7;
+        text-transform:uppercase; letter-spacing:0.04em;
+        border:1px solid var(--border-dark); border-radius:6px; padding:2px 6px; }
       .ni-fin .ni-contents .note { font-size:12px; opacity:0.7; padding:8px 2px; }
       .ni-fin label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;
         opacity:0.65; margin-bottom:6px; }
@@ -1023,13 +1030,20 @@
       contentsList.style.display = 'none';
       contentsNote.style.display = '';
     };
+    // Whatever the launcher uses when a thing has no picture of its own.
+    const fallbackIcon = () => window.DEFAULT_ICON || 'assets/icons/Redstone_Ore_JE4_BE3.png';
     const showList = (items) => {
       contentsList.innerHTML = '';
       for (const it of items) {
         const li = document.createElement('li');
+        const img = document.createElement('img');
+        img.alt = '';
+        if (it.icon) { img.src = it.icon; img.onerror = () => { img.src = fallbackIcon(); }; }
+        else img.src = fallbackIcon();
         const n = document.createElement('span');
+        n.className = 't';
         n.textContent = it.name;
-        li.appendChild(n);
+        li.append(img, n);
         if (it.kind && it.kind !== 'mod') {
           const k = document.createElement('span');
           k.className = 'k';
@@ -1063,7 +1077,9 @@
       fields.appendChild(contents);
     } else if (pre.projectTitle) {
       contentsLabel.textContent = 'What it installs';
-      showList([{ name: pre.projectTitle, kind: pre.projectKind || 'mod' }]);
+      // The mod's own picture: it is what the instance is being given as an
+      // icon, because it is the mod's.
+      showList([{ name: pre.projectTitle, kind: pre.projectKind || 'mod', icon: pre.icon || null }]);
       fields.appendChild(contents);
     }
 

@@ -94,8 +94,58 @@
       background: var(--third-color);
       padding: 20px;
       border-radius: var(--border-radius);
-      width: 300px;
+      /* Wide enough for the QR code from the start. It used to be 300px and
+         grow when the code arrived, so the dialog jumped sideways at exactly
+         the moment you were trying to read it. */
+      width: 340px;
+      box-sizing: border-box;
     }
+    .playerModal .modal-content > .modal-actions { margin-top: 14px; }
+
+    /* The accounts already signed in elsewhere on this computer: a card each,
+       with the skin standing in it, the way the launcher shows a player
+       anywhere else. */
+    .ip-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      max-height: 54vh;
+      overflow-y: auto;
+      padding: 2px;
+    }
+    .ip-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 10px;
+      cursor: pointer;
+      background: linear-gradient(135deg, color-mix(in srgb, var(--secondary-color) 50%, black) 0%, var(--menu-bg) 100%);
+      border: 2px solid var(--border-dark);
+      border-radius: var(--border-radius);
+      transition: var(--smooth-transition);
+    }
+    .ip-card:hover { border-color: var(--base-color); }
+    .ip-card canvas, .ip-card .ip-shot {
+      width: 110px; height: 150px; flex: 0 0 150px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    /* No figure to show -- Mojang did not answer, or there is no skin -- so
+       the card is just the name rather than a name under a tall blank. */
+    .ip-card .ip-shot:empty { display: none; }
+
+    /* The account being dragged. Lifted off the list so it is obvious which
+       one is moving, and transparent to the pointer so the row under it is
+       the one being measured against. */
+    li.profile-item.dragging {
+      opacity: 0.9;
+      border-color: var(--base-color);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
+      cursor: grabbing;
+      pointer-events: none;
+    }
+    .ip-card .ip-name { font-size: 14px; word-break: break-word; text-align: center; }
+    .ip-card .ip-from { font-size: 10px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.04em; }
 
     .playerModal label {
       display: block;
@@ -439,6 +489,8 @@
         <div id="qrStartArea">
           <label>Sign in with your Microsoft account by scanning a QR code, or use a browser window.</label>
         </div>
+        <!-- A fixed size, so the dialog does not jump wider the moment the QR
+             code arrives and then narrower again when it is cleared. -->
         <div id="qrContainer" style="display:none; text-align:center;">
           <img id="qrImage" alt="Login QR code"
             style="width:200px; height:200px; background:#fff; padding:6px; border-radius:6px; object-fit:contain;" />
@@ -448,13 +500,28 @@
           <p style="margin:2px 0;">and enter code: <strong id="qrCode"></strong></p>
           <p id="qrStatus" style="opacity:0.8; font-size:13px; margin-top:8px;"></p>
         </div>
-        <div style="margin-top:8px;">
-          <a id="useBrowserLogin" href="#"
-            style="color:var(--text-color); text-decoration:underline; cursor:pointer; font-size:13px;">Use a browser window instead</a>
-        </div>
       </div>
-      <button id="submitPlayerBtn">Add Player</button>
-      <button id="cancelPlayerBtn">Cancel</button>
+      <!-- "Use a browser window" is a thing you do, so it is a button beside
+           the others rather than a link underneath them. -->
+      <div class="modal-actions">
+        <button id="submitPlayerBtn">Add Player</button>
+        <button id="useBrowserLogin">Use a browser</button>
+        <button id="cancelPlayerBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Offering an account that is already signed in somewhere else on this
+       computer, rather than making somebody sign in again for nothing. -->
+  <div id="importPlayerModal" class="playerModal">
+    <div class="modal-content" style="width:min(640px, 92vw); max-width:none;">
+      <h3 id="importPlayerTitle">Sign in as</h3>
+      <p id="importPlayerSub" style="opacity:0.8; font-size:13px; margin:0 0 12px;"></p>
+      <div id="importPlayerList" class="ip-cards"></div>
+      <div class="modal-actions">
+        <button id="importPlayerOther">Use another account</button>
+        <button id="importPlayerCancel">Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -543,9 +610,110 @@
       }
     }
 
+    // Adding a player: offer the accounts that are already signed in on this
+    // computer first.
+    //
+    // Somebody who has used another launcher is already signed in to
+    // Microsoft there, and the refresh token is sitting on disk -- making them
+    // scan a QR code to get back an account the launcher could see all along
+    // is work for nothing. Accounts already in THIS launcher are left out:
+    // offering one of those would be offering nothing.
     async function openAddPlayerModal() {
+      let importable = [];
+      try {
+        const found = await ipcRenderer.invoke('import:accounts');
+        importable = (found || []).filter(a => a && a.username && !a.already);
+      } catch { /* no detection, no offer */ }
+      if (importable.length) return openImportPlayerModal(importable);
+      await openSignInModal();
+    }
+
+    async function openSignInModal() {
       await updatePlayerModal();
       playerModal.classList.add('show');
+    }
+
+    let _ipViewers = [];
+    function closeImportPlayerModal() {
+      for (const v of _ipViewers) { try { v.dispose(); } catch { /* already gone */ } }
+      _ipViewers = [];
+      document.getElementById('importPlayerModal').classList.remove('show');
+      document.getElementById('importPlayerList').innerHTML = '';
+    }
+
+    function openImportPlayerModal(accounts) {
+      const modal = document.getElementById('importPlayerModal');
+      const list = document.getElementById('importPlayerList');
+      const one = accounts.length === 1;
+      document.getElementById('importPlayerTitle').textContent =
+        one ? `Sign in as ${accounts[0].username}?` : 'Sign in as';
+      document.getElementById('importPlayerSub').textContent = one
+        ? 'This account is already signed in elsewhere on this computer.'
+        : `${accounts.length} accounts are already signed in elsewhere on this computer.`;
+      list.innerHTML = '';
+
+      for (const a of accounts) {
+        const card = document.createElement('div');
+        card.className = 'ip-card';
+        const shot = document.createElement('div');
+        shot.className = 'ip-shot';
+        const name = document.createElement('div');
+        name.className = 'ip-name';
+        name.textContent = a.username;
+        card.append(shot, name);
+        // Which launcher it was found in, so two accounts with similar names
+        // are still told apart.
+        if (a.source) {
+          const from = document.createElement('div');
+          from.className = 'ip-from';
+          from.textContent = a.source;
+          card.appendChild(from);
+        }
+        card.onclick = async () => {
+          card.style.opacity = '0.5';
+          card.style.pointerEvents = 'none';
+          const r = await ipcRenderer.invoke('import:accountsAdd', { accounts: [a] });
+          closeImportPlayerModal();
+          if (!r || !r.success) {
+            await uiAlert('That account could not be brought in: ' + ((r && r.error) || 'unknown error'),
+              { title: 'Could not sign in' });
+            return openSignInModal();
+          }
+          if (window.notify) window.notify(`Signed in as ${a.username}`, 'success');
+          ipcRenderer.send('get-players');
+        };
+        list.appendChild(card);
+
+        // The skin, standing in the card. Looked up after the card exists so
+        // one slow lookup does not hold the whole list up, and left as a plain
+        // card if there is nothing to show.
+        (async () => {
+          try {
+            const skin = await ipcRenderer.invoke('head:skin', { uuid: a.uuid || null, name: a.username });
+            if (!shot.isConnected || !skin || !skin.base64 || typeof skinview3d === 'undefined') return;
+            const canvas = document.createElement('canvas');
+            shot.appendChild(canvas);
+            const v = new skinview3d.SkinViewer({ canvas, width: 110, height: 150 });
+            _ipViewers.push(v);
+            v.zoom = 0.85;
+            v.autoRotate = false;
+            // The whole card is one button, so the figure in it is a picture
+            // rather than something to drag or scroll into -- a drag here
+            // would turn the figure AND still count as a click on the card.
+            try { v.controls.enabled = false; } catch { /* older build */ }
+            await v.loadSkin('data:image/png;base64,' + skin.base64,
+              { model: skin.slim ? 'slim' : 'default' });
+            if (skin.capeUrl) { try { await v.loadCape(skin.capeUrl); } catch { /* no cape */ } }
+          } catch { /* a card without a figure is still a card */ }
+        })();
+      }
+
+      document.getElementById('importPlayerOther').onclick = () => {
+        closeImportPlayerModal();
+        openSignInModal();
+      };
+      document.getElementById('importPlayerCancel').onclick = closeImportPlayerModal;
+      modal.classList.add('show');
     }
     // Selected player
     function setSelectedPlayer(id) { ipcRenderer.send('set-selected-player', id); }
@@ -855,6 +1023,10 @@
         try {
           _pdViewer.controls.minPolarAngle = Math.PI / 2 - 0.55;
           _pdViewer.controls.maxPolarAngle = Math.PI / 2 + 0.55;
+          // No zoom, the same as the skins page's render: this is a picture
+          // of somebody to turn around, not something to scroll into, and the
+          // wheel over it should do nothing rather than fly the camera in.
+          _pdViewer.controls.enableZoom = false;
         } catch { }
         await _pdViewer.loadSkin('data:image/png;base64,' + skin.base64,
           { model: skin.slim ? 'slim' : 'default' });
@@ -1143,6 +1315,88 @@
 
     // Render player list
     let _friendsLoadedFor = null;
+    // ── Dragging an account up or down ──────────────────────────────────────
+    //
+    // After holding it for half a second, so an ordinary click still selects
+    // the account and a scroll still scrolls: a list you can reorder by
+    // accident is worse than one you cannot reorder at all. The row follows
+    // the pointer and the others move out of its way; the order is saved when
+    // it is let go.
+    const DRAG_HOLD = 500;
+    let _drag = null;
+
+    function accountRows() {
+      return [...playersList.querySelectorAll('li.profile-item')];
+    }
+
+    function makeAccountDraggable(li) {
+      li.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('button')) return;      // deleting is not dragging
+        const startY = e.clientY, startX = e.clientX;
+        const timer = setTimeout(() => startDrag(li, startY), DRAG_HOLD);
+        const moved = (ev) => {
+          // Moved before the hold was up? Then it was a scroll or a slip, not
+          // a drag.
+          if (Math.abs(ev.clientY - startY) > 6 || Math.abs(ev.clientX - startX) > 6) cancel();
+        };
+        const cancel = () => {
+          clearTimeout(timer);
+          window.removeEventListener('pointermove', moved);
+          window.removeEventListener('pointerup', cancel);
+          window.removeEventListener('pointercancel', cancel);
+        };
+        window.addEventListener('pointermove', moved);
+        window.addEventListener('pointerup', cancel);
+        window.addEventListener('pointercancel', cancel);
+      });
+    }
+
+    function startDrag(li, fromY) {
+      if (_drag) return;
+      const rows = accountRows();
+      if (rows.length < 2) return;                   // nothing to reorder
+      const rect = li.getBoundingClientRect();
+      _drag = { li, rows, grabY: fromY - rect.top, height: rect.height };
+      li.classList.add('dragging');
+      // A click would otherwise land when the drag is let go and change the
+      // selected account.
+      li.dataset.dragged = '1';
+      document.body.style.userSelect = 'none';
+      window.addEventListener('pointermove', onDragMove);
+      window.addEventListener('pointerup', endDrag);
+      window.addEventListener('pointercancel', endDrag);
+    }
+
+    function onDragMove(e) {
+      if (!_drag) return;
+      const { li } = _drag;
+      const rows = accountRows().filter(r => r !== li);
+      const y = e.clientY;
+      // Which row is the pointer over the top half of? That is where it goes.
+      let before = null;
+      for (const r of rows) {
+        const b = r.getBoundingClientRect();
+        if (y < b.top + b.height / 2) { before = r; break; }
+      }
+      if (before) { if (before !== li.nextSibling) playersList.insertBefore(li, before); }
+      else if (li !== playersList.lastElementChild) playersList.appendChild(li);
+    }
+
+    async function endDrag() {
+      if (!_drag) return;
+      const { li } = _drag;
+      _drag = null;
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+      li.classList.remove('dragging');
+      document.body.style.userSelect = '';
+      setTimeout(() => { delete li.dataset.dragged; }, 0);
+      const order = accountRows().map(r => r.dataset.playerId).filter(Boolean);
+      try { await ipcRenderer.invoke('players:reorder', { order }); } catch { /* it stays as drawn */ }
+    }
+
     async function renderPlayers() {
       selectedPlayerId = await getSelectedPlayer();
       // Load the friends list once per account, not on every re-render — the
@@ -1222,6 +1476,7 @@
 
         // Click = select player
         li.onclick = () => {
+          if (li.dataset.dragged) return;      // that click was the end of a drag
           selectedPlayerId = p.id;
           setSelectedPlayer(p.id);
           Array.from(playersList.children).forEach(c => c.classList.remove("selected"));
@@ -1235,6 +1490,8 @@
         // Highlight currently selected one
         if (String(p.id) === String(selectedPlayerId)) li.classList.add("selected");
 
+        li.dataset.playerId = String(p.id);
+        makeAccountDraggable(li);
         playersList.appendChild(li);
       });
       // Above the list, not below it: with more than a screenful of accounts the

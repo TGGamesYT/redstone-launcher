@@ -920,6 +920,25 @@ function loadPlayers() {
 }
 
 function savePlayers(p) { fs.writeFileSync(playersPath, JSON.stringify(p, null, 2)); }
+
+// The order the accounts are listed in, as dragged. By ID rather than by
+// index: the list on screen can be a render behind what is on disk, and an
+// account the drag never knew about must not be dropped because of it.
+ipcMain.handle("players:reorder", (event, { order }) => {
+  try {
+    const players = loadPlayers();
+    const want = (order || []).map(String);
+    const byId = new Map(players.map(p => [String(p.id), p]));
+    const out = [];
+    for (const id of want) { const p = byId.get(id); if (p) { out.push(p); byId.delete(id); } }
+    for (const p of players) if (byId.has(String(p.id))) out.push(p);   // anything not named, kept
+    savePlayers(out);
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.webContents.send("players-updated", out); } catch { /* gone */ }
+    }
+    return { success: true };
+  } catch (err) { return { success: false, error: err.message }; }
+});
 let mainWindow;
 const iconPath = path.join(process.resourcesPath, 'frontend', 'icon.png');
 const color = settings.get('baseColor', "#FF0000");
@@ -4687,6 +4706,32 @@ async function runModpackServerInstall({ ticket, url, name, iconUrl }) {
 // project and file ids only -- no names without a lookup each -- so that one
 // answers with a count and says so.
 const _packPreview = new Map();
+
+// Turn a pack's file list into mods with real names and icons: one bulk
+// request for every project in it rather than one per mod. Best effort -- a
+// pack still lists what it installs if Modrinth cannot be reached, just by
+// file name.
+async function nameModsFromModrinth(mods) {
+  const ids = [...new Set(mods.map(m => m.projectId).filter(Boolean))];
+  if (!ids.length) return;
+  try {
+    const res = await fetch(`https://api.modrinth.com/v2/projects?ids=${encodeURIComponent(JSON.stringify(ids))}`,
+      { headers: { "User-Agent": LAUNCHER_UA } });
+    if (!res.ok) return;
+    const projects = await res.json();
+    const by = new Map();
+    for (const p of (Array.isArray(projects) ? projects : [])) by.set(p.id, p);
+    for (const m of mods) {
+      const p = m.projectId && by.get(m.projectId);
+      if (!p) continue;
+      if (p.title) m.name = p.title;
+      if (p.icon_url) m.icon = p.icon_url;
+      if (p.project_type) m.kind = p.project_type === "mod" ? "mod"
+        : p.project_type === "resourcepack" ? "resource pack"
+          : p.project_type === "shader" ? "shader pack" : p.project_type;
+    }
+  } catch { /* names from the file paths will do */ }
+}
 ipcMain.handle("modpack:preview", async (event, { url }) => {
   const key = String(url || "");
   if (!key) return { error: "no pack" };
@@ -4705,14 +4750,24 @@ ipcMain.handle("modpack:preview", async (event, { url }) => {
       if (index) {
         const mods = (index.files || []).map(f => {
           const p = String(f.path || "");
+          // Every download a Modrinth pack lists is a CDN path that carries
+          // the project's own id: .../data/<projectId>/versions/<id>/<file>.
+          // That is what turns a file name into a mod with a title and an
+          // icon, below, without having to look anything up by hash.
+          const cdn = (f.downloads || []).map(String)
+            .map(u => /\/data\/([A-Za-z0-9]+)\/versions\//.exec(u))
+            .find(Boolean);
           return {
             path: p,
+            projectId: cdn ? cdn[1] : null,
+            // Until the lookup fills it in: the file's own name, tidied.
             name: p.split("/").pop().replace(/\.(jar|zip)$/i, "").replace(/[_-]/g, " ").trim(),
             kind: /^mods\//.test(p) ? "mod" : /^resourcepacks\//.test(p) ? "resource pack"
               : /^shaderpacks\//.test(p) ? "shader pack" : "file",
             size: f.fileSize || 0,
           };
         });
+        await nameModsFromModrinth(mods);
         return { name: index.name || null, packVersion: index.versionId || null, mods };
       }
       const manifest = await readJson("manifest.json");
