@@ -1,7 +1,7 @@
 {
   "name": "redstone-launcher",
   "productName": "Redstone Launcher",
-  "version": "1.17.0",
+  "version": "1.18.0",
   "description": "A Minecraft launcher",
   "author": "Redstone Launcher Team <contact@redstone-launcher.com>",
   "main": "backend/main.js",
