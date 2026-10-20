@@ -100,6 +100,18 @@
       width: 340px;
       box-sizing: border-box;
     }
+    /* The premium half keeps the room the QR code needs whether it is showing
+       or not. It used to be the start text one moment and a 200px code with
+       three lines under it the next, so the dialog grew as the code was
+       generated and shrank again when it was cleared -- jumping under the
+       cursor at exactly the moment you were trying to read it. */
+    #premInfo { min-height: 312px; }
+    /* Offline accounts have no code to wait for, so nothing is being held
+       open for them. */
+    #premInfo[hidden], #premInfo[style*="display: none"] { min-height: 0; }
+    #qrContainer { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    #qrStatus { min-height: 18px; }
+
     .playerModal .modal-content > .modal-actions {
       margin-top: 14px;
       flex-wrap: wrap;
@@ -136,24 +148,46 @@
       transition: var(--smooth-transition);
     }
     .ip-card:hover { border-color: var(--base-color); }
-    .ip-card canvas, .ip-card .ip-shot {
-      width: 110px; height: 150px; flex: 0 0 150px;
+    /* A player render is about twice as tall as it is wide, the same as the
+       ones on the skins page. At 110x150 the figure was squeezed into a box
+       the wrong shape for it, which is what made it look stretched. The
+       canvas is NOT sized here: skinview3d owns its own dimensions, and
+       forcing a size on it from CSS is the other way to stretch one. */
+    .ip-card .ip-shot {
+      width: 110px; height: 210px; flex: 0 0 210px;
       display: flex; align-items: center; justify-content: center;
     }
+    .ip-card .ip-shot canvas { display: block; }
     /* No figure to show -- Mojang did not answer, or there is no skin -- so
        the card is just the name rather than a name under a tall blank. */
     .ip-card .ip-shot:empty { display: none; }
 
-    /* The account being dragged. Lifted off the list so it is obvious which
-       one is moving, and transparent to the pointer so the row under it is
-       the one being measured against. */
+    /* The account being dragged: picked up off the list, so it is obvious
+       which one is moving and that it IS being held rather than just
+       highlighted. Transparent to the pointer so the row underneath is the
+       one being measured against. */
     li.profile-item.dragging {
-      opacity: 0.9;
       border-color: var(--base-color);
-      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.6);
+      background: color-mix(in srgb, var(--secondary-color) 60%, black);
       cursor: grabbing;
       pointer-events: none;
+      position: relative;
+      z-index: 5;
+      transform: scale(1.03);
+      transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
     }
+    /* The moment it is taken hold of, before it has moved anywhere. */
+    @keyframes account-grabbed {
+      0% { transform: scale(1); }
+      55% { transform: scale(1.06); }
+      100% { transform: scale(1.03); }
+    }
+    li.profile-item.grabbed { animation: account-grabbed 0.22s ease-out; }
+    /* A row sliding out of the way. The transform is set from where the row
+       WAS and then cleared, so it animates from its old place to its new one
+       rather than appearing in it. */
+    li.profile-item.shifting { transition: transform 0.18s ease; }
     .ip-card .ip-name { font-size: 14px; word-break: break-word; text-align: center; }
     .ip-card .ip-from { font-size: 10px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.04em; }
 
@@ -703,14 +737,19 @@
             if (!shot.isConnected || !skin || !skin.base64 || typeof skinview3d === 'undefined') return;
             const canvas = document.createElement('canvas');
             shot.appendChild(canvas);
-            const v = new skinview3d.SkinViewer({ canvas, width: 110, height: 150 });
+            // The same proportions and zoom as every other player render in
+            // the launcher, so this one looks like the rest of them.
+            const v = new skinview3d.SkinViewer({ canvas, width: 110, height: 210 });
             _ipViewers.push(v);
-            v.zoom = 0.85;
+            v.zoom = 0.9;
             v.autoRotate = false;
             // The whole card is one button, so the figure in it is a picture
             // rather than something to drag or scroll into -- a drag here
             // would turn the figure AND still count as a click on the card.
             try { v.controls.enabled = false; } catch { /* older build */ }
+            // Turned very slightly off square, the way a character is posed
+            // for a portrait rather than lined up against a wall.
+            try { v.playerObject.rotation.y = -0.4; } catch { /* older build */ }
             await v.loadSkin('data:image/png;base64,' + skin.base64,
               { model: skin.slim ? 'slim' : 'default' });
             if (skin.capeUrl) { try { await v.loadCape(skin.capeUrl); } catch { /* no cape */ } }
@@ -1368,7 +1407,8 @@
       if (rows.length < 2) return;                   // nothing to reorder
       const rect = li.getBoundingClientRect();
       _drag = { li, rows, grabY: fromY - rect.top, height: rect.height };
-      li.classList.add('dragging');
+      li.classList.add('dragging', 'grabbed');
+      setTimeout(() => li.classList.remove('grabbed'), 240);
       // A click would otherwise land when the drag is let go and change the
       // selected account.
       li.dataset.dragged = '1';
@@ -1381,16 +1421,35 @@
     function onDragMove(e) {
       if (!_drag) return;
       const { li } = _drag;
-      const rows = accountRows().filter(r => r !== li);
+      const others = accountRows().filter(r => r !== li);
       const y = e.clientY;
       // Which row is the pointer over the top half of? That is where it goes.
       let before = null;
-      for (const r of rows) {
+      for (const r of others) {
         const b = r.getBoundingClientRect();
         if (y < b.top + b.height / 2) { before = r; break; }
       }
-      if (before) { if (before !== li.nextSibling) playersList.insertBefore(li, before); }
-      else if (li !== playersList.lastElementChild) playersList.appendChild(li);
+      const want = before || null;
+      const now = li.nextElementSibling;
+      if (want === now || (want === null && li === playersList.lastElementChild)) return;
+
+      // Move it, then let the rows that were displaced slide from where they
+      // were to where they are now -- first and last positions, so nothing
+      // has to know in advance which way anything went.
+      const was = new Map(others.map(r => [r, r.getBoundingClientRect().top]));
+      if (want) playersList.insertBefore(li, want); else playersList.appendChild(li);
+      for (const r of others) {
+        const moved = was.get(r) - r.getBoundingClientRect().top;
+        if (!moved) continue;
+        r.classList.remove('shifting');
+        r.style.transform = `translateY(${moved}px)`;
+        // Read once so the browser takes the start position before the
+        // transition is switched on; otherwise there is nothing to animate
+        // from and the row simply appears in its new place.
+        void r.offsetHeight;
+        r.classList.add('shifting');
+        r.style.transform = '';
+      }
     }
 
     async function endDrag() {
@@ -1400,7 +1459,9 @@
       window.removeEventListener('pointermove', onDragMove);
       window.removeEventListener('pointerup', endDrag);
       window.removeEventListener('pointercancel', endDrag);
-      li.classList.remove('dragging');
+      li.classList.remove('dragging', 'grabbed');
+      // Whatever was mid-slide is where it belongs now.
+      for (const r of accountRows()) { r.classList.remove('shifting'); r.style.transform = ''; }
       document.body.style.userSelect = '';
       setTimeout(() => { delete li.dataset.dragged; }, 0);
       const order = accountRows().map(r => r.dataset.playerId).filter(Boolean);
@@ -1556,7 +1617,7 @@
       qrLoginActive = true;
       document.getElementById('qrStartArea').style.display = 'none';
       const container = document.getElementById('qrContainer');
-      container.style.display = 'block';
+      container.style.display = '';          // back to the stylesheet's flex
       document.getElementById('qrImage').src = '';
       document.getElementById('qrCode').textContent = '';
       document.getElementById('qrStatus').textContent = 'Generating a sign-in code...';

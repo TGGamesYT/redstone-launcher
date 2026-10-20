@@ -9,6 +9,26 @@ started.
 
 ---
 
+## 0. Round 33
+
+- [x] **The import chooser's player render is not a proper one, and stretched.**
+      *A player render is about twice as tall as it is wide, the same as the
+      ones on the skins page; this one was in a 110x150 box, which is the
+      wrong shape for a figure. The canvas is no longer given a size in CSS
+      either — skinview3d owns its own dimensions, and forcing one on it from
+      a stylesheet is the other way to stretch a render. Same zoom as the
+      rest, and turned slightly off square the way a character is posed for a
+      portrait.*
+- [x] **Reordering should look like the card is being picked up.**
+      *It lifts: scaled, shadowed and tinted, with a little bounce the moment
+      it is taken hold of, and the rows it displaces slide out of its way from
+      where they were rather than appearing in their new places.*
+- [x] **The QR code still changes the dialog's height.**
+      *The width was settled last round; the premium half now keeps the room
+      the code needs whether it is showing or not, so the dialog is the same
+      size before, during and after. Measured at every stage: 340x595
+      throughout.*
+
 ## 0. Round 32
 
 - [x] **"What it installs" is a bare list of file names**, where it should be
