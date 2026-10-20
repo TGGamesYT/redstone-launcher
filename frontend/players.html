@@ -100,7 +100,17 @@
       width: 340px;
       box-sizing: border-box;
     }
-    .playerModal .modal-content > .modal-actions { margin-top: 14px; }
+    .playerModal .modal-content > .modal-actions {
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    /* Each button keeps a width its label fits in; three of them wrap onto a
+       second row rather than all being squeezed into a third of the dialog. */
+    .playerModal .modal-content > .modal-actions button {
+      flex: 1 1 auto;
+      min-width: 96px;
+      white-space: nowrap;
+    }
 
     /* The accounts already signed in elsewhere on this computer: a card each,
        with the skin standing in it, the way the launcher shows a player
@@ -505,7 +515,7 @@
            the others rather than a link underneath them. -->
       <div class="modal-actions">
         <button id="submitPlayerBtn">Add Player</button>
-        <button id="useBrowserLogin">Use a browser</button>
+        <button id="useBrowserLogin">Browser</button>
         <button id="cancelPlayerBtn">Cancel</button>
       </div>
     </div>
