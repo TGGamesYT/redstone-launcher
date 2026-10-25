@@ -9,6 +9,113 @@ started.
 
 ---
 
+## 0. Round 34
+
+A large batch. Ordered roughly as it was given, but worked through by how much
+it hurts: the crashes first, then the things that are actively broken, then
+the new features.
+
+### A. Crashes and launching
+- [ ] **`3221225477` STILL, across computers, and now `3221226356` too.**
+      Round 28 found one real cause (unverified library jars) and fixed it;
+      it is still happening, so there is at least one more.
+- [ ] **The download progress bar jumps about.** Each individual asset's
+      progress is being mixed into the total, so the bar goes back and forth
+      and only shows the real total for a moment as each file finishes. Either
+      fix it or put the per-file progress on a second bar underneath.
+- [ ] **Resource-pack syncing uses symlinks, which Minecraft refuses.**
+      `Found forbidden symlinks: ...resourcepacks\epicmc->...Downloads\epicmc`
+- [ ] **An auto-updating instance's version cannot be changed** — it is set
+      back instantly.
+- [ ] **A loader is offered for versions it has no build for.** It only fails
+      at launch. Offer only loaders that actually have a build for the chosen
+      version, and where NO loader does, skip the loader step entirely and go
+      straight to finalize.
+
+### B. Dev mods
+- [ ] **Adding a dev mod does not show it in the mods list** until Refresh is
+      pressed.
+- [ ] **A proper "add dev mod" modal**: the dev mods already added and still
+      valid, with the project/path picker at the top.
+- [ ] **Accept a project ROOT** (containing `build/`), the `build` folder, or
+      `build/libs` as it does now.
+- [ ] **Rebuild a mod from the launcher**, with gradle/gradlew from the project
+      root, the project's required Java version but the launcher's own
+      download of it, and the failure shown when it fails.
+
+### C. Remod
+- [ ] **Edit what the mod declares it NEEDS** too: dependencies,
+      incompatibilities, version requirements.
+
+### D. Themes and the background
+- [ ] **Replace the gradient settings with a Background section**, which can
+      be: the theme's own colour, a custom single colour, a gradient, an
+      uploaded image, or a block texture.
+- [ ] **An uploaded image needs a fit mode**: stretched (to the background
+      area, which excludes the top and left bars), fitted (whole image inside
+      the area, nothing cropped), or covered (fills the area, overflow
+      allowed, never distorted).
+- [ ] **A block picker** like the icon one, but showing each full block's FACE
+      texture flat rather than a render. Picking one tiles it over the whole
+      background, with a slider for the size of one tile.
+- [ ] **A tiled block background must be pixel-sharp** however low-resolution
+      the texture is.
+- [ ] **Predefined theme sync sets the wrong gradient.** It should be a
+      gradient of what the background colour actually is, not a gradient
+      through the theme's main colours.
+- [ ] **Save a custom theme under a name**, listed with the built-in ones.
+- [ ] **Set the app's icon.** The icon's red parts follow the theme, so
+      changing the colours re-tints it; a custom image can be used instead;
+      the icon is saved with the theme.
+- [ ] **Export and import a theme** (background settings included), carrying
+      the original author — a premium account — fused into the data so it
+      cannot be edited to say somebody else.
+
+### E. Settings
+- [ ] **Drop the long inline descriptions.** A short description on hover
+      instead, and the dev-mode toggle loses its "(...)" part.
+- [ ] **Custom CSS**, when developer mode is on, able to rearrange elements.
+
+### F. Accounts
+- [ ] **A dragged account should follow the pointer**, not sit still until the
+      row it would displace is reached.
+- [ ] **An info button on incoming and outgoing requests' players**, as the
+      friends list has.
+
+### G. The admin window
+- [ ] **A Users panel**: everyone with a record of using the launcher and when
+      they last did, shown the way the friend-info modal shows a player.
+- [ ] **A Relay panel**: recent relay usage — who, when, and whether it is
+      still up. Everything the server knows.
+
+### H. The main page, editable
+- [ ] **An edit button, bottom left**, opening an editor with the page's
+      sections separated and new items addable.
+- [ ] **Segments**: recent instances, the selected player's render, the Java
+      friends list, random modpacks, random mods, random projects of any type
+      (with the provider, filters, ordering and count settable), launcher
+      news, snapshot news, a custom time display, countdowns, total playtime,
+      and custom media (image, gif or video). Every segment customisable.
+- [ ] **Playtime has to be tracked** per instance first, and shown on the
+      instance's own page as well.
+
+### I. Resource-pack tools
+- [ ] **A Tools button on an instance's Resourcepacks tab**, opening a picker
+      like the version one.
+- [ ] **A totem resource-pack generator**, marked like a dev mod, which
+      updates to the right skin when the instance launches — the totem tool
+      from `tggamesyt/tggamesyt.github.io`'s `totem` directory, 1:1 — and can
+      be pinned to a chosen skin instead, using the launcher's usual skin
+      picker.
+- [ ] **Vanilla Tweaks**, the whole generator, in the same tools picker, with
+      a customise button like a dev mod's.
+
+### J. Onboarding
+- [ ] **It still tells you to click the tab.**
+- [ ] **On the instances page, the "my instances" highlight lands in the
+      middle of the page** instead of on the same thing it highlights
+      elsewhere.
+
 ## 0. Round 33
 
 - [x] **The import chooser's player render is not a proper one, and stretched.**
