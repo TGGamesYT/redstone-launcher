@@ -633,7 +633,14 @@
       // but there is no way to clear an ICON here, so a page that never had
       // one picked falls back to whatever the mod or pack brought.
       prefill: carry ? { ...pre, name: carry.name, icon: carry.icon || pre.icon || null } : pre,
-      onBack: () => loaderStep(version),
+      // Back is the step before this one -- but when no loader has a build
+      // for this version the loader step was skipped, so going back to it
+      // would skip forward again and Back would do nothing.
+      onBack: async () => {
+        const offer = await offeredLoaders(version);
+        if (offer && !offer.some(id => id !== 'vanilla')) return versionStep();
+        return loaderStep(version);
+      },
       onChangeVersion: (state) => pickVersion({
         only: onlyVersions,
         onBack: () => finish(version, loader, state),
@@ -662,13 +669,20 @@
       },
     });
 
-    const loaderStep = (version) => pickLoader({
-      version,
-      onBack: () => versionStep(),
-      // Only the loaders this mod has builds for, when it came from one.
-      only: onlyLoaders,
-      onPick: (loader) => finish(version, loader),
-    });
+    const loaderStep = async (version) => {
+      // Where no loader has a build for this version there is no choice to
+      // make, so the question is not asked: straight on to the last page as
+      // vanilla. It used to offer all five and fail at launch.
+      const offer = await offeredLoaders(version);
+      if (offer && !offer.some(id => id !== 'vanilla')) return finish(version, 'vanilla');
+      pickLoader({
+        version,
+        onBack: () => versionStep(),
+        // Only the loaders this mod has builds for, when it came from one.
+        only: onlyLoaders,
+        onPick: (loader) => finish(version, loader),
+      });
+    };
 
     const versionStep = () => pickVersion({
       onBack: back,
@@ -1129,6 +1143,25 @@
     { id: 'quilt', name: 'Quilt', sub: 'A fork of Fabric', icon: 'assets/loaders/quilt.png' },
   ];
 
+  // Which loaders have a build for a game version, asked once per version.
+  // Every loader used to be offered for every version and the first anyone
+  // heard otherwise was the launch failing -- after the instance had been
+  // made and had mods put in it. A null answer means the question could not
+  // be reached, and everything is offered: hiding Fabric because a request
+  // timed out would be worse than the bug being fixed.
+  const _loaderOffer = new Map();
+  async function offeredLoaders(version) {
+    if (!version) return null;
+    if (_loaderOffer.has(version)) return _loaderOffer.get(version);
+    let out = null;
+    try {
+      const r = await ipcRenderer.invoke('loader:supported', { gameVersion: version });
+      if (r && r.success && Array.isArray(r.offer)) out = r.offer;
+    } catch { /* leave it null, which offers everything */ }
+    _loaderOffer.set(version, out);
+    return out;
+  }
+
   function pickLoader(opts) {
     opts = opts || {};
     const { card, list } = shell(
@@ -1142,12 +1175,32 @@
 
     // Started from a mod: only the loaders it has builds for.
     const only = opts.only ? new Set(opts.only.map(x => String(x).toLowerCase())) : null;
-    const offered = only ? LOADERS.filter(l => only.has(l.id)) : LOADERS;
-    const shown = offered.length ? offered : LOADERS;
+    let offered = only ? LOADERS.filter(l => only.has(l.id)) : LOADERS;
+    let shown = offered.length ? offered : LOADERS;
+    // And only the ones with a build for this version. Already answered by
+    // the time the flow gets here, so there is nothing to wait for; the
+    // request below is for the paths that arrive without having asked.
+    const byVersion = _loaderOffer.get(opts.version);
+    if (byVersion) {
+      const keep = new Set(byVersion);
+      const narrowed = shown.filter(l => keep.has(l.id));
+      if (narrowed.length) shown = narrowed;
+    }
     // A column each: this is the whole page, not the first of many rows.
     list.style.setProperty('--cols', String(shown.length));
+    if (!byVersion) {
+      offeredLoaders(opts.version).then(offer => {
+        if (!offer || !list.isConnected) return;
+        const keep = new Set(offer);
+        const gone = [...list.children].filter(t => t.dataset.loader && !keep.has(t.dataset.loader));
+        if (gone.length >= list.children.length) return;        // never empty the page
+        gone.forEach(t => t.remove());
+        list.style.setProperty('--cols', String(list.children.length || 1));
+      }).catch(() => { });
+    }
     for (const l of shown) {
       const tile = makeTile({ name: l.name, sub: l.sub, icon: l.icon });
+      tile.dataset.loader = l.id;
       tile.onclick = () => opts.onPick && opts.onPick(l.id);
       list.appendChild(tile);
       edgeBanner(l.icon).then(url => {

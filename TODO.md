@@ -61,12 +61,36 @@ the new features.
       Anything the user wrote in the file themselves is kept, and a link that
       cannot be resolved is left out rather than written half-formed — a file
       the game cannot parse disables every symlink.*
-- [ ] **An auto-updating instance's version cannot be changed** — it is set
-      back instantly.
-- [ ] **A loader is offered for versions it has no build for.** It only fails
+- [x] **An auto-updating instance's version cannot be changed** — it is set
+      back instantly. — *Three separate things, and "instantly" was the third.
+      (1) The sweep only ever moves forward, so it landed back on the latest
+      within 15 minutes; picking a version by hand is the clearer of two
+      contradictory instructions, so it now wins and version-following is
+      switched off, unless the pick IS what it would have followed to anyway.
+      (2) `edit-profile` took a SORTED copy of every profile, held it across
+      an await, and saved the whole array back — the edit dialog sends that
+      and then changes the version, and since the message carries no version
+      field its snapshot still held the old one, so whichever finished last
+      won. That is the instant revert. Both paths now read the raw file at the
+      moment of writing. (3) Saving that sorted copy also wrote whatever sort
+      was on display over the user's own instance order.*
+- [x] **A loader is offered for versions it has no build for.** It only fails
       at launch. Offer only loaders that actually have a build for the chosen
       version, and where NO loader does, skip the loader step entirely and go
-      straight to finalize.
+      straight to finalize. — *New `loader:supported`, which asks Fabric's and
+      Quilt's metadata and Forge's and NeoForge's maven, cached per version.
+      The creation flow skips the loader page outright when only vanilla can
+      run the version (and Back from the last page then goes to the version
+      page, not forward again). The edit dialog greys the others out and says
+      "no build for 1.12.2" rather than having them vanish, hides the whole
+      section when only vanilla is left, and drops a selected loader that has
+      no build. A loader whose check could not be reached is still offered:
+      hiding Fabric over a timed-out request would be worse than the bug.*
+
+Also found and fixed while in there: an instance named after its version was
+only renamed on the `edit-profile` path, which never carries a version, so
+"my 1.21 instance" kept saying 1.21 on every other route into a version
+change — the version dropdown included.
 
 ### B. Dev mods
 - [ ] **Adding a dev mod does not show it in the mods list** until Refresh is

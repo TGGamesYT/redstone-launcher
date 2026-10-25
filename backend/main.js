@@ -1936,34 +1936,40 @@ function renamedForChange(before, after) {
   return name;
 }
 
-ipcMain.on('edit-profile', (event, updatedProfile) => {
-  const profilesPromise = loadProfiles(); // returns a Promise because applySort is async
-  // handle the promise here
-  profilesPromise
-    .then(profiles => {
-      // ensure it's an array
-      if (!Array.isArray(profiles)) profiles = Object.values(profiles || {});
-      const index = profiles.findIndex(p => String(p.id) === String(updatedProfile.id));
-      if (index === -1) {
-        devtoolsLog('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
-        event.reply('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
-        return;
-      }
-      const before = profiles[index];
-      const after = { ...before, ...updatedProfile };
-      // An instance named after what it runs should keep saying what it
-      // runs. Not only "Fabric 1.21.9": "my 1.21 instance" too. Skipped when
-      // a name is being typed in this same edit -- that one is theirs.
-      if (after.name === before.name) after.name = renamedForChange(before, after);
-      profiles[index] = after;
+ipcMain.on('edit-profile', async (event, updatedProfile) => {
+  try {
+    // The raw file, read at the moment of writing. This used to take a
+    // SORTED copy from loadProfiles(), hold it across an await, merge into
+    // that copy and save the whole array back -- so when two edits were in
+    // flight at once, whichever finished last put its stale snapshot back
+    // over the other. The edit dialog does exactly that: it sends this and
+    // then changes the version, and since this message carries no version
+    // field its snapshot still held the OLD one. That is why changing an
+    // instance's version put itself back instantly. Saving the sorted copy
+    // also wrote whatever sort was on display over the user's own order.
+    let raw;
+    try { raw = JSON.parse(fs.readFileSync(profilesPath, "utf8")); } catch { raw = null; }
+    if (!Array.isArray(raw)) { event.reply('edit-profile-error', 'Failed to load profiles'); return; }
+    const index = raw.findIndex(p => String(p.id) === String(updatedProfile.id));
+    if (index === -1) {
+      devtoolsLog('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
+      event.reply('edit-profile-error', `Profile with id ${updatedProfile.id} not found`);
+      return;
+    }
+    const before = raw[index];
+    const after = { ...before, ...updatedProfile };
+    // An instance named after what it runs should keep saying what it
+    // runs. Not only "Fabric 1.21.9": "my 1.21 instance" too. Skipped when
+    // a name is being typed in this same edit -- that one is theirs.
+    if (after.name === before.name) after.name = renamedForChange(before, after);
+    raw[index] = after;
 
-      saveProfiles(profiles);
-      event.reply('profiles-updated', profiles);
-    })
-    .catch(err => {
-      devtoolsLog('Failed to load profiles for edit:', err);
-      event.reply('edit-profile-error', 'Failed to load profiles');
-    });
+    saveProfiles(raw);
+    event.reply('profiles-updated', await loadProfiles());
+  } catch (err) {
+    devtoolsLog('Failed to load profiles for edit:', err);
+    event.reply('edit-profile-error', 'Failed to load profiles');
+  }
 });
 
 // Drop every trace of an instance that lives outside its own folder. Called on
@@ -5872,6 +5878,80 @@ ipcMain.handle("loader:versions", async (event, { loader, gameVersion }) => {
     return { success: true, versions: list.reverse() };
   } catch (err) {
     return { success: false, error: String(err && err.message || err), versions: [] };
+  }
+});
+
+// ── Which loaders actually have a build for a version ───────────────────────
+//
+// Every loader was offered for every version, and the first anyone heard
+// otherwise was the launch failing with "no build supports this version" --
+// after the instance had been made, named and had mods put in it. The
+// creation flow and the edit dialog ask here instead.
+//
+// A loader whose check cannot be reached is reported as `null`, not `false`.
+// Hiding Fabric because a request timed out would be a worse bug than the one
+// being fixed, so an unknown answer still gets offered.
+const _loaderSupport = new Map();                  // gameVersion -> { at, loaders }
+const _mavenCache = new Map();                     // url -> { at, versions }
+const LOADER_SUPPORT_TTL = 30 * 60 * 1000;
+
+async function mavenVersionList(url) {
+  const seen = _mavenCache.get(url);
+  if (seen && Date.now() - seen.at < LOADER_SUPPORT_TTL) return seen.versions;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const xml = await res.text();
+  const versions = [...xml.matchAll(/<version>([^<]+)<\/version>/g)].map(m => m[1]);
+  _mavenCache.set(url, { at: Date.now(), versions });
+  return versions;
+}
+
+// Fabric and Quilt both answer "which loaders can run this game version" with
+// a list that is empty when the answer is none.
+async function metaListHasAny(url) {
+  const res = await fetch(url);
+  if (res.status === 400 || res.status === 404) return false;   // a version they have never heard of
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data) && data.length > 0;
+}
+
+async function loadersForVersion(gameVersion) {
+  const v = String(gameVersion || "");
+  if (!v) return { vanilla: true };
+  const seen = _loaderSupport.get(v);
+  if (seen && Date.now() - seen.at < LOADER_SUPPORT_TTL) return seen.loaders;
+
+  const ask = async (fn) => { try { return await fn(); } catch { return null; } };
+  const [fabric, quilt, forge, neoforge] = await Promise.all([
+    ask(() => metaListHasAny(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(v)}`)),
+    ask(() => metaListHasAny(`https://meta.quiltmc.org/v3/versions/loader/${encodeURIComponent(v)}`)),
+    ask(async () => (await mavenVersionList("https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml"))
+      .some(x => x.startsWith(`${v}-`))),
+    ask(async () => {
+      const prefix = neoPrefix(v);
+      if (!prefix) return false;                   // NeoForge starts at 1.20.2
+      return (await mavenVersionList("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"))
+        .some(x => x.startsWith(prefix) && !x.includes("-beta"));
+    }),
+  ]);
+  const loaders = { vanilla: true, fabric, quilt, forge, neoforge };
+  // Only worth remembering an answer that was actually reached.
+  if ([fabric, quilt, forge, neoforge].every(x => x !== null)) _loaderSupport.set(v, { at: Date.now(), loaders });
+  return loaders;
+}
+
+ipcMain.handle("loader:supported", async (event, { gameVersion } = {}) => {
+  try {
+    const loaders = await loadersForVersion(gameVersion);
+    // What to offer: anything that said yes, plus anything that could not be
+    // asked. `modded` is false only when every loader definitely said no, so
+    // the creation flow can skip the loader step outright.
+    const offer = Object.keys(loaders).filter(k => loaders[k] !== false);
+    const modded = offer.some(k => k !== "vanilla");
+    return { success: true, loaders, offer, modded };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err), loaders: null, offer: null, modded: true };
   }
 });
 
@@ -10228,19 +10308,59 @@ async function autoUpdateTrackedInstances() {
   } finally { _autoUpdatingVersions = false; }
 }
 
+// Which version an instance that follows the latest would be moved to, or
+// null when it does not follow anything (or the manifest cannot be had).
+async function trackedVersionFor(profile) {
+  if (!(profile.autoUpdateVersion ?? profile.alwaysUpdate)) return null;
+  const manifest = await getVersionManifest().catch(() => null);
+  if (!manifest) return null;
+  const cur = manifest.versions.find(v => v.id === profile.version);
+  // Snapshot-tracking instances follow snapshots; everything else releases.
+  return (cur && cur.type === "release") ? manifest.latest.release : manifest.latest.snapshot;
+}
+
 ipcMain.handle("change-instance-version", async (event, { profileId, newVersion }) => {
   try {
-    const profiles = await loadProfiles();
-    const idx = profiles.findIndex(p => String(p.id) === String(profileId));
-    if (idx === -1) return { success: false, error: "Instance not found" };
     if (!newVersion) return { success: false, error: "No version given" };
-    const loader = profiles[idx].loader;
-    if (profiles[idx].version === newVersion) return { success: true, report: null, unchanged: true };
-    profiles[idx].version = newVersion;
-    saveProfiles(profiles);
+    // The raw file, not loadProfiles(), which hands back a SORTED copy —
+    // saving that back writes the current sort into the user's own order.
+    let raw;
+    try { raw = JSON.parse(fs.readFileSync(profilesPath, "utf8")); } catch { raw = null; }
+    if (!Array.isArray(raw)) return { success: false, error: "Instances could not be read" };
+    const idx = raw.findIndex(p => String(p.id) === String(profileId));
+    if (idx === -1) return { success: false, error: "Instance not found" };
+    const loader = raw[idx].loader;
+    if (raw[idx].version === newVersion) return { success: true, report: null, unchanged: true };
+
+    // An instance set to follow the latest version was having a hand-picked
+    // version put straight back by the next sweep, which only ever moves
+    // forward and so always lands on the latest again. Choosing a version by
+    // hand is the clearer instruction of the two, so it wins and the
+    // following is switched off — unless the choice IS what it would have
+    // followed to anyway, in which case there is nothing to disagree about.
+    let stoppedTracking = false;
+    if (raw[idx].autoUpdateVersion ?? raw[idx].alwaysUpdate) {
+      const tracked = await trackedVersionFor(raw[idx]);
+      if (tracked !== newVersion) {
+        raw[idx].autoUpdateVersion = false;
+        if ("alwaysUpdate" in raw[idx]) raw[idx].alwaysUpdate = false;
+        stoppedTracking = true;
+      }
+    }
+
+    const before = { ...raw[idx] };
+    raw[idx].version = newVersion;
+    // An instance named after what it runs follows the change here too. This
+    // only happened on the edit-profile path, which never carries the
+    // version, so "my 1.21 instance" kept saying 1.21 on every other route
+    // into a version change -- the version dropdown included.
+    raw[idx].name = renamedForChange(before, raw[idx]);
+    saveProfiles(raw);
     const report = await migrateContentToVersion(profileId, newVersion, loader);
-    event.reply?.("profiles-updated", profiles);
-    return { success: true, report };
+    const sorted = await loadProfiles();
+    event.reply?.("profiles-updated", sorted);
+    broadcastProfiles(sorted);                 // the toggle moved; every window needs to see it
+    return { success: true, report, stoppedTracking };
   } catch (err) {
     return { success: false, error: err.message };
   }

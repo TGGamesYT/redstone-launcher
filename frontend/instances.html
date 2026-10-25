@@ -1024,6 +1024,7 @@
         instanceVersion.value = prefill.version;
       }
       if (typeof updateInstanceLoaderVersion === 'function') updateInstanceLoaderVersion();
+      if (typeof refreshLoaderChoices === 'function') refreshLoaderChoices();
       // Remembered so the mod can be installed into the instance once it
       // exists -- which site it came from decides how.
       modalCreateBtn._prefillProject = (prefill && (prefill.projectId || prefill.curseId))
@@ -1206,10 +1207,53 @@
       if (preselect && versions.includes(preselect)) sel.value = preselect;
     }
     instanceLoader.addEventListener('change', () => updateInstanceLoaderVersion());
+
+    // Only the loaders that actually have a build for the chosen version. All
+    // five were offered for every version and the first anyone heard
+    // otherwise was the launch failing, with the instance already made.
+    //
+    // The ones without a build are disabled and say so rather than vanishing,
+    // so it is clear why Forge is not available for a snapshot instead of it
+    // simply not being there. A loader whose check could not be reached stays
+    // enabled: hiding it over a timed-out request would be the worse bug.
+    let loaderOfferSeq = 0;
+    async function refreshLoaderChoices() {
+      const gameVersion = (typeof resolveVersionSelection === 'function'
+        ? (resolveVersionSelection().version || '') : (instanceVersion && instanceVersion.value) || '');
+      if (!gameVersion) return;
+      const section = instanceLoader.closest('.modal-section');
+      const mine = ++loaderOfferSeq;
+      let offer = null;
+      try {
+        const r = await ipcRenderer.invoke('loader:supported', { gameVersion });
+        if (r && r.success && Array.isArray(r.offer)) offer = r.offer;
+      } catch { /* leave every option as it is */ }
+      if (mine !== loaderOfferSeq) return;          // a later version change won
+      const keep = offer ? new Set(offer) : null;
+      let usable = 0;
+      for (const opt of instanceLoader.options) {
+        const ok = !keep || keep.has(opt.value);
+        if (!opt.dataset.label) opt.dataset.label = opt.textContent;
+        opt.disabled = !ok;
+        opt.textContent = ok ? opt.dataset.label : `${opt.dataset.label} — no build for ${gameVersion}`;
+        if (ok && opt.value !== 'vanilla') usable++;
+      }
+      // Nothing but vanilla can run this version, so there is no choice to
+      // put in front of anyone.
+      if (section) section.style.display = usable ? '' : 'none';
+      const chosen = instanceLoader.selectedOptions[0];
+      if (chosen && chosen.disabled) {
+        instanceLoader.value = 'vanilla';
+        updateInstanceLoaderVersion();
+      }
+    }
+    window._refreshLoaderChoices = refreshLoaderChoices;
+
     // Forge/NeoForge builds are per Minecraft version, so the list has to be
     // rebuilt when the game version changes.
     if (typeof instanceVersion !== 'undefined' && instanceVersion) {
       instanceVersion.addEventListener('change', () => {
+        refreshLoaderChoices();
         if (instanceLoader.value === 'forge' || instanceLoader.value === 'neoforge') {
           updateInstanceLoaderVersion(document.getElementById('instanceLoaderVersion').value);
         }
@@ -1239,6 +1283,9 @@
         }
         instanceVersion.value = profile.version;
       }
+      // Grey out the loaders this version has no build for, now that the
+      // version is set.
+      refreshLoaderChoices();
 
       modalCreateBtn.dataset.editingId = profile.id;
       modalCreateBtn._originalProfile = profile;
@@ -3813,7 +3860,14 @@
             // A version change goes through the migration path so mods/plugins
             // get updated (or set aside as .toupdate).
             if (versionChanged) {
-              await ipcRenderer.invoke("change-instance-version", { profileId: editingId, newVersion });
+              const r = await ipcRenderer.invoke("change-instance-version", { profileId: editingId, newVersion });
+              // Picking a version by hand and following the latest one are
+              // contradictory instructions, and following used to win
+              // silently -- the chosen version was put back by the next
+              // sweep. The choice wins now, so say what that cost.
+              if (r && r.stoppedTracking && window.notify) {
+                window.notify(`Set to ${newVersion}, and it no longer follows the latest version`, 'success');
+              }
               ipcRenderer.send("get-profiles");
             }
 
