@@ -16,15 +16,51 @@ it hurts: the crashes first, then the things that are actively broken, then
 the new features.
 
 ### A. Crashes and launching
-- [ ] **`3221225477` STILL, across computers, and now `3221226356` too.**
+- [x] **`3221225477` STILL, across computers, and now `3221226356` too.**
       Round 28 found one real cause (unverified library jars) and fixed it;
-      it is still happening, so there is at least one more.
-- [ ] **The download progress bar jumps about.** Each individual asset's
+      it is still happening, so there is at least one more. — *Found it, and
+      it is the same bug one level down: mclc's `downloadAsync` pipes the
+      response straight into the file's final name and resolves on the write
+      stream's `finish`, so a transfer cut halfway leaves a truncated file
+      sitting where everything afterwards takes it for complete. Its own
+      error handler resolves without deleting it. For assets that is fatal
+      every launch, because `getAssets` checks the hash BEFORE downloading
+      and never again after — so a truncated `.ogg` goes to OpenAL and a
+      truncated `.png` to stb_image, which is a read off the end of a native
+      buffer: an access violation (`0xC0000005`) outside the heap, heap
+      corruption (`0xC0000374`) inside it. Both reported codes, from native
+      code, with no Java stack trace, and it travels between computers
+      because the assets folder is what gets copied. The download is now
+      replaced wholesale: bytes go to a `.part` file, the SHA-1 is checked as
+      it streams whenever the name is the hash (which is every asset), four
+      tries with backoff, and only a verified file is renamed into place. A
+      failure leaves nothing, which every caller already handles. Also gates
+      concurrency at 8 — mclc asked for all 4000 assets at once and leaned on
+      `request`'s 2-socket pool, which `fetch` does not have.*
+- [x] **The download progress bar jumps about.** Each individual asset's
       progress is being mixed into the total, so the bar goes back and forth
       and only shows the real total for a moment as each file finishes. Either
-      fix it or put the per-file progress on a second bar underneath.
-- [ ] **Resource-pack syncing uses symlinks, which Minecraft refuses.**
+      fix it or put the per-file progress on a second bar underneath. —
+      *Both were being written to the same bar, last one wins: `progress`
+      counts tasks done out of a total, `download-status` reports one file's
+      bytes. 30%, then one `.ogg`'s 34%, then 30% again. While a counted task
+      is running the bar is the counter and nothing else, and the file being
+      fetched only names itself in the label; per-file bytes drive the bar
+      only when there is no counter, which is the one-big-file case where
+      they are what you want. The counter can no longer go backwards either.*
+- [x] **Resource-pack syncing uses symlinks, which Minecraft refuses.**
       `Found forbidden symlinks: ...resourcepacks\epicmc->...Downloads\epicmc`
+      — *The launcher makes no symlinks; this was one made by hand, and since
+      1.20 the game validates every link under the game directory against
+      `allowed_symlinks.txt` and skips what is not listed. Each instance's
+      links are now found at launch and their targets written as `[prefix]`
+      rules. Two details decide whether it works: the rule matches where the
+      link POINTS, not where it sits, and the target must be the resolved
+      path. Narrow rules rather than the blanket `[regex].+` the internet
+      suggests, which would let the game follow a link anywhere on the disk.
+      Anything the user wrote in the file themselves is kept, and a link that
+      cannot be resolved is left out rather than written half-formed — a file
+      the game cannot parse disables every symlink.*
 - [ ] **An auto-updating instance's version cannot be changed** — it is set
       back instantly.
 - [ ] **A loader is offered for versions it has no build for.** It only fails

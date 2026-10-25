@@ -208,6 +208,136 @@ function verifyNatives() {
   Handler.__verifiesNatives = true;
 }
 
+// ── Every download, finished or not, was being kept ─────────────────────────
+//
+// mclc's downloadAsync pipes the response straight into the file it is meant
+// to end up as, and resolves on the write stream's `finish`:
+//
+//     const file = fs.createWriteStream(path.join(directory, name))
+//     _request.pipe(file)
+//     file.once('finish', () => resolve({ failed: false, asset: null }))
+//
+// A connection cut halfway through ends the response, which ends the pipe,
+// which finishes the file. Nothing ever compares what arrived against the
+// Content-Length it was told to expect, so a transfer that stopped at 40%
+// resolves as a completed download, and the truncated file is sitting at its
+// real name where everything afterwards takes it for the finished article.
+//
+// For libraries and natives that is the access violation (0xC0000005 /
+// 3221225477) the two patches above now repair. For ASSETS it is worse,
+// because of what getAssets does with the result:
+//
+//     if (!fs.existsSync(f) || !await this.checkSum(hash, f)) await this.downloadAsync(...)
+//
+// It checks the hash BEFORE downloading and never again after. So a truncated
+// asset is used by the game this launch; next launch the hash check catches
+// it, re-downloads it, and uses the new one unchecked as well. A half-written
+// .ogg handed to OpenAL or a half-written .png handed to stb_image is a read
+// off the end of a native buffer: an access violation if it lands outside the
+// heap, and heap corruption (0xC0000374 / 3221226356) if it lands inside it.
+// Both of the codes being reported, from inside native code, with no Java
+// stack trace and no crash report -- and it follows the broken file from
+// machine to machine, because the assets folder is what gets copied.
+//
+// So the download itself is replaced with one that cannot leave a lie on
+// disk: the bytes go to a `.part` file, the full Content-Length must arrive,
+// the SHA-1 is checked as it streams whenever the name is the hash (which is
+// how every asset is stored), and only then is it renamed to the name
+// everything else looks for. Anything short is thrown away and fetched again.
+// A file that is not there at all is a miss, which every caller handles; a
+// file that is there and wrong is what nothing handles.
+function verifyDownloads() {
+  let Handler = null;
+  try { Handler = require_("minecraft-launcher-core/components/handler"); }
+  catch { return; }
+  if (Handler.__verifiesDownloads) return;
+
+  const HASH_NAME = /^[0-9a-f]{40}$/i;
+  const TRIES = 4;
+  const IDLE = 45000;              // a socket that has said nothing for this long is gone
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  // mclc asks for all four thousand assets at once with a single Promise.all
+  // and relied on `request`'s two-socket pool to queue them. fetch has no
+  // such pool, so without a gate of our own that is four thousand concurrent
+  // connections: descriptor exhaustion and a storm of resets, which is to
+  // say more truncated files. Eight at a time is both safe and four times
+  // what mclc managed.
+  let active = 0;
+  const waiting = [];
+  const enter = () => active < 8 ? (active++, Promise.resolve()) : new Promise(r => waiting.push(r));
+  const leave = () => { const next = waiting.shift(); if (next) next(); else active--; };
+
+  Handler.prototype.downloadAsync = async function (url, directory, name, retry, type) {
+    const dest = path.join(directory, name);
+    const part = `${dest}.part`;
+    const wantHash = HASH_NAME.test(name) ? name.toLowerCase() : null;
+    let last = null;
+
+    await enter();
+    try {
+      for (let attempt = 1; attempt <= TRIES; attempt++) {
+        let out = null;
+        try {
+          fs.mkdirSync(directory, { recursive: true });
+          const stop = new AbortController();
+          let idle = setTimeout(() => stop.abort(), IDLE);
+          const res = await fetch(url, { redirect: "follow", signal: stop.signal });
+          if (res.status === 404) {
+            clearTimeout(idle);
+            this.client.emit("debug", `[MCLC]: Failed to download ${url} due to: File not found...`);
+            return false;                               // what mclc's callers expect
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const stated = parseInt(res.headers.get("content-length"), 10);
+          const total = Number.isFinite(stated) && stated > 0 ? stated : 0;
+
+          const sha = wantHash ? require_("crypto").createHash("sha1") : null;
+          out = fs.createWriteStream(part);
+          let got = 0, told = 0;
+          for await (const chunk of res.body) {
+            clearTimeout(idle);
+            idle = setTimeout(() => stop.abort(), IDLE);
+            got += chunk.length;
+            if (sha) sha.update(chunk);
+            if (!out.write(chunk)) await new Promise((ok, no) => { out.once("drain", ok); out.once("error", no); });
+            // One message per chunk of four thousand files is a lot of IPC for
+            // a number nobody can read that fast.
+            const now = Date.now();
+            if (now - told > 120 || got === total) {
+              told = now;
+              this.client.emit("download-status", { name, type, current: got, total: total || got });
+            }
+          }
+          clearTimeout(idle);
+          await new Promise((ok, no) => { out.once("error", no); out.end(ok); });
+          out = null;
+
+          if (total && got !== total) throw new Error(`only ${got} of ${total} bytes arrived`);
+          if (!got && total !== 0) throw new Error("nothing arrived");
+          if (sha) {
+            const had = sha.digest("hex");
+            if (had !== wantHash) throw new Error(`sha1 is ${had} and should be ${wantHash}`);
+          }
+          fs.renameSync(part, dest);                    // never a partial file under the real name
+          this.client.emit("download", name);
+          return { failed: false, asset: null };
+        } catch (e) {
+          last = e;
+          if (out) { try { out.destroy(); } catch { /* already gone */ } }
+          try { fs.unlinkSync(part); } catch { /* it may not have been created */ }
+          if (attempt < TRIES) await sleep(400 * 2 ** (attempt - 1));
+        }
+      }
+    } finally { leave(); }
+
+    this.client.emit("debug", `[redstone]: gave up on ${name} after ${TRIES} tries: ${last && last.message || last}`);
+    return;                                             // mclc treats this as a miss
+  };
+
+  Handler.__verifiesDownloads = true;
+}
+
 function isTransient(err) {
   const s = String(err && err.message || err || "");
   return /\b(429|500|502|503|504)\b/.test(s) || /ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|network|timed? ?out|fetch failed/i.test(s);
@@ -233,6 +363,7 @@ async function runLaunch(cfg) {
   }, (line) => post({ type: "log", line })));
 
   const saveChecks = rememberChecksums(cfg.assetRoot || path.join(cfg.rootPath, "assets"));
+  verifyDownloads();
   verifyLibraries();
   verifyNatives();
 

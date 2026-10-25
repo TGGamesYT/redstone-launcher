@@ -3108,6 +3108,12 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
   // which its last session detached by renaming over it. Also runs when a game
   // exits, so the other instances don't stay stale until their next launch.
   try { await applyConfigSync(); } catch { /* non-fatal */ }
+  // Let the game follow the links this instance has, which since 1.20 it
+  // otherwise skips without saying why.
+  try {
+    const { targets } = writeAllowedSymlinks(profileId);
+    if (targets.length) broadcastLog(profileId, `[INFO] Allowing ${targets.length} symlink target${targets.length === 1 ? "" : "s"}: ${targets.join(", ")}`);
+  } catch { /* non-fatal */ }
 
   try {
     broadcastLog(profileId, "Launching, please wait.");
@@ -3264,6 +3270,93 @@ ipcMain.handle("get-launching-instances", () =>
     };
   }));
 
+// ── Symlinked resource packs the game refuses to load ───────────────────────
+//
+// Since 1.20 pre-release 7 Minecraft validates every symbolic link it meets
+// under the game directory against an allow-list and silently skips what is
+// not on it:
+//
+//     [Render thread/WARN]: Ignoring potential pack entry: Failed to validate
+//     '...\resourcepacks\epicmc'. Found forbidden symlinks: ...
+//
+// The list is `allowed_symlinks.txt` in the game directory, one rule a line:
+// `[prefix]<path>`, `[regex]<pattern>` or `[glob]<pattern>`, and a line with
+// no tag means prefix. Two details decide whether this works at all: the
+// rules are matched against where a link POINTS, not where it sits, and the
+// target has to be the resolved path -- a target reached through another link
+// does not match its unresolved spelling.
+//
+// A blanket `[regex].+` is what most of the advice online suggests and it is
+// one line, but it gives the game leave to follow a link to anywhere on the
+// disk, which is the entire thing the check was added to stop. One prefix per
+// real target is the narrow version, and a prefix covers the folder's
+// contents too, which a symlinked pack folder needs.
+//
+// Whatever the user put in the file themselves is kept: our rules live
+// between two marker comments and only that block is rewritten. A file the
+// game cannot parse disables every symlink, so a target that cannot be
+// resolved -- or whose path contains a newline -- is left out rather than
+// written in a form that would break the rest.
+const SYMLINK_MARK_START = "# --- Redstone Launcher: targets of this instance's links ---";
+const SYMLINK_MARK_END = "# --- end Redstone Launcher ---";
+// A pack can be a linked folder, and a link can sit one level in (inside
+// resourcepacks/, say), so each of these is looked at one level deep.
+const SYMLINK_SCAN = ["resourcepacks", "shaderpacks", "mods", "saves", "config", "shaders"];
+
+function instanceLinkTargets(root) {
+  const found = new Set();
+  const look = (dir, depth) => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      // Node reports a Windows junction as a symbolic link too, which is what
+      // most tools make when they "link" a folder there.
+      if (e.isSymbolicLink()) {
+        try {
+          const real = fs.realpathSync(full);
+          if (real && path.isAbsolute(real) && !/[\r\n]/.test(real)) found.add(real);
+        } catch { /* a broken link has no target worth allowing */ }
+      } else if (e.isDirectory() && depth > 0) look(full, depth - 1);
+    }
+  };
+  look(root, 0);                                   // links directly in the instance folder
+  for (const sub of SYMLINK_SCAN) look(path.join(root, sub), 1);
+  return [...found].sort();
+}
+
+function writeAllowedSymlinks(profileId) {
+  const root = path.join(dataDir, "client", String(profileId));
+  const file = path.join(root, "allowed_symlinks.txt");
+  const targets = instanceLinkTargets(root);
+
+  // Everything outside our block is the user's and is put back untouched.
+  const kept = [];
+  try {
+    let inside = false;
+    for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+      if (line.trim() === SYMLINK_MARK_START) { inside = true; continue; }
+      if (line.trim() === SYMLINK_MARK_END) { inside = false; continue; }
+      if (!inside) kept.push(line);
+    }
+    while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
+  } catch { /* no file yet */ }
+
+  if (!targets.length) {
+    // Nothing to allow. A file holding only our own block is removed so it
+    // does not sit there claiming to allow things; one the user has written
+    // in is left exactly as it is.
+    try { if (!kept.length && fs.existsSync(file)) fs.unlinkSync(file); } catch { /* fine */ }
+    if (kept.length) { try { fs.writeFileSync(file, kept.join("\n") + "\n"); } catch { /* fine */ } }
+    return { targets };
+  }
+
+  const lines = [...kept, SYMLINK_MARK_START, ...targets.map(t => `[prefix]${t}`), SYMLINK_MARK_END];
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(file, lines.join("\n") + "\n");
+  return { targets };
+}
+
 function launchViaWorker(profileId, cfg) {
   return new Promise((resolve, reject) => {
     let worker;
@@ -3272,15 +3365,45 @@ function launchViaWorker(profileId, cfg) {
     } catch (e) { reject(e); return; }
     launchWorkers.set(String(profileId), worker);
     let settled = false;
+    // Two different things report downloads, and they used to be written to
+    // the same bar: `progress` counts tasks finished out of a known total
+    // (1200 assets of 4000), while `download-status` reports the bytes of one
+    // single file. With four thousand assets in flight the bar was taking
+    // 30%, then one .ogg's 34%, then 30% again -- jumping back and forth for
+    // the whole download. So while a counted task is running the bar is the
+    // counter and nothing else; the file being fetched only names itself in
+    // the label. Per-file bytes drive the bar only when there is no counter
+    // to beat them, which is exactly the one-big-file case (the client jar,
+    // a loader installer) where they are what you want to watch.
+    let counted = null;
+    const sendCounted = (fileName) => broadcastProgress(profileId, {
+      stage: counted.type, current: counted.current, total: counted.total,
+      label: progressLabel(counted.type), fileName: fileName || null,
+    });
     worker.on('message', (m) => {
       if (!m) return;
       switch (m.type) {
         case 'log':
         case 'gamelog':
           broadcastLog(profileId, m.line); break;
-        case 'progress':
-          broadcastProgress(profileId, { stage: m.p.type, current: m.p.task, total: m.p.total, label: progressLabel(m.p.type) }); break;
+        case 'progress': {
+          const p = m.p || {};
+          const many = Number(p.total) > 1;
+          // A counter that has run out is finished; let the next single-file
+          // download speak for itself again.
+          if (many && p.task < p.total) {
+            // mclc restarts the count for each stage, and within a stage it
+            // only ever goes up. Never let it go down.
+            if (!counted || counted.type !== p.type || p.task >= counted.current) counted = { type: p.type, current: p.task, total: p.total };
+            sendCounted();
+          } else {
+            counted = null;
+            broadcastProgress(profileId, { stage: p.type, current: p.task, total: p.total, label: progressLabel(p.type) });
+          }
+          break;
+        }
         case 'dl':
+          if (counted) { sendCounted(m.s.name); break; }
           broadcastProgress(profileId, { stage: m.s.type, fileName: m.s.name, current: m.s.current, total: m.s.total, bytes: true, label: 'Downloading files' }); break;
         case 'spawned':
           settled = true;
