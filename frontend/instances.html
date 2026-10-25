@@ -219,6 +219,103 @@
     }
 
     .inline-check input { width: auto; margin: 0; }
+
+    /* ── Adding a dev mod ── */
+    .dm-pickrow { margin-bottom: 12px; }
+
+    .dm-pickbtn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      justify-content: center;
+      padding: 12px;
+      font-size: 14px;
+    }
+
+    .dm-pickhint {
+      opacity: .6;
+      font-size: 12px;
+      margin-top: 6px;
+      text-align: center;
+    }
+
+    .dm-sep {
+      opacity: .55;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin: 14px 0 6px;
+    }
+
+    .dm-known {
+      max-height: 280px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .dm-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--menu-bg);
+      border: 2px solid transparent;
+      border-radius: 6px;
+      padding: 9px 10px;
+    }
+
+    .dm-row.pick { cursor: pointer; }
+
+    .dm-row.pick:hover { border-color: var(--accent, #c33); }
+
+    .dm-row.added { opacity: .55; }
+
+    .dm-row-main { flex: 1; min-width: 0; }
+
+    .dm-name { font-weight: bold; font-size: 13px; }
+
+    .dm-sub {
+      opacity: .65;
+      font-size: 11.5px;
+      word-break: break-all;
+      margin-top: 2px;
+    }
+
+    .dm-tag {
+      font-size: 11px;
+      opacity: .8;
+      white-space: nowrap;
+    }
+
+    .dm-picked { margin: 10px 0; }
+
+    .dm-idrow { margin: 8px 0; }
+
+    .dm-idrow input { width: 100%; }
+
+    .dm-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 8px;
+    }
+
+    /* Gradle's output, which is the whole point of showing a failure. */
+    .dm-log {
+      background: #0d0d0d;
+      color: #ddd;
+      font-size: 11px;
+      line-height: 1.45;
+      max-height: 220px;
+      overflow: auto;
+      padding: 8px 10px;
+      border-radius: 6px;
+      margin: 8px 0 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
   </style>
   <script src="uimodal.js"></script>
 </head>
@@ -587,6 +684,14 @@
     ipcRenderer.send("get-profiles");
     ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); maybeLaunchFromShortcut(); });
     ipcRenderer.on("profiles-updated", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
+
+    // The main process put something in an instance's mods folder -- a dev
+    // mod added or rebuilt. The list used to have no idea until Refresh was
+    // pressed, which is why a dev mod seemed not to be added at all.
+    ipcRenderer.on("mods-changed", (e, m) => {
+      if (!m || m.type !== "instance") return;
+      if (typeof window.__reloadContentTab === "function") window.__reloadContentTab(m.id);
+    });
 
     // ── Crash report ─────────────────────────────────────────────────────────
     // A crash used to be silent: the game vanished and the only trace was a
@@ -2393,9 +2498,22 @@
             (mods || []).forEach(m => {
               const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;align-items:center;margin:6px 0;background:var(--menu-bg);padding:8px;border-radius:6px;';
               row.innerHTML = `<div style="flex:1;min-width:0;"><div style="font-weight:bold;">${m.modId}</div><div style="opacity:.65;font-size:12px;word-break:break-all;">${m.folder}</div></div>`;
+              // Rebuild it here, with the project's own Gradle and the Java it
+              // asks for, rather than leaving the window to go and do it.
+              const build = document.createElement('button');
+              build.innerHTML = '<i class="material-icons">build</i>'; build.title = 'Rebuild with Gradle';
+              const log = document.createElement('pre'); log.className = 'dm-log'; log.style.display = 'none';
+              build.onclick = async () => {
+                build.disabled = true;
+                log.style.display = ''; log.textContent = '';
+                await runDevBuild(type, id, m.folder, log);
+                build.disabled = false;
+                onChange && onChange();
+              };
+              row.appendChild(build);
               const rm = document.createElement('button'); rm.innerHTML = '<i class="material-icons">delete</i>'; rm.title = 'Remove';
               rm.onclick = async () => { const r = await ipcRenderer.invoke('devmod:remove', { type, id, folder: m.folder }); draw(r.mods); onChange && onChange(); };
-              row.appendChild(rm); listEl.appendChild(row);
+              row.appendChild(rm); listEl.appendChild(row); listEl.appendChild(log);
             });
             if (!(mods || []).length) listEl.innerHTML = '<div style="opacity:.6;font-size:13px;">No dev mods registered yet.</div>';
           };
@@ -2443,18 +2561,143 @@
           });
         }
 
-        // "Add dev mod": pick a build-output folder and register it right away,
-        // only prompting for the mod id when it can't be auto-detected.
-        async function quickAddDevMod(type, id, onChange) {
-          const pick = await ipcRenderer.invoke('devmod:pickFolder'); if (!pick || pick.canceled) return;
-          let modId = pick.modId;
-          if (!modId) { modId = await promptText('Mod id', "Couldn't auto-detect the mod id from that folder — enter it:"); if (!modId) return; }
-          const r = await ipcRenderer.invoke('devmod:add', { type, id, folder: pick.folder, modId });
-          if (r && r.swap && r.swap.success === false && r.swap.error) {
-            // Not fatal: it's registered and will hot-swap on the next build.
-            if (window.notify) window.notify('Dev mod registered. ' + r.swap.error, 'info');
-          } else if (window.notify) window.notify('Dev mod registered and swapped in.', 'success');
-          onChange && onChange();
+        // "Add dev mod": the folder picker at the top, and under it the dev
+        // mods already added somewhere that are still valid mods -- which in
+        // practice is the same handful of projects going into one instance
+        // after another, and typing the path again each time was the slow way
+        // round. Any of the three folders is accepted: the project root, its
+        // build folder, or build/libs.
+        async function openAddDevModModal(type, id, onChange) {
+          const ov = document.createElement('div');
+          ov.className = 'modal-overlay active'; ov.style.zIndex = 5000;
+          ov.innerHTML = `<div class="modal-content dm-add" style="max-width:620px;">
+            <div class="modal-header"><h2>Add a dev mod</h2></div>
+            <div class="dm-pickrow">
+              <button type="button" id="dm-pick" class="dm-pickbtn">
+                <i class="material-icons">create_new_folder</i>
+                <span>Choose a project folder…</span>
+              </button>
+              <div class="dm-pickhint">The project root, its <code>build</code> folder or <code>build/libs</code> — any of them.</div>
+            </div>
+            <div id="dm-picked" class="dm-picked" style="display:none;"></div>
+            <div id="dm-known-wrap" style="display:none;">
+              <div class="dm-sep">Already set up elsewhere</div>
+              <div id="dm-known" class="dm-known"></div>
+            </div>
+            <div class="modal-actions" style="margin-top:14px;"><button type="button" id="dm-close">Cancel</button></div>
+          </div>`;
+          document.body.appendChild(ov);
+          const close = () => ov.remove();
+          ov.querySelector('#dm-close').onclick = close;
+          ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
+
+          const add = async (info, modId) => {
+            const r = await ipcRenderer.invoke('devmod:add', {
+              type, id, folder: info.folder || info.picked, root: info.root || null, modId: modId || info.modId || null,
+            });
+            if (!r || !r.success) {
+              if (window.notify) window.notify((r && r.error) || 'That could not be added', 'error');
+              return false;
+            }
+            if (r.swap && r.swap.success === false && r.swap.error) {
+              if (window.notify) window.notify('Added. ' + r.swap.error, 'info');
+            } else if (window.notify) window.notify('Added and swapped in.', 'success');
+            close();
+            onChange && onChange();
+            return true;
+          };
+
+          // ── the picker ──
+          const pickedEl = ov.querySelector('#dm-picked');
+          ov.querySelector('#dm-pick').onclick = async () => {
+            const pick = await ipcRenderer.invoke('devmod:pickFolder');
+            if (!pick || pick.canceled) return;
+            pickedEl.style.display = '';
+            const where = pick.root && pick.root !== pick.folder
+              ? `<div class="dm-sub">project <code>${pick.root}</code></div>` : '';
+            pickedEl.innerHTML = `
+              <div class="dm-row">
+                <div class="dm-row-main">
+                  <div class="dm-name">${pick.modId || 'Which mod is this?'}</div>
+                  <div class="dm-sub"><code>${pick.folder}</code></div>
+                  ${where}
+                  <div class="dm-sub">${pick.jar ? `newest build: ${pick.jar}` : 'nothing built in there yet'}${pick.buildable ? ` · can be built here (Java ${pick.java})` : ''}</div>
+                </div>
+              </div>
+              <div class="dm-idrow" ${pick.modId ? 'style="display:none;"' : ''}>
+                <input id="dm-modid" type="text" placeholder="mod id" value="${pick.modId || ''}" />
+              </div>
+              <div class="dm-actions">
+                ${pick.buildable ? '<button type="button" id="dm-buildnow">Build it now</button>' : ''}
+                <button type="button" id="dm-addpicked">Add this</button>
+              </div>
+              <pre id="dm-log" class="dm-log" style="display:none;"></pre>`;
+            const idEl = pickedEl.querySelector('#dm-modid');
+            const logEl = pickedEl.querySelector('#dm-log');
+            pickedEl.querySelector('#dm-addpicked').onclick = () =>
+              add(pick, idEl ? (idEl.value || '').trim() : null);
+            const buildBtn = pickedEl.querySelector('#dm-buildnow');
+            if (buildBtn) buildBtn.onclick = async () => {
+              // Not registered yet, so it is added first and then built --
+              // which also means the mod id has to be known by now.
+              const modId = idEl ? (idEl.value || '').trim() : pick.modId;
+              if (!modId) { if (window.notify) window.notify('Give it a mod id first', 'error'); return; }
+              const r = await ipcRenderer.invoke('devmod:add', { type, id, folder: pick.folder, root: pick.root, modId });
+              if (!r || !r.success) { if (window.notify) window.notify((r && r.error) || 'Could not add it', 'error'); return; }
+              buildBtn.disabled = true; buildBtn.textContent = 'Building…';
+              logEl.style.display = ''; logEl.textContent = '';
+              const br = await runDevBuild(type, id, r.folder, logEl);
+              buildBtn.disabled = false; buildBtn.textContent = 'Build it now';
+              if (br && br.success) { close(); onChange && onChange(); }
+            };
+          };
+
+          // ── the ones already set up ──
+          const known = await ipcRenderer.invoke('devmod:known', { type, id });
+          const rows = ((known && known.mods) || []).filter(m => m.valid);
+          if (rows.length) {
+            ov.querySelector('#dm-known-wrap').style.display = '';
+            const host = ov.querySelector('#dm-known');
+            for (const m of rows) {
+              const el = document.createElement('div');
+              el.className = 'dm-row' + (m.added ? ' added' : ' pick');
+              const used = (m.usedBy || []).map(u => u.name).filter(Boolean);
+              el.innerHTML = `<div class="dm-row-main">
+                  <div class="dm-name">${m.modId || '(no mod id)'}</div>
+                  <div class="dm-sub"><code>${m.folder}</code></div>
+                  <div class="dm-sub">${m.jar ? `newest build: ${m.jar}` : 'nothing built in there yet'}${used.length ? ` · in ${used.join(', ')}` : ''}</div>
+                </div>
+                <div class="dm-row-side">${m.added ? '<span class="dm-tag">already here</span>' : '<i class="material-icons">add</i>'}</div>`;
+              if (!m.added) el.onclick = () => add(m, m.modId);
+              host.appendChild(el);
+            }
+          }
+        }
+
+        // Run a build and stream its output into an element. The listener is
+        // removed afterwards, or every build would write to every log panel
+        // opened before it.
+        async function runDevBuild(type, id, folder, logEl) {
+          const onLine = (_e, m) => {
+            if (!m || m.folder !== folder) return;
+            logEl.textContent += (logEl.textContent ? '\n' : '') + m.line;
+            logEl.scrollTop = logEl.scrollHeight;
+          };
+          ipcRenderer.on('devmod:buildLog', onLine);
+          try {
+            const r = await ipcRenderer.invoke('devmod:build', { type, id, folder });
+            if (r && r.success) {
+              if (window.notify) window.notify('Built and swapped in.', 'success');
+            } else {
+              const err = (r && r.error) || 'The build failed';
+              logEl.textContent += `\n\n${err}`;
+              logEl.scrollTop = logEl.scrollHeight;
+              if (window.notify) window.notify(err, 'error');
+            }
+            return r;
+          } finally {
+            ipcRenderer.removeListener('devmod:buildLog', onLine);
+          }
         }
 
         // Change the build folder for an existing dev mod (keeps the same mod id).
@@ -3176,6 +3419,14 @@
 
             } else if (["resourcepacks", "mods", "shaderpacks"].includes(tabName)) {
               const renderContentTab = async () => {
+                // So the main process can say "this instance's mods folder
+                // changed" and have the list redraw itself, which is what a
+                // freshly added dev mod needs.
+                window.__reloadContentTab = (forId) => {
+                  if (String(forId) !== String(profile.id)) return;
+                  if (!ensureStillActive()) return;
+                  renderContentTab();
+                };
                 // Everything that doesn't depend on the file list: the action bar,
                 // whether the game is running, the dev-mod registrations. Fetched
                 // once, then reused by both paint passes.
@@ -3247,7 +3498,7 @@
                     const devBtn = document.createElement("button");
                     devBtn.className = "tab-install-btn secondary";
                     devBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Add dev mod`;
-                    devBtn.onclick = () => quickAddDevMod("instance", profile.id, () => renderContentTab());
+                    devBtn.onclick = () => openAddDevModModal("instance", profile.id, () => renderContentTab());
                     bar.appendChild(devBtn);
                   }
                   return bar;

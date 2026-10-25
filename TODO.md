@@ -93,15 +93,34 @@ only renamed on the `edit-profile` path, which never carries a version, so
 change — the version dropdown included.
 
 ### B. Dev mods
-- [ ] **Adding a dev mod does not show it in the mods list** until Refresh is
-      pressed.
-- [ ] **A proper "add dev mod" modal**: the dev mods already added and still
-      valid, with the project/path picker at the top.
-- [ ] **Accept a project ROOT** (containing `build/`), the `build` folder, or
-      `build/libs` as it does now.
-- [ ] **Rebuild a mod from the launcher**, with gradle/gradlew from the project
+- [x] **Adding a dev mod does not show it in the mods list** until Refresh is
+      pressed. — *`devmod:add` fired the jar copy off without waiting, so it
+      returned before the jar was in the folder and the list reloaded just too
+      early to see it. It is awaited now, and the main process says
+      `mods-changed` afterwards, which the page redraws on.*
+- [x] **A proper "add dev mod" modal**: the dev mods already added and still
+      valid, with the project/path picker at the top. — *The picker is at the
+      top; under it every dev mod registered anywhere that is still a valid
+      mod, with its newest build, which instances already use it, and one
+      click to add. The ones already in this instance are marked and not
+      clickable, and a folder that has gone is not offered. It used to open
+      the folder dialog immediately with none of this in sight.*
+- [x] **Accept a project ROOT** (containing `build/`), the `build` folder, or
+      `build/libs` as it does now. — *Any of the three, and the project root
+      is recorded separately because that is what a rebuild runs in. A
+      subproject's `build/libs` resolves to the top-level project, where the
+      wrapper is. A plain folder of jars still works as before.*
+- [x] **Rebuild a mod from the launcher**, with gradle/gradlew from the project
       root, the project's required Java version but the launcher's own
-      download of it, and the failure shown when it fails.
+      download of it, and the failure shown when it fails. — *`gradlew build
+      -x test` in the project root, on the Java the build script asks for
+      (toolchain, `JavaVersion.VERSION_*`, `sourceCompatibility`, `release`,
+      or failing all of those the Minecraft version in `gradle.properties`),
+      taken from the launcher's own downloads — as a JDK, since Gradle needs
+      javac and the download preferred a JRE, which has none. Output streams
+      into the dialog as it goes and stays on screen when it fails. Falls back
+      to `gradle` on the PATH where there is no wrapper, and chmods a wrapper
+      that came out of git without its executable bit.*
 
 ### C. Remod
 - [ ] **Edit what the mod declares it NEEDS** too: dependencies,

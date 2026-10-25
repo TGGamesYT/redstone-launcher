@@ -2934,7 +2934,8 @@ async function curseforgeImport(zipPath, onProgress, hooks) {
   }
 }
 
-async function getJavaForMinecraft(mcVersion) {
+// Which Java a Minecraft version asks for.
+async function javaMajorForMinecraft(mcVersion) {
   // 1️⃣ Fetch the version manifest
   const manifestRes = await fetch("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json");
   if (!manifestRes.ok) throw new Error("Failed to fetch version manifest");
@@ -2952,11 +2953,32 @@ async function getJavaForMinecraft(mcVersion) {
   // 4️⃣ Extract javaVersion.majorVersion
   const javaVersion = versionData.javaVersion?.majorVersion;
   if (!javaVersion) throw new Error(`Java version info not found for Minecraft ${mcVersion}`);
+  return javaVersion;
+}
+
+async function getJavaForMinecraft(mcVersion) {
+  return getJavaByMajor(await javaMajorForMinecraft(mcVersion), { label: `Minecraft ${mcVersion}` });
+}
+
+// Where a bundled Java was unpacked, given the binary inside it.
+const javaHomeOf = (bin) => path.dirname(path.dirname(bin));
+const hasJavac = (home) => fs.existsSync(path.join(home, "bin", process.platform === "win32" ? "javac.exe" : "javac"));
+
+// A Java of a particular major version: the user's own, the system's, one
+// already downloaded, or a fresh download from Adoptium.
+//
+// `needJdk` is for compiling rather than running -- a Gradle build needs
+// javac, and the download below prefers a JRE, which has none. A JDK is kept
+// under its own folder so it can sit beside an already-downloaded JRE of the
+// same version instead of one overwriting the other.
+async function getJavaByMajor(javaVersion, { needJdk = false, label = "" } = {}) {
+  const want = needJdk ? "jdk" : "jre";
+  const forWhat = label ? ` for ${label}` : "";
 
   // 5️⃣ Check custom Java path from settings
   const customJava = settings.get('customJavaPath');
   if (customJava && fs.existsSync(customJava)) {
-    if (checkJavaVersion(customJava, javaVersion)) {
+    if (checkJavaVersion(customJava, javaVersion) && (!needJdk || hasJavac(javaHomeOf(customJava)))) {
       return customJava;
     } else {
       devtoolsLog(`[Java] Custom Java path ${customJava} is not compatible with version ${javaVersion}`);
@@ -2965,7 +2987,7 @@ async function getJavaForMinecraft(mcVersion) {
 
   // 6️⃣ Check system Java
   const systemJava = findSystemJava(javaVersion);
-  if (systemJava) {
+  if (systemJava && (!needJdk || hasJavac(javaHomeOf(systemJava)))) {
     devtoolsLog(`[Java] Found compatible system Java: ${systemJava}`);
     return systemJava;
   }
@@ -2981,10 +3003,13 @@ async function getJavaForMinecraft(mcVersion) {
   const arch = os.arch() === "x64" ? "x64" : os.arch() === "arm64" ? "aarch64" : null;
   if (!arch) throw new Error(`Unsupported architecture: ${os.arch()}`);
 
-  // 8️⃣ Check if we already have extracted Java in our runtimes folder
-  const installPath = path.join(JAVA_DIR, `${javaVersion}_${osName}_${arch}`);
-  const javaBin = path.join(installPath, platform === "win32" ? "bin/javaw.exe" : "bin/java");
-  if (fs.existsSync(javaBin)) {
+  // 8️⃣ Check if we already have extracted Java in our runtimes folder.
+  // A build wants a console-less launch for the game but a real `java` for
+  // Gradle, which writes to stdout.
+  const installPath = path.join(JAVA_DIR, `${javaVersion}_${osName}_${arch}${needJdk ? "_jdk" : ""}`);
+  const exe = platform === "win32" ? (needJdk ? "bin/java.exe" : "bin/javaw.exe") : "bin/java";
+  const javaBin = path.join(installPath, exe);
+  if (fs.existsSync(javaBin) && (!needJdk || hasJavac(installPath))) {
     devtoolsLog(`[Java] Found existing bundled Java ${javaVersion} at ${javaBin}`);
     return javaBin;
   }
@@ -3007,7 +3032,8 @@ async function getJavaForMinecraft(mcVersion) {
   let downloadUrl = null;
   outer:
   for (const releaseType of ["ga", "ea"]) {
-    for (const imageType of ["jre", "jdk"]) {
+    // A JDK first when javac is wanted, since a JRE has none.
+    for (const imageType of (needJdk ? ["jdk"] : ["jre", "jdk"])) {
       const url = `https://api.adoptium.net/v3/assets/latest/${javaVersion}/hotspot?architecture=${arch}&os=${osName}&image_type=${imageType}&release_type=${releaseType}`;
       const apiData = await fetchAdoptium(url);
       const link = Array.isArray(apiData) && apiData[0]?.binary?.package?.link;
@@ -3018,10 +3044,10 @@ async function getJavaForMinecraft(mcVersion) {
     throw new Error(`Could not find a downloadable Java ${javaVersion} build (Adoptium had no ga/ea jre/jdk).`);
   }
 
-  const tmpZip = path.join(os.tmpdir(), `java${javaVersion}.zip`);
+  const tmpZip = path.join(os.tmpdir(), `java${javaVersion}${needJdk ? "jdk" : ""}.zip`);
 
   // 10️⃣ Download
-  devtoolsLog(`Downloading Java ${javaVersion} for ${mcVersion} from Adoptium...`);
+  devtoolsLog(`Downloading Java ${javaVersion} (${want})${forWhat} from Adoptium...`);
   await downloadFile(downloadUrl, tmpZip);
 
   // 11️⃣ Extract
@@ -9904,6 +9930,168 @@ async function swapDevMod(type, id, modId, folder, pinnedJar) {
   } catch (e) { return { success: false, error: e.message }; }
 }
 
+// ── What folder the user actually picked ─────────────────────────────────────
+//
+// A dev mod used to be registered by its build-output folder and nothing
+// else, so you had to know to pick `build/libs` and nothing above it. Any of
+// the three is now accepted: the project root, its `build` folder, or
+// `build/libs` itself. The jars are read from whichever of them has them, and
+// the project root is kept separately, because that is what a rebuild runs in.
+const GRADLE_MARKERS = ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "gradlew.bat"];
+const isGradleProject = (dir) => {
+  try { return GRADLE_MARKERS.some(f => fs.existsSync(path.join(dir, f))); } catch { return false; }
+};
+// The project this folder belongs to, looked for at it and above it. A
+// multi-project build puts a subproject's jars in `<sub>/build/libs`, and
+// `gradlew` lives at the top, so the top is what gets run.
+function gradleRootFor(dir) {
+  let cur = null;
+  try { cur = path.resolve(dir); } catch { return null; }
+  let found = null;
+  for (let i = 0; i < 8; i++) {
+    if (isGradleProject(cur)) found = cur;
+    // Keep going up: a wrapper at the top beats a build file in a subproject.
+    const up = path.dirname(cur);
+    if (up === cur) break;
+    cur = up;
+    if (found && !isGradleProject(cur)) break;
+  }
+  return found;
+}
+
+function resolveDevModFolder(picked) {
+  if (!picked) return { jarDir: null, root: null };
+  const candidates = [picked, path.join(picked, "libs"), path.join(picked, "build", "libs")];
+  let jarDir = candidates.find(d => newestJar(d)) || null;
+  if (!jarDir) {
+    // Nothing built yet, which is fine -- it can be built from here. Guess
+    // where the jars will land from what the folder looks like.
+    if (isGradleProject(picked)) jarDir = path.join(picked, "build", "libs");
+    else if (fs.existsSync(path.join(picked, "libs"))) jarDir = path.join(picked, "libs");
+    else jarDir = picked;
+  }
+  return { jarDir, root: gradleRootFor(jarDir) };
+}
+
+// ── Building a dev mod from the launcher ─────────────────────────────────────
+//
+// Which Java the project wants, read from the build script. Gradle will not
+// run at all on the wrong major -- and it is the project's requirement, not
+// the game's, so the instance's Java is the wrong answer.
+const MC_JAVA = [[[1, 20, 5], 21], [[1, 18, 0], 17], [[1, 17, 0], 16]];
+function javaForMinecraftVersion(v) {
+  const parts = String(v || "").split(".").map(n => parseInt(n, 10) || 0);
+  for (const [at, major] of MC_JAVA) {
+    for (let i = 0; i < 3; i++) {
+      if ((parts[i] || 0) > (at[i] || 0)) return major;
+      if ((parts[i] || 0) < (at[i] || 0)) break;
+      if (i === 2) return major;
+    }
+  }
+  return 8;
+}
+function requiredJavaForProject(root) {
+  const read = (f) => { try { return fs.readFileSync(path.join(root, f), "utf8"); } catch { return ""; } };
+  const scripts = read("build.gradle") + "\n" + read("build.gradle.kts");
+  // The toolchain is the modern and most explicit statement of it.
+  let m = scripts.match(/JavaLanguageVersion\.of\(\s*(\d+)\s*\)/);
+  if (m) return parseInt(m[1], 10);
+  // JavaVersion.VERSION_21, and VERSION_1_8 for the old numbering.
+  m = scripts.match(/JavaVersion\.VERSION_1_(\d+)/);
+  if (m) return parseInt(m[1], 10);
+  m = scripts.match(/JavaVersion\.VERSION_(\d+)/);
+  if (m) return parseInt(m[1], 10);
+  m = scripts.match(/(?:source|target)Compatibility\s*=?\s*["']?(?:1\.)?(\d+)["']?/);
+  if (m) return parseInt(m[1], 10);
+  m = scripts.match(/release(?:\.set\(|\s*=\s*)\s*(\d+)/);
+  if (m) return parseInt(m[1], 10);
+  // Nothing said: go by the Minecraft version it builds against, which every
+  // mod template puts in gradle.properties.
+  const props = read("gradle.properties");
+  m = props.match(/^\s*minecraft_version\s*=\s*(\S+)/m) || props.match(/^\s*minecraft\s*=\s*(\S+)/m);
+  if (m) return javaForMinecraftVersion(m[1]);
+  return 17;
+}
+
+const devBuilds = new Map();                 // key -> { child, lines }
+function devBuildKey(type, id, folder) { return `${type}:${id}:${folder}`; }
+
+// Run the project's own Gradle, on the Java it asks for, taken from the
+// launcher's own downloads rather than whatever happens to be on PATH.
+async function buildDevMod({ type, id, folder, root, onLine }) {
+  const projectRoot = root || gradleRootFor(folder);
+  if (!projectRoot) return { success: false, error: "No Gradle project above that folder" };
+
+  const major = requiredJavaForProject(projectRoot);
+  let javaBin;
+  try { javaBin = await getJavaByMajor(major, { needJdk: true, label: `building ${path.basename(projectRoot)}` }); }
+  catch (e) { return { success: false, error: `Java ${major} is needed to build this and could not be prepared: ${e.message}` }; }
+  const home = javaHomeOf(javaBin);
+
+  const isWin = process.platform === "win32";
+  const wrapper = path.join(projectRoot, isWin ? "gradlew.bat" : "gradlew");
+  let cmd, args;
+  if (fs.existsSync(wrapper)) {
+    // A wrapper checked out of git on a Unix box often arrives without its
+    // executable bit, and then nothing will run it.
+    if (!isWin) { try { fs.chmodSync(wrapper, 0o755); } catch { /* it may not be ours */ } }
+    cmd = wrapper;
+    args = [];
+  } else {
+    cmd = isWin ? "gradle.bat" : "gradle";
+    args = [];
+  }
+  // `build` without the tests: a mod's tests are rarely set up and a failing
+  // one should not stop the jar being produced.
+  args.push("build", "-x", "test", `-Dorg.gradle.java.home=${home}`, "--console=plain");
+
+  const lines = [];
+  const say = (line) => { lines.push(line); if (onLine) { try { onLine(line); } catch { /* ignore */ } } };
+  say(`> ${path.basename(cmd)} ${args.join(" ")}`);
+  say(`  in ${projectRoot}`);
+  say(`  with Java ${major} at ${home}`);
+
+  const key = devBuildKey(type, id, folder);
+  const out = await new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(cmd, args, {
+        cwd: projectRoot,
+        env: { ...process.env, JAVA_HOME: home, GRADLE_OPTS: "-Dorg.gradle.daemon=false" },
+        windowsHide: true,
+        shell: isWin,              // gradlew.bat is a batch file
+      });
+    } catch (e) { resolve({ success: false, error: e.message }); return; }
+    devBuilds.set(key, { child, lines });
+    let rest = "";
+    const feed = (buf) => {
+      rest += buf.toString();
+      const parts = rest.split(/\r?\n/);
+      rest = parts.pop();
+      parts.forEach(say);
+    };
+    child.stdout && child.stdout.on("data", feed);
+    child.stderr && child.stderr.on("data", feed);
+    child.on("error", (e) => {
+      say(`! ${e.message}`);
+      resolve({
+        success: false,
+        error: e.code === "ENOENT"
+          ? "No gradlew in the project and no gradle on the PATH"
+          : e.message,
+      });
+    });
+    child.on("close", (code) => {
+      if (rest) say(rest);
+      resolve(code === 0
+        ? { success: true }
+        : { success: false, error: `Gradle exited with ${code}` });
+    });
+  });
+  devBuilds.delete(key);
+  return { ...out, lines, java: major, root: projectRoot };
+}
+
 const devWatchers = new Map(); // key -> [ { watcher, timer } ]
 function stopDevWatch(type, id) {
   const k = devModKey(type, id);
@@ -10015,25 +10203,146 @@ ipcMain.handle("devmod:setEnabled", (event, { type, id, enabled }) => {
   return { success: true, ...store[k] };
 });
 ipcMain.handle("devmod:pickFolder", async () => {
-  const r = await dialog.showOpenDialog({ title: "Select the mod's build-output folder (where the .jar is produced)", properties: ["openDirectory"] });
+  const r = await dialog.showOpenDialog({
+    title: "Select the mod's project folder, its build folder, or build/libs",
+    properties: ["openDirectory"],
+  });
   if (r.canceled || !r.filePaths.length) return { canceled: true };
-  const folder = r.filePaths[0];
-  const jar = newestJar(folder);
-  const info = jar ? readJarModInfo(jar) : null;
-  return { folder, modId: (info && info.id) || null };
+  return devModFolderInfo(r.filePaths[0]);
 });
-ipcMain.handle("devmod:add", (event, { type, id, folder, modId }) => {
-  if (!folder || !modId) return { success: false, error: "Folder and mod id are required" };
+
+// What a picked folder is: where its jars are, what project it belongs to,
+// what mod it builds, and whether it can be built from here.
+function devModFolderInfo(picked) {
+  const { jarDir, root } = resolveDevModFolder(picked);
+  const jar = jarDir ? newestJar(jarDir) : null;
+  const info = jar ? readJarModInfo(jar) : null;
+  return {
+    picked,
+    folder: jarDir,
+    root,
+    modId: (info && info.id) || null,
+    jar: jar ? path.basename(jar) : null,
+    buildable: !!root,
+    java: root ? requiredJavaForProject(root) : null,
+  };
+}
+ipcMain.handle("devmod:inspect", (event, { folder } = {}) => devModFolderInfo(folder));
+
+// Every dev mod registered anywhere, for the "add a dev mod" dialog -- the
+// usual case is the same handful of projects being added to one instance
+// after another, and typing the path again each time is the slow way.
+// A folder that has gone is reported as such rather than offered.
+ipcMain.handle("devmod:known", (event, { type, id } = {}) => {
+  const store = loadDevModsStore();
+  const here = new Set(((store[devModKey(type, id)] || {}).mods || []).map(m => m.folder));
+  const seen = new Map();
+  for (const [k, entry] of Object.entries(store)) {
+    for (const m of (entry && entry.mods) || []) {
+      if (!m || !m.folder) continue;
+      const was = seen.get(m.folder);
+      const row = was || {
+        folder: m.folder, modId: m.modId, root: m.root || gradleRootFor(m.folder),
+        exists: fs.existsSync(m.folder), usedBy: [], added: here.has(m.folder),
+      };
+      if (!was) seen.set(m.folder, row);
+      // Where else it is in use, by name, so it is recognisable.
+      const [t, ...rest] = k.split(":");
+      row.usedBy.push({ type: t, id: rest.join(":"), name: instanceDisplayName(t, rest.join(":")) });
+    }
+  }
+  const all = [...seen.values()];
+  for (const r of all) {
+    const jar = r.exists ? newestJar(r.folder) : null;
+    r.jar = jar ? path.basename(jar) : null;
+    r.builtAt = jar ? (() => { try { return fs.statSync(jar).mtimeMs; } catch { return null; } })() : null;
+    // "Still a valid mod": the folder is there and has a jar that reads as a
+    // mod, or it is a project that can be built into one.
+    r.valid = !!(r.exists && (jar || gradleRootFor(r.folder)));
+    r.buildable = !!(r.root && isGradleProject(r.root));
+  }
+  // The ones already in this instance last, the newest build first.
+  all.sort((a, b) => (a.added === b.added ? (b.builtAt || 0) - (a.builtAt || 0) : a.added ? 1 : -1));
+  return { success: true, mods: all };
+});
+
+// An instance's or server's name, for saying where a dev mod is already used.
+function instanceDisplayName(type, id) {
+  try {
+    if (type === "server") {
+      const info = serverManager.getServerInfo(id);
+      return (info && info.name) || String(id);
+    }
+    const arr = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
+    const p = Array.isArray(arr) ? arr.find(x => String(x.id) === String(id)) : null;
+    return (p && p.name) || String(id);
+  } catch { return String(id); }
+}
+
+ipcMain.handle("devmod:add", async (event, { type, id, folder, modId, root }) => {
+  if (!folder) return { success: false, error: "A folder is required" };
+  // Accept the project root, its build folder, or build/libs -- whichever was
+  // handed over, work out which is which.
+  const resolved = resolveDevModFolder(folder);
+  const jarDir = resolved.jarDir || folder;
+  const projectRoot = root || resolved.root || null;
+  // The mod id can be read off the built jar, so it is only required when
+  // there is no jar to read it from.
+  let useId = modId;
+  if (!useId) {
+    const jar = newestJar(jarDir);
+    const info = jar ? readJarModInfo(jar) : null;
+    useId = (info && info.id) || null;
+  }
+  if (!useId) return { success: false, error: "No built jar to read the mod id from — build it first, or type the id in" };
+
   const store = loadDevModsStore(); const k = devModKey(type, id);
   store[k] = store[k] || { enabled: true, mods: [] };
   store[k].enabled = true;
-  store[k].mods = (store[k].mods || []).filter(m => m.folder !== folder);
-  store[k].mods.push({ folder, modId });
+  store[k].mods = (store[k].mods || []).filter(m => m.folder !== jarDir);
+  store[k].mods.push({ folder: jarDir, modId: useId, root: projectRoot });
   saveDevModsStore(store);
-  const swap = swapDevMod(type, id, modId, folder);
-  Promise.resolve(swap).then(r => { if (r && r.success) rememberDevBuild(type, id, folder, r.from); }).catch(() => { });
+  // Awaited, not fired off: the jar has to be IN the folder before this
+  // returns, or the mods list reloads just too early to see it -- which is
+  // why a newly added dev mod only showed up after pressing Refresh.
+  const swap = await swapDevMod(type, id, useId, jarDir);
+  if (swap && swap.success) rememberDevBuild(type, id, jarDir, swap.from);
   startDevWatch(type, id);
-  return { success: true, mods: store[k].mods, swap };
+  if (swap && swap.success) announceModsChanged(type, id);
+  return { success: true, mods: store[k].mods, modId: useId, folder: jarDir, root: projectRoot, swap };
+});
+
+// Tell the windows showing this instance's mods that the folder changed, so a
+// dev mod appears as soon as it is added instead of on the next Refresh.
+function announceModsChanged(type, id) {
+  const msg = { type, id: String(id) };
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { w.webContents.send("mods-changed", msg); } catch { /* window going away */ }
+  }
+}
+
+// Build a registered dev mod with its own Gradle, streaming the output so a
+// failure can be read rather than guessed at.
+ipcMain.handle("devmod:build", async (event, { type, id, folder } = {}) => {
+  const store = loadDevModsStore();
+  const entry = store[devModKey(type, id)] || {};
+  const m = (entry.mods || []).find(x => x.folder === folder);
+  const root = (m && m.root) || gradleRootFor(folder);
+  if (!root) return { success: false, error: "No Gradle project above that folder" };
+  if (devBuilds.has(devBuildKey(type, id, folder))) return { success: false, error: "That mod is already building" };
+
+  const send = (line) => { try { event.sender.send("devmod:buildLog", { type, id, folder, line }); } catch { /* window gone */ } };
+  const r = await buildDevMod({ type, id, folder, root, onLine: send });
+  if (!r.success) return r;
+
+  // Put the fresh build in. The watcher would get there too, but only if
+  // this instance has dev mods switched on and is being watched.
+  const swap = await swapDevMod(type, id, m ? m.modId : null, folder, m && m.pinnedJar);
+  if (swap && swap.success) {
+    rememberDevBuild(type, id, folder, swap.from);
+    announceModsChanged(type, id);
+  }
+  return { ...r, swap };
 });
 // List the buildable jars in a folder (for the "change version" picker), newest first.
 ipcMain.handle("devmod:listJars", (event, { folder }) => {
