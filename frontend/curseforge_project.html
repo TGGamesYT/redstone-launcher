@@ -5,6 +5,8 @@
 <title>CurseForge Project</title>
 <script src="theme-boot.js"></script>
 <script src="outline.js" defer></script>
+<script src="tabstrip.js" defer></script>
+  <script src="gallery.js"></script>
 <link rel="stylesheet" href="modrinth.css" />
 <link rel="stylesheet" href="server.css" />
 <link rel="stylesheet" href="material-icons.css">
@@ -29,8 +31,8 @@
 .description { background: var(--very-dark); border-radius: var(--border-radius); padding: 15px; line-height: 1.5; }
 .description img { max-width: 100%; height: auto; border-radius: 6px; }
 .description iframe, .description video { max-width: 100%; }
-.mp-tabs button.srv-tab { background: var(--menu-bg); color: var(--text-color); border: none; border-radius: var(--border-radius); padding: 6px 14px; cursor: pointer; font-family: var(--text-font); text-transform: none; }
-.mp-tabs button.srv-tab.active { background: var(--base-color); }
+/* The look is `.tabstrip` in server.css. */
+.mp-tabs button.srv-tab { cursor: pointer; text-transform: none; }
 </style>
   <script src="uimodal.js"></script>
 </head>
@@ -74,7 +76,7 @@
 </div>
   <div id="project-container" class="project-container" data-fit-height>
     <div id="projectHeader" class="project-header"></div>
-    <div id="projectTabs" class="mp-tabs" style="display:flex;gap:6px;margin:10px 0;flex-wrap:wrap;"></div>
+    <div id="projectTabs" class="mp-tabs tabstrip" style="margin:10px 0;"></div>
     <div id="projectDescription" class="description"></div>
     <div id="projectGallery" class="description" style="display:none;"></div>
   </div>
@@ -108,7 +110,10 @@ function setupCfTabs(proj) {
   const avail = ["description"];
   if (shots.length) {
     avail.push("gallery");
-    gallery.innerHTML = shots.map(s => `<figure style="margin:0 0 16px 0;"><img src="${s.url || s.thumbnailUrl}" style="max-width:100%;border-radius:8px;display:block;" />${s.title ? `<figcaption style="opacity:0.8;margin-top:4px;">${s.title}</figcaption>` : ""}</figure>`).join("");
+    // The same grid-and-viewer the Modrinth page uses; see gallery.js.
+    window.Gallery.render(gallery, shots.map(s => ({
+      url: s.url || s.thumbnailUrl, title: s.title || "", description: s.description || "",
+    })));
   }
   if (avail.length < 2) { tabsEl.style.display = "none"; return; }
   const label = { description: "Description", gallery: "Gallery" };

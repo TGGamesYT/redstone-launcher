@@ -92,18 +92,40 @@ In the order it was given.
       which have only the name, are still matched on that.*
 
 ### The mod browser
-- [ ] **Clicking a creator should open their profile** as another sub-page of
-      the browser: their projects and their stats.
-- [ ] **A project's gallery images are not as large as they could be** and are
-      not a consistent size; clicking one should open it full size, zoomable.
-- [ ] **Installing should be able to make a new instance** for the thing, not
-      only add it to an existing one.
+- [x] **Clicking a creator should open their profile.** — *A third kind of
+      page in the browser, beside the search and a project: the avatar, name,
+      handle and bio, how many projects they have, every download added up,
+      when they joined, and their projects most-used first with a tab per kind
+      they actually make. Reachable from the author on a project page and from
+      the author in the search results, where the name is its own link so it
+      does not open the project behind it.*
+- [x] **A project's gallery images.** — *They were a column of `max-width:
+      100%` pictures, so each came out whatever size its own file happened to
+      be and none used the width that was there. A grid of tiles now, all one
+      size whatever shape the picture is, filling the width available; and
+      clicking one opens it full size with zoom (wheel, buttons or keys),
+      dragging when it is bigger than the window, the rest of the gallery on
+      the arrow keys, and Escape to close.*
+- [x] **Installing should be able to make a new instance.** — *The only
+      choice was an existing instance, so a mod needing a version or loader you
+      had no instance for could not be installed from that page at all: the
+      list simply came up empty. "Make a new instance for this" is offered
+      first, and the version and loader steps are told what the project
+      actually supports, so neither can offer a combination it cannot run on.
+      The mod goes in as soon as the instance is saved, and it opens on it.*
 
 ### Everywhere
-- [ ] **Rework every tab strip to Modrinth's shape** (browser, mod details,
-      creator details, instance, server details): one joined background behind
-      the whole strip, rounded at its ends, with only the selected tab carrying
-      its own rounded highlight — and the highlight slides between them.
+- [x] **Rework every tab strip to Modrinth's shape.** — *Each page had grown
+      its own, all of them a row of separate buttons with the selected one
+      filled in. One `.tabstrip` now: a single joined background, rounded at
+      its ends, with the highlight a single element behind the buttons rather
+      than a background on one of them — which is what lets it SLIDE from tab
+      to tab instead of blinking out and in. tabstrip.js measures the selected
+      tab and the CSS transition does the rest; a strip built later, or one
+      whose tab is changed by script rather than by a click, is picked up the
+      same way. Applied to the instance tabs, the add-instance modal, the mod
+      browser's types, both project pages, the creator page, the server page
+      and the settings switcher.*
 - [x] **Highlight the current page in the left sidebar.** — *There was no way
       to tell which page you were on: every button looked the same. The link
       that points at the page we are already on is marked — sidebar.js has

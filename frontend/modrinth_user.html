@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>Creator</title>
+  <script src="theme-boot.js"></script>
+  <script src="outline.js" defer></script>
+  <script src="tabstrip.js" defer></script>
+  <link rel="stylesheet" href="modrinth.css" />
+  <link rel="stylesheet" href="server.css" />
+  <link rel="stylesheet" href="material-icons.css">
+  <script src="defaults.js"></script>
+  <script src="console-commands.js"></script>
+  <script src="loading.js"></script>
+  <script src="modalfx.js"></script>
+  <style>
+    /* Laid out like Modrinth's own creator page: the avatar and who they are
+       across the top with their totals, then their projects under it. */
+    .cr-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 20px;
+      padding: 20px 20px 0 0;
+    }
+
+    .cr-head img {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: var(--very-dark);
+      flex: 0 0 auto;
+    }
+
+    .cr-who { min-width: 0; flex: 1; }
+    .cr-who h1 { margin: 0 0 4px; }
+    .cr-handle { font-size: 13px; opacity: 0.7; margin: 0 0 8px; }
+    .cr-bio { margin: 0 0 10px; line-height: 1.5; max-width: 70ch; }
+
+    .cr-stats {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      font-size: 13px;
+      opacity: 0.85;
+    }
+
+    .cr-stats span { display: inline-flex; align-items: center; gap: 6px; }
+    .cr-stats i { font-size: 16px; opacity: 0.75; }
+
+    .cr-projects { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+
+    .cr-item {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      background: var(--menu-bg);
+      border: 1px solid var(--border-dark);
+      border-radius: var(--border-radius);
+      padding: 12px 14px;
+      cursor: pointer;
+      transition: var(--smooth-transition);
+      min-width: 0;
+    }
+
+    .cr-item:hover { border-color: var(--base-color); }
+
+    .cr-item > img {
+      width: 56px;
+      height: 56px;
+      border-radius: 8px;
+      object-fit: contain;
+      background: var(--very-dark);
+      flex: 0 0 auto;
+    }
+
+    .cr-item .b { min-width: 0; flex: 1; }
+    .cr-item .n { font-weight: bold; margin-bottom: 3px; }
+    .cr-item .d { font-size: 12px; opacity: 0.8; line-height: 1.45; }
+    .cr-item .m { font-size: 11px; opacity: 0.65; margin-top: 6px; display: flex; gap: 14px; flex-wrap: wrap; }
+    .cr-item .m i { font-size: 13px; vertical-align: middle; }
+
+    .cr-empty { opacity: 0.7; padding: 20px 0; }
+  </style>
+</head>
+
+<body>
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-container">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Redstone Launcher</div>
+      <div class="loading-subtext">Loading creator…</div>
+    </div>
+  </div>
+  <div id="toolbar">
+    <div class="toolbar-buttons-left">
+      <button id="backBtn">⬅</button>
+      <button id="forwardBtn">➡</button>
+    </div>
+    <div class="drag-region">Redstone Launcher</div>
+    <div class="toolbar-buttons">
+      <div id="instance-processes"></div>
+      <button id="min-btn">—</button>
+      <button id="max-btn">◻</button>
+      <button id="close-btn">✕</button>
+    </div>
+  </div>
+  <div class="sidebar">
+    <ul class="menu top">
+      <a href="index.html"><li><i class="material-icons">home</i><span>Home</span></li></a>
+      <a href="instances.html"><li><i class="material-icons">play_arrow</i><span>Instances</span></li></a>
+      <a href="modrinth.html" class="modrinth"><li><span>Modrinth</span></li></a>
+      <a href="server.html"><li><i class="material-icons">storage</i><span>Server Manager</span></li></a>
+    </ul>
+    <ul class="menu middle" id="instances">
+      <li><i class="material-icons">add</i><span>Add an instance</span></li>
+    </ul>
+    <ul class="menu bottom">
+      <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+      <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skins</span></li>
+      <a href="players.html"><li id="players-login"><i class="material-icons">login</i><span>Login</span></li></a>
+      <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+    </ul>
+  </div>
+
+  <div id="creator-container" class="project-container" data-fit-height>
+    <div id="crHead" class="cr-head"></div>
+    <div id="crTabs" class="tabstrip" style="margin:14px 0 0;"></div>
+    <div id="crProjects" class="cr-projects"></div>
+  </div>
+
+  <script>
+    // A creator's page: who they are, what they have made, and how much of it
+    // people use.
+    //
+    // Clicking an author's name anywhere in the mod browser used to do
+    // nothing at all -- there was no way to see the rest of somebody's work
+    // without going back out and searching for it by name. This is the third
+    // kind of page the browser has, beside the search and a project.
+    const { ipcRenderer, shell } = require('electron');
+
+    const fmt = (n) => {
+      const v = Number(n) || 0;
+      if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+      if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+      if (v >= 1e3) return (v / 1e3).toFixed(1) + 'k';
+      return String(v);
+    };
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g,
+      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+    // Who to show, left here by whichever page was clicked.
+    let who = null;
+    try { who = JSON.parse(localStorage.getItem('selectedCreator') || 'null'); } catch { who = null; }
+
+    const head = document.getElementById('crHead');
+    const tabsEl = document.getElementById('crTabs');
+    const listEl = document.getElementById('crProjects');
+
+    // Modrinth's own words for the project kinds, so the tabs read the way
+    // their site does.
+    const KIND_NAMES = {
+      mod: 'Mods', modpack: 'Modpacks', resourcepack: 'Resource packs',
+      shader: 'Shaders', datapack: 'Data packs', plugin: 'Plugins',
+    };
+
+    let projects = [];
+    let kind = 'all';
+
+    function drawProjects() {
+      listEl.innerHTML = '';
+      const shown = kind === 'all' ? projects : projects.filter(p => p.project_type === kind);
+      if (!shown.length) {
+        listEl.innerHTML = '<div class="cr-empty">Nothing here.</div>';
+        return;
+      }
+      for (const p of shown) {
+        const row = document.createElement('div');
+        row.className = 'cr-item';
+        row.innerHTML = `
+          <img src="${esc(p.icon_url || (window.DEFAULT_ICON || ''))}" alt="">
+          <div class="b">
+            <div class="n">${esc(p.title)}</div>
+            <div class="d">${esc(p.description || '')}</div>
+            <div class="m">
+              <span><i class="material-icons">download</i> ${fmt(p.downloads)}</span>
+              <span><i class="material-icons">favorite</i> ${fmt(p.followers)}</span>
+              <span>${esc(KIND_NAMES[p.project_type] || p.project_type || '')}</span>
+            </div>
+          </div>`;
+        const img = row.querySelector('img');
+        img.onerror = () => { img.src = window.DEFAULT_ICON || ''; };
+        row.onclick = () => {
+          // Handed over exactly the way the search results hand a project
+          // over, so the project page needs to know nothing about this one.
+          localStorage.setItem('selectedModrinthProject', JSON.stringify({
+            project_id: p.id, slug: p.slug, title: p.title, description: p.description,
+            icon_url: p.icon_url, author: (who && (who.username || who.name)) || null,
+            downloads: p.downloads, follows: p.followers,
+          }));
+          localStorage.setItem('selectedProjectType', p.project_type || 'mod');
+          localStorage.removeItem('installTargetInstance');
+          window.location.href = 'modrinth_project.html';
+        };
+        listEl.appendChild(row);
+      }
+    }
+
+    function drawTabs() {
+      tabsEl.innerHTML = '';
+      // Only the kinds they have actually made, in the order their projects
+      // come back -- an empty "Shaders" tab helps nobody.
+      const kinds = [...new Set(projects.map(p => p.project_type).filter(Boolean))];
+      const make = (id, label) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        if (id === kind) b.classList.add('active');
+        b.onclick = () => {
+          kind = id;
+          for (const o of tabsEl.children) o.classList.toggle('active', o === b);
+          drawProjects();
+        };
+        tabsEl.appendChild(b);
+      };
+      make('all', 'All');
+      for (const k of kinds) make(k, KIND_NAMES[k] || k);
+      tabsEl.style.display = kinds.length > 1 ? '' : 'none';
+    }
+
+    async function load() {
+      if (!who || !(who.username || who.id)) {
+        head.innerHTML = '<div class="cr-empty">No creator was chosen.</div>';
+        return;
+      }
+      const handle = who.username || who.id;
+      let user = null;
+      try {
+        const r = await fetch(`https://api.modrinth.com/v2/user/${encodeURIComponent(handle)}`);
+        if (r.ok) user = await r.json();
+      } catch { /* shown below */ }
+      if (!user || !user.id) {
+        head.innerHTML = `<div class="cr-empty">${esc(handle)} could not be looked up.</div>`;
+        return;
+      }
+
+      try {
+        const r = await fetch(`https://api.modrinth.com/v2/user/${user.id}/projects`);
+        projects = r.ok ? await r.json() : [];
+      } catch { projects = []; }
+      if (!Array.isArray(projects)) projects = [];
+      projects.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
+
+      const total = projects.reduce((n, p) => n + (p.downloads || 0), 0);
+      const joined = user.created ? new Date(user.created) : null;
+      const since = joined
+        ? joined.toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
+        : null;
+
+      head.innerHTML = `
+        <img src="${esc(user.avatar_url || '')}" alt="">
+        <div class="cr-who">
+          <h1>${esc(user.name || user.username)}</h1>
+          <p class="cr-handle">@${esc(user.username)}</p>
+          ${user.bio ? `<p class="cr-bio">${esc(user.bio)}</p>` : ''}
+          <div class="cr-stats">
+            <span><i class="material-icons">inventory_2</i> ${projects.length} project${projects.length === 1 ? '' : 's'}</span>
+            <span><i class="material-icons">download</i> ${fmt(total)} downloads</span>
+            ${since ? `<span><i class="material-icons">calendar_today</i> Joined ${esc(since)}</span>` : ''}
+          </div>
+        </div>
+        <button id="crOpen" class="download-btn">View on Modrinth</button>`;
+      const img = head.querySelector('img');
+      if (img) img.onerror = () => { img.style.visibility = 'hidden'; };
+      const open = document.getElementById('crOpen');
+      if (open) open.onclick = () => {
+        try { shell.openExternal(`https://modrinth.com/user/${user.username}`); } catch { /* no browser */ }
+      };
+      document.title = `${user.name || user.username} - Modrinth`;
+
+      drawTabs();
+      drawProjects();
+    }
+
+    load();
+  </script>
+  <script src="iconpicker.js"></script>
+  <script src="fitheight.js"></script>
+  <script src="sidebar.js"></script>
+  <script src="notifications.js"></script>
+</body>
+
+</html>

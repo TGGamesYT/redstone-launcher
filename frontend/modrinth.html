@@ -6,6 +6,7 @@
   <title>Redstone Launcher - Modrinth Browser</title>
   <script src="theme-boot.js"></script>
   <script src="outline.js" defer></script>
+  <script src="tabstrip.js" defer></script>
   <link rel="stylesheet" href="common.css" />
   <link rel="stylesheet" href="modrinth.css" />
   <link rel="stylesheet" href="server.css" />
@@ -82,7 +83,7 @@
     </div>
     
     <div class="bottom-row">
-      <div id="typeTabs">
+      <div id="typeTabs" class="tabstrip">
         <button class="tab active" data-type="mod">Mod</button>
         <button class="tab" data-type="resourcepack">Resourcepack</button>
         <button class="tab" data-type="datapack">Datapack</button>
@@ -590,6 +591,25 @@
       <div class="project-title">${title}</div>
       <div class="project-meta">${meta}</div>
     `;
+        // The author's name opens their page rather than the project's, so
+        // the rest of somebody's work is one click away. Only on Modrinth:
+        // CurseForge has no creator page here to open.
+        if (api === "modrinth" && author && author !== "Unknown" && activeType !== "server") {
+          const metaEl = info.querySelector(".project-meta");
+          metaEl.innerHTML = "";
+          const link = document.createElement("a");
+          link.textContent = author;
+          link.href = "#";
+          link.style.cssText = "color:inherit;text-decoration:underline;cursor:pointer;";
+          link.title = `Everything by ${author}`;
+          link.onclick = (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();          // not the project behind it
+            localStorage.setItem("selectedCreator", JSON.stringify({ username: author }));
+            window.location.href = "modrinth_user.html";
+          };
+          metaEl.append("by ", link, ` • ${formatNumber(downloads)} downloads`);
+        }
         left.appendChild(info);
 
         // Server projects: try (best-effort) to show a live online-player count

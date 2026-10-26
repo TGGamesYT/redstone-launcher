@@ -5,6 +5,7 @@
 <title>Project Details</title>
 <script src="theme-boot.js"></script>
 <script src="outline.js" defer></script>
+<script src="tabstrip.js" defer></script>
 <link rel="stylesheet" href="modrinth.css" />
 <link rel="stylesheet" href="server.css" />
 <link rel="stylesheet" href="material-icons.css">
@@ -70,12 +71,8 @@
   }
   .description img { max-width: 100%; height: auto; border-radius: 6px; }
   .description iframe, .description video { max-width: 100%; }
-  .mp-tabs button.srv-tab {
-    background: var(--menu-bg); color: var(--text-color); border: none;
-    border-radius: var(--border-radius); padding: 6px 14px; cursor: pointer;
-    font-family: var(--text-font); text-transform: none;
-  }
-  .mp-tabs button.srv-tab.active { background: var(--base-color); }
+  /* The look is `.tabstrip` in server.css. */
+  .mp-tabs button.srv-tab { cursor: pointer; text-transform: none; }
   .description {
     background: var(--very-dark);
     border-radius: var(--border-radius);
@@ -84,6 +81,7 @@
   }
 </style>
   <script src="uimodal.js"></script>
+  <script src="gallery.js"></script>
 </head>
 <body>
   <div id="loading-overlay" class="loading-overlay">
@@ -125,7 +123,7 @@
 </div>
   <div id="project-container" class="project-container" data-fit-height>
     <div id="projectHeader" class="project-header"></div>
-    <div id="projectTabs" class="mp-tabs" style="display:flex;gap:6px;margin:10px 0;flex-wrap:wrap;"></div>
+    <div id="projectTabs" class="mp-tabs tabstrip" style="margin:10px 0;"></div>
     <div id="projectDescription" class="description"></div>
     <div id="projectGallery" class="description" style="display:none;"></div>
     <div id="projectChangelog" class="description" style="display:none;"></div>
@@ -270,7 +268,25 @@ try {
         const add = (t) => { const e = document.createElement('span'); e.textContent = t; meta.appendChild(e); };
         add(`${formatNumber(full.downloads ?? mod.downloads ?? 0)} downloads`);
         add(`${formatNumber(full.followers ?? mod.follows ?? 0)} followers`);
-        if (author) add(`by ${author}`);
+        if (author) {
+          // Clicking who made it opens their page -- the rest of their work,
+          // and how much of it people use. It used to be plain text with
+          // nowhere to go.
+          const e = document.createElement('span');
+          e.innerHTML = 'by ';
+          const link = document.createElement('a');
+          link.textContent = author;
+          link.href = '#';
+          link.style.cssText = 'color:inherit;text-decoration:underline;cursor:pointer;';
+          link.title = `Everything by ${author}`;
+          link.onclick = (ev) => {
+            ev.preventDefault();
+            localStorage.setItem('selectedCreator', JSON.stringify({ username: author }));
+            window.location.href = 'modrinth_user.html';
+          };
+          e.appendChild(link);
+          meta.appendChild(e);
+        }
       }
       document.title = `${full.title || mod.title} - Modrinth`;
     }
@@ -389,9 +405,13 @@ async function setupProjectTabs(full) {
   // Gallery
   if (Array.isArray(full.gallery) && full.gallery.length) {
     avail.push("gallery");
-    panels.gallery.innerHTML = full.gallery
+    // A grid of tiles that are all one size, each opening full size and
+    // zoomable -- see gallery.js. They used to be a ragged column of
+    // whatever size each file happened to be, and clicking one did nothing.
+    window.Gallery.render(panels.gallery, full.gallery
+      .slice()
       .sort((a, b) => (b.featured === true) - (a.featured === true) || (a.ordering || 0) - (b.ordering || 0))
-      .map(g => `<figure style="margin:0 0 16px 0;"><img src="${g.url}" style="max-width:100%;border-radius:8px;display:block;" />${g.title ? `<figcaption style="opacity:0.8;margin-top:4px;">${g.title}</figcaption>` : ""}</figure>`).join("");
+      .map(g => ({ url: g.url, title: g.title || "", description: g.description || "" })));
   }
 
   // Versions + Changelog (both come from the version list).
@@ -601,6 +621,72 @@ if (downloadBtn.textContent == "Back") {
     const clientHeader = document.createElement("h4");
     clientHeader.textContent = "Client Instances";
     installArea.appendChild(clientHeader);
+
+    // Somewhere to put it when none of the instances you have will do.
+    //
+    // The only choice here used to be an existing instance, so a mod that
+    // needed a version or a loader you had no instance for simply could not
+    // be installed from this page at all -- the list came up empty with no
+    // way forward. The new-instance flow is offered first, told which
+    // versions and loaders this project actually supports so it never offers
+    // a combination the mod cannot run on.
+    if (window.NewInstance) {
+      const makeLi = document.createElement("li");
+      makeLi.className = "profile-item";
+      makeLi.style.cursor = "pointer";
+      makeLi.style.borderStyle = "dashed";
+      const plus = document.createElement("div");
+      plus.innerHTML = '<i class="material-icons" style="font-size:28px;opacity:0.85;">add</i>';
+      plus.style.cssText = "width:50px;display:flex;align-items:center;justify-content:center;";
+      makeLi.appendChild(plus);
+      const makeInfo = document.createElement("div");
+      makeInfo.className = "profile-info";
+      const makeName = document.createElement("div");
+      makeName.className = "profile-name";
+      makeName.textContent = "Make a new instance for this";
+      const makeSub = document.createElement("div");
+      makeSub.className = "profile-details";
+      makeSub.textContent = `Only the versions and loaders ${mod.title || "it"} supports are offered.`;
+      makeInfo.append(makeName, makeSub);
+      makeLi.appendChild(makeInfo);
+      makeLi.onclick = () => {
+        // What the mod actually runs on, newest first, so the pickers only
+        // ever offer something that will work.
+        const versions = [...new Set(validVersions.flatMap(v => v.game_versions || []))];
+        const loaders = [...new Set(validVersions.flatMap(v => v.loaders || []))]
+          .filter(l => ["fabric", "quilt", "forge", "neoforge"].includes(l));
+        window.NewInstance.build({
+          target: "instance",
+          onCreate: (profile) => {
+            // The instance has to exist before the mod can go into it, so
+            // the download waits for the profile to be saved.
+            const want = newestCompatibleFile(profile.version, profile.loader, projType === "mod");
+            const once = async (e, list) => {
+              const made = (list || []).find(x => String(x.id) === String(profile.id));
+              if (!made) return;
+              ipcRenderer.removeListener("profiles-updated", once);
+              if (want) {
+                await ipcRenderer.invoke("mod-download", {
+                  server: false, id: made.id, fileUrl: want, projectType: selectedType,
+                });
+              }
+              // Straight to what was just made, with the mod in it.
+              window.location.href = `instances.html?i=${encodeURIComponent(made.id)}`;
+            };
+            ipcRenderer.on("profiles-updated", once);
+            ipcRenderer.send("create-profile", profile);
+          },
+        }, {
+          name: mod.title || "",
+          icon: mod.icon_url || null,
+          projectId: mod.project_id,
+          source: "modrinth",
+          supportedVersions: versions,
+          supportedLoaders: loaders,
+        });
+      };
+      installArea.appendChild(makeLi);
+    }
 
     // If we came from an instance's install browser, show that instance first.
     const orderedProfiles = profiles.slice().sort((a, b) => {

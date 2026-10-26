@@ -404,31 +404,11 @@
   align-items: center;
 }
 
+/* The look is `.tabstrip` in server.css, the same strip the instance pages
+   and the settings modal use: one joined background with a highlight that
+   slides to the selected tab. */
 #typeTabs {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
   max-width: 80%;
-}
-
-/* Match the instance-detail tabs for a consistent look. */
-#typeTabs .tab {
-  background: var(--toolbar-bg);
-  color: var(--text-color);
-  border: none;
-  border-radius: var(--border-radius);
-  padding: 6px 12px;
-  cursor: pointer;
-  font-family: var(--text-font);
-  transition: background 0.2s;
-}
-
-#typeTabs .tab:hover {
-  background: var(--third-color);
-}
-
-#typeTabs .tab.active {
-  background: var(--base-color);
 }
 
 /* ---------------- PAGINATION ---------------- */

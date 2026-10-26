@@ -6,6 +6,7 @@
   <title>Redstone Launcher - Instances</title>
   <script src="theme-boot.js"></script>
   <script src="outline.js" defer></script>
+  <script src="tabstrip.js" defer></script>
   <link rel="stylesheet" href="common.css">
   <link rel="stylesheet" href="server.css">
   <link rel="stylesheet" href="instanceview.css">
@@ -155,27 +156,11 @@
     .add-instance-btn .material-icons { font-size: 24px; }
 
     /* Instance Settings modal tabs. */
+    /* The look is `.tabstrip` in server.css: one joined background with a
+       highlight that slides to the selected tab. */
     .settings-tabs {
-      display: flex;
-      gap: 6px;
       margin-bottom: 14px;
-      flex-wrap: wrap;
-      border-bottom: 1px solid var(--border-dark);
-      padding-bottom: 8px;
     }
-
-    .settings-tab {
-      background: var(--menu-bg);
-      color: var(--text-color);
-      border: none;
-      border-radius: var(--border-radius);
-      padding: 6px 14px;
-      cursor: pointer;
-      font-family: var(--text-font);
-    }
-
-    .settings-tab:hover { background: var(--menu-hover-bg); }
-    .settings-tab.active { background: var(--base-color); }
 
     /* Import reads as a standalone action button, pushed to the far right. */
     .settings-tab-import {
@@ -186,6 +171,9 @@
       gap: 4px;
     }
     .settings-tab-import.active { border-color: var(--base-color); }
+    /* Import is an action rather than one of the tabs, so it keeps an edge of
+       its own and is not where the strip's highlight is expected to be. */
+    .tabstrip > .settings-tab-import { opacity: 1; }
 
     .settings-panel { display: none; }
     .settings-panel.active { display: block; }
@@ -502,7 +490,7 @@
         <button type="button" class="modal-close" id="closeAddInstanceBtn" onclick="document.getElementById('addInstanceModal').classList.remove('active');">✕</button>
       </div>
 
-      <div class="settings-tabs">
+      <div class="settings-tabs tabstrip">
         <button type="button" class="settings-tab active" data-tab="general">General</button>
         <button type="button" class="settings-tab" data-tab="advanced">Advanced</button>
         <button type="button" class="settings-tab settings-tab-import" data-tab="import" id="importTabBtn"><i class="material-icons" style="vertical-align:middle;font-size:17px;">archive</i> Import</button>
@@ -2496,7 +2484,7 @@
 
         // TABS ROW
         const tabsRow = document.createElement("div");
-        tabsRow.className = "instance-tabs-row";
+        tabsRow.className = "instance-tabs-row tabstrip";
         instanceDetail.appendChild(tabsRow);
 
         const tabs = ["Logs", "Resourcepacks", "Mods", "Shaderpacks", "Worlds", "Servers", "Screenshots", "Files"];

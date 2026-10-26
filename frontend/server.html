@@ -5,6 +5,7 @@
   <title>Redstone Launcher — Server Manager</title>
   <script src="theme-boot.js"></script>
   <script src="outline.js" defer></script>
+  <script src="tabstrip.js" defer></script>
   <link rel="stylesheet" href="common.css" />
   <link rel="stylesheet" href="server.css" />
   <link rel="stylesheet" href="material-icons.css">
@@ -89,9 +90,9 @@
     .srv-top-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
     .srv-top-row img { width: 64px; height: 64px; border-radius: 8px; }
     .srv-identity { display: flex; align-items: center; gap: 12px; }
-    .srv-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-dark); padding-bottom: 8px; margin-bottom: 10px; }
-    .srv-tab { background: var(--menu-bg); color: var(--text-color); border: none; border-radius: var(--border-radius); padding: 6px 14px; cursor: pointer; font-family: var(--text-font); }
-    .srv-tab.active { background: var(--base-color); }
+    /* The look is `.tabstrip` in server.css. */
+    .srv-tabs { margin-bottom: 10px; }
+    .srv-tab { cursor: pointer; }
     .srv-panel { display: none; flex: 1; min-height: 0; }
     .srv-panel.active { display: flex; flex-direction: column; }
     /* Console mirrors the instance Logs view (themed, selectable text) rather
@@ -237,7 +238,7 @@
         <button id="relayCopy" style="padding:4px 10px;">Copy</button>
         <button id="relayStop" style="padding:4px 10px;">Stop</button>
       </div>
-      <div class="srv-tabs">
+      <div class="srv-tabs tabstrip">
         <button class="srv-tab active" data-tab="console">Console</button>
         <button class="srv-tab" data-tab="files">Files</button>
         <button class="srv-tab" data-tab="mods" id="srvModsTab" style="display:none;">Mods</button>

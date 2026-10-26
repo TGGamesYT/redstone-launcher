@@ -1696,3 +1696,86 @@ body.app-offline [data-needs-net] {
   image-rendering: var(--app-bg-render);
   border-radius: 0;
 }
+
+/* ── One tab strip, everywhere ───────────────────────────────────────────────
+   Every page had grown its own: the instance's tabs, the mod browser's types,
+   the server's, the settings modal's. Each was a row of separate buttons, the
+   selected one filled in, with nothing tying them together.
+
+   One strip now, the shape Modrinth uses: a single joined background behind
+   the whole row, rounded at its ends, and only the selected tab carrying its
+   own rounded highlight. The highlight is not on the button -- it is one
+   element behind them all, moved to wherever the selected tab is, so it
+   SLIDES from one to the next instead of blinking out and in.
+
+   tabstrip.js measures the selected tab and sets --tab-x / --tab-w. Until it
+   has (or if it never runs), `.active` still paints its own background, so a
+   strip is never left with nothing marked. */
+.tabstrip {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px;
+  background: var(--very-dark);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  isolation: isolate;
+  /* Only as wide as the tabs in it.
+     A flex container is still a block, so the strip stretched the full width
+     of the page and the joined background ran off to the right of the last
+     tab with nothing in it. It wraps within the page when there are more tabs
+     than fit, which is what max-width is for. */
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* The highlight. Behind the buttons, above the strip's own background. */
+.tabstrip::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  top: var(--tab-y, 4px);
+  left: var(--tab-x, 4px);
+  width: var(--tab-w, 0);
+  height: var(--tab-h, 0);
+  border-radius: calc(var(--border-radius) - 2px);
+  background: var(--base-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: left 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              top 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              height 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 0;
+}
+
+/* Only once something has been measured, so an unmeasured strip does not
+   flash a zero-width block in its corner. */
+.tabstrip.measured::before { opacity: 1; }
+
+/* A strip that has just been built should not slide in from the left edge:
+   the first placement is instant, and every one after it animates. */
+.tabstrip.placing::before { transition: none; }
+
+.tabstrip > button {
+  position: relative;
+  z-index: 1;
+  border: none;
+  background: none;
+  color: var(--text-color);
+  font-family: var(--text-font);
+  padding: 7px 14px;
+  border-radius: calc(var(--border-radius) - 2px);
+  cursor: pointer;
+  transition: background 0.18s, opacity 0.18s;
+  opacity: 0.75;
+}
+
+.tabstrip > button:hover { opacity: 1; background: color-mix(in srgb, var(--text-color) 10%, transparent); }
+.tabstrip > button.active { opacity: 1; font-weight: bold; background: none; }
+
+/* The fallback, for before tabstrip.js has measured anything. */
+.tabstrip:not(.measured) > button.active { background: var(--base-color); }
+
+/* A strip that must stay on one line, however many tabs it has. */
+.tabstrip.nowrap { flex-wrap: nowrap; overflow-x: auto; }
