@@ -14,19 +14,44 @@ started.
 In the order it was given.
 
 ### The home page
-- [ ] **A segment's size is not editable** — not by dragging and not in its
-      own settings.
-- [ ] **At the smallest window size the segments are cropped off the right**
-      instead of being laid out to fit.
-- [ ] **No list-or-grid choice** in a segment's settings.
-- [ ] **The title text is not a segment**, so it cannot be moved or removed.
-- [ ] **The first segment's buttons have their tops cut off.**
-- [ ] **Only the vertical order can be changed** — segments cannot be put
-      beside each other, and neither width nor height can be set.
-- [ ] **The segment picker is ugly** — icons and a great deal of text.
-- [ ] **The snapshots segment should be the changelogs** from
-      `launchercontent.mojang.com/v2/javaPatchNotes.json`.
-- [ ] **And a Minecraft news segment** from Mojang's launcher content.
+- [x] **A segment's size is not editable.** — *The page is a twelve-column
+      grid now and every segment carries its own span and an optional height.
+      Both are in its settings, and both are on the segment itself as a handle
+      in each corner — all four change the width, the bottom two the height as
+      well, and the width snaps to the columns because that is what the layout
+      is made of.*
+- [x] **At the smallest window size the segments are cropped off the right.**
+      — *A grid item's default minimum width is the width of its contents, so
+      a row of cards refused to narrow and overflowed instead of fitting. With
+      `min-width: 0` it lays out properly, and the spans collapse as the window
+      shrinks: anything narrow becomes half width, then everything goes full.
+      Checked at five widths down to 640px for overhang and sideways scroll.*
+- [x] **No list-or-grid choice.** — *Continue playing is a list or tiles; a
+      project row is a sideways row, tiles that wrap, or a list.*
+- [x] **The title text is not a segment.** — *It was an `<h1>` in index.html
+      with its own script, which made it the one thing on the home page nobody
+      could move, reword or remove. It is a Greeting segment now, with its own
+      wording, size and alignment; left blank it still picks one of the ten at
+      random, as it did.*
+- [x] **The first segment's buttons have their tops cut off.** — *They sat at
+      `top: -10px`, outside the segment, so for the first row that was above
+      the top of the scroller. They are inside it now.*
+- [x] **Only the vertical order can be changed.** — *Covered by the grid
+      above: anything can sit beside anything, and holding a dragged segment
+      over another for half a second is the gesture that puts it there —
+      splitting that row between the two rather than merely placing it next in
+      the list and still a row each.*
+- [x] **The segment picker is ugly.** — *It was a wall of icons each with a
+      paragraph beside it. Tiles now — icon and name — with the explanation
+      shown once for whichever one you are pointing at, and a box to narrow
+      them down.*
+- [x] **The snapshots segment should be the changelogs.** — *It listed bare
+      version IDs out of the manifest, which says what came out and when and
+      nothing about what is in it. It is Mojang's own patch notes now, with
+      their pictures, opening on the article.*
+- [x] **And a Minecraft news segment.** — *From their news feed, the same one
+      the official launcher draws its front page from, filterable by category.
+      Both feeds are fetched once an hour rather than on every visit.*
 - [x] **The friends API is pinged every time the home page opens.** — *There
       was nothing between the page and Mojang at all: both the list and the
       presence report went out on every open. An answer is kept for a minute
@@ -36,20 +61,35 @@ In the order it was given.
       Refresh and any change to your own status still go straight out — an
       "appear offline" answered out of a cache would not appear offline — and
       adding or removing somebody drops what is held.*
-- [ ] **The player segment wants settings**: whether it can be dragged,
-      whether it has physics/animation, its size and its position.
-- [ ] **The mods/modpacks segment lost its "featured" ordering** — it used to
-      vary by day, popular but not always the most popular.
-- [ ] **The icons are different sizes.**
-- [ ] **The edit button should be the icon alone, at the bottom right.**
-- [ ] **Replace the up/down buttons with dragging**, as on the accounts page;
-      holding over another segment for about half a second puts it beside that
-      one; and a resize handle in each corner.
-- [ ] **"Continue playing" wants a choice of play button or info** per entry —
-      the play button was removed outright.
-- [ ] **Discover's featured items, the same** — and the play button it had did
-      not work: it should open instance creation when no instance for that
-      modpack or mod exists yet.
+- [x] **The player segment wants settings.** — *What it is doing (standing,
+      idling, walking, running, flying), whether it can be turned by dragging,
+      whether it turns on its own, how tall, where in its space, and whether
+      the name shows.*
+- [x] **The mods/modpacks segment lost its "featured" ordering.** — *Back,
+      and the default. Plain "most followed" is the same handful for months;
+      random digs up abandoned things with four downloads. So a pool of sixty
+      well-liked ones, the very top few skipped, shuffled with the day as the
+      seed: the same selection all day, a different one tomorrow, always drawn
+      from things that are actually popular.*
+- [x] **The icons are different sizes.** — *`object-fit: cover` cropped
+      non-square art so the icons read as different sizes. A fixed square box
+      with the picture fitted inside it means every one matches.*
+- [x] **The edit button should be the icon alone, at the bottom right.** —
+      *It was "✎ Edit page" at the bottom left.*
+- [x] **Replace the up/down buttons with dragging.** — *All three: the arrows
+      are gone and a grip starts the drag, holding over another segment for
+      half a second drops it beside that one instead of before it, and there is
+      a handle in each corner. Only the grip starts a drag, so selecting text
+      or pressing a button inside a segment still works.*
+- [x] **"Continue playing" wants a choice of play button or info.** — *Play
+      button, details, both or neither. The play button launches rather than
+      merely opening the instance.*
+- [x] **Discover's featured items, the same.** — *And the button does
+      something now: it looks for an instance already made from that project
+      and opens it, and where there is none it goes to the project with the
+      install flow ready. Packs record which project they came from as they are
+      installed, so the match is exact rather than by name — older instances,
+      which have only the name, are still matched on that.*
 
 ### The mod browser
 - [ ] **Clicking a creator should open their profile** as another sub-page of

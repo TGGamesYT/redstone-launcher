@@ -72,11 +72,12 @@
   
   <div id="content">
     <div id="main">
-      <h1 id="random-message">Welcome back!</h1>
-      <!-- Whatever the layout says. The page used to be a fixed "Continue
-           Playing" list and two hard-coded Modrinth rows; it is now drawn
-           from the saved layout, and the Edit page button bottom-left is how
-           that layout is changed. See home.js. -->
+      <!-- Whatever the layout says, greeting included. The page used to be a
+           fixed heading, a "Continue Playing" list and two hard-coded
+           Modrinth rows; it is drawn from the saved layout now, and the edit
+           button bottom-right is how that layout is changed. The greeting was
+           the last thing still pinned in the markup, so it was the one thing
+           on this page nobody could move or reword. See home.js. -->
       <div class="main-scrolly" data-fit-height>
         <div id="home-segments"></div>
       </div>
@@ -206,23 +207,6 @@
     if (window.Onboarding) window.Onboarding.maybeRunFirstTime();
   </script>
   <script src="notifications.js"></script>
-  <script>
-    const greetings = [
-      "Hello there!",
-      "Greetings, human.",
-      "Back for more? Are ya ready?",
-      "Systems online.",
-      "Ready for action?",
-      "What's on the menu today?",
-      "Did you bring snacks?",
-      "Let's get rolling!",
-      "Welcome back, commander!",
-      "The redstone awaits your command!",
-    ];
-
-    const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)];
-    document.getElementById("random-message").textContent = randomGreeting;
-  </script>
 </body>
 
 </html>

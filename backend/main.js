@@ -2474,6 +2474,10 @@ async function mrpack(mrpackPath, onProgress, hooks) {
   // the caller was already showing in the browser.
   let icon = await packIcon(zip, hooks.iconUrl, indexJson.name);
 
+  // Which project this pack is, when the caller knows -- the mod browser and
+  // the home page both do, because they came from its page.
+  const projectIdForPack = hooks.projectId ? String(hooks.projectId) : null;
+
   const newProfile = {
     id: profileId,
     name: indexJson.name || "Imported Profile",
@@ -2487,6 +2491,11 @@ async function mrpack(mrpackPath, onProgress, hooks) {
     // made from a pack had no way back to the pack's own picture.
     modpackIcon: icon || null,
     modpackName: indexJson.name || null,
+    // Which project it came from, so the launcher can later tell that an
+    // instance for this pack already exists rather than offering to make a
+    // second one. Nothing recorded it before, so matching had only the name.
+    projectId: projectIdForPack || null,
+    projectProvider: projectIdForPack ? "modrinth" : null,
     modpack: true,
     installing: true,
     created: Date.now(),
@@ -2972,6 +2981,7 @@ async function getModInfo(projectID) {
 
 async function curseforgeImport(zipPath, onProgress, hooks) {
   hooks = hooks || {};
+  const projectIdForPack = hooks.projectId ? String(hooks.projectId) : null;
   const zip = new AdmZip(zipPath);
 
   const manifestEntry = zip.getEntry("manifest.json");
@@ -3008,6 +3018,8 @@ async function curseforgeImport(zipPath, onProgress, hooks) {
     // offer it after the instance's has been changed.
     modpackIcon: icon || null,
     modpackName: manifest.name || null,
+    projectId: projectIdForPack || null,
+    projectProvider: projectIdForPack ? "curseforge" : null,
     modpack: true,
     // Which kind of pack it came from. The "update modpack" flow reads a
     // .mrpack and diffs it against the file list one leaves behind, neither
@@ -3933,14 +3945,19 @@ function contentPath(type, id, tab, filename) {
 // launcher has always shown. An install that never touches the editor keeps
 // the page it had.
 const HOME_DEFAULT = [
-  { id: "recent", type: "recent", title: "Continue playing", count: 6 },
+  // The greeting is a segment like everything else now, so it can be moved,
+  // reworded or taken off the page. It used to be an <h1> in the markup,
+  // which meant it was the one thing on the home page nobody could change.
+  { id: "greeting", type: "greeting", w: 12, h: 0 },
+  { id: "recent", type: "recent", title: "Continue playing", count: 6, w: 7, h: 0, action: "both" },
+  { id: "player", type: "player", title: "", height: 260, w: 5, h: 0 },
   {
     id: "modpacks", type: "projects", title: "Featured modpacks",
-    provider: "modrinth", kind: "modpack", sort: "follows", count: 6,
+    provider: "modrinth", kind: "modpack", sort: "featured", count: 6, w: 12, h: 0,
   },
   {
     id: "mods", type: "projects", title: "Featured mods",
-    provider: "modrinth", kind: "mod", sort: "follows", count: 6,
+    provider: "modrinth", kind: "mod", sort: "featured", count: 6, w: 12, h: 0,
   },
 ];
 
@@ -3949,11 +3966,36 @@ const HOME_DEFAULT = [
 // up -- rather than being spelled out again in the window.
 const HOME_TYPES = [
   {
+    type: "greeting", name: "Greeting", icon: "waving_hand",
+    about: "The line at the top of the page.",
+    options: [
+      { id: "text", label: "What it says (blank for a different one each time)", kind: "text", default: "" },
+      { id: "size", label: "Size", kind: "number", default: 32, min: 12, max: 90 },
+      {
+        id: "align", label: "Where", kind: "choice", default: "left",
+        choices: [{ value: "left", label: "Left" }, { value: "center", label: "Middle" }, { value: "right", label: "Right" }],
+      },
+    ],
+  },
+  {
     type: "recent", name: "Recent instances", icon: "schedule",
     about: "The instances you played last, newest first.",
     options: [
       { id: "title", label: "Heading", kind: "text", default: "Continue playing" },
       { id: "count", label: "How many", kind: "number", default: 6, min: 1, max: 24 },
+      {
+        id: "view", label: "Shown as", kind: "choice", default: "list",
+        choices: [{ value: "list", label: "A list" }, { value: "grid", label: "Tiles" }],
+      },
+      {
+        id: "action", label: "Each one has", kind: "choice", default: "both",
+        choices: [
+          { value: "play", label: "A play button" },
+          { value: "info", label: "Its details" },
+          { value: "both", label: "Both" },
+          { value: "none", label: "Neither" },
+        ],
+      },
     ],
   },
   {
@@ -3962,7 +4004,23 @@ const HOME_TYPES = [
     options: [
       { id: "title", label: "Heading", kind: "text", default: "" },
       { id: "height", label: "Height", kind: "number", default: 320, min: 120, max: 700 },
+      {
+        id: "animation", label: "Doing", kind: "choice", default: "idle",
+        choices: [
+          { value: "none", label: "Standing still" },
+          { value: "idle", label: "Idling" },
+          { value: "walk", label: "Walking" },
+          { value: "run", label: "Running" },
+          { value: "fly", label: "Flying" },
+        ],
+      },
+      { id: "movable", label: "Let it be turned by dragging", kind: "toggle", default: true },
       { id: "spin", label: "Turn slowly on its own", kind: "toggle", default: false },
+      {
+        id: "align", label: "Where in its space", kind: "choice", default: "center",
+        choices: [{ value: "left", label: "Left" }, { value: "center", label: "Middle" }, { value: "right", label: "Right" }],
+      },
+      { id: "showName", label: "Show the account name", kind: "toggle", default: true },
     ],
   },
   {
@@ -3992,14 +4050,32 @@ const HOME_TYPES = [
         ],
       },
       {
-        id: "sort", label: "Order", kind: "choice", default: "follows",
+        id: "sort", label: "Order", kind: "choice", default: "featured",
         choices: [
+          { value: "featured", label: "Featured — popular, a different few each day" },
           { value: "follows", label: "Most followed" }, { value: "downloads", label: "Most downloaded" },
           { value: "newest", label: "Newest" }, { value: "updated", label: "Recently updated" },
           { value: "relevance", label: "Whatever it finds" }, { value: "random", label: "At random" },
         ],
       },
       { id: "count", label: "How many", kind: "number", default: 6, min: 1, max: 24 },
+      {
+        id: "view", label: "Shown as", kind: "choice", default: "row",
+        choices: [
+          { value: "row", label: "A row that scrolls sideways" },
+          { value: "grid", label: "Tiles that wrap" },
+          { value: "list", label: "A list" },
+        ],
+      },
+      {
+        id: "action", label: "Each one has", kind: "choice", default: "both",
+        choices: [
+          { value: "play", label: "A button to install it" },
+          { value: "info", label: "Its downloads and author" },
+          { value: "both", label: "Both" },
+          { value: "none", label: "Neither" },
+        ],
+      },
       { id: "query", label: "Search for", kind: "text", default: "" },
       { id: "gameVersion", label: "For version", kind: "text", default: "" },
       { id: "loader", label: "For loader", kind: "text", default: "" },
@@ -4015,12 +4091,23 @@ const HOME_TYPES = [
     ],
   },
   {
-    type: "snapshots", name: "Snapshot news", icon: "new_releases",
-    about: "The newest snapshots and pre-releases as Mojang publishes them.",
+    type: "snapshots", name: "Minecraft changelogs", icon: "new_releases",
+    about: "Mojang's own patch notes: what changed in each snapshot and release.",
     options: [
       { id: "title", label: "Heading", kind: "text", default: "Latest from Mojang" },
       { id: "count", label: "How many", kind: "number", default: 4, min: 1, max: 20 },
       { id: "releasesToo", label: "Full releases as well", kind: "toggle", default: true },
+      { id: "images", label: "Show their pictures", kind: "toggle", default: true },
+    ],
+  },
+  {
+    type: "mcnews", name: "Minecraft news", icon: "feed",
+    about: "What Mojang is announcing, as the official launcher shows it.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "Minecraft news" },
+      { id: "count", label: "How many", kind: "number", default: 4, min: 1, max: 20 },
+      { id: "category", label: "Only this category (blank for all)", kind: "text", default: "" },
+      { id: "images", label: "Show their pictures", kind: "toggle", default: true },
     ],
   },
   {
@@ -4073,9 +4160,27 @@ const HOME_TYPES = [
   },
 ];
 
+// How wide and how tall, for every type.
+//
+// The page was a single column: segments could only be reordered up and down,
+// and nothing could sit beside anything else or be made bigger or smaller.
+// The page is a twelve-column grid now, and every segment carries its own
+// span and an optional height. These are not in `options` because they belong
+// to the layout rather than to what a segment shows -- the editor draws them
+// in their own section and the corner handles write to them directly.
+const HOME_COLUMNS = 12;
+const HOME_W_DEFAULT = 12;         // a row of its own, which is how it was
+const clampW = (v) => Math.max(2, Math.min(HOME_COLUMNS, Math.round(Number(v) || HOME_W_DEFAULT)));
+// 0 means "however tall its contents are", which is the old behaviour.
+const clampH = (v) => {
+  const n = Math.round(Number(v) || 0);
+  if (!n) return 0;
+  return Math.max(80, Math.min(1200, n));
+};
+
 const homeDefaults = (type) => {
   const spec = HOME_TYPES.find(t => t.type === type);
-  const out = {};
+  const out = { w: HOME_W_DEFAULT, h: 0 };
   for (const o of (spec && spec.options) || []) out[o.id] = o.default;
   return out;
 };
@@ -4087,8 +4192,14 @@ ipcMain.handle("home:layout", () => {
   return {
     success: true,
     types: HOME_TYPES,
+    columns: HOME_COLUMNS,
     custom: Array.isArray(saved) && saved.length > 0,
-    layout: layout.map(seg => ({ ...homeDefaults(seg.type), ...seg })),
+    layout: layout.map(seg => {
+      const full = { ...homeDefaults(seg.type), ...seg };
+      full.w = clampW(full.w);
+      full.h = clampH(full.h);
+      return full;
+    }),
   };
 });
 
@@ -4099,13 +4210,16 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
     .filter(seg => seg && known.has(seg.type))
     .slice(0, 40)
     .map((seg, i) => {
-      const allowed = new Set(["id", "type", ...(HOME_TYPES.find(t => t.type === seg.type).options || []).map(o => o.id)]);
+      const allowed = new Set(["id", "type", "w", "h",
+        ...(HOME_TYPES.find(t => t.type === seg.type).options || []).map(o => o.id)]);
       const out = {};
       // Only the options this type declares, so an edited layout cannot
       // smuggle anything else into the settings.
       for (const [k, v] of Object.entries(seg)) if (allowed.has(k)) out[k] = v;
       out.type = seg.type;
       out.id = String(seg.id || `${seg.type}-${i}`).slice(0, 64);
+      out.w = clampW(seg.w);
+      out.h = clampH(seg.h);
       return out;
     });
   settings.set("homeLayout", clean);
@@ -4130,14 +4244,96 @@ ipcMain.handle("home:resetLayout", () => {
 // straight at their API -- is reached the same way the mod browser reaches
 // it.
 const CF_CLASS = { mod: 6, modpack: 4471, resourcepack: 12, shader: 6552, datapack: 6945, plugin: 5 };
-const CF_SORT = { follows: 2, downloads: 6, newest: 11, updated: 3, relevance: 1, random: 6 };
-const MR_SORT = { follows: "follows", downloads: "downloads", newest: "newest", updated: "updated", relevance: "relevance", random: "downloads" };
+// `featured` and `random` both ask the site for the popular ones and then
+// choose among them here, so both borrow the followed/downloaded order.
+const CF_SORT = { follows: 2, downloads: 6, newest: 11, updated: 3, relevance: 1, random: 6, featured: 2 };
+const MR_SORT = { follows: "follows", downloads: "downloads", newest: "newest", updated: "updated", relevance: "relevance", random: "downloads", featured: "follows" };
+
+// ── "Featured": popular, but not the same six every day ─────────────────────
+//
+// The home page used to carry a featured row and it was lost when the page
+// became segments. Plain "most followed" is not it: that is the same handful
+// for months on end. Nor is random, which digs up abandoned things with four
+// downloads.
+//
+// So: take a pool of the well-liked ones -- deep enough to be interesting,
+// not so deep it stops being a recommendation -- and pick from it with the
+// day as the seed. Everyone sees the same selection on the same day, it
+// changes tomorrow, and it is drawn only from projects that are actually
+// popular.
+const FEATURED_POOL = 60;
+
+// A small deterministic generator, so "today" gives the same answer every
+// time the page is opened rather than reshuffling on each visit.
+function seededOrder(list, seed) {
+  let x = seed >>> 0 || 1;
+  const next = () => {
+    // xorshift32
+    x ^= x << 13; x >>>= 0;
+    x ^= x >> 17;
+    x ^= x << 5; x >>>= 0;
+    return x / 0x100000000;
+  };
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(next() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// The day, as a number. Changes at local midnight.
+const featuredSeed = (salt) => {
+  const d = new Date();
+  const day = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+  let h = (d.getFullYear() * 1000 + day) >>> 0;
+  for (const ch of String(salt || "")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+};
+
+// Is there already an instance for this project?
+//
+// "Play" on a featured modpack should open the instance you have rather than
+// offering to make a second copy of it. Matched on the project id where one
+// was recorded, and otherwise on the pack's name -- instances made before
+// the id was stored have only that.
+ipcMain.handle("instance-for-project", async (event, { id, slug, title, provider } = {}) => {
+  try {
+    const profiles = await loadProfiles();
+    const wantId = id == null ? "" : String(id);
+    const wantSlug = String(slug || "").toLowerCase();
+    const named = String(title || "").trim().toLowerCase();
+    const hit = profiles.find((p) => {
+      if (!p) return false;
+      if (wantId && p.projectId && String(p.projectId) === wantId) return true;
+      if (wantId && p.serverProjectId && String(p.serverProjectId) === wantId) return true;
+      if (wantSlug && p.projectId && String(p.projectId).toLowerCase() === wantSlug) return true;
+      if (!named) return false;
+      const packName = String(p.modpackName || "").trim().toLowerCase();
+      const ownName = String(p.name || "").trim().toLowerCase();
+      return packName === named || ownName === named;
+    });
+    return { success: true, profileId: hit ? hit.id : null };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err), profileId: null };
+  }
+});
 
 ipcMain.handle("home:projects", async (event, opts = {}) => {
   const kind = String(opts.kind || "modpack");
   const count = Math.max(1, Math.min(24, Number(opts.count) || 6));
   const sort = String(opts.sort || "follows");
   const random = sort === "random";
+  const featured = sort === "featured";
+  // A featured row asks for the whole pool and then cuts it down here.
+  const ask = featured ? FEATURED_POOL : count;
+  const pick = (hits) => {
+    if (random) return hits.sort(() => Math.random() - 0.5).slice(0, count);
+    if (!featured) return hits;
+    // Skip the very top few: those are the ones everybody has already seen.
+    const pool = hits.length > count * 2 ? hits.slice(Math.min(4, hits.length - count)) : hits;
+    return seededOrder(pool, featuredSeed(`${opts.provider}|${kind}`)).slice(0, count);
+  };
   try {
     if (String(opts.provider) === "curseforge") {
       const body = {
@@ -4145,7 +4341,7 @@ ipcMain.handle("home:projects", async (event, opts = {}) => {
         classId: CF_CLASS[kind] || CF_CLASS.mod,
         sortField: CF_SORT[sort] || CF_SORT.follows,
         sortOrder: "desc",
-        pageSize: count,
+        pageSize: ask,
         index: 0,
       };
       if (opts.query) body.searchFilter = String(opts.query);
@@ -4175,7 +4371,7 @@ ipcMain.handle("home:projects", async (event, opts = {}) => {
         downloads: p.downloadCount || 0,
         provider: "curseforge", kind,
       }));
-      return { success: true, hits: random ? hits.sort(() => Math.random() - 0.5).slice(0, count) : hits };
+      return { success: true, hits: pick(hits) };
     }
 
     // Modrinth
@@ -4188,7 +4384,7 @@ ipcMain.handle("home:projects", async (event, opts = {}) => {
     const url = new URL("https://api.modrinth.com/v2/search");
     url.searchParams.set("facets", JSON.stringify(facets));
     url.searchParams.set("index", MR_SORT[sort] || "follows");
-    url.searchParams.set("limit", String(count));
+    url.searchParams.set("limit", String(ask));
     if (opts.query) url.searchParams.set("query", String(opts.query));
     if (random) {
       const probe = new URL(url);
@@ -4209,15 +4405,100 @@ ipcMain.handle("home:projects", async (event, opts = {}) => {
       downloads: p.downloads || 0,
       provider: "modrinth", kind,
     }));
-    return { success: true, hits: random ? hits.sort(() => Math.random() - 0.5).slice(0, count) : hits };
+    return { success: true, hits: pick(hits) };
   } catch (err) {
     return { success: false, error: String(err && err.message || err), hits: [] };
   }
 });
 
-// The newest versions Mojang has published, which is what "snapshot news"
-// is: the manifest already says what came out and when, and it is the same
-// manifest every launch reads.
+// ── Mojang's own launcher content ───────────────────────────────────────────
+//
+// The same two feeds the official launcher draws its front page from. The
+// snapshot segment used to list bare version IDs out of the manifest, which
+// says what came out and when and nothing else -- no account of what actually
+// changed. These are the written changelogs and the news, with their images.
+const MOJANG_PATCH_NOTES = "https://launchercontent.mojang.com/v2/javaPatchNotes.json";
+const MOJANG_NEWS = "https://launchercontent.mojang.com/v2/news.json";
+const MOJANG_MEDIA = "https://launchercontent.mojang.com";
+
+// Both feeds are a megabyte of JSON that changes a few times a month, so they
+// are fetched once and kept for an hour. Without this, every visit to the
+// home page is another download of the lot.
+const _mojangFeeds = new Map();
+async function mojangFeed(url) {
+  const held = _mojangFeeds.get(url);
+  if (held && Date.now() - held.at < 60 * 60 * 1000) return held.value;
+  const res = await fetch(url, { headers: { accept: "application/json" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const value = await res.json();
+  _mojangFeeds.set(url, { at: Date.now(), value });
+  return value;
+}
+
+// Their image paths are relative to the same host.
+const mojangImage = (img) => {
+  const u = img && (img.url || img.imageURL);
+  if (!u) return null;
+  return /^https?:/i.test(u) ? u : MOJANG_MEDIA + (u.startsWith("/") ? u : "/" + u);
+};
+
+// Mojang's written changelogs: what actually changed in each snapshot and
+// release, rather than a list of version numbers.
+ipcMain.handle("home:patchnotes", async (event, { count = 4, releasesToo = true } = {}) => {
+  try {
+    const want = Math.max(1, Math.min(20, Number(count) || 4));
+    const data = await mojangFeed(MOJANG_PATCH_NOTES);
+    const all = (data && data.entries) || [];
+    const items = all
+      .filter(e => releasesToo || String(e.type || "").toLowerCase() !== "release")
+      .slice(0, want)
+      .map(e => ({
+        id: e.version || e.id || "",
+        title: e.title || e.version || "",
+        type: e.type || "",
+        at: e.date || null,
+        image: mojangImage(e.image),
+        // The body is HTML; the window shows the shortened text and opens the
+        // full thing on the wiki rather than trying to render their markup.
+        body: String(e.shortText || "").trim(),
+        url: e.version ? `https://www.minecraft.net/article/minecraft-java-edition-${String(e.version).replace(/\./g, "-")}` : null,
+      }));
+    return { success: true, items };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err), items: [] };
+  }
+});
+
+// Mojang's news: what they are announcing, as the official launcher shows it.
+ipcMain.handle("home:mcnews", async (event, { count = 4, category = "" } = {}) => {
+  try {
+    const want = Math.max(1, Math.min(20, Number(count) || 4));
+    const data = await mojangFeed(MOJANG_NEWS);
+    let all = (data && data.entries) || [];
+    const wantCat = String(category || "").trim().toLowerCase();
+    if (wantCat) all = all.filter(e => String(e.category || "").toLowerCase() === wantCat);
+    const items = all.slice(0, want).map(e => ({
+      id: e.id || e.title || "",
+      title: e.title || "",
+      body: String(e.text || "").trim(),
+      tag: e.tag || e.category || "",
+      at: e.date || null,
+      image: mojangImage(e.newsPageImage || e.image),
+      url: e.readMoreLink
+        ? (/^https?:/i.test(e.readMoreLink) ? e.readMoreLink : "https://www.minecraft.net" + e.readMoreLink)
+        : null,
+    }));
+    // What they file things under, so the segment can offer the real list
+    // rather than a guess.
+    const categories = [...new Set(((data && data.entries) || [])
+      .map(e => String(e.category || "").trim()).filter(Boolean))];
+    return { success: true, items, categories };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err), items: [] };
+  }
+});
+
+// The old version-list segment, kept because a layout may still name it.
 ipcMain.handle("home:snapshots", async (event, { count = 4, releasesToo = true } = {}) => {
   try {
     const manifest = await getVersionManifest();

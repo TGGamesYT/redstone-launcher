@@ -15,6 +15,7 @@
 
   let LAYOUT = [];
   let TYPES = [];
+  let COLUMNS = 12;
   let editing = false;
   let profilesCache = [];
   // Every timer and 3D viewer a drawn segment owns, so redrawing the page
@@ -35,65 +36,139 @@
     const s = document.createElement('style');
     s.id = 'home-style';
     s.textContent = `
-      #home-segments { display:flex; flex-direction:column; gap:26px; padding-bottom:40px; }
-      .hs { position:relative; }
+      /* ── the grid ──
+         The page was a single column: segments could only be moved up and
+         down, nothing could sit beside anything else, and nothing could be
+         made bigger or smaller. It is twelve columns now; each segment says
+         how many it spans and, optionally, how tall it is.
+
+         A min-width of 0 on the segments is what stops them being cropped off
+         the right at small window sizes -- a grid item's default minimum is
+         the width of its contents, so a row of cards refused to narrow and
+         simply overflowed instead. */
+      #home-segments { display:grid; grid-template-columns:repeat(var(--home-cols, 12), minmax(0, 1fr));
+        gap:22px; align-content:start; padding:14px 2px 40px; }
+      .hs { position:relative; min-width:0; grid-column:span var(--w, 12); display:flex; flex-direction:column; }
+      .hs[data-h] { overflow:hidden; }
       .hs > h2, .hs > h3 { margin:0 0 10px; }
+      .hs-body { min-height:0; flex:1; overflow:auto; }
       .hs-empty { opacity:0.6; font-size:13px; }
       .hs-error { opacity:0.7; font-size:12px; }
+
+      /* Narrow windows: the spans collapse rather than the contents being cut
+         off. Anything narrow becomes half-width, then everything goes full. */
+      @media (max-width: 1150px) { .hs { grid-column:span max(var(--w, 12), 6); } }
+      @media (max-width: 820px)  { .hs { grid-column:span 12; } }
+
       /* A row of project cards, which scrolls sideways rather than wrapping
          into a block that pushes everything else off the page. */
       .hs-row { display:flex; gap:12px; overflow-x:auto; padding-bottom:6px; }
-      .hs-card { flex:0 0 190px; background:var(--menu-bg); border:1px solid var(--border-dark);
-        border-radius:var(--border-radius); padding:10px; cursor:pointer; }
+      .hs-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+      .hs-grid .hs-card, .hs-grid .hs-tile { flex:none; }
+      .hs-card { flex:0 0 170px; background:var(--menu-bg); border:1px solid var(--border-dark);
+        border-radius:var(--border-radius); padding:10px; cursor:pointer; display:flex; flex-direction:column;
+        min-width:0; }
       .hs-card:hover { border-color:var(--base-color); }
-      .hs-card img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:6px; background:var(--very-dark);
-        image-rendering:auto; }
+      /* Every icon the same size, whatever shape the file is. cover cropped
+         non-square art to different-looking sizes; a fixed square box with
+         the picture fitted inside it means they all match. */
+      .hs-card .ic { width:100%; aspect-ratio:1; border-radius:6px; background:var(--very-dark);
+        display:flex; align-items:center; justify-content:center; overflow:hidden; flex:0 0 auto; }
+      .hs-card .ic img { width:100%; height:100%; object-fit:contain; image-rendering:auto; display:block; }
       .hs-card .t { font-weight:bold; font-size:13px; margin-top:8px;
         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .hs-card .d { font-size:11px; opacity:0.7; margin-top:2px;
         display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+      .hs-card .go { margin-top:8px; display:flex; gap:6px; }
+      .hs-card .go button { flex:1; padding:5px 6px; font-size:11px; }
       .hs-big { font-variant-numeric:tabular-nums; line-height:1.1; font-weight:bold; }
       .hs-sub { font-size:12px; opacity:0.7; margin-top:4px; }
       .hs-media { width:100%; border-radius:var(--border-radius); background:var(--very-dark); display:block; }
       .hs-list { display:flex; flex-direction:column; gap:6px; }
       .hs-item { display:flex; align-items:center; gap:10px; background:var(--menu-bg);
-        border:1px solid var(--border-dark); border-radius:var(--border-radius); padding:8px 10px; }
-      .hs-item img { width:32px; height:32px; border-radius:4px; image-rendering:pixelated; background:var(--very-dark); }
+        border:1px solid var(--border-dark); border-radius:var(--border-radius); padding:8px 10px; min-width:0; }
+      .hs-item img { width:32px; height:32px; border-radius:4px; image-rendering:pixelated;
+        background:var(--very-dark); object-fit:contain; flex:0 0 auto; }
       .hs-item .t { font-size:13px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .hs-item .s { font-size:11px; opacity:0.7; }
+      .hs-item .s { font-size:11px; opacity:0.7; flex:0 0 auto; }
+      .hs-item .go { flex:0 0 auto; display:flex; gap:4px; }
+      .hs-item .go button { padding:3px 7px; font-size:12px; line-height:1.2; }
       .hs-dot { width:8px; height:8px; border-radius:50%; background:#777; flex:0 0 auto; }
       .hs-dot.on { background:#5ad65a; }
       .hs-news { background:var(--menu-bg); border:1px solid var(--border-dark);
-        border-radius:var(--border-radius); padding:10px 12px; }
+        border-radius:var(--border-radius); overflow:hidden; }
+      .hs-news .bd { padding:10px 12px; }
+      .hs-news img { width:100%; height:120px; object-fit:cover; display:block; background:var(--very-dark); }
       .hs-news h4 { margin:0 0 4px; font-size:13px; }
       .hs-news pre { margin:0; font-size:11.5px; line-height:1.5; white-space:pre-wrap;
         max-height:120px; overflow:hidden; opacity:0.85; font-family:inherit; }
+      .hs-news .tag { font-size:10px; text-transform:uppercase; letter-spacing:0.05em; opacity:0.6; }
       .hs-player { display:flex; justify-content:center; }
+      .hs-player.left { justify-content:flex-start; }
+      .hs-player.right { justify-content:flex-end; }
+      .hs-greet { margin:0; font-weight:bold; line-height:1.2; }
 
       /* ── editing ── */
-      #home-edit { position:fixed; left:86px; bottom:14px; z-index:30; display:flex; gap:8px; align-items:center; }
+      /* Bottom RIGHT, and the icon alone. */
+      #home-edit { position:fixed; right:18px; bottom:16px; z-index:30; display:flex; gap:8px; align-items:center; }
       #home-edit button { padding:7px 12px; }
+      #home-edit button.icon-only { width:40px; height:40px; padding:0; border-radius:50%;
+        display:flex; align-items:center; justify-content:center; }
+      #home-edit button.icon-only i { font-size:19px; }
       body.home-editing .hs { outline:2px dashed color-mix(in srgb, var(--base-color) 70%, transparent);
         outline-offset:6px; border-radius:var(--border-radius); }
-      body.home-editing .hs-card, body.home-editing .hs-item { pointer-events:none; }
-      .hs-tools { position:absolute; top:-10px; right:0; display:none; gap:4px; z-index:4; }
+      body.home-editing .hs-card, body.home-editing .hs-item, body.home-editing .hs-news { pointer-events:none; }
+      /* Inside the segment, not above it: at -10px the first row's buttons
+         were clipped by the top of the scroller. */
+      .hs-tools { position:absolute; top:4px; right:4px; display:none; gap:4px; z-index:6; }
       body.home-editing .hs-tools { display:flex; }
-      .hs-tools button { padding:2px 6px; line-height:1; font-size:12px; }
-      .hs.dragging { opacity:0.5; }
+      .hs-tools button { padding:2px 6px; line-height:1; font-size:12px;
+        background:var(--very-dark); border:1px solid var(--border-dark); }
+      .hs-tools button.grab { cursor:grab; }
+      .hs.dragging { opacity:0.45; }
       .hs-drop { outline:2px solid var(--base-color) !important; }
+      /* Held over another segment: it will go BESIDE that one. */
+      .hs-beside { outline:3px solid #5ad65a !important; }
+      .hs-beside::after { content:"beside"; position:absolute; top:4px; left:4px; z-index:7;
+        font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
+        background:#5ad65a; color:#06290b; padding:2px 6px; border-radius:4px; }
 
-      .he-types { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:8px; }
-      .he-type { display:flex; gap:8px; align-items:flex-start; text-align:left; padding:10px;
+      /* A handle in each corner. The two bottom ones change the height as
+         well, the top ones only the width. */
+      .hs-grip { position:absolute; width:14px; height:14px; z-index:6; display:none; }
+      body.home-editing .hs-grip { display:block; }
+      .hs-grip::before { content:""; position:absolute; inset:3px; border-radius:2px;
+        background:var(--base-color); opacity:0.85; }
+      .hs-grip.nw { left:-7px; top:-7px; cursor:nwse-resize; }
+      .hs-grip.ne { right:-7px; top:-7px; cursor:nesw-resize; }
+      .hs-grip.sw { left:-7px; bottom:-7px; cursor:nesw-resize; }
+      .hs-grip.se { right:-7px; bottom:-7px; cursor:nwse-resize; }
+      .hs-size { position:absolute; left:50%; top:-12px; transform:translateX(-50%); z-index:7;
+        font-size:11px; background:var(--base-color); color:#fff; padding:1px 7px;
+        border-radius:4px; display:none; white-space:nowrap; }
+      .hs.sizing .hs-size { display:block; }
+
+      /* ── the segment picker ──
+         It was a wall of icons and paragraphs. Now it is tiles: the icon, the
+         name, and the explanation only when you hover one. */
+      .he-search { width:100%; box-sizing:border-box; margin-bottom:12px; }
+      .he-types { display:grid; grid-template-columns:repeat(auto-fill,minmax(118px,1fr)); gap:10px; }
+      .he-type { display:flex; flex-direction:column; align-items:center; justify-content:center;
+        gap:8px; text-align:center; padding:16px 8px; min-height:96px;
         border:2px solid var(--border-dark); background:var(--menu-bg);
-        border-radius:var(--border-radius); cursor:pointer; }
-      .he-type:hover { border-color:var(--base-color); }
-      .he-type .n { font-weight:bold; font-size:13px; }
-      .he-type .a { font-size:11px; opacity:0.7; margin-top:2px; }
+        border-radius:var(--border-radius); cursor:pointer; transition:var(--smooth-transition); }
+      .he-type:hover { border-color:var(--base-color); transform:translateY(-2px); }
+      .he-type i { font-size:26px; opacity:0.9; }
+      .he-type .n { font-weight:bold; font-size:12px; line-height:1.3; }
+      .he-about { min-height:34px; margin-top:12px; font-size:12px; opacity:0.75; line-height:1.5; }
       .he-opt { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
       .he-opt label { font-size:12px; opacity:0.8; }
       .he-opt input[type="text"], .he-opt input[type="number"], .he-opt select { width:100%; box-sizing:border-box; }
       .he-opt.row { flex-direction:row; align-items:center; gap:8px; }
       .he-opt.row input { width:auto; margin:0; }
+      .he-size { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end;
+        border-top:1px solid var(--border-dark); margin-top:4px; padding-top:12px; }
+      .he-size .he-opt { flex:1 1 150px; margin-bottom:0; }
       .he-media { display:flex; gap:8px; align-items:center; }
       .he-media input { flex:1; }
     `;
@@ -107,27 +182,63 @@
     if (t) node.appendChild(el('h2', '', t));
   };
 
-  function projectCard(p) {
+  // Opening a project's page, the way the mod browser hands it over.
+  function openProject(p) {
+    localStorage.setItem('selectedModrinthProject', JSON.stringify({
+      project_id: p.id, slug: p.slug, title: p.title, description: p.description,
+      icon_url: p.icon, author: p.author, downloads: p.downloads,
+    }));
+    localStorage.setItem('selectedProjectType', p.kind || 'mod');
+    window.location.href = p.provider === 'curseforge' ? 'curseforge_project.html' : 'modrinth_project.html';
+  }
+
+  // "Play" on a modpack or a mod means: put it somewhere you can play it.
+  //
+  // The button the featured rows used to have did nothing useful -- it is
+  // meant to make an instance from the thing when you have not got one
+  // already, and to open the one you have when you do.
+  async function installProject(p) {
+    let existing = null;
+    try {
+      const r = await ipcRenderer.invoke('instance-for-project',
+        { id: p.id, slug: p.slug, title: p.title, provider: p.provider });
+      existing = r && r.profileId ? r.profileId : null;
+    } catch { /* ask the project page instead */ }
+    if (existing) { window.location.href = `instances.html?i=${encodeURIComponent(existing)}`; return; }
+    // Nothing for it yet, so the project's own page opens with the install
+    // flow ready -- that is where making an instance from it lives.
+    localStorage.setItem('installIntent', '1');
+    openProject(p);
+  }
+
+  function projectCard(p, seg) {
+    const action = (seg && seg.action) || 'both';
     const card = el('div', 'hs-card');
+    const box = el('div', 'ic');
     const img = el('img');
     img.src = p.icon || (window.DEFAULT_ICON || '');
     img.alt = '';
-    card.appendChild(img);
+    img.onerror = () => { img.src = window.DEFAULT_ICON || ''; };
+    box.appendChild(img);
+    card.appendChild(box);
     card.appendChild(el('div', 't', p.title || ''));
-    const bits = [];
-    if (p.author) bits.push('by ' + p.author);
-    if (p.downloads) bits.push(fmtCount(p.downloads) + ' downloads');
-    card.appendChild(el('div', 'd', bits.join(' · ')));
-    card.onclick = () => {
-      // The project page reads what to show from here, the same way the mod
-      // browser hands it over.
-      localStorage.setItem('selectedModrinthProject', JSON.stringify({
-        project_id: p.id, slug: p.slug, title: p.title, description: p.description,
-        icon_url: p.icon, author: p.author, downloads: p.downloads,
-      }));
-      localStorage.setItem('selectedProjectType', p.kind || 'mod');
-      window.location.href = p.provider === 'curseforge' ? 'curseforge_project.html' : 'modrinth_project.html';
-    };
+    if (action === 'info' || action === 'both') {
+      const bits = [];
+      if (p.author) bits.push('by ' + p.author);
+      if (p.downloads) bits.push(fmtCount(p.downloads) + ' downloads');
+      card.appendChild(el('div', 'd', bits.join(' · ')));
+    } else {
+      card.appendChild(el('div', 'd', p.description || ''));
+    }
+    if (action === 'play' || action === 'both') {
+      const go = el('div', 'go');
+      const play = el('button', 'primary');
+      play.innerHTML = '<i class="material-icons" style="font-size:13px;vertical-align:middle;">play_arrow</i> Play';
+      play.onclick = (e) => { e.stopPropagation(); installProject(p); };
+      go.appendChild(play);
+      card.appendChild(go);
+    }
+    card.onclick = () => openProject(p);
     return card;
   }
 
@@ -151,34 +262,103 @@
     return `${Math.floor(total)}s`;
   }
 
+  // The greeting, which used to be an <h1> in the markup and so was the one
+  // thing on the home page that could not be moved, reworded or removed.
+  const GREETINGS = [
+    'Hello there!',
+    'Greetings, human.',
+    'Back for more? Are ya ready?',
+    'Systems online.',
+    'Ready for action?',
+    "What's on the menu today?",
+    'Did you bring snacks?',
+    "Let's get rolling!",
+    'Welcome back, commander!',
+    'The redstone awaits your command!',
+  ];
+
   const DRAW = {
+    greeting(seg, node) {
+      const said = String(seg.text || '').trim()
+        || (window.__homeGreeting || (window.__homeGreeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)]));
+      const h = el('h1', 'hs-greet', said);
+      h.style.fontSize = (Number(seg.size) || 32) + 'px';
+      h.style.textAlign = seg.align || 'left';
+      node.appendChild(h);
+    },
+
     recent(seg, node) {
       titleOf(seg, node);
-      const list = el('div', 'hs-list');
-      node.appendChild(list);
+      const grid = (seg.view || 'list') === 'grid';
+      const box = el('div', grid ? 'hs-grid' : 'hs-list');
+      node.appendChild(box);
+      const action = seg.action || 'both';
+      const open = (p) => { window.location.href = `instances.html?i=${encodeURIComponent(p.id)}`; };
+      const play = async (p) => {
+        const who = await ipcRenderer.invoke('get-selected-player');
+        if (who == null) { window.location.href = 'players.html'; return; }
+        ipcRenderer.send('launch-profile', { profileId: p.id, playerId: who });
+        open(p);
+      };
       const paint = () => {
-        list.innerHTML = '';
+        box.innerHTML = '';
         const items = (profilesCache || []).slice(0, Number(seg.count) || 6);
         if (!items.length) {
-          const add = el('div', 'hs-item');
+          const add = el('div', grid ? 'hs-card' : 'hs-item');
           add.appendChild(el('div', 't', 'Make an instance'));
           add.style.cursor = 'pointer';
           add.onclick = () => { window.location.href = 'instances.html?i=NEWINSTANCE'; };
-          list.appendChild(add);
+          box.appendChild(add);
           return;
         }
         for (const p of items) {
+          if (grid) {
+            const card = el('div', 'hs-card');
+            const ic = el('div', 'ic');
+            const img = el('img');
+            if (window.instanceIconInto) window.instanceIconInto(img, p);
+            else img.src = window.DEFAULT_ICON || '';
+            img.style.imageRendering = 'pixelated';
+            ic.appendChild(img);
+            card.append(ic, el('div', 't', p.name || ''));
+            if (action === 'info' || action === 'both') {
+              card.appendChild(el('div', 'd', `${p.version || ''}${p.loader ? ' · ' + p.loader : ''}`));
+            }
+            if (action === 'play' || action === 'both') {
+              const go = el('div', 'go');
+              const b = el('button', 'primary');
+              b.innerHTML = '<i class="material-icons" style="font-size:13px;vertical-align:middle;">play_arrow</i> Play';
+              b.onclick = (e) => { e.stopPropagation(); play(p); };
+              go.appendChild(b);
+              card.appendChild(go);
+            }
+            card.style.cursor = 'pointer';
+            card.onclick = () => open(p);
+            box.appendChild(card);
+            continue;
+          }
           const row = el('div', 'hs-item');
           row.style.cursor = 'pointer';
           const img = el('img');
           if (window.instanceIconInto) window.instanceIconInto(img, p);
           else img.src = window.DEFAULT_ICON || '';
           row.appendChild(img);
-          const t = el('div', 't', p.name || '');
-          row.appendChild(t);
-          row.appendChild(el('div', 's', `${p.version || ''}${p.loader ? ' · ' + p.loader : ''}`));
-          row.onclick = () => { window.location.href = `instances.html?i=${encodeURIComponent(p.id)}`; };
-          list.appendChild(row);
+          row.appendChild(el('div', 't', p.name || ''));
+          if (action === 'info' || action === 'both') {
+            row.appendChild(el('div', 's', `${p.version || ''}${p.loader ? ' · ' + p.loader : ''}`));
+          }
+          if (action === 'play' || action === 'both') {
+            // The play button this list used to have and lost.
+            const go = el('div', 'go');
+            const b = el('button', 'primary');
+            b.title = 'Play';
+            b.innerHTML = '<i class="material-icons" style="font-size:14px;vertical-align:middle;">play_arrow</i>';
+            b.onclick = (e) => { e.stopPropagation(); play(p); };
+            go.appendChild(b);
+            row.appendChild(go);
+          }
+          row.onclick = () => open(p);
+          box.appendChild(row);
         }
       };
       paint();
@@ -187,7 +367,10 @@
 
     async player(seg, node) {
       titleOf(seg, node);
-      const box = el('div', 'hs-player');
+      const box = el('div', 'hs-player ' + (seg.align || 'center'));
+      box.style.flexDirection = 'column';
+      box.style.alignItems = seg.align === 'left' ? 'flex-start'
+        : seg.align === 'right' ? 'flex-end' : 'center';
       node.appendChild(box);
       const r = await ipcRenderer.invoke('pack:skinChoices');
       const account = r && r.account;
@@ -210,15 +393,31 @@
       const v = new skinview3d.SkinViewer({ canvas, width: Math.round(h * 0.6), height: h });
       v.zoom = 0.9;
       v.autoRotate = !!seg.spin;
+      // Whether it can be turned by hand. Some people want a picture, not a
+      // toy that spins off-centre the moment the mouse crosses it.
+      const movable = seg.movable !== false;
       try {
+        v.controls.enabled = movable;
+        v.controls.enableRotate = movable;
         v.controls.minPolarAngle = Math.PI / 2 - 0.55;
         v.controls.maxPolarAngle = Math.PI / 2 + 0.55;
         v.controls.enableZoom = false;
       } catch { /* an older bundle */ }
+      canvas.style.cursor = movable ? 'grab' : 'default';
       await v.loadSkin('data:image/png;base64,' + skin.base64, { model: skin.slim ? 'slim' : 'default' });
       if (skin.capeUrl) { try { await v.loadCape(skin.capeUrl); } catch { /* no cape */ } }
+      // What it is doing. skinview3d ships these; an unknown one or an older
+      // bundle simply leaves it standing.
+      const ANIM = {
+        idle: 'IdleAnimation', walk: 'WalkingAnimation',
+        run: 'RunningAnimation', fly: 'FlyingAnimation',
+      };
+      const want = ANIM[String(seg.animation || 'idle')];
+      if (want && typeof skinview3d[want] === 'function') {
+        try { v.animation = new skinview3d[want](); } catch { /* standing still it is */ }
+      }
       cleanups.push(() => { try { v.dispose(); } catch { /* gone */ } });
-      box.appendChild(el('div', 'hs-sub', account.name || ''));
+      if (seg.showName !== false) box.appendChild(el('div', 'hs-sub', account.name || ''));
     },
 
     async friends(seg, node) {
@@ -262,7 +461,8 @@
 
     async projects(seg, node) {
       titleOf(seg, node);
-      const row = el('div', 'hs-row');
+      const view = seg.view || 'row';
+      const row = el('div', view === 'grid' ? 'hs-grid' : view === 'list' ? 'hs-list' : 'hs-row');
       node.appendChild(row);
       row.appendChild(el('div', 'hs-empty', 'Looking…'));
       const r = await ipcRenderer.invoke('home:projects', {
@@ -275,7 +475,34 @@
         return;
       }
       if (!r.hits.length) { row.appendChild(el('div', 'hs-empty', 'Nothing matched that.')); return; }
-      for (const p of r.hits) row.appendChild(projectCard(p));
+      if (view === 'list') {
+        const action = seg.action || 'both';
+        for (const p of r.hits) {
+          const item = el('div', 'hs-item');
+          item.style.cursor = 'pointer';
+          const img = el('img');
+          img.src = p.icon || (window.DEFAULT_ICON || '');
+          img.style.imageRendering = 'auto';
+          item.appendChild(img);
+          item.appendChild(el('div', 't', p.title || ''));
+          if (action === 'info' || action === 'both') {
+            item.appendChild(el('div', 's', fmtCount(p.downloads) + ' downloads'));
+          }
+          if (action === 'play' || action === 'both') {
+            const go = el('div', 'go');
+            const b = el('button', 'primary');
+            b.title = 'Play';
+            b.innerHTML = '<i class="material-icons" style="font-size:14px;vertical-align:middle;">play_arrow</i>';
+            b.onclick = (e) => { e.stopPropagation(); installProject(p); };
+            go.appendChild(b);
+            item.appendChild(go);
+          }
+          item.onclick = () => openProject(p);
+          row.appendChild(item);
+        }
+        return;
+      }
+      for (const p of r.hits) row.appendChild(projectCard(p, seg));
     },
 
     async news(seg, node) {
@@ -299,23 +526,55 @@
       node.appendChild(list);
     },
 
-    async snapshots(seg, node) {
-      titleOf(seg, node);
-      const r = await ipcRenderer.invoke('home:snapshots', { count: seg.count, releasesToo: seg.releasesToo });
-      if (!r || !r.success) { node.appendChild(el('div', 'hs-error', (r && r.error) || 'The version list could not be read.')); return; }
+    // One of Mojang's entries, as a card: their picture, what it is, and the
+    // opening of what they wrote.
+    async _mojang(seg, node, channel, args, emptyText) {
+      const r = await ipcRenderer.invoke(channel, args);
+      if (!r || !r.success) {
+        node.appendChild(el('div', 'hs-error', (r && r.error) || emptyText));
+        return;
+      }
+      if (!r.items.length) { node.appendChild(el('div', 'hs-empty', 'Nothing yet.')); return; }
       const list = el('div', 'hs-list');
-      for (const v of r.items) {
-        const row = el('div', 'hs-item');
-        row.appendChild(el('div', 't', v.id));
-        row.appendChild(el('div', 's', `${v.type}${v.at ? ' · ' + new Date(v.at).toLocaleDateString() : ''}`));
-        if (v.latest) {
-          const dot = el('div', 'hs-dot on');
-          dot.title = 'the newest';
-          row.appendChild(dot);
+      for (const n of r.items) {
+        const box = el('div', 'hs-news');
+        if (seg.images !== false && n.image) {
+          const img = el('img');
+          img.src = n.image;
+          img.alt = '';
+          img.onerror = () => img.remove();
+          box.appendChild(img);
         }
-        list.appendChild(row);
+        const bd = el('div', 'bd');
+        if (n.tag || n.type) bd.appendChild(el('div', 'tag', n.tag || n.type));
+        bd.appendChild(el('h4', '', n.title || n.id || ''));
+        if (n.at) bd.appendChild(el('div', 'hs-sub', new Date(n.at).toLocaleDateString()));
+        if (n.body) bd.appendChild(el('pre', '', n.body));
+        box.appendChild(bd);
+        if (n.url) {
+          box.style.cursor = 'pointer';
+          box.onclick = () => { try { shell.openExternal(n.url); } catch { /* no browser */ } };
+        }
+        list.appendChild(box);
       }
       node.appendChild(list);
+    },
+
+    // Mojang's written changelogs rather than a list of version numbers,
+    // which is what this segment was and what made it useless: it said 25w14a
+    // came out and nothing about what is in it.
+    async snapshots(seg, node) {
+      titleOf(seg, node);
+      await DRAW._mojang(seg, node, 'home:patchnotes',
+        { count: seg.count, releasesToo: seg.releasesToo },
+        'The changelogs could not be fetched.');
+    },
+
+    async mcnews(seg, node) {
+      titleOf(seg, node);
+      await DRAW._mojang(seg, node, 'home:mcnews',
+        { count: seg.count, category: seg.category },
+        'The news could not be fetched.');
     },
 
     clock(seg, node) {
@@ -452,9 +711,14 @@
     if (!host) return;
     clearSegments();
     host.innerHTML = '';
+    host.style.setProperty('--home-cols', String(COLUMNS));
     for (const seg of LAYOUT) {
       const node = el('section', 'hs');
       node.dataset.id = seg.id;
+      // How wide, and how tall if a height was set. A segment with no height
+      // is as tall as its contents, which is how the page has always been.
+      node.style.setProperty('--w', String(seg.w || COLUMNS));
+      if (seg.h) { node.style.height = seg.h + 'px'; node.dataset.h = String(seg.h); }
       host.appendChild(node);
       // Each type draws itself; an async one that fails must not take the
       // rest of the page down with it.
@@ -483,18 +747,168 @@
 
   // ── editing ────────────────────────────────────────────────────────────────
 
+  // ── moving a segment ────────────────────────────────────────────────────
+  //
+  // The up and down buttons are gone. Dragging is how the accounts page
+  // reorders, and it is how this does now -- with one addition: hold a
+  // segment over another for half a second and it goes BESIDE that one
+  // instead of before it, the two of them splitting the row between them.
+  // That is the only way to put two things side by side.
+  const HOLD_MS = 500;
+  let dragId = null;
+  let hoverTimer = null;
+  let besideId = null;
+
+  function clearDropMarks() {
+    for (const n of document.querySelectorAll('.hs-drop, .hs-beside')) {
+      n.classList.remove('hs-drop', 'hs-beside');
+    }
+  }
+
   function addTools(node, seg) {
     const tools = el('div', 'hs-tools');
-    const up = el('button', '', '↑'); up.title = 'Move up';
-    const down = el('button', '', '↓'); down.title = 'Move down';
+    const grab = el('button', 'grab', '⠿'); grab.title = 'Drag to move';
     const cog = el('button', '', '⚙'); cog.title = 'Settings';
     const rm = el('button', '', '✕'); rm.title = 'Remove';
-    up.onclick = () => move(seg.id, -1);
-    down.onclick = () => move(seg.id, 1);
     cog.onclick = () => editSegment(seg.id);
     rm.onclick = () => removeSegment(seg.id);
-    tools.append(up, down, cog, rm);
+    tools.append(grab, cog, rm);
     node.appendChild(tools);
+
+    // Only the handle starts a drag, so selecting text or pressing a button
+    // inside the segment does not.
+    node.draggable = false;
+    grab.addEventListener('mousedown', () => { node.draggable = true; });
+    node.addEventListener('dragend', () => {
+      node.draggable = false;
+      node.classList.remove('dragging');
+      clearDropMarks();
+      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+      dragId = null; besideId = null;
+    });
+    node.addEventListener('dragstart', (e) => {
+      dragId = seg.id;
+      besideId = null;
+      node.classList.add('dragging');
+      try { e.dataTransfer.setData('text/plain', seg.id); e.dataTransfer.effectAllowed = 'move'; } catch { /* fine */ }
+    });
+    node.addEventListener('dragover', (e) => {
+      if (!dragId || dragId === seg.id) return;
+      e.preventDefault();
+      if (node.classList.contains('hs-drop') || node.classList.contains('hs-beside')) return;
+      clearDropMarks();
+      node.classList.add('hs-drop');
+      // Held here long enough: it will land beside this one rather than
+      // before it.
+      if (hoverTimer) clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        besideId = seg.id;
+        node.classList.remove('hs-drop');
+        node.classList.add('hs-beside');
+      }, HOLD_MS);
+    });
+    node.addEventListener('dragleave', () => {
+      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+      if (besideId === seg.id) besideId = null;
+      node.classList.remove('hs-drop', 'hs-beside');
+    });
+    node.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+      const from = dragId;
+      const pairUp = besideId === seg.id;
+      clearDropMarks();
+      dragId = null; besideId = null;
+      if (!from || from === seg.id) return;
+      pairUp ? placeBeside(from, seg.id) : placeBefore(from, seg.id);
+    });
+
+    addGrips(node, seg);
+  }
+
+  function placeBefore(fromId, ontoId) {
+    const i = LAYOUT.findIndex(s => s.id === fromId);
+    if (i < 0) return;
+    const [moved] = LAYOUT.splice(i, 1);
+    const j = LAYOUT.findIndex(s => s.id === ontoId);
+    LAYOUT.splice(j < 0 ? LAYOUT.length : j, 0, moved);
+    save();
+  }
+
+  // Side by side: put it straight after the one it was held over and split
+  // that row between the two, so they actually end up next to each other
+  // rather than merely adjacent in the list and still a row each.
+  function placeBeside(fromId, ontoId) {
+    const i = LAYOUT.findIndex(s => s.id === fromId);
+    if (i < 0) return;
+    const [moved] = LAYOUT.splice(i, 1);
+    const j = LAYOUT.findIndex(s => s.id === ontoId);
+    if (j < 0) { LAYOUT.push(moved); save(); return; }
+    const onto = LAYOUT[j];
+    // Only share the row out when they would not fit as they are.
+    if ((onto.w || COLUMNS) + (moved.w || COLUMNS) > COLUMNS) {
+      onto.w = Math.floor(COLUMNS / 2);
+      moved.w = COLUMNS - onto.w;
+    }
+    LAYOUT.splice(j + 1, 0, moved);
+    save();
+  }
+
+  // ── resizing ────────────────────────────────────────────────────────────
+  //
+  // A handle in each corner. All four change the width; the bottom two change
+  // the height as well, which is the corner people reach for. The width snaps
+  // to the grid's columns, because that is what the layout is made of.
+  function addGrips(node, seg) {
+    const host = document.getElementById('home-segments');
+    const readout = el('div', 'hs-size');
+    node.appendChild(readout);
+
+    for (const corner of ['nw', 'ne', 'sw', 'se']) {
+      const grip = el('div', 'hs-grip ' + corner);
+      node.appendChild(grip);
+      grip.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const colW = (host.clientWidth + 22) / COLUMNS;   // the gap counts as part of a column
+        const startX = e.clientX, startY = e.clientY;
+        const startW = seg.w || COLUMNS;
+        const startH = seg.h || node.offsetHeight;
+        const east = corner === 'ne' || corner === 'se';
+        const south = corner === 'sw' || corner === 'se';
+        node.classList.add('sizing');
+
+        const show = (w, h) => {
+          readout.textContent = h ? `${w}/${COLUMNS} · ${Math.round(h)}px` : `${w}/${COLUMNS}`;
+        };
+        show(startW, seg.h);
+
+        const onMove = (ev) => {
+          const dx = (ev.clientX - startX) * (east ? 1 : -1);
+          const w = Math.max(2, Math.min(COLUMNS, startW + Math.round(dx / colW)));
+          seg.w = w;
+          node.style.setProperty('--w', String(w));
+          let h = seg.h;
+          if (south) {
+            const dy = ev.clientY - startY;
+            h = Math.max(80, Math.min(1200, startH + dy));
+            seg.h = h;
+            node.style.height = h + 'px';
+            node.dataset.h = String(h);
+          }
+          show(w, h);
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          node.classList.remove('sizing');
+          // Saving redraws, which is how the rest of the row reflows.
+          save();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    }
   }
 
   const save = async () => {
@@ -502,15 +916,6 @@
     if (r && r.layout) LAYOUT = r.layout;
     drawAll();
   };
-
-  function move(id, by) {
-    const i = LAYOUT.findIndex(s => s.id === id);
-    const j = i + by;
-    if (i < 0 || j < 0 || j >= LAYOUT.length) return;
-    const [seg] = LAYOUT.splice(i, 1);
-    LAYOUT.splice(j, 0, seg);
-    save();
-  }
 
   function removeSegment(id) {
     LAYOUT = LAYOUT.filter(s => s.id !== id);
@@ -538,24 +943,47 @@
     return ov;
   }
 
+  // The picker was a wall of icons each with a paragraph beside it. Tiles
+  // now: the icon and the name, with the explanation shown once for whichever
+  // one you are pointing at, and a box to narrow them down.
   function addSegment() {
     overlay('Add a segment', (body, box, close) => {
+      const search = el('input', 'he-search');
+      search.type = 'text';
+      search.placeholder = 'Search';
+      body.appendChild(search);
+
       const grid = el('div', 'he-types');
+      const about = el('div', 'he-about', 'Pick something to put on the page.');
+      const tiles = [];
       for (const t of TYPES) {
         const b = el('button', 'he-type');
         b.type = 'button';
-        b.innerHTML = `<i class="material-icons">${t.icon || 'widgets'}</i>
-          <span><span class="n">${t.name}</span><span class="a">${t.about || ''}</span></span>`;
+        b.innerHTML = `<i class="material-icons">${t.icon || 'widgets'}</i><span class="n"></span>`;
+        b.querySelector('.n').textContent = t.name;
+        b.title = t.about || '';
+        const say = () => { about.textContent = t.about || t.name; };
+        b.addEventListener('mouseenter', say);
+        b.addEventListener('focus', say);
         b.onclick = () => {
           close();
-          const seg = { id: `${t.type}-${Date.now().toString(36)}`, type: t.type };
+          const seg = { id: `${t.type}-${Date.now().toString(36)}`, type: t.type, w: 12, h: 0 };
           for (const o of t.options || []) seg[o.id] = o.default;
           LAYOUT.push(seg);
           save().then(() => editSegment(seg.id));
         };
+        tiles.push({ b, t });
         grid.appendChild(b);
       }
-      body.appendChild(grid);
+      search.oninput = () => {
+        const q = search.value.trim().toLowerCase();
+        for (const { b, t } of tiles) {
+          const hit = !q || (t.name + ' ' + (t.about || '')).toLowerCase().includes(q);
+          b.style.display = hit ? '' : 'none';
+        }
+      };
+      body.append(grid, about);
+      setTimeout(() => search.focus(), 0);
     }, { wide: true });
   }
 
@@ -621,6 +1049,31 @@
         }
         body.appendChild(wrap);
       }
+      // How big it is, which belongs to every type rather than to any one of
+      // them -- so it is here rather than in each type's option list. The
+      // corner handles write the same two numbers.
+      const sizeRow = el('div', 'he-size');
+      const wWrap = el('div', 'he-opt');
+      wWrap.appendChild(el('label', '', `Width (of ${COLUMNS})`));
+      const wIn = el('input');
+      wIn.type = 'number'; wIn.min = 2; wIn.max = COLUMNS;
+      wIn.value = String(values.w || COLUMNS);
+      wIn.oninput = () => { values.w = Math.max(2, Math.min(COLUMNS, parseInt(wIn.value, 10) || COLUMNS)); };
+      wWrap.appendChild(wIn);
+
+      const hWrap = el('div', 'he-opt');
+      hWrap.appendChild(el('label', '', 'Height in pixels (0 to fit its contents)'));
+      const hIn = el('input');
+      hIn.type = 'number'; hIn.min = 0; hIn.max = 1200;
+      hIn.value = String(values.h || 0);
+      hIn.oninput = () => {
+        const n = parseInt(hIn.value, 10) || 0;
+        values.h = n ? Math.max(80, Math.min(1200, n)) : 0;
+      };
+      hWrap.appendChild(hIn);
+      sizeRow.append(wWrap, hWrap);
+      body.appendChild(sizeRow);
+
       const actions = el('div', 'modal-actions');
       actions.style.marginTop = '12px';
       const ok = el('button', '', 'Done');
@@ -657,8 +1110,10 @@
       done.onclick = () => setEditing(false);
       bar.append(add, reset, done);
     } else {
-      const edit = el('button', '', '');
-      edit.innerHTML = '<i class="material-icons" style="font-size:16px;vertical-align:middle;">edit</i> Edit page';
+      // The icon on its own, bottom right.
+      const edit = el('button', 'icon-only');
+      edit.title = 'Edit the page';
+      edit.innerHTML = '<i class="material-icons">edit</i>';
       edit.onclick = () => setEditing(true);
       bar.appendChild(edit);
     }
@@ -668,6 +1123,7 @@
   async function load() {
     const r = await ipcRenderer.invoke('home:layout');
     TYPES = (r && r.types) || [];
+    COLUMNS = (r && r.columns) || 12;
     LAYOUT = ((r && r.layout) || []).map(s => ({ ...s }));
     drawAll();
   }
