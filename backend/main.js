@@ -381,6 +381,47 @@ function isPidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
+// ── How long each instance has been played ──────────────────────────────────
+//
+// Counted from the tracker that already knows when a game starts and stops,
+// so nothing new has to be watched: the time between the two is added to the
+// instance's total when its process goes.
+//
+// It survives the launcher being closed with the game still running, because
+// the tracker persists its sessions and picks them up again on startup --
+// and a session whose start time is lost contributes nothing rather than
+// contributing nonsense.
+const playtimePath = path.join(dataDir, "playtime.json");
+const loadPlaytime = () => { try { return JSON.parse(fs.readFileSync(playtimePath, "utf8")) || {}; } catch { return {}; } };
+const savePlaytime = (o) => { try { fs.writeFileSync(playtimePath, JSON.stringify(o, null, 2)); } catch { /* a total that cannot be written is only a total */ } };
+
+function addPlaytime(id, ms) {
+  const n = Number(ms);
+  // A session under ten seconds is a launch that failed, not time played.
+  if (!Number.isFinite(n) || n < 10_000) return;
+  // And one over a fortnight is a clock that went backwards or a session
+  // whose start was lost; counting it would make the total meaningless.
+  if (n > 14 * 24 * 3600 * 1000) return;
+  const store = loadPlaytime();
+  const key = String(id);
+  const was = store[key] || { total: 0, sessions: 0, last: null };
+  store[key] = {
+    total: (was.total || 0) + Math.round(n),
+    sessions: (was.sessions || 0) + 1,
+    last: Date.now(),
+  };
+  savePlaytime(store);
+}
+
+ipcMain.handle("playtime:get", (event, { profileId } = {}) => {
+  const store = loadPlaytime();
+  if (profileId != null) return { success: true, ...(store[String(profileId)] || { total: 0, sessions: 0, last: null }) };
+  // Everything, plus the sum, for the home page's total.
+  let total = 0, sessions = 0;
+  for (const v of Object.values(store)) { total += v.total || 0; sessions += v.sessions || 0; }
+  return { success: true, total, sessions, instances: store };
+});
+
 function startInstance(id, pid) {
   const now = Date.now();
   const key = `${id}-${pid}`; // unique per process
@@ -393,16 +434,22 @@ function stopInstance(id, pid = null) {
   // NOTE: we intentionally KEEP instanceLogs after an instance stops, so the Logs
   // tab still shows the whole session (including the crash/exit) once it's closed.
   // The logs are cleared at the START of the next launch (see launchProfileCore).
+  //
+  // This is also where a session's length is counted: the tracker knows when
+  // it started, and this is the moment it ended.
   if (pid) {
     const key = `${id}-${pid}`;
     if (runningInstances.has(key)) {
+      const data = runningInstances.get(key);
       runningInstances.delete(key);
+      if (data && data.startTime) addPlaytime(id, Date.now() - data.startTime);
       devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${pid})`);
     }
   } else {
     for (const [key, data] of runningInstances.entries()) {
       if (data.id === id) {
         runningInstances.delete(key);
+        if (data.startTime) addPlaytime(id, Date.now() - data.startTime);
         devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${data.pid})`);
       }
     }
@@ -631,6 +678,10 @@ function restoreRunningInstances() {
     for (const [key, data] of runningInstances.entries()) {
       if (!isPidAlive(data.pid)) {
         runningInstances.delete(key);
+        // Most games end this way -- quit from inside the game rather than
+        // stopped from the launcher -- so the session has to be counted here
+        // as well, or almost nothing would ever be counted.
+        if (data.startTime) addPlaytime(data.id, Date.now() - data.startTime);
         // Keep the logs so the Logs tab still shows the finished session.
         changed = true;
         devtoolsLog(`[Tracker] Instance ${data.id} (PID ${data.pid}) is no longer running`);
@@ -684,6 +735,7 @@ function stopByPid(pid) {
       try {
         process.kill(pid);
         runningInstances.delete(key);
+        if (data.startTime) addPlaytime(data.id, Date.now() - data.startTime);
         persistRunningInstances();
         devtoolsLog(`[Tracker] Killed instance ${data.id} (PID ${pid})`);
         return true;
@@ -736,6 +788,11 @@ const DEFAULT_SETTINGS = {
   // A style sheet of the user's own, applied to every page when developer
   // mode is on.
   customCss: "",
+  // What the home page is made of. Null means "whatever the launcher has
+  // always shown", which is laid out in HOME_DEFAULT below -- so an existing
+  // install opens on the page it opened on before, and only changes once
+  // somebody edits it.
+  homeLayout: null,
   syncOptions: false,
   syncServers: false,
 };
@@ -3823,6 +3880,370 @@ function contentPath(type, id, tab, filename) {
   if (!filename || path.dirname(full) !== dir) return null;
   return full;
 }
+
+// ── What the home page is made of ───────────────────────────────────────────
+//
+// A list of segments, each a type and its own settings. The page draws
+// whatever is in the list, so adding a kind of segment is adding a type here
+// and a way to draw it -- there is no fixed layout left in the page.
+//
+// `homeLayout` is null until somebody edits it, and null means this: what the
+// launcher has always shown. An install that never touches the editor keeps
+// the page it had.
+const HOME_DEFAULT = [
+  { id: "recent", type: "recent", title: "Continue playing", count: 6 },
+  {
+    id: "modpacks", type: "projects", title: "Featured modpacks",
+    provider: "modrinth", kind: "modpack", sort: "follows", count: 6,
+  },
+  {
+    id: "mods", type: "projects", title: "Featured mods",
+    provider: "modrinth", kind: "mod", sort: "follows", count: 6,
+  },
+];
+
+// Every type the page can draw, and what each one takes. The editor is built
+// from this, so a new segment type is described once and the editor picks it
+// up -- rather than being spelled out again in the window.
+const HOME_TYPES = [
+  {
+    type: "recent", name: "Recent instances", icon: "schedule",
+    about: "The instances you played last, newest first.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "Continue playing" },
+      { id: "count", label: "How many", kind: "number", default: 6, min: 1, max: 24 },
+    ],
+  },
+  {
+    type: "player", name: "Your player", icon: "person",
+    about: "The signed-in account, as a render you can turn.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "" },
+      { id: "height", label: "Height", kind: "number", default: 320, min: 120, max: 700 },
+      { id: "spin", label: "Turn slowly on its own", kind: "toggle", default: false },
+    ],
+  },
+  {
+    type: "friends", name: "Friends", icon: "group",
+    about: "Your Java friends list, with who is online.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "Friends" },
+      { id: "count", label: "How many", kind: "number", default: 8, min: 1, max: 40 },
+      { id: "onlineOnly", label: "Only the ones online", kind: "toggle", default: false },
+    ],
+  },
+  {
+    type: "projects", name: "Mods & modpacks", icon: "extension",
+    about: "A row of projects from Modrinth or CurseForge — any type, with your own filters and order.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "Have a look at" },
+      {
+        id: "provider", label: "From", kind: "choice", default: "modrinth",
+        choices: [{ value: "modrinth", label: "Modrinth" }, { value: "curseforge", label: "CurseForge" }],
+      },
+      {
+        id: "kind", label: "Type", kind: "choice", default: "modpack",
+        choices: [
+          { value: "modpack", label: "Modpacks" }, { value: "mod", label: "Mods" },
+          { value: "resourcepack", label: "Resource packs" }, { value: "shader", label: "Shaders" },
+          { value: "datapack", label: "Data packs" }, { value: "plugin", label: "Plugins" },
+        ],
+      },
+      {
+        id: "sort", label: "Order", kind: "choice", default: "follows",
+        choices: [
+          { value: "follows", label: "Most followed" }, { value: "downloads", label: "Most downloaded" },
+          { value: "newest", label: "Newest" }, { value: "updated", label: "Recently updated" },
+          { value: "relevance", label: "Whatever it finds" }, { value: "random", label: "At random" },
+        ],
+      },
+      { id: "count", label: "How many", kind: "number", default: 6, min: 1, max: 24 },
+      { id: "query", label: "Search for", kind: "text", default: "" },
+      { id: "gameVersion", label: "For version", kind: "text", default: "" },
+      { id: "loader", label: "For loader", kind: "text", default: "" },
+      { id: "categories", label: "Categories, comma separated", kind: "text", default: "" },
+    ],
+  },
+  {
+    type: "news", name: "Launcher news", icon: "campaign",
+    about: "What has changed in the launcher.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "What's new" },
+      { id: "count", label: "How many", kind: "number", default: 3, min: 1, max: 20 },
+    ],
+  },
+  {
+    type: "snapshots", name: "Snapshot news", icon: "new_releases",
+    about: "The newest snapshots and pre-releases as Mojang publishes them.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "Latest from Mojang" },
+      { id: "count", label: "How many", kind: "number", default: 4, min: 1, max: 20 },
+      { id: "releasesToo", label: "Full releases as well", kind: "toggle", default: true },
+    ],
+  },
+  {
+    type: "clock", name: "Time", icon: "schedule",
+    about: "The time, wherever you like, however you like it written.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "" },
+      { id: "zone", label: "Time zone (blank for yours)", kind: "text", default: "" },
+      { id: "seconds", label: "Show seconds", kind: "toggle", default: false },
+      { id: "hour12", label: "12-hour clock", kind: "toggle", default: false },
+      { id: "showDate", label: "Show the date", kind: "toggle", default: true },
+      { id: "size", label: "Size", kind: "number", default: 44, min: 14, max: 160 },
+    ],
+  },
+  {
+    type: "countdown", name: "Countdown", icon: "hourglass_bottom",
+    about: "How long until something.",
+    options: [
+      { id: "title", label: "What it counts to", kind: "text", default: "Something" },
+      { id: "target", label: "When (YYYY-MM-DD HH:MM)", kind: "text", default: "" },
+      { id: "size", label: "Size", kind: "number", default: 36, min: 14, max: 160 },
+      { id: "afterText", label: "What to say once it has passed", kind: "text", default: "It's here" },
+    ],
+  },
+  {
+    type: "playtime", name: "Playtime", icon: "timer",
+    about: "How long you have played — everything, or one instance.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "Time played" },
+      { id: "profileId", label: "One instance only (blank for all)", kind: "text", default: "" },
+      { id: "breakdown", label: "List the instances", kind: "toggle", default: true },
+      { id: "count", label: "How many to list", kind: "number", default: 5, min: 1, max: 30 },
+    ],
+  },
+  {
+    type: "media", name: "A picture or video", icon: "image",
+    about: "An image, a gif or a video of your own.",
+    options: [
+      { id: "title", label: "Heading", kind: "text", default: "" },
+      { id: "src", label: "Address or file", kind: "media", default: "" },
+      { id: "caption", label: "Caption", kind: "text", default: "" },
+      {
+        id: "fit", label: "How it fills its space", kind: "choice", default: "cover",
+        choices: [{ value: "cover", label: "Covered" }, { value: "contain", label: "Fitted" }, { value: "fill", label: "Stretched" }],
+      },
+      { id: "height", label: "Height", kind: "number", default: 220, min: 60, max: 800 },
+      { id: "loop", label: "Loop a video", kind: "toggle", default: true },
+      { id: "muted", label: "Silent", kind: "toggle", default: true },
+    ],
+  },
+];
+
+const homeDefaults = (type) => {
+  const spec = HOME_TYPES.find(t => t.type === type);
+  const out = {};
+  for (const o of (spec && spec.options) || []) out[o.id] = o.default;
+  return out;
+};
+
+ipcMain.handle("home:layout", () => {
+  const saved = settings.get("homeLayout", null);
+  const layout = Array.isArray(saved) && saved.length ? saved : HOME_DEFAULT;
+  // Filled out, so the page never has to wonder what a missing option means.
+  return {
+    success: true,
+    types: HOME_TYPES,
+    custom: Array.isArray(saved) && saved.length > 0,
+    layout: layout.map(seg => ({ ...homeDefaults(seg.type), ...seg })),
+  };
+});
+
+ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
+  if (!Array.isArray(layout)) return { success: false, error: "That is not a layout" };
+  const known = new Set(HOME_TYPES.map(t => t.type));
+  const clean = layout
+    .filter(seg => seg && known.has(seg.type))
+    .slice(0, 40)
+    .map((seg, i) => {
+      const allowed = new Set(["id", "type", ...(HOME_TYPES.find(t => t.type === seg.type).options || []).map(o => o.id)]);
+      const out = {};
+      // Only the options this type declares, so an edited layout cannot
+      // smuggle anything else into the settings.
+      for (const [k, v] of Object.entries(seg)) if (allowed.has(k)) out[k] = v;
+      out.type = seg.type;
+      out.id = String(seg.id || `${seg.type}-${i}`).slice(0, 64);
+      return out;
+    });
+  settings.set("homeLayout", clean);
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("home-layout-changed", clean); } catch { /* gone */ }
+  }
+  return { success: true, layout: clean };
+});
+
+ipcMain.handle("home:resetLayout", () => {
+  settings.set("homeLayout", null);
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("home-layout-changed", HOME_DEFAULT); } catch { /* gone */ }
+  }
+  return { success: true, layout: HOME_DEFAULT };
+});
+
+// ── What the segments show ──────────────────────────────────────────────────
+//
+// Fetched here rather than in the page so one segment type is one handler,
+// and so CurseForge's search -- which goes through a worker rather than
+// straight at their API -- is reached the same way the mod browser reaches
+// it.
+const CF_CLASS = { mod: 6, modpack: 4471, resourcepack: 12, shader: 6552, datapack: 6945, plugin: 5 };
+const CF_SORT = { follows: 2, downloads: 6, newest: 11, updated: 3, relevance: 1, random: 6 };
+const MR_SORT = { follows: "follows", downloads: "downloads", newest: "newest", updated: "updated", relevance: "relevance", random: "downloads" };
+
+ipcMain.handle("home:projects", async (event, opts = {}) => {
+  const kind = String(opts.kind || "modpack");
+  const count = Math.max(1, Math.min(24, Number(opts.count) || 6));
+  const sort = String(opts.sort || "follows");
+  const random = sort === "random";
+  try {
+    if (String(opts.provider) === "curseforge") {
+      const body = {
+        gameId: 432,
+        classId: CF_CLASS[kind] || CF_CLASS.mod,
+        sortField: CF_SORT[sort] || CF_SORT.follows,
+        sortOrder: "desc",
+        pageSize: count,
+        index: 0,
+      };
+      if (opts.query) body.searchFilter = String(opts.query);
+      if (opts.gameVersion) body.gameVersion = String(opts.gameVersion);
+      const search = async (b) => {
+        const r = await fetch("https://curseforge.tgdoescode.workers.dev/search", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      };
+      if (random) {
+        // A random page of the results, the way the mod browser does it: ask
+        // for one to learn how many there are, then jump somewhere into them.
+        const probe = await search({ ...body, pageSize: 1 });
+        const total = (probe.pagination && probe.pagination.totalCount) || 0;
+        // Their API will not page beyond 10,000.
+        const span = Math.max(0, Math.min(total, 10000) - count);
+        body.index = span > 0 ? Math.floor(Math.random() * span) : 0;
+      }
+      const data = await search(body);
+      const hits = (data.data || []).map(p => ({
+        id: String(p.id), slug: p.slug, title: p.name,
+        description: p.summary || "",
+        icon: (p.logo && p.logo.thumbnailUrl) || null,
+        author: (p.authors && p.authors[0] && p.authors[0].name) || null,
+        downloads: p.downloadCount || 0,
+        provider: "curseforge", kind,
+      }));
+      return { success: true, hits: random ? hits.sort(() => Math.random() - 0.5).slice(0, count) : hits };
+    }
+
+    // Modrinth
+    const facets = [[`project_type:${kind}`]];
+    if (opts.gameVersion) facets.push([`versions:${opts.gameVersion}`]);
+    if (opts.loader) facets.push([`categories:${String(opts.loader).toLowerCase()}`]);
+    for (const c of String(opts.categories || "").split(",").map(x => x.trim()).filter(Boolean)) {
+      facets.push([`categories:${c}`]);
+    }
+    const url = new URL("https://api.modrinth.com/v2/search");
+    url.searchParams.set("facets", JSON.stringify(facets));
+    url.searchParams.set("index", MR_SORT[sort] || "follows");
+    url.searchParams.set("limit", String(count));
+    if (opts.query) url.searchParams.set("query", String(opts.query));
+    if (random) {
+      const probe = new URL(url);
+      probe.searchParams.set("limit", "1");
+      const p1 = await fetch(probe);
+      const total = p1.ok ? ((await p1.json()).total_hits || 0) : 0;
+      const span = Math.max(0, Math.min(total, 10000) - count);
+      if (span > 0) url.searchParams.set("offset", String(Math.floor(Math.random() * span)));
+    }
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const hits = (data.hits || []).map(p => ({
+      id: p.project_id, slug: p.slug, title: p.title,
+      description: p.description || "",
+      icon: p.icon_url || null,
+      author: p.author || null,
+      downloads: p.downloads || 0,
+      provider: "modrinth", kind,
+    }));
+    return { success: true, hits: random ? hits.sort(() => Math.random() - 0.5).slice(0, count) : hits };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err), hits: [] };
+  }
+});
+
+// The newest versions Mojang has published, which is what "snapshot news"
+// is: the manifest already says what came out and when, and it is the same
+// manifest every launch reads.
+ipcMain.handle("home:snapshots", async (event, { count = 4, releasesToo = true } = {}) => {
+  try {
+    const manifest = await getVersionManifest();
+    if (!manifest) return { success: false, error: "The version list could not be read", items: [] };
+    const want = Math.max(1, Math.min(20, Number(count) || 4));
+    const items = (manifest.versions || [])
+      .filter(v => releasesToo || v.type !== "release")
+      .slice(0, want)
+      .map(v => ({
+        id: v.id, type: v.type, at: v.releaseTime || v.time || null,
+        latest: v.id === manifest.latest.snapshot || v.id === manifest.latest.release,
+      }));
+    return { success: true, items, latest: manifest.latest };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err), items: [] };
+  }
+});
+
+// What has changed in the launcher: its own releases, which is where the
+// update checker already looks.
+let _launcherNews = null;
+ipcMain.handle("home:news", async (event, { count = 3 } = {}) => {
+  try {
+    const want = Math.max(1, Math.min(20, Number(count) || 3));
+    if (_launcherNews && Date.now() - _launcherNews.at < 15 * 60 * 1000) {
+      return { success: true, items: _launcherNews.items.slice(0, want) };
+    }
+    const res = await fetch("https://api.github.com/repos/tggamesyt/redstone-launcher/releases?per_page=20", {
+      headers: { accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const list = await res.json();
+    const items = (Array.isArray(list) ? list : []).map(r => ({
+      version: r.tag_name || r.name || "",
+      title: r.name || r.tag_name || "",
+      at: r.published_at || r.created_at || null,
+      body: String(r.body || "").slice(0, 4000),
+      url: r.html_url || null,
+      prerelease: !!r.prerelease,
+    }));
+    _launcherNews = { at: Date.now(), items };
+    return { success: true, items: items.slice(0, want) };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err), items: [] };
+  }
+});
+
+// A picture or video for a media segment, copied in so the segment does not
+// go blank when the file is moved.
+ipcMain.handle("home:pickMedia", async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: "Choose a picture or video",
+      filters: [{ name: "Pictures and video", extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif", "mp4", "webm", "ogv"] }],
+      properties: ["openFile"],
+    });
+    if (canceled || !filePaths.length) return { canceled: true };
+    const src = filePaths[0];
+    const st = fs.statSync(src);
+    if (st.size > 256 * 1024 * 1024) return { error: "That file is too big (over 256 MB)." };
+    const dir = path.join(dataDir, "home-media");
+    fs.mkdirSync(dir, { recursive: true });
+    const ext = (path.extname(src) || ".png").toLowerCase();
+    const name = crypto.randomUUID() + ext;
+    fs.copyFileSync(src, path.join(dir, name));
+    return { file: path.join(dir, name), url: pathToFileURL(path.join(dir, name)).href, name: path.basename(src) };
+  } catch (e) { return { error: e.message }; }
+});
 
 // ── Resource packs the launcher makes ───────────────────────────────────────
 //

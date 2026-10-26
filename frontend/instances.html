@@ -2097,10 +2097,27 @@
         <div style="font-size:1.2em;font-weight:bold">${profile.name}</div>
         <div style="font-size:0.9em;color:var(--text-color)">
             <span class="material-icons" style="vertical-align:middle;font-size:16px">sports_esports</span>
-            ${profile.loader} ${profile.version} | Last Played: ${lastPlayed} | Created: ${created}
+            ${profile.loader} ${profile.version} | Last Played: ${lastPlayed} | Created: ${created}<span id="instancePlaytime"></span>
         </div>
     `;
         left.appendChild(info);
+        // How long this instance has been played, which the launcher now
+        // counts from the tracker that already knows when a game starts and
+        // stops. Filled in when it arrives so the header does not wait.
+        ipcRenderer.invoke("playtime:get", { profileId: profile.id }).then((r) => {
+          const span = document.getElementById("instancePlaytime");
+          if (!span || !r || !r.success || !r.total) return;
+          const say = (ms) => {
+            const total = Math.round(ms / 1000);
+            const d = Math.floor(total / 86400), h = Math.floor((total % 86400) / 3600), m = Math.floor((total % 3600) / 60);
+            if (d) return `${d} day${d === 1 ? "" : "s"}, ${h}h`;
+            if (h) return `${h}h ${m}m`;
+            return `${m}m`;
+          };
+          const n = r.sessions || 0;
+          span.textContent = ` | Played: ${say(r.total)}`;
+          span.title = `${n} session${n === 1 ? "" : "s"}`;
+        }).catch(() => { /* the header is fine without it */ });
 
         // RIGHT: BUTTONS
         const right = document.createElement("div");

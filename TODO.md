@@ -269,15 +269,37 @@ Both are relay-side only: the admin window draws whatever panels the relay
 declares, which is what that was built for.
 
 ### H. The main page, editable
-- [ ] **An edit button, bottom left**, opening an editor with the page's
-      sections separated and new items addable.
-- [ ] **Segments**: recent instances, the selected player's render, the Java
-      friends list, random modpacks, random mods, random projects of any type
-      (with the provider, filters, ordering and count settable), launcher
-      news, snapshot news, a custom time display, countdowns, total playtime,
-      and custom media (image, gif or video). Every segment customisable.
-- [ ] **Playtime has to be tracked** per instance first, and shown on the
-      instance's own page as well.
+- [x] **An edit button, bottom left** — *Marks every segment out, gives each
+      one move/settings/remove controls, and offers Add a segment and Start
+      over. There is no fixed layout left in the page: it draws whatever the
+      saved layout says, and until somebody edits it the layout is null, which
+      means "what the launcher has always shown" — so an existing install
+      opens on the page it opened on before.*
+- [x] **Segments**, all of them, each customisable — *recent instances, your
+      player as a render you can turn, the Java friends list (online first,
+      optionally online only), projects from Modrinth or CurseForge with the
+      type, order (including at random), count, search, version, loader and
+      categories all settable, launcher news from the launcher's own releases,
+      snapshot news from the version manifest, a clock (any time zone, 12 or
+      24 hour, seconds, date, size), countdowns, playtime, and a picture, gif
+      or video. The main process declares the types and their options, and the
+      editor's controls are built from that list — so a new segment type is
+      described once there and drawn once in `home.js`, and the editor picks
+      it up without being told about it. A segment that fails to draw says so
+      in its own box rather than taking the page with it; a clock with a
+      nonsense time zone and a countdown with no date both say what is wrong
+      instead of showing NaN; and every timer and 3D viewer a segment owns is
+      disposed of when the page redraws, so nothing is left ticking into an
+      element that has gone.*
+- [x] **Playtime has to be tracked** per instance first, and shown on the
+      instance's own page as well. — *Counted from the tracker that already
+      knows when a game starts and stops, so nothing new is watched. All three
+      exits count it: stopped from the launcher, killed by pid, and — the
+      usual one — quit from inside the game, which the poller notices. A
+      session under ten seconds is a failed launch rather than time played,
+      and one over a fortnight is a lost start time rather than a fortnight at
+      the keyboard; neither is counted. Shown in the instance's header and as
+      a home-page segment, with a per-instance breakdown.*
 
 ### I. Resource-pack tools
 - [x] **A Tools button on an instance's Resourcepacks tab** — *Both
