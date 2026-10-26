@@ -146,6 +146,11 @@
        which one is moving and that it IS being held rather than just
        highlighted. Transparent to the pointer so the row underneath is the
        one being measured against. */
+    /* The row being dragged is lifted out of the list and follows the
+       pointer: its transform is set on every move, so it goes where the
+       cursor is rather than waiting to snap into the next slot. Which means
+       no transition on transform while it is being dragged -- that would
+       leave it trailing behind the pointer. */
     li.profile-item.dragging {
       border-color: var(--base-color);
       box-shadow: 0 14px 30px rgba(0, 0, 0, 0.6);
@@ -154,8 +159,13 @@
       pointer-events: none;
       position: relative;
       z-index: 5;
-      transform: scale(1.03);
-      transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+      will-change: transform;
+      transition: box-shadow 0.16s ease, background 0.16s ease;
+    }
+
+    /* Let go: it slides from wherever the pointer left it into its slot. */
+    li.profile-item.dragging.settling {
+      transition: transform 0.18s ease, box-shadow 0.16s ease, background 0.16s ease;
     }
     /* The moment it is taken hold of, before it has moved anywhere. */
     @keyframes account-grabbed {
@@ -878,9 +888,13 @@
         ])));
         return;
       }
+      // Info on a request's row too: deciding whether to accept somebody is
+      // exactly when you want to see who they are, and their row was the one
+      // place in this list with no way to look.
       if (FR.tab === 'incoming') {
         if (!FR.incoming.length) return empty('No incoming requests.');
         FR.incoming.forEach(f => el.appendChild(frRow(f, [
+          { label: 'Info', run: (p) => openPlayerDetails(p) },
           { label: 'Accept', run: (p) => frAction(p.profileId, 'ADD', `Accepted ${p.name}`, { drop: p.profileId }) },
           { label: 'Deny', run: (p) => frAction(p.profileId, 'REMOVE', `Denied ${p.name}`, { drop: p.profileId }) },
         ])));
@@ -888,6 +902,7 @@
       }
       if (!FR.outgoing.length) return empty('No outgoing requests.');
       FR.outgoing.forEach(f => el.appendChild(frRow(f, [
+        { label: 'Info', run: (p) => openPlayerDetails(p) },
         { label: 'Cancel', run: (p) => frAction(p.profileId, 'REMOVE', `Cancelled the request to ${p.name}`, { drop: p.profileId }) },
       ])));
     }
@@ -1389,6 +1404,8 @@
       _drag = { li, rows, grabY: fromY - rect.top, height: rect.height };
       li.classList.add('dragging', 'grabbed');
       setTimeout(() => li.classList.remove('grabbed'), 240);
+      // Lifted where it stands, before it has been moved anywhere.
+      li.style.transform = 'translateY(0px) scale(1.03)';
       // A click would otherwise land when the drag is let go and change the
       // selected account.
       li.dataset.dragged = '1';
@@ -1398,12 +1415,32 @@
       window.addEventListener('pointercancel', endDrag);
     }
 
+    // Where the dragged row would sit if it were not being dragged. Measured
+    // with its own transform off, so following the pointer does not feed back
+    // into the measurement.
+    function restingTop(li) {
+      const had = li.style.transform;
+      li.style.transform = 'none';
+      const top = li.getBoundingClientRect().top;
+      li.style.transform = had;
+      return top;
+    }
+
+    // Put the row under the pointer, exactly where it was taken hold of.
+    function followPointer(li, pointerY) {
+      const dy = pointerY - _drag.grabY - restingTop(li);
+      li.style.transform = `translateY(${dy}px) scale(1.03)`;
+    }
+
     function onDragMove(e) {
       if (!_drag) return;
       const { li } = _drag;
       const others = accountRows().filter(r => r !== li);
       const y = e.clientY;
-      // Which row is the pointer over the top half of? That is where it goes.
+      // Which row is the pointer over the top half of? That is the slot it
+      // belongs in -- but the row itself goes wherever the pointer is, not
+      // into that slot: it used to sit in the list and jump a place at a
+      // time, so it was never under the cursor that was dragging it.
       let before = null;
       for (const r of others) {
         const b = r.getBoundingClientRect();
@@ -1411,7 +1448,10 @@
       }
       const want = before || null;
       const now = li.nextElementSibling;
-      if (want === now || (want === null && li === playersList.lastElementChild)) return;
+      if (want === now || (want === null && li === playersList.lastElementChild)) {
+        followPointer(li, y);
+        return;
+      }
 
       // Move it, then let the rows that were displaced slide from where they
       // were to where they are now -- first and last positions, so nothing
@@ -1430,6 +1470,10 @@
         r.classList.add('shifting');
         r.style.transform = '';
       }
+      // Its slot moved under it, so the offset that keeps it under the
+      // pointer has changed. Recomputed here, or it would jump by a row's
+      // height at every reorder.
+      followPointer(li, y);
     }
 
     async function endDrag() {
@@ -1439,9 +1483,21 @@
       window.removeEventListener('pointermove', onDragMove);
       window.removeEventListener('pointerup', endDrag);
       window.removeEventListener('pointercancel', endDrag);
-      li.classList.remove('dragging', 'grabbed');
-      // Whatever was mid-slide is where it belongs now.
-      for (const r of accountRows()) { r.classList.remove('shifting'); r.style.transform = ''; }
+      li.classList.remove('grabbed');
+      // Let go: it slides from wherever the pointer left it into its slot,
+      // rather than blinking into place.
+      for (const r of accountRows()) { if (r !== li) { r.classList.remove('shifting'); r.style.transform = ''; } }
+      li.classList.add('settling');
+      li.style.transform = '';
+      const settled = () => {
+        li.classList.remove('dragging', 'settling');
+        li.style.transform = '';
+        li.style.willChange = '';
+      };
+      li.addEventListener('transitionend', settled, { once: true });
+      // A transform that was already zero fires no transition, so it would
+      // never be cleaned up on that path.
+      setTimeout(settled, 240);
       document.body.style.userSelect = '';
       setTimeout(() => { delete li.dataset.dragged; }, 0);
       const order = accountRows().map(r => r.dataset.playerId).filter(Boolean);

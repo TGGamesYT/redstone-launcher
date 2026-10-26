@@ -202,6 +202,13 @@ try { applyTheme(cachedTheme); } catch (e) { console.warn('cached theme failed t
 
 ipcRenderer.invoke('get-settings').then(settings => {
   try { applyTheme(settings); } catch (e) { console.warn('theme failed to apply', e); }
+  // The real settings may differ from the cache the boot script used -- a
+  // custom style sheet edited in another window, say.
+  try {
+    if (window.LauncherCustomCss) {
+      window.LauncherCustomCss.apply(settings.devMode ? (settings.customCss || '') : '');
+    }
+  } catch (e) { console.warn('custom css failed to apply', e); }
   try { localStorage.setItem('launcherTheme', JSON.stringify(settings)); } catch { /* ignore */ }
 }).catch(e => console.warn('get-settings failed', e));
 

@@ -732,6 +732,9 @@ const DEFAULT_SETTINGS = {
     block: { id: null, name: null, url: null, size: 64 },
   },
   predefinedThemeSync: false,
+  // A style sheet of the user's own, applied to every page when developer
+  // mode is on.
+  customCss: "",
   syncOptions: false,
   syncServers: false,
 };

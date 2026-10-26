@@ -74,4 +74,24 @@
     set('--app-bg-render', render);
     root.classList.add('custom-bg');
   }
+
+  // ── a style sheet of the user's own ──
+  // Last in the document, so it beats the page's own styles and can move or
+  // restyle anything the theme settings do not reach. Only with developer
+  // mode on: a page that will not render because of a typo in here is much
+  // harder to explain to somebody who does not know the setting exists.
+  const style = document.createElement('style');
+  style.id = 'launcher-custom-css';
+  const apply = (text) => {
+    style.textContent = String(text || '');
+    // Appended to <body> rather than <head> so it comes after every stylesheet
+    // the page loads, whenever this script runs.
+    const host = document.body || document.documentElement;
+    if (style.parentNode !== host) host.appendChild(style);
+  };
+  window.LauncherCustomCss = { apply, element: style };
+  if (cached.devMode && cached.customCss) {
+    if (document.body) apply(cached.customCss);
+    else document.addEventListener('DOMContentLoaded', () => apply(cached.customCss), { once: true });
+  }
 })();

@@ -219,6 +219,81 @@
       text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
     }
 
+    /* ── What a setting does, on hover ──
+       There used to be a paragraph above each group explaining several
+       settings at once, which made the page a wall of text you had to read
+       to find the one switch you came for. The explanation belongs to the
+       switch now, and only shows when you ask for it.
+       Positioned by script rather than as a child, so a tooltip is never
+       clipped by a scrolling section. */
+    #setting-tip {
+      position: fixed;
+      z-index: 9000;
+      max-width: 320px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.45;
+      background: var(--very-dark);
+      color: var(--text-color);
+      border: 1px solid var(--border-dark);
+      border-radius: var(--border-radius);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(3px);
+      transition: opacity 0.12s ease, transform 0.12s ease;
+    }
+
+    #setting-tip.on {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* A setting with an explanation says so, faintly. */
+    [data-tip] { position: relative; }
+
+    label[data-tip]::after {
+      content: "?";
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 13px;
+      height: 13px;
+      margin-left: 6px;
+      border-radius: 50%;
+      border: 1px solid currentColor;
+      font-size: 9px;
+      opacity: 0.4;
+      flex: 0 0 auto;
+    }
+
+    label[data-tip]:hover::after { opacity: 0.85; }
+
+    /* ── Custom CSS, with developer mode on ── */
+    #custom-css-wrap { display: none; }
+
+    #custom-css {
+      width: 100%;
+      max-width: 760px;
+      min-height: 220px;
+      box-sizing: border-box;
+      font-family: "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre;
+      resize: vertical;
+    }
+
+    .ccss-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    #custom-css-state { font-size: 12px; opacity: 0.75; }
+
     /* ── Saving and sharing a theme ── */
     .theme-actions {
       display: flex;
@@ -486,38 +561,26 @@
     <div class="section active settings-scrolly" id="general" data-fit-height>
       <h3 style="margin-top: 30px;">General</h3>
       <div style="margin-bottom: 30px;">
-        <label class="setting-toggle"><input type="checkbox" id="auto-updates"> Enable Auto Launcher Updates</label>
-        <label class="setting-toggle"><input type="checkbox" id="discord-presence"> Enable Discord Presence</label>
-        <label class="setting-toggle"><input type="checkbox" id="grid-view"> Enable Grid View</label>
+        <label class="setting-toggle" data-tip="Downloads and installs a new version of the launcher itself when one is out."><input type="checkbox" id="auto-updates"> Auto launcher updates</label>
+        <label class="setting-toggle" data-tip="Shows what you are playing on your Discord profile."><input type="checkbox" id="discord-presence"> Discord presence</label>
+        <label class="setting-toggle" data-tip="Lays the instances out as tiles instead of a list."><input type="checkbox" id="grid-view"> Grid view</label>
       </div>
 
       <h3>Syncing</h3>
-      <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:620px;">
-        Share one copy between your instances, so a keybind or a saved server set up in
-        one is there in all of them. Instances with servers of their own — a Modrinth
-        server instance, a modpack that ships a server list — keep those and get the
-        shared ones alongside. Any instance can opt out in its own settings.
-        Sharing skins shows one library to every account signed in here; capes
-        stay per-account, since only the account granted one may wear it.
-      </p>
       <div style="margin-bottom: 12px;">
-        <label class="setting-toggle"><input type="checkbox" id="sync-options"> Sync game options</label>
-        <label class="setting-toggle"><input type="checkbox" id="sync-servers"> Sync multiplayer servers</label>
+        <label class="setting-toggle" data-tip="One copy of your keybinds and video settings for every instance, so a change in one is there in all of them. Any instance can opt out in its own settings."><input type="checkbox" id="sync-options"> Sync game options</label>
+        <label class="setting-toggle" data-tip="One saved server list for every instance. An instance with servers of its own — a Modrinth server, a modpack that ships a list — keeps those and gets the shared ones alongside."><input type="checkbox" id="sync-servers"> Sync multiplayer servers</label>
       </div>
 
       <div style="margin-bottom: 50px;">
-        <label class="setting-toggle"><input type="checkbox" id="pool-skins"> Share skins between accounts</label>
+        <label class="setting-toggle" data-tip="One skin library for every account signed in here. Capes stay per-account, since only the account granted one may wear it."><input type="checkbox" id="pool-skins"> Share skins between accounts</label>
         <div id="poolSkinsState" style="font-size:12px;opacity:0.75;margin-top:6px;"></div>
       </div>
 
       <h3>Getting started</h3>
-      <p style="opacity:0.75;font-size:12px;margin:0 0 10px;max-width:620px;">
-        The tour that runs the first time you open the launcher, and the importer
-        for instances from other launchers. Both can be run again whenever you like.
-      </p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:50px;">
-        <button id="runTourBtn">Run the tour again</button>
-        <button id="runImportBtn">Import instances, accounts &amp; skins…</button>
+        <button id="runTourBtn" data-tip="The tour that runs the first time you open the launcher.">Run the tour again</button>
+        <button id="runImportBtn" data-tip="Brings in instances, accounts and skins from other launchers on this computer.">Import instances, accounts &amp; skins…</button>
       </div>
     </div>
 
@@ -616,7 +679,7 @@
         <button data-color="third">Reset</button>
       </div>
       </div>
-      <label class="setting-toggle"><input type="checkbox" id="auto-third" checked> Automatic Third Color</label>
+      <label class="setting-toggle" data-tip="Works the middle colour out from the base and the secondary. Turn it off to pick one yourself."><input type="checkbox" id="auto-third" checked> Automatic third colour</label>
       <br>
       <label style="margin-top: 40px;">Font</label>
       <select id="font-selector" class="narrow-select">
@@ -703,7 +766,7 @@
 
       <div id="bg-preview" class="bg-preview"></div>
 
-      <label class="setting-toggle" style="margin-top:14px;"><input type="checkbox" id="predefined-theme-sync"> Match the background to the theme</label>
+      <label class="setting-toggle" style="margin-top:14px;" data-tip="Picking a theme, or changing its secondary colour, sets the background colours to a shade of it. Which background mode is in use is left alone."><input type="checkbox" id="predefined-theme-sync"> Match the background to the theme</label>
 
     </div>
 
@@ -723,7 +786,25 @@
       <div class="slider-value" id="ram-servers-value"></div>
       <br><br><br>
       <h3>Developer</h3>
-      <label class="setting-toggle"><input type="checkbox" id="dev-mode"> Developer mode (enables DevTools with F12 / Ctrl+Shift+I, and dev-mod tools)</label>
+      <label class="setting-toggle" data-tip="Opens DevTools with F12 or Ctrl+Shift+I, and turns on the dev-mod tools and custom CSS."><input type="checkbox" id="dev-mode"> Developer mode</label>
+
+      <!-- Only with developer mode on: style sheet of your own, applied to
+           every page, so anything the theme settings do not reach can be
+           moved or restyled by hand. -->
+      <div id="custom-css-wrap">
+        <h4 style="margin-top:22px;">Custom CSS</h4>
+        <div class="bg-hint" style="max-width:760px;margin-bottom:8px;">
+          Applied to every page in the launcher, after its own styles — so you can move,
+          hide or restyle anything the settings above do not reach. Saved as you go.
+        </div>
+        <textarea id="custom-css" spellcheck="false"
+          placeholder="/* e.g. */&#10;.sidebar { width: 90px; }&#10;h1 { letter-spacing: 0.04em; }"></textarea>
+        <div class="ccss-row">
+          <button type="button" id="custom-css-apply">Apply now</button>
+          <button type="button" id="custom-css-clear">Clear</button>
+          <span id="custom-css-state"></span>
+        </div>
+      </div>
     </div>
 
     <!-- === Suggestions === -->
@@ -1243,6 +1324,78 @@
         const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
         localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
       });
+
+      // ── What a setting does, on hover ──
+      //
+      // Each group used to carry a paragraph above it explaining several
+      // settings at once, so the page was a wall of text you had to read to
+      // find the one switch you came for. The explanation belongs to the
+      // switch, and is shown when it is asked for.
+      (function settingTips() {
+        const tip = document.createElement('div');
+        tip.id = 'setting-tip';
+        document.body.appendChild(tip);
+        let over = null;
+        const place = (el) => {
+          const r = el.getBoundingClientRect();
+          tip.style.visibility = 'hidden';
+          tip.classList.add('on');
+          const t = tip.getBoundingClientRect();
+          // Below by default, above when there is no room -- a tooltip off
+          // the bottom of the window is no tooltip.
+          const below = r.bottom + 8 + t.height < window.innerHeight;
+          tip.style.top = (below ? r.bottom + 8 : r.top - t.height - 8) + 'px';
+          tip.style.left = Math.max(8, Math.min(r.left, window.innerWidth - t.width - 8)) + 'px';
+          tip.style.visibility = '';
+        };
+        const show = (el) => {
+          over = el;
+          tip.textContent = el.dataset.tip;
+          place(el);
+        };
+        const hide = () => { over = null; tip.classList.remove('on'); };
+        document.addEventListener('mouseover', (e) => {
+          const el = e.target.closest && e.target.closest('[data-tip]');
+          if (!el) { if (over) hide(); return; }
+          if (el !== over) show(el);
+        });
+        document.addEventListener('mouseout', (e) => {
+          if (over && e.target.closest && e.target.closest('[data-tip]') === over
+            && !over.contains(e.relatedTarget)) hide();
+        });
+        // A section that scrolls under the cursor would leave it behind.
+        window.addEventListener('scroll', hide, true);
+      })();
+
+      // ── Custom CSS ──
+      //
+      // Only with developer mode on. Applied to every page, after its own
+      // styles, so it can move or restyle anything the settings do not
+      // reach. Kept in the settings so every window picks it up.
+      const cssWrap = document.getElementById('custom-css-wrap');
+      const cssBox = document.getElementById('custom-css');
+      const cssState = document.getElementById('custom-css-state');
+      cssBox.value = getSetting('customCss', '') || '';
+      // 'block', not '': the stylesheet hides this panel by default, so
+      // clearing the inline style would fall back to that and the panel
+      // could never be shown at all.
+      const showCssPanel = (on) => { cssWrap.style.display = on ? 'block' : 'none'; };
+      const saveCss = (text) => {
+        ipcRenderer.send('save-settings', { customCss: text });
+        const cachedNow = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+        localStorage.setItem('launcherTheme', JSON.stringify({ ...cachedNow, customCss: text }));
+        if (window.LauncherCustomCss) window.LauncherCustomCss.apply(text);
+        cssState.textContent = text.trim() ? `${text.length} characters, applied` : 'nothing of your own';
+      };
+      let cssTimer = null;
+      cssBox.addEventListener('input', () => {
+        clearTimeout(cssTimer);
+        cssState.textContent = 'saving…';
+        cssTimer = setTimeout(() => saveCss(cssBox.value), 400);
+      });
+      document.getElementById('custom-css-apply').addEventListener('click', () => saveCss(cssBox.value));
+      document.getElementById('custom-css-clear').addEventListener('click', () => { cssBox.value = ''; saveCss(''); });
+      cssState.textContent = cssBox.value.trim() ? `${cssBox.value.length} characters, applied` : 'nothing of your own';
 
       // ── Themes of the user's own ──
       //
@@ -1875,7 +2028,19 @@
       const devMode = document.getElementById('dev-mode');
       if (devMode) {
         devMode.checked = !!getSetting('devMode');
-        devMode.addEventListener('change', () => ipcRenderer.send('save-settings', { devMode: devMode.checked }));
+        showCssPanel(devMode.checked);
+        devMode.addEventListener('change', () => {
+          ipcRenderer.send('save-settings', { devMode: devMode.checked });
+          // Custom CSS is a developer-mode thing, so the panel comes and goes
+          // with it. What was written stays written; it is only applied while
+          // developer mode is on.
+          showCssPanel(devMode.checked);
+          const cachedNow = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+          localStorage.setItem('launcherTheme', JSON.stringify({ ...cachedNow, devMode: devMode.checked }));
+          if (window.LauncherCustomCss) {
+            window.LauncherCustomCss.apply(devMode.checked ? (cssBox.value || '') : '');
+          }
+        });
       }
 
       const predefinedThemeSync = document.getElementById('predefined-theme-sync');

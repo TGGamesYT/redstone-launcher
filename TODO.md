@@ -209,15 +209,39 @@ change — the version dropdown included.
       "author unverified" rather than being trusted.*
 
 ### E. Settings
-- [ ] **Drop the long inline descriptions.** A short description on hover
-      instead, and the dev-mode toggle loses its "(...)" part.
-- [ ] **Custom CSS**, when developer mode is on, able to rearrange elements.
+- [x] **Drop the long inline descriptions.** A short description on hover
+      instead, and the dev-mode toggle loses its "(...)" part. — *Each group
+      carried a paragraph above it explaining several settings at once, so
+      the page was a wall of text to read through to find the one switch you
+      came for. The explanation belongs to the switch: a `data-tip`, a faint
+      `?` on the label, and a tooltip positioned by script so it is never
+      clipped by a scrolling section and flips above a setting near the
+      bottom of the window. The dev-mode toggle's bracketed sentence became
+      its tooltip.*
+- [x] **Custom CSS**, when developer mode is on, able to rearrange elements. —
+      *A textarea in the Developer section, saved as you type, applied to
+      every page from the end of `<body>` so it beats the page's own styles.
+      Only applied while developer mode is on — a page that will not render
+      because of a typo somebody forgot about is much harder to explain
+      otherwise. (The panel's own `display` had to be set to `block` rather
+      than `''`: the stylesheet hides it by default, so clearing the inline
+      style fell back to that and it could never be shown.)*
 
 ### F. Accounts
-- [ ] **A dragged account should follow the pointer**, not sit still until the
-      row it would displace is reached.
-- [ ] **An info button on incoming and outgoing requests' players**, as the
-      friends list has.
+- [x] **A dragged account should follow the pointer**, not sit still until the
+      row it would displace is reached. — *It stayed in the list's flow, so it
+      only ever moved when the DOM reordered: a jump of one row's height at a
+      time, never under the cursor dragging it. Its transform is set on every
+      pointer move now — measured against where the row would rest with its
+      own transform off, so following does not feed back into the
+      measurement, and recomputed after each reorder so it does not jump when
+      its slot moves under it. No transition on transform while dragging, or
+      it would trail behind the pointer; letting go turns one back on so it
+      slides into its slot.*
+- [x] **An info button on incoming and outgoing requests' players**, as the
+      friends list has. — *Deciding whether to accept somebody is exactly when
+      you want to see who they are, and a request's row was the one place in
+      the list with no way to look.*
 
 ### G. The admin window
 - [ ] **A Users panel**: everyone with a record of using the launcher and when
