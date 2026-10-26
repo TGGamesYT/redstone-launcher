@@ -3774,6 +3774,9 @@ ipcMain.handle("remod:open", async (event, { type, id, tab, filename }) => {
       format: (found && found.id) || null,
       manifest: (found && found.file) || null,
       fields: info.fields, supports: info.supports,
+      // What it says it needs: dependencies, incompatibilities and version
+      // ranges, in one shape whatever manifest they came out of.
+      requires: remod.readRequirements(files, found),
       icon: icon ? icon.dataUrl : null, iconPath: icon ? icon.path : null,
     };
   } catch (e) { return { error: e.message }; }
@@ -3797,14 +3800,22 @@ ipcMain.handle("remod:set-icon", async (event, { ticket, dataUrl }) => {
 
 // Write the fields back, re-zip in the same structure, and put the archive
 // where it belongs — under a new name if one was asked for.
-ipcMain.handle("remod:save", async (event, { ticket, fields, filename }) => {
+ipcMain.handle("remod:save", async (event, { ticket, fields, requires, filename }) => {
   const s = remodSessions.get(String(ticket));
   if (!s) return { error: "That edit is no longer open" };
   const files = path.join(s.dir, "files");
+  let notes = [];
   try {
     if (fields && Object.keys(fields).length) {
       const r = remod.writeFields(files, s.format, fields);
       if (r && r.error) return r;
+    }
+    if (requires) {
+      const r = remod.writeRequirements(files, s.format, requires);
+      if (r && r.error) return r;
+      // Not every manifest can say every kind of requirement, and what had to
+      // be written differently is worth saying rather than quietly doing.
+      notes = (r && r.notes) || [];
     }
     // A rename keeps whatever .disabled suffix the file had: that suffix is
     // how the launcher stores "switched off", not part of the name.
@@ -3830,7 +3841,7 @@ ipcMain.handle("remod:save", async (event, { ticket, fields, filename }) => {
     }
     fs.rmSync(s.dir, { recursive: true, force: true });
     remodSessions.delete(String(ticket));
-    return { success: true, filename: finalName };
+    return { success: true, filename: finalName, notes };
   } catch (e) { return { error: e.message }; }
 });
 

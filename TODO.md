@@ -123,8 +123,21 @@ change — the version dropdown included.
       that came out of git without its executable bit.*
 
 ### C. Remod
-- [ ] **Edit what the mod declares it NEEDS** too: dependencies,
-      incompatibilities, version requirements.
+- [x] **Edit what the mod declares it NEEDS** too: dependencies,
+      incompatibilities, version requirements. — *Every manifest states this
+      differently — Fabric has five objects keyed by mod id, Forge a
+      `[[dependencies.<modid>]]` table apiece, a plugin.yml three lists — so
+      they are read into one shape (`id`, `kind`, `versions`) and written back
+      into whichever the archive speaks. Five kinds: requires, optional,
+      recommends, breaks with, conflicts with, and only the ones a format can
+      actually state are offered. Where it cannot say exactly what was asked
+      (Forge has only mandatory true/false, mcmod.info only "required", a
+      plugin.yml has nowhere for a version) the nearest thing is written and
+      the dialog says so rather than dropping it quietly. Forge's and
+      NeoForge's `loaderVersion` is editable as its own field, and the Minecraft
+      range is simply a dependency row. The TOML is still edited in place, so
+      the author's comments and ordering survive everywhere except inside the
+      dependency tables, which are rewritten.*
 
 ### D. Themes and the background
 - [ ] **Replace the gradient settings with a Background section**, which can

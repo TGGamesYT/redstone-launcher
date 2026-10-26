@@ -115,6 +115,287 @@ function tomlGet(text, key) {
   return single ? single[2] : "";
 }
 
+// The root of a mods.toml — everything before the first table header. That is
+// where `loaderVersion`, `license` and `issueTrackerURL` live, and tomlSet
+// deliberately cannot reach it because it works inside [[mods]].
+function tomlRootEnd(text) {
+  const m = /\n\s*\[/.exec(text);
+  return m ? m.index : text.length;
+}
+function tomlGetRoot(text, key) {
+  const head = text.slice(0, tomlRootEnd(text));
+  const m = new RegExp(`(?:^|\\n)\\s*${key}\\s*=\\s*(["'])([^\\n]*?)\\1`).exec(head);
+  return m ? m[2] : "";
+}
+function tomlSetRoot(text, key, value) {
+  const end = tomlRootEnd(text);
+  const head = text.slice(0, end);
+  const line = `${key}=${JSON.stringify(str(value))}`;
+  const re = new RegExp(`(^|\\n)(\\s*)${key}\\s*=\\s*(["'])[^\\n]*?\\3`);
+  if (re.test(head)) return head.replace(re, `$1$2${line}`) + text.slice(end);
+  return head.replace(/\n*$/, "\n") + line + "\n" + text.slice(end);
+}
+
+// ── What a mod says it needs ────────────────────────────────────────────────
+//
+// Every manifest states this differently -- Fabric has five objects keyed by
+// mod id, Forge has a [[dependencies.<modid>]] table apiece, a plugin.yml has
+// three lists -- so they are read into one shape and written back out into
+// whichever the format actually speaks:
+//
+//   { id, kind, versions, ordering, side }
+//
+// `kind` is one of required / optional / recommended / breaks / conflicts.
+// A format with nowhere to put a kind gets the nearest thing it has, which is
+// said out loud rather than silently dropped.
+const DEP_KINDS = ["required", "optional", "recommended", "breaks", "conflicts"];
+// Which key each kind lives under in a Fabric manifest.
+const FABRIC_DEP_KEYS = {
+  required: "depends", recommends: "recommends", recommended: "recommends",
+  optional: "suggests", breaks: "breaks", conflicts: "conflicts",
+};
+const FABRIC_KEY_KINDS = { depends: "required", recommends: "recommended", suggests: "optional", breaks: "breaks", conflicts: "conflicts" };
+// NeoForge names them; Forge only has mandatory true/false.
+const NEO_TYPES = { required: "required", optional: "optional", recommended: "optional", breaks: "incompatible", conflicts: "discouraged" };
+const NEO_TYPE_KINDS = { required: "required", optional: "optional", incompatible: "breaks", discouraged: "conflicts" };
+
+const depKind = (k) => (DEP_KINDS.includes(k) ? k : "required");
+// A version range as text, from whichever shape the manifest holds it in.
+const rangeText = (v) => (Array.isArray(v) ? v.join(" || ") : str(v));
+// And back: Fabric accepts a single string or a list, and a `||` list is
+// clearer kept as a list.
+const rangeValue = (t) => {
+  const s = str(t).trim();
+  if (!s) return "*";
+  const parts = s.split("||").map(x => x.trim()).filter(Boolean);
+  return parts.length > 1 ? parts : s;
+};
+
+// Which modId the [[mods]] block declares, needed to attach Forge's
+// dependency tables to the right mod.
+const tomlModId = (text) => tomlGet(text, "modId");
+
+// Every [[dependencies.<who>]] block in a mods.toml, with where it sits.
+function tomlDepBlocks(text) {
+  const out = [];
+  const re = /(^|\n)[ \t]*\[\[dependencies\.([^\]]+)\]\][ \t]*/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const start = m.index + (m[1] ? 1 : 0);
+    const after = text.slice(m.index + m[0].length);
+    const next = after.search(/\n[ \t]*\[/);
+    out.push({
+      who: m[2].replace(/^["']|["']$/g, ""),
+      start,
+      end: next < 0 ? text.length : m.index + m[0].length + next + 1,
+    });
+  }
+  return out;
+}
+const tomlBlockGet = (body, key) => {
+  const m = new RegExp(`(?:^|\\n)\\s*${key}\\s*=\\s*(["'])([^\\n]*?)\\1`).exec(body);
+  if (m) return m[2];
+  const bare = new RegExp(`(?:^|\\n)\\s*${key}\\s*=\\s*([^\\s"'][^\\n]*)`).exec(body);
+  return bare ? bare[1].trim() : "";
+};
+
+export function readRequirements(dir, format) {
+  const f = format || detectFormat(dir);
+  const none = { supports: false, deps: [], loaderVersion: null, kinds: [] };
+  if (!f) return none;
+  try {
+    if (f.id === "fabric") {
+      const j = parseJson(readText(dir, f.file)) || {};
+      const deps = [];
+      for (const [key, kind] of Object.entries(FABRIC_KEY_KINDS)) {
+        const o = j[key];
+        if (!o || typeof o !== "object") continue;
+        for (const [id, v] of Object.entries(o)) deps.push({ id, kind, versions: rangeText(v) });
+      }
+      return { supports: true, deps, loaderVersion: null, kinds: DEP_KINDS };
+    }
+    if (f.id === "quilt") {
+      const q = (parseJson(readText(dir, f.file)) || {}).quilt_loader || {};
+      const read = (v, kind) => (Array.isArray(v) ? v : []).map(d => (typeof d === "string"
+        ? { id: d, kind, versions: "*" }
+        : { id: str(d.id), kind, versions: rangeText(d.versions), optional: !!d.optional }));
+      const deps = [
+        ...read(q.depends, "required").map(d => (d.optional ? { ...d, kind: "optional" } : d)),
+        ...read(q.breaks, "breaks"),
+      ].map(({ optional, ...d }) => d);
+      return { supports: true, deps, loaderVersion: null, kinds: ["required", "optional", "breaks"] };
+    }
+    if (f.id === "forge" || f.id === "neoforge") {
+      const t = readText(dir, f.file) || "";
+      const mine = tomlModId(t);
+      const deps = [];
+      for (const b of tomlDepBlocks(t)) {
+        // A multi-mod jar can declare dependencies for each of its mods; only
+        // the ones belonging to the mod being edited are shown.
+        if (mine && b.who !== mine) continue;
+        const body = t.slice(b.start, b.end);
+        const type = tomlBlockGet(body, "type");
+        const mandatory = tomlBlockGet(body, "mandatory");
+        const kind = type
+          ? (NEO_TYPE_KINDS[type.toLowerCase()] || "required")
+          : (/^false$/i.test(mandatory) ? "optional" : "required");
+        deps.push({
+          id: tomlBlockGet(body, "modId"), kind,
+          versions: tomlBlockGet(body, "versionRange"),
+          ordering: tomlBlockGet(body, "ordering") || "",
+          side: tomlBlockGet(body, "side") || "",
+        });
+      }
+      return {
+        supports: true, deps, loaderVersion: tomlGetRoot(t, "loaderVersion"),
+        kinds: f.id === "neoforge" ? DEP_KINDS.filter(k => k !== "recommended") : ["required", "optional"],
+        ordering: true,
+      };
+    }
+    if (f.id === "mcmod") {
+      const a = parseJson(readText(dir, f.file));
+      const m = (Array.isArray(a) ? a[0] : (a && a.modList && a.modList[0])) || {};
+      const list = [...(m.requiredMods || []), ...(m.dependencies || [])];
+      // A 1.7–1.12 dependency is one string: "modid@[1.0,)".
+      const deps = [...new Set(list.map(String))].map(s => {
+        const at = s.indexOf("@");
+        return at < 0 ? { id: s, kind: "required", versions: "" } : { id: s.slice(0, at), kind: "required", versions: s.slice(at + 1) };
+      });
+      return { supports: true, deps, loaderVersion: null, kinds: ["required"] };
+    }
+    if (f.id === "plugin" || f.id === "paper") {
+      const t = readText(dir, f.file) || "";
+      // depend/softdepend are inline `[a, b]` or a block list of `- a` lines.
+      const listOf = (key) => {
+        const inline = new RegExp(`^${key}:\\s*\\[(.*)\\]\\s*$`, "m").exec(t);
+        if (inline) return inline[1].split(",").map(s => s.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+        const block = new RegExp(`^${key}:\\s*\\n((?:\\s*-\\s*.*\\n?)+)`, "m").exec(t);
+        if (!block) return [];
+        return block[1].split(/\n/).map(l => l.replace(/^\s*-\s*/, "").trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+      };
+      const deps = [
+        ...listOf("depend").map(id => ({ id, kind: "required", versions: "" })),
+        ...listOf("softdepend").map(id => ({ id, kind: "optional", versions: "" })),
+      ];
+      return { supports: true, deps, loaderVersion: null, kinds: ["required", "optional"], versionless: true };
+    }
+  } catch { /* an unreadable manifest declares nothing we can edit */ }
+  return none;
+}
+
+export function writeRequirements(dir, format, { deps, loaderVersion } = {}) {
+  const f = format || detectFormat(dir);
+  if (!f) return { error: "Nothing in this file declares what it needs" };
+  const rows = (deps || []).map(d => ({
+    id: str(d.id).trim(), kind: depKind(d.kind), versions: str(d.versions).trim(),
+    ordering: str(d.ordering || "").trim(), side: str(d.side || "").trim(),
+  })).filter(d => d.id);
+  const notes = [];
+  try {
+    if (f.id === "fabric") {
+      const j = parseJson(readText(dir, f.file)) || {};
+      for (const key of Object.keys(FABRIC_KEY_KINDS)) delete j[key];
+      for (const d of rows) {
+        const key = FABRIC_DEP_KEYS[d.kind] || "depends";
+        j[key] = j[key] || {};
+        j[key][d.id] = rangeValue(d.versions);
+      }
+      writeText(dir, f.file, JSON.stringify(j, null, 2));
+    } else if (f.id === "quilt") {
+      const j = parseJson(readText(dir, f.file)) || {};
+      j.quilt_loader = j.quilt_loader || {};
+      const q = j.quilt_loader;
+      q.depends = [];
+      q.breaks = [];
+      for (const d of rows) {
+        const entry = { id: d.id, versions: rangeValue(d.versions) };
+        if (d.kind === "breaks" || d.kind === "conflicts") {
+          if (d.kind === "conflicts") notes.push(`Quilt has no "conflicts"; ${d.id} is written as breaks`);
+          q.breaks.push(entry);
+        } else {
+          if (d.kind === "optional" || d.kind === "recommended") entry.optional = true;
+          if (d.kind === "recommended") notes.push(`Quilt has no "recommended"; ${d.id} is written as an optional dependency`);
+          q.depends.push(entry);
+        }
+      }
+      if (!q.depends.length) delete q.depends;
+      if (!q.breaks.length) delete q.breaks;
+      writeText(dir, f.file, JSON.stringify(j, null, 2));
+    } else if (f.id === "forge" || f.id === "neoforge") {
+      let t = readText(dir, f.file) || "";
+      if (loaderVersion != null && str(loaderVersion)) t = tomlSetRoot(t, "loaderVersion", loaderVersion);
+      const mine = tomlModId(t) || "";
+      // Cut our own dependency tables out, back to front so the earlier
+      // offsets stay good, and write the new set at the end. Comments inside
+      // a dependency table do not survive this; comments everywhere else do,
+      // which is why the rest of the file is still edited in place.
+      const blocks = tomlDepBlocks(t).filter(b => !mine || b.who === mine);
+      for (const b of blocks.slice().reverse()) t = t.slice(0, b.start) + t.slice(b.end);
+      t = t.replace(/\n{3,}$/, "\n\n");
+      const who = mine || "mod";
+      const out = [];
+      for (const d of rows) {
+        const lines = [`[[dependencies.${who}]]`, `modId=${JSON.stringify(d.id)}`];
+        if (f.id === "neoforge") {
+          lines.push(`type=${JSON.stringify(NEO_TYPES[d.kind] || "required")}`);
+        } else {
+          // Forge only knows mandatory or not.
+          const mandatory = d.kind === "required";
+          if (d.kind === "breaks" || d.kind === "conflicts") {
+            notes.push(`Forge cannot say "${d.kind}"; ${d.id} is written as an optional dependency, which is the closest it has`);
+          } else if (d.kind === "recommended") {
+            notes.push(`Forge has no "recommended"; ${d.id} is written as optional`);
+          }
+          lines.push(`mandatory=${mandatory ? "true" : "false"}`);
+        }
+        lines.push(`versionRange=${JSON.stringify(d.versions || "[0,)")}`);
+        lines.push(`ordering=${JSON.stringify(d.ordering || "NONE")}`);
+        lines.push(`side=${JSON.stringify(d.side || "BOTH")}`);
+        out.push(lines.join("\n"));
+      }
+      if (out.length) t = t.replace(/\n*$/, "\n\n") + out.join("\n\n") + "\n";
+      writeText(dir, f.file, t);
+    } else if (f.id === "mcmod") {
+      const a = parseJson(readText(dir, f.file));
+      const list = Array.isArray(a) ? a : (a && Array.isArray(a.modList) ? a.modList : null);
+      if (!list || !list.length) return { error: "mcmod.info has no mod in it" };
+      const m = list[0];
+      const req = [], all = [];
+      for (const d of rows) {
+        if (d.kind !== "required") { notes.push(`mcmod.info can only say "required"; ${d.id} was left out`); continue; }
+        const s = d.versions ? `${d.id}@${d.versions}` : d.id;
+        req.push(s); all.push(s);
+      }
+      m.requiredMods = req;
+      m.dependencies = all;
+      writeText(dir, f.file, JSON.stringify(Array.isArray(a) ? list : a, null, 2));
+    } else if (f.id === "plugin" || f.id === "paper") {
+      let t = readText(dir, f.file) || "";
+      const hard = [], soft = [];
+      for (const d of rows) {
+        if (d.versions) notes.push(`A plugin.yml cannot state a version range; ${d.id}'s was dropped`);
+        if (d.kind === "required") hard.push(d.id);
+        else if (d.kind === "optional" || d.kind === "recommended") soft.push(d.id);
+        else notes.push(`A plugin.yml cannot say "${d.kind}"; ${d.id} was left out`);
+      }
+      const setList = (text, key, items) => {
+        const line = items.length ? `${key}: [${items.map(i => JSON.stringify(i)).join(", ")}]` : null;
+        const inline = new RegExp(`^${key}:\\s*\\[.*\\]\\s*$`, "m");
+        const block = new RegExp(`^${key}:\\s*\\n(?:\\s*-\\s*.*\\n?)+`, "m");
+        if (inline.test(text)) return line ? text.replace(inline, line) : text.replace(inline, "").replace(/\n{3,}/g, "\n\n");
+        if (block.test(text)) return line ? text.replace(block, line + "\n") : text.replace(block, "");
+        return line ? text.replace(/\n*$/, "\n") + line + "\n" : text;
+      };
+      t = setList(t, "depend", hard);
+      t = setList(t, "softdepend", soft);
+      writeText(dir, f.file, t);
+    } else {
+      return { error: `A ${f.id} file does not declare dependencies` };
+    }
+    return { success: true, notes };
+  } catch (e) { return { error: e.message }; }
+}
+
 // ── YAML, edited as text, one `key: value` line at a time ───────────────────
 function ymlGet(text, key) {
   const m = new RegExp(`^${key}:\\s*(.*)$`, "m").exec(text);
@@ -344,4 +625,7 @@ export function repack(dir, archive, { dirs = [] } = {}) {
   return { success: true };
 }
 
-export default { detectFormat, readFields, writeFields, iconPath, readIcon, writeIcon, unpack, repack };
+export default {
+  detectFormat, readFields, writeFields, readRequirements, writeRequirements,
+  iconPath, readIcon, writeIcon, unpack, repack,
+};
