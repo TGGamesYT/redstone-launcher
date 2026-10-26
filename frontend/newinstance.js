@@ -26,9 +26,18 @@
     const s = document.createElement('style');
     s.id = 'ni-style';
     s.textContent = `
-      .ni-overlay { position:fixed; inset:38px 0 0 70px; display:flex; align-items:center; justify-content:center;
+      /* The darkening and the blur live on their own element, NOT on each
+         step. Each step replaces the one before it, so when they carried the
+         blur themselves it went away with the step that was leaving and came
+         back with the one arriving -- the page behind visibly snapped sharp
+         and then blurred again half a second later, both going forward to the
+         loader and coming back to the versions. The backdrop stays put for as
+         long as any step is open and only the card inside changes. */
+      .ni-backdrop { position:fixed; inset:38px 0 0 70px; z-index:5399;
         border-top-left-radius:var(--border-radius, 8px);
-        background:rgba(0,0,0,0.55); backdrop-filter:blur(4px); z-index:5400; }
+        background:rgba(0,0,0,0.55); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); }
+      .ni-overlay { position:fixed; inset:38px 0 0 70px; display:flex; align-items:center; justify-content:center;
+        border-top-left-radius:var(--border-radius, 8px); z-index:5400; }
       .ni-card { background:linear-gradient(135deg, var(--third-color), color-mix(in srgb, var(--third-color) 80%, black));
         border:2px solid var(--border-dark); border-radius:var(--border-radius); padding:18px; width:560px; max-width:94%;
         max-height:86vh; display:flex; flex-direction:column; box-shadow:0 18px 60px rgba(0,0,0,0.7); }
@@ -210,8 +219,48 @@
   // stack a second, identical chooser on top of the first.
   let openShell = null;
 
+  // The one backdrop, kept for as long as any step is on screen. Taking it
+  // down is deferred a couple of frames so that a step closing in order to
+  // open the next one never leaves the page unblurred in between; whoever
+  // opens next cancels the removal.
+  let backdropEl = null;
+  let backdropGoing = null;
+  function showBackdrop() {
+    if (backdropGoing) { clearTimeout(backdropGoing); backdropGoing = null; }
+    if (backdropEl && backdropEl.isConnected) return;
+    backdropEl = document.createElement('div');
+    backdropEl.className = 'ni-backdrop';
+    document.body.appendChild(backdropEl);
+  }
+  function hideBackdrop() {
+    if (backdropGoing) clearTimeout(backdropGoing);
+    backdropGoing = setTimeout(() => {
+      backdropGoing = null;
+      // Something opened again while this was pending.
+      if (document.querySelector('.ni-overlay')) return;
+      if (backdropEl) { backdropEl.remove(); backdropEl = null; }
+    }, 80);
+  }
+
+  // Where each step was scrolled to, so coming back to it lands where it was
+  // left rather than at the top. Going down a long version list, opening one
+  // and pressing Back used to mean finding your place again every time.
+  const scrollMemory = new Map();
+  function rememberScroll(key, list) {
+    if (!key || !list) return;
+    list.addEventListener('scroll', () => scrollMemory.set(key, list.scrollTop), { passive: true });
+  }
+  function restoreScroll(key, list) {
+    if (!key || !list) return;
+    const at = scrollMemory.get(key);
+    if (!at) return;
+    // After the rows are in and the browser has laid them out.
+    requestAnimationFrame(() => { requestAnimationFrame(() => { list.scrollTop = at; }); });
+  }
+
   const shell = (title, sub, opts = {}) => {
     ensureStyle();
+    showBackdrop();
     // Including one that is still fading out: the page that is arriving
     // must be the only one on screen, or a click lands on the wrong card and
     // anything reading the page sees the one that is leaving.
@@ -236,7 +285,8 @@
     openShell = ov;
     const close = () => {
       if (openShell === ov) openShell = null;
-      if (window.ModalFX) window.ModalFX.close(ov, () => ov.remove()); else ov.remove();
+      if (window.ModalFX) window.ModalFX.close(ov, () => { ov.remove(); hideBackdrop(); });
+      else { ov.remove(); hideBackdrop(); }
     };
     const back = typeof opts.onBack === 'function'
       ? () => { close(); opts.onBack(); }
@@ -249,9 +299,13 @@
         b.style.display = '';
         b.onclick = back;
       }
-      // Cancel on a step means "not this one", which is the same as Back.
+      // Cancel on a step means "not this one", which is the same as Back --
+      // and it was wired to close everything instead, so cancelling at the
+      // version step of a modpack install dropped you out of the whole thing
+      // with the pack to find again. ✕ and clicking away still mean "I have
+      // changed my mind about all of it".
       card.querySelector('.ni-cancel').textContent = 'Cancel';
-      card.querySelector('.ni-cancel').onclick = close;
+      card.querySelector('.ni-cancel').onclick = back;
     } else {
       card.querySelector('.ni-cancel').onclick = close;
     }
@@ -637,9 +691,16 @@
       // for this version the loader step was skipped, so going back to it
       // would skip forward again and Back would do nothing.
       onBack: async () => {
+        // Back goes to the last step that actually ASKED something. A step
+        // that was skipped -- because the mod named the only loader, or the
+        // only version, or because nothing but vanilla runs on this version --
+        // is skipped on the way out too, or Back would either show a page with
+        // one option on it or bounce straight forward again and do nothing.
         const offer = await offeredLoaders(version);
-        if (offer && !offer.some(id => id !== 'vanilla')) return versionStep();
-        return loaderStep(version);
+        const loaderWasAsked = !oneLoader && !(offer && !offer.some(id => id !== 'vanilla'));
+        if (loaderWasAsked) return loaderStep(version);
+        if (!oneVersion) return versionStep();
+        return back && back();
       },
       onChangeVersion: (state) => pickVersion({
         only: onlyVersions,
@@ -669,15 +730,28 @@
       },
     });
 
+    // A question with one possible answer is not a question.
+    //
+    // A mod that has builds for exactly one Minecraft version still opened the
+    // version picker, showing a single card there was no choice about -- and a
+    // mod for exactly one loader did the same. Both steps are skipped when the
+    // mod has already decided them, which also means Back has to skip them
+    // again on the way out rather than landing on a page with one option.
+    const oneVersion = onlyVersions && onlyVersions.length === 1 ? onlyVersions[0] : null;
+    const oneLoader = onlyLoaders && onlyLoaders.length === 1 ? onlyLoaders[0] : null;
+
     const loaderStep = async (version) => {
       // Where no loader has a build for this version there is no choice to
       // make, so the question is not asked: straight on to the last page as
       // vanilla. It used to offer all five and fail at launch.
       const offer = await offeredLoaders(version);
       if (offer && !offer.some(id => id !== 'vanilla')) return finish(version, 'vanilla');
+      if (oneLoader) return finish(version, oneLoader);
       pickLoader({
         version,
-        onBack: () => versionStep(),
+        // With the version step skipped there is nothing behind this but
+        // whatever opened the flow.
+        onBack: () => (oneVersion ? back && back() : versionStep()),
         // Only the loaders this mod has builds for, when it came from one.
         only: onlyLoaders,
         onPick: (loader) => finish(version, loader),
@@ -690,7 +764,8 @@
       onPick: (version) => loaderStep(version),
     });
 
-    versionStep();
+    if (oneVersion) loaderStep(oneVersion);
+    else versionStep();
   }
 
   // ── Picking a version ─────────────────────────────────────────────────────
@@ -709,6 +784,10 @@
       { onBack: opts.onBack, wide: true }
     );
     list.className = 'ni-cards';
+    // Coming back from the loader step, or from the snapshot list, lands
+    // where the list was left rather than back at the top.
+    const scrollKey = 'versions:' + (opts.only ? [...opts.only].sort().join(',') : 'all');
+    rememberScroll(scrollKey, list);
 
     // Clicking a version IS choosing it. There was a Continue button to press
     // afterwards, and a Cancel that did what the ✕ already does.
@@ -761,6 +840,7 @@
     if (only && !releases.length) {
       list.innerHTML = '<div class="ni-empty">No release supports it. Try the snapshots.</div>';
     }
+    restoreScroll(scrollKey, list);
 
     // A plain list, because a snapshot has no banner and no icon of its own
     // and a grid of identical grey cards would be worse than a list.
@@ -871,7 +951,12 @@
       }
     };
     input.oninput = paint;
+    // Narrowing the list throws the old scroll position away, so only the
+    // unfiltered list is worth remembering a place in.
+    const scrollKey = 'list:' + title;
+    rememberScroll(scrollKey, list);
     paint();
+    restoreScroll(scrollKey, list);
     setTimeout(() => input.focus(), 0);
   }
 

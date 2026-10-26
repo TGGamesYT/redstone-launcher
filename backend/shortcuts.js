@@ -143,6 +143,47 @@ export function rewriteIcon(iconPath, pngBuffer) {
 //
 // Returns the files it managed to change, so the launcher can say what
 // happened instead of claiming more than it did.
+// A name of its own for each version of the icon.
+//
+// Both shells cache an icon against the file it came from, so rewriting the
+// same `app.ico` or `app.png` left the old picture on the desktop until the
+// cache happened to be rebuilt -- which is why a change of theme was not
+// visible out there until a reboot. A path that has never been seen before
+// cannot have a cached icon, so each write gets a fresh name and the ones
+// before it are cleared away afterwards.
+function freshIconPath(dir, ext) {
+  return path.join(dir, `app-${Date.now().toString(36)}${ext}`);
+}
+function sweepOldIcons(dir, ext, keep) {
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  // Exactly the names freshIconPath makes, plus the single fixed name used
+  // before it. An instance's own shortcut icon is `<label>.png` and must not
+  // be caught by this, however the instance happens to be called.
+  const mine = new RegExp(`^app(-[0-9a-z]+)?\\${ext}$`);
+  for (const n of names) {
+    if (!mine.test(n)) continue;
+    const full = path.join(dir, n);
+    if (full === keep) continue;
+    // Still referenced by a shortcut that was not ours to change: leaving a
+    // few stale files behind is better than blanking somebody's icon.
+    try { fs.unlinkSync(full); } catch { /* it will go next time */ }
+  }
+}
+
+// Tell Explorer the association changed, so it re-reads the shortcuts rather
+// than redrawing them from its cache at some point of its own choosing.
+function nudgeWindowsShell() {
+  const ps = "$sig='[DllImport(\"shell32.dll\")]public static extern void SHChangeNotify("
+    + "int wEventId,uint uFlags,IntPtr dwItem1,IntPtr dwItem2);';"
+    + "$t=Add-Type -MemberDefinition $sig -Name Sh -Namespace W -PassThru;"
+    + "$t::SHChangeNotify(0x08000000,0x0000,[IntPtr]::Zero,[IntPtr]::Zero)";
+  try {
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps],
+      { windowsHide: true, timeout: 15000 });
+  } catch { /* the icon is written either way; this only makes it immediate */ }
+}
+
 export function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", exec } = {}) {
   if (!pngBuffer) return { updated: [], skipped: ["no icon given"] };
   const updated = [], skipped = [];
@@ -152,7 +193,7 @@ export function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", e
 
   try {
     if (process.platform === "win32") {
-      const ico = path.join(dir, "app.ico");
+      const ico = freshIconPath(dir, ".ico");
       fs.writeFileSync(ico, pngToIco(pngBuffer));
       // Wherever an installer puts them: the desktop, and the Start menu for
       // this user and for everybody.
@@ -185,6 +226,7 @@ export function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", e
           updated.push(lnk);
         } catch (e) { skipped.push(`${path.basename(lnk)}: ${e.message}`); }
       }
+      if (updated.length) { nudgeWindowsShell(); sweepOldIcons(dir, ".ico", ico); }
       return { updated, skipped, icon: ico };
     }
 
@@ -193,7 +235,7 @@ export function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", e
     }
 
     // Linux: the .desktop entries, wherever they are.
-    const png = path.join(dir, "app.png");
+    const png = freshIconPath(dir, ".png");
     fs.writeFileSync(png, pngBuffer);
     const places = [desktop, path.join(home, ".local", "share", "applications")].filter(Boolean);
     const want = appName.toLowerCase().split(" ")[0];
@@ -221,6 +263,7 @@ export function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", e
       }
     }
     if (!found) skipped.push("no desktop entry found to change");
+    if (updated.length) sweepOldIcons(dir, ".png", png);
     return { updated, skipped, icon: png };
   } catch (e) {
     return { updated, skipped: [...skipped, String(e && e.message || e)] };

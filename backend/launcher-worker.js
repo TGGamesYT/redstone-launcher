@@ -268,6 +268,24 @@ function verifyDownloads() {
   const enter = () => active < 8 ? (active++, Promise.resolve()) : new Promise(r => waiting.push(r));
   const leave = () => { const next = waiting.shift(); if (next) next(); else active--; };
 
+  // Waiting on a write stream without leaving a listener behind.
+  //
+  // Both of these used to be written inline as `out.once("drain", ok);
+  // out.once("error", no)`, which leaves the OTHER listener attached for ever
+  // -- one pair per chunk, so a large file ends up with thousands of dead
+  // listeners on the same stream and node starts warning about a leak.
+  const drained = (s) => new Promise((ok, no) => {
+    const onDrain = () => { s.off("error", onError); ok(); };
+    const onError = (e) => { s.off("drain", onDrain); no(e); };
+    s.once("drain", onDrain);
+    s.once("error", onError);
+  });
+  const ended = (s) => new Promise((ok, no) => {
+    const onError = (e) => no(e);
+    s.once("error", onError);
+    s.end(() => { s.off("error", onError); ok(); });
+  });
+
   Handler.prototype.downloadAsync = async function (url, directory, name, retry, type) {
     const dest = path.join(directory, name);
     const part = `${dest}.part`;
@@ -294,13 +312,29 @@ function verifyDownloads() {
 
           const sha = wantHash ? require_("crypto").createHash("sha1") : null;
           out = fs.createWriteStream(part);
+          // There must ALWAYS be something listening for this stream's
+          // errors.
+          //
+          // The catch below destroys `out` on any failure -- an aborted
+          // fetch, a short body, a hash that does not match. A write already
+          // handed to the filesystem then comes back as ERR_STREAM_DESTROYED
+          // and is emitted as an 'error' event; with nothing listening, node
+          // turns that into an uncaught exception, which in the main process
+          // takes the launcher down mid-download. The transient listeners
+          // around drain and end did not cover it, because a failure
+          // anywhere else in the loop reaches the catch with neither of them
+          // attached.
+          //
+          // Swallowing it here loses nothing: whatever actually went wrong
+          // is already in `last`, and the retry loop deals with it.
+          out.on("error", () => { });
           let got = 0, told = 0;
           for await (const chunk of res.body) {
             clearTimeout(idle);
             idle = setTimeout(() => stop.abort(), IDLE);
             got += chunk.length;
             if (sha) sha.update(chunk);
-            if (!out.write(chunk)) await new Promise((ok, no) => { out.once("drain", ok); out.once("error", no); });
+            if (!out.write(chunk)) await drained(out);
             // One message per chunk of four thousand files is a lot of IPC for
             // a number nobody can read that fast.
             const now = Date.now();
@@ -310,7 +344,7 @@ function verifyDownloads() {
             }
           }
           clearTimeout(idle);
-          await new Promise((ok, no) => { out.once("error", no); out.end(ok); });
+          await ended(out);
           out = null;
 
           if (total && got !== total) throw new Error(`only ${got} of ${total} bytes arrived`);

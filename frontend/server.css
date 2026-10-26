@@ -12,6 +12,24 @@
   font-style: normal;
 }
 
+/* How glyphs are rasterised.
+   A pixel font is drawn from square pixels, and the browser's default
+   antialiasing smears every edge into a grey halo -- which is what made the
+   launcher's own font look soft and slightly out of focus. `none` turns that
+   off and the glyphs come out as drawn. It is only right for a bitmap-style
+   face, though, so it is a setting rather than a decision: a normal typeface
+   with no antialiasing looks jagged. Inherited, so the root is enough. */
+html[data-smoothing="sharp"] {
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  text-rendering: optimizeSpeed;
+}
+
+html[data-smoothing="smooth"] {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
 :root {
   --base-color: #b30c0c;
   --secondary-color: #ff4d4d;
@@ -19,7 +37,6 @@
   --text-color: #ffffff;
   --text-font: Pixel;
   --border-radius: 8px;
-  --gradient-angle: 180deg;
   /* What is behind the launcher, when it is not the app's own panel.
      sidebar.js sets these from the Background setting. */
   --app-gradient: none;
@@ -28,8 +45,23 @@
   --app-bg-size: auto;
   --app-bg-repeat: no-repeat;
   --app-bg-render: auto;
+  /* What a sticky header paints.
+     A sticky strip has to be opaque or the rows scroll past behind it, and it
+     was painted in the panel's own dark shade -- a solid block that hid the
+     background the user chose. It shows that background straight through
+     instead now, lined up with the window's own (background-attachment:
+     fixed), so what is behind the strip is the wallpaper rather than whatever
+     card happens to be sliding under it. With no custom background there is
+     nothing to show through to, so it falls back to the panel's shade. */
+  --sticky-bg-color: var(--very-dark);
+  --sticky-bg-image: none;
   --toolbar-bg: var(--secondary-color);
-  --sidebar-bg: linear-gradient(var(--gradient-angle), var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
+  /* Straight down, always. This used to run along --gradient-angle, which is
+     the BACKGROUND's gradient angle and has nothing to do with the sidebar:
+     with a custom background on, anybody whose saved angle was not 180
+     got the sidebar's shading tilted across its corner, so switching from
+     `theme` to `colour` at the very same colour visibly changed it. */
+  --sidebar-bg: linear-gradient(180deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
   --sidebar-border: color-mix(in srgb, var(--secondary-color) 50%, black);
   --menu-bg: color-mix(in srgb, var(--secondary-color) 50%, black);
   --very-dark: color-mix(in srgb, var(--secondary-color) 30%, black);
@@ -652,11 +684,11 @@ html {
   --text-outline: rgba(0, 0, 0, 0.85);
 }
 
-html.custom-bg h1,
-html.custom-bg h2,
-html.custom-bg h3,
-html.custom-bg h4,
-html.custom-bg h5,
+/* Who gets one is worked out by outline.js, which measures whether anything
+   up the ancestor chain actually paints a background. Listing the selectors
+   here by hand is what left most of the launcher's text without an outline:
+   headings and whatever had been tagged `.on-background` were covered and
+   nothing else was. */
 html.custom-bg .on-background {
   /* Four offsets rather than a blur: a crisp one-pixel edge, which suits a
      pixel font and does not smear. paint-order keeps the stroke behind the
@@ -674,6 +706,8 @@ html.custom-bg .on-background {
 }
 
 html.custom-bg {
+  --sticky-bg-color: var(--app-bg-color);
+  --sticky-bg-image: var(--app-background);
   /* A flat colour is a background-COLOR; everything else is an image. Handing
      a hex over as the image made the whole declaration invalid, which is why
      a flat colour came out white. The colour also sits behind a tiled block,
@@ -923,10 +957,6 @@ textarea::placeholder {
 #toolbar .logo-icon {
   display: none;
 }
-html:not(.custom-bg) .sidebar {
-  background: linear-gradient(180deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
-}
-
 .sidebar {
   position: fixed;
   top: 38px;
@@ -976,6 +1006,38 @@ html:not(.custom-bg) .sidebar {
   border-color: var(--menu-hover-border);
   transform: translateY(-3px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* The page you are on. There was no way to tell from the sidebar at all --
+   every button looked the same whichever page was open. Marked by sidebar.js,
+   which already works out which link points at the current page.
+
+   Not the hover look: hovering means "this is what clicking does" and has to
+   stay distinguishable from "this is where you already are". So the marker is
+   a filled button with a bar down its leading edge, and it does not lift. */
+.sidebar .menu li.current {
+  background: var(--base-color);
+  border-color: color-mix(in srgb, var(--base-color) 60%, white);
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.35);
+}
+
+.sidebar .menu li.current::after {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 26px;
+  border-radius: 0 3px 3px 0;
+  background: var(--text-color);
+  /* Behind the tooltip label, which is also absolutely placed in here. */
+  pointer-events: none;
+}
+
+.sidebar .menu li.current:hover {
+  background: color-mix(in srgb, var(--base-color) 75%, var(--third-color));
+  transform: none;
 }
 
 .sidebar .menu li i,
@@ -1614,4 +1676,23 @@ body.app-offline [data-needs-net] {
   border-radius: 50%;
   background: var(--text-color);
   transform: translateX(16px);
+}
+
+/* A sticky header, painted with the window's own background rather than a
+   slab of panel colour. `background-attachment: fixed` is what makes it line
+   up with the real thing: the strip becomes a window through to what is
+   behind the launcher instead of a lid over the rows going past.
+
+   No corner radius. It was rounded at the top to sit against the rounded
+   panel, but a strip showing the background through it is not a panel edge,
+   and the radius read as a notch. */
+.sticky-strip {
+  background-color: var(--sticky-bg-color);
+  background-image: var(--sticky-bg-image);
+  background-size: var(--app-bg-size);
+  background-repeat: var(--app-bg-repeat);
+  background-position: center center;
+  background-attachment: fixed;
+  image-rendering: var(--app-bg-render);
+  border-radius: 0;
 }

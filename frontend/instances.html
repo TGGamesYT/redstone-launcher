@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <title>Redstone Launcher - Instances</title>
   <script src="theme-boot.js"></script>
+  <script src="outline.js" defer></script>
   <link rel="stylesheet" href="common.css">
   <link rel="stylesheet" href="server.css">
   <link rel="stylesheet" href="instanceview.css">
@@ -2091,13 +2092,26 @@
         left.appendChild(icon);
 
         const info = document.createElement("div");
-        const lastPlayed = profile.lastUsed ? new Date(profile.lastUsed).toLocaleString() : "Never";
-        const created = profile.created ? new Date(profile.created).toLocaleString() : "Unknown";
+        // Two lines, not one.
+        //
+        // Everything used to run together on the line under the name:
+        // loader, version, "Last Played: 26/10/2025, 14:32:10", "Created:
+        // …", and the playtime after them. Two full timestamps in the middle
+        // of it made the whole line unreadable -- you could not pick the
+        // loader and version out of it at a glance, which is what that line
+        // is for. So the line under the name is what the instance IS and how
+        // long it has been played, and the dates go below it, quieter.
+        const when = (v, never) => (v ? new Date(v).toLocaleString() : never);
+        const lastPlayed = when(profile.lastUsed, "Never");
+        const created = when(profile.created, "Unknown");
         info.innerHTML = `
         <div style="font-size:1.2em;font-weight:bold">${profile.name}</div>
         <div style="font-size:0.9em;color:var(--text-color)">
             <span class="material-icons" style="vertical-align:middle;font-size:16px">sports_esports</span>
-            ${profile.loader} ${profile.version} | Last Played: ${lastPlayed} | Created: ${created}<span id="instancePlaytime"></span>
+            ${profile.loader} ${profile.version}<span id="instancePlaytime"></span>
+        </div>
+        <div style="font-size:0.8em;opacity:0.6;margin-top:2px">
+            Last played ${lastPlayed} &middot; Created ${created}
         </div>
     `;
         left.appendChild(info);
@@ -2106,17 +2120,18 @@
         // stops. Filled in when it arrives so the header does not wait.
         ipcRenderer.invoke("playtime:get", { profileId: profile.id }).then((r) => {
           const span = document.getElementById("instancePlaytime");
-          if (!span || !r || !r.success || !r.total) return;
+          if (!span || !r || !r.success) return;
           const say = (ms) => {
             const total = Math.round(ms / 1000);
             const d = Math.floor(total / 86400), h = Math.floor((total % 86400) / 3600), m = Math.floor((total % 3600) / 60);
             if (d) return `${d} day${d === 1 ? "" : "s"}, ${h}h`;
             if (h) return `${h}h ${m}m`;
-            return `${m}m`;
+            if (m) return `${m}m`;
+            return "under a minute";
           };
           const n = r.sessions || 0;
-          span.textContent = ` | Played: ${say(r.total)}`;
-          span.title = `${n} session${n === 1 ? "" : "s"}`;
+          span.textContent = r.total ? ` | Played ${say(r.total)}` : " | Not played yet";
+          if (r.total) span.title = `${n} session${n === 1 ? "" : "s"}`;
         }).catch(() => { /* the header is fine without it */ });
 
         // RIGHT: BUTTONS
@@ -3934,6 +3949,11 @@
 
               const renderWorlds = async () => {
                 const worlds = await ipcRenderer.invoke("get-instance-worlds", { profileId: profile.id });
+                // Playing a world IS launching the instance, so while the
+                // game is running there is nothing to play -- the same as the
+                // Servers tab, which already knew this.
+                const running = (await ipcRenderer.invoke("get-running-instances") || [])
+                  .some(r => String(r.id) === String(profile.id));
                 if (!ensureStillActive()) return;
                 tabContent.innerHTML = "";
 
@@ -3993,7 +4013,10 @@
                   const play = document.createElement("button");
                   play.className = "card-action-btn play";
                   play.innerHTML = `<i class="material-icons">play_arrow</i>`;
-                  if (canQuickPlay) {
+                  if (running) {
+                    play.disabled = true;
+                    play.title = "Already running — close the game first";
+                  } else if (canQuickPlay) {
                     play.title = "Play this world";
                     play.onclick = (e) => {
                       e.stopPropagation();
@@ -4021,6 +4044,17 @@
               // Modern multiplayer quick-play needs 1.20+, else fall back to the
               // legacy --server flag (works on all versions).
               const qpType = versionAtLeast(profile.version, "1.20") ? "multiplayer" : "legacy";
+
+              // What each server last said about itself.
+              //
+              // Every render blanked the MOTD to "Pinging…" and only filled it
+              // back in once the ping came home -- so coming back to the app,
+              // which re-pings, made the whole list flash to "Pinging…" for a
+              // second or two. The last answer is kept instead and drawn
+              // straight away, and the new one replaces it in place when it
+              // arrives, which nobody sees unless it actually changed.
+              const statusMemory = (window.__serverStatusMemory =
+                window.__serverStatusMemory || new Map());
 
               const renderServers = async () => {
                 const servers = await ipcRenderer.invoke("get-instance-servers", { profileId: profile.id });
@@ -4077,7 +4111,17 @@
                   name.className = "profile-name"; name.textContent = s.name;
                   const details = document.createElement("div");
                   details.className = "profile-details server-status";
-                  details.textContent = "Pinging…";
+                  // Whatever it said last time, until the new ping lands.
+                  const remembered = s.ip ? statusMemory.get(s.ip) : null;
+                  const paintStatus = (st) => {
+                    details.classList.remove("offline");
+                    if (!st) { details.textContent = "Pinging…"; return; }
+                    if (!st.online) { details.textContent = "Offline"; details.classList.add("offline"); return; }
+                    details.textContent = "";
+                    if (st.motd) renderMcComponent(st.motd, details, {});
+                    else details.appendChild(document.createTextNode(s.ip));
+                  };
+                  paintStatus(remembered);
                   info.append(name, details);
                   li.appendChild(info);
 
@@ -4087,9 +4131,16 @@
                   const play = document.createElement("button");
                   play.className = "card-action-btn play";
                   play.innerHTML = `<i class="material-icons">play_arrow</i>`;
-                  play.title = "Join server";
+                  // Joining a server IS launching the instance, so it is no
+                  // more available than any other action here while the game
+                  // is running. It used to stay lit, send the launch anyway
+                  // and jump to the Logs tab to say "This profile is already
+                  // running. Please close it first."
+                  play.disabled = running;
+                  play.title = running ? "Already running — close the game first" : "Join server";
                   play.onclick = (e) => {
                     e.stopPropagation();
+                    if (running) return;
                     if (!selectedPlayerId) { play.title = "Select a player first!"; return; }
                     ipcRenderer.send("launch-profile", {
                       profileId: profile.id, playerId: selectedPlayerId,
@@ -4153,6 +4204,10 @@
                   playersEl.className = "server-players";
                   actions.insertBefore(playersEl, actions.firstChild);
                   li._playersEl = playersEl;
+                  if (remembered && remembered.online && remembered.players) {
+                    playersEl.textContent = `${remembered.players.online}/${remembered.players.max}`;
+                    playersEl.title = "Players online";
+                  }
 
                   actions.appendChild(reorder);
                   li.appendChild(actions);
@@ -4198,15 +4253,9 @@
                   if (s.ip) {
                     ipcRenderer.invoke("get-server-status", { ip: s.ip }).then(st => {
                       if (!ensureStillActive() || !st) return;
-                      if (!st.online) { details.textContent = "Offline"; details.classList.add("offline"); return; }
-                      details.textContent = "";
-                      details.classList.remove("offline");
-                      if (st.motd) {
-                        // Render the MOTD with Minecraft colours/formatting.
-                        renderMcComponent(st.motd, details, {});
-                      } else {
-                        details.appendChild(document.createTextNode(s.ip));
-                      }
+                      statusMemory.set(s.ip, st);
+                      paintStatus(st);
+                      if (!st.online) return;
                       // Player count goes next to the action buttons, not on the MOTD.
                       if (st.players && li._playersEl) {
                         li._playersEl.textContent = `${st.players.online}/${st.players.max}`;
@@ -4223,7 +4272,11 @@
                           profileId: profile.id, ip: s.ip, icon: st.icon,
                         }).catch(() => { });
                       }
-                    }).catch(() => { details.textContent = s.ip; });
+                    }).catch(() => {
+                      // A failed ping is not news about the server; keep what
+                      // it last said rather than replacing it with its address.
+                      if (!remembered) details.textContent = s.ip;
+                    });
                   } else {
                     details.textContent = s.ip;
                   }

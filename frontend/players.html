@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <title>Redstone Launcher - Players</title>
   <script src="theme-boot.js"></script>
+  <script src="outline.js" defer></script>
   <style>
     body {
       font-family: sans-serif;
@@ -383,11 +384,7 @@
       display: block;          /* sticky needs a block, not inline-block */
       margin: -10px -10px 8px;
       padding: 14px 10px 12px;
-      background: var(--very-dark);
-      /* The strip takes the panel's own corner radius at the top, where it
-         sits against the rounded scroller; square corners there showed as a
-         notch either side. */
-      border-radius: var(--border-radius) var(--border-radius) 0 0;
+      /* The background itself: see `.sticky-strip` in server.css. */
       box-shadow: 0 6px 10px -6px rgba(0, 0, 0, 0.6);
     }
 
@@ -476,7 +473,7 @@
   </div>
   <div id="players-layout">
     <ul id="players-list">
-      <span id="addPlayerLine" onclick="openAddPlayerModal()">Add New Player</span>
+      <span id="addPlayerLine" class="sticky-strip" onclick="openAddPlayerModal()">Add New Player</span>
     </ul>
 
     <!-- Minecraft's own friends list, for whichever account is selected. -->
@@ -1156,6 +1153,9 @@
     // what is on screen belongs to somebody else.
     async function loadFriends(opts) {
       const quiet = !!(opts && opts.quiet);
+      // Pressing Refresh means "ask Mojang now", so it goes past what was
+      // held from the last read. Opening the page does not.
+      const force = !!(opts && opts.force);
       const panel = document.getElementById('friendsPanel');
       if (!panel) return;
       // The panel belongs to whichever account is selected, and so does the
@@ -1167,7 +1167,9 @@
       if (FR.presenceFor && String(FR.presenceFor) !== String(selectedPlayerId)) {
         const was = FR.presenceFor;
         FR.presenceFor = null;
-        ipcRenderer.invoke('friends:presence', { accountId: was, status: 'OFFLINE' }).catch(() => { });
+        // Reporting a CHANGE of status must actually be sent, not answered
+        // out of what was held from the last read.
+        ipcRenderer.invoke('friends:presence', { accountId: was, status: 'OFFLINE', force: true }).catch(() => { });
       }
       if (!selectedPlayerId) {
         clearFriends('Select an account to see its friends.');
@@ -1185,7 +1187,7 @@
       const btn = document.getElementById('frRefresh');
       if (btn) btn.classList.add('spinning');
       try {
-        const r = await ipcRenderer.invoke('friends:list', { accountId: want });
+        const r = await ipcRenderer.invoke('friends:list', { accountId: want, force });
         if (String(want) !== String(selectedPlayerId)) return;   // switched mid-flight
         if (!r || !r.success) {
           const err = (r && r.error) || 'unknown error';
@@ -1204,7 +1206,7 @@
         // Presence BEFORE the first paint, so the list doesn't visibly reorder
         // a moment later when the statuses land. A failure there just means
         // everyone shows as offline.
-        const pr = await ipcRenderer.invoke('friends:presence', { accountId: want, status: FR.myStatus });
+        const pr = await ipcRenderer.invoke('friends:presence', { accountId: want, status: FR.myStatus, force });
         if (String(want) !== String(selectedPlayerId)) return;
         if (pr && pr.success) FR.presence = pr.presence || {};
         FR.presenceFor = want;
@@ -1238,7 +1240,7 @@
         t.onclick = () => { FR.tab = t.dataset.tab; paintFriends(); };
       });
       const refresh = document.getElementById('frRefresh');
-      if (refresh) refresh.onclick = () => loadFriends();
+      if (refresh) refresh.onclick = () => loadFriends({ force: true });
 
       // YOUR status. Changing it tells Mojang straight away, which is the
       // whole point — "appear offline" that only takes effect next time you
@@ -1253,7 +1255,7 @@
           myStatus.disabled = true;
           try {
             const r = await ipcRenderer.invoke('friends:presence',
-              { accountId: selectedPlayerId, status: FR.myStatus });
+              { accountId: selectedPlayerId, status: FR.myStatus, force: true });
             if (r && r.success) {
               // The same call answers with everyone's presence, so the list is
               // up to date for free.

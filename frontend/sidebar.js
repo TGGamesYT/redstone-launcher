@@ -66,6 +66,7 @@ function error(text, duration = 3000) {
 const THEME_FALLBACK = {
   baseColor: '#b30c0c', secondaryColor: '#ff4d4d', thirdColor: '#d92d2d',
   textColor: '#ffffff', font: 'Pixel', borderRadius: 0, gradientAngle: 180,
+  fontSmoothing: 'sharp',
 };
 
 function hexToRgb(hex, fallback = '#000000') {
@@ -174,6 +175,7 @@ function applyBackground(settings) {
     root.style.setProperty('--app-bg-color', 'transparent');
     root.classList.remove('custom-bg');
     if (document.body) document.body.classList.remove('custom-bg');
+    if (window.LauncherOutline) window.LauncherOutline.refresh();
     return;
   }
   root.style.setProperty('--app-background', css.image);
@@ -183,6 +185,9 @@ function applyBackground(settings) {
   root.style.setProperty('--app-bg-render', css.render);
   root.classList.add('custom-bg');
   if (document.body) document.body.classList.add('custom-bg');
+  // Which text needs an outline depends on what is behind it, so a change of
+  // background is a reason to work it out again.
+  if (window.LauncherOutline) window.LauncherOutline.refresh();
 }
 // The settings page previews with these, and so does its own head script.
 window.LauncherBackground = { css: backgroundCss, apply: applyBackground, FALLBACK: BG_FALLBACK };
@@ -217,8 +222,10 @@ function applyTheme(settings) {
   // about the text colour's brightness and so cannot be asked in CSS.
   document.documentElement.style.setProperty('--text-outline', outlineFor(textColor));
   document.documentElement.style.setProperty('--text-font', textFont);
+  // How glyphs are rasterised: an attribute rather than a variable, since
+  // -webkit-font-smoothing takes a keyword and not a custom property.
+  document.documentElement.dataset.smoothing = settings.fontSmoothing || 'sharp';
   document.documentElement.style.setProperty('--border-radius', `${settings.borderRadius}px`);
-  document.documentElement.style.setProperty('--gradient-angle', `${settings.gradientAngle ?? 180}deg`);
   
   applyBackground(settings);
 }
@@ -427,6 +434,12 @@ applyModProviderIcon();
   document.querySelectorAll('.sidebar a[href]').forEach(a => {
     const target = (a.getAttribute('href') || '').split('/').pop().toLowerCase();
     if (!target || target !== here) return;
+    // Which page you are on was not shown anywhere: every button in the
+    // sidebar looked the same whichever one was open. The link that points at
+    // the page we are already on IS the current page, which this loop has
+    // just worked out anyway.
+    const button = a.querySelector('li') || (a.parentElement && a.parentElement.tagName === 'LI' ? a.parentElement : null);
+    if (button) button.classList.add('current');
     a.addEventListener('click', (e) => {
       if (typeof window.showListView === 'function') {
         e.preventDefault();

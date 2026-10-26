@@ -220,14 +220,22 @@
   box-sizing: border-box;
 }
 
-/* Sticky section headers. The strip they paint takes the panel's corner
-   radius: against a rounded panel a square-cornered block is visible as a
-   notch at either end of the header. */
+/* Sticky section headers. These show the window's own background through
+   them rather than painting a slab of panel colour over whatever is scrolling
+   past -- the same as every other sticky strip; see `.sticky-strip` in
+   server.css, whose declarations are repeated here because this file is not
+   guaranteed to load before it. */
 .install-scroll-area h4 {
   position: sticky;
   top: 0;
-  background: var(--very-dark);
-  border-radius: var(--border-radius) var(--border-radius) 0 0;
+  background-color: var(--sticky-bg-color);
+  background-image: var(--sticky-bg-image);
+  background-size: var(--app-bg-size);
+  background-repeat: var(--app-bg-repeat);
+  background-position: center center;
+  background-attachment: fixed;
+  image-rendering: var(--app-bg-render);
+  border-radius: 0;
   z-index: 10;
   padding: 8px 12px;
   font-size: 1.1em;

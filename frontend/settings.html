@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <title>Redstone Launcher — Settings</title>
   <script src="theme-boot.js"></script>
+  <script src="outline.js" defer></script>
   <link href="nouislider.min.css" rel="stylesheet">
   <link rel="stylesheet" href="server.css" />
   <link rel="stylesheet" href="material-icons.css">
@@ -20,6 +21,9 @@
   <style>
     .settings-container {
       margin-right: 20px;
+      /* So the version number below can be placed against the PANEL's corner
+         rather than the window's. */
+      position: relative;
     }
 
     .section-switcher {
@@ -76,6 +80,23 @@
 
     .section.just-shown > * {
       animation: section-in 0.16s ease both;
+    }
+
+    /* `transform` does nothing at all to a non-replaced inline element, so an
+       inline child faded in but never rose with everything else -- which is
+       why the "Font" label, the border-radius label and its value, and the
+       "RAM for …" labels looked like they sat the animation out while the
+       panel around them moved. Promoted for the 160ms it runs. Each of these
+       has a <br> on either side of it, so inline-block lays out identically;
+       anything that sets its own display is left alone. */
+    .section.just-shown > label:not(.setting-toggle),
+    .section.just-shown > span,
+    .section.just-shown > a,
+    .section.just-shown > b,
+    .section.just-shown > strong,
+    .section.just-shown > em,
+    .section.just-shown > small {
+      display: inline-block;
     }
 
     @keyframes section-in {
@@ -227,11 +248,15 @@
 
     /* The version sits outside the scrolling sections, which are sized to the
        bottom of the window — so in the flow it fell off the end and only its
-       first couple of pixel rows showed. Pinned out of the way instead. */
+       first couple of pixel rows showed. Pinned out of the way instead.
+
+       Against the settings panel, not the window: pinned to the window it sat
+       past the panel's right edge, out in the margin, which looked like it had
+       come loose from the page. */
     .app-version {
-      position: fixed;
-      right: 14px;
-      bottom: 8px;
+      position: absolute;
+      right: 16px;
+      bottom: 10px;
       margin: 0;
       font-size: 11px;
       opacity: 0.55;
@@ -677,10 +702,10 @@
       <div class="appicon-row">
         <img id="app-icon-preview" alt="">
         <div class="appicon-btns">
-          <button type="button" id="app-icon-theme"
-            data-tip="The icon's coloured parts are the launcher's own theme colour, so they follow the base colour — change it and the icon is re-tinted to match.">Follow the theme</button>
           <button type="button" id="app-icon-pick"
-            data-tip="Use a picture of your own instead. It is saved with the theme, like the colours are.">Use a picture…</button>
+            data-tip="Use a picture of your own instead of the launcher's own icon. It is saved with the theme, like the colours are.">Use a picture…</button>
+          <button type="button" id="app-icon-theme" style="display:none;"
+            data-tip="Go back to the launcher's own icon, which is tinted to the base colour and follows it from then on.">Back to the launcher's icon</button>
         </div>
       </div>
 
@@ -726,6 +751,13 @@
         <option value="Courier New">Courier New</option>
         <option value="Times New Roman">Times New Roman</option>
         <option value="Custom">Custom (system)</option>
+      </select>
+      <br>
+      <label data-tip="The launcher's own font is drawn from square pixels, and smoothing blurs every edge of it. Sharp turns that off. A normal typeface looks jagged without it, so switch to Smooth if you have chosen one.">Edges</label>
+      <select id="font-smoothing" class="narrow-select">
+        <option value="sharp">Sharp — no smoothing</option>
+        <option value="smooth">Smooth</option>
+        <option value="auto">Whatever the system does</option>
       </select>
       <br>
       <label>Border Radius (px):</label>
@@ -787,6 +819,8 @@
           <button type="button" class="bg-fit" data-fit="contain" title="Show all of it, with bars where it does not reach">Fitted</button>
           <button type="button" class="bg-fit" data-fit="stretch" title="Fill the window exactly, distorting it">Stretched</button>
         </div>
+        <button type="button" id="bg-image-colors" class="bg-btn" style="margin-top:14px;display:none;"
+          data-tip="Takes the theme's base and secondary colours from this picture — the middling-dark and middling-bright of it, rather than its lightest and darkest pixels.">Match the theme to this picture</button>
       </div>
 
       <div class="bg-panel" id="bg-panel-block">
@@ -879,6 +913,8 @@
       <div id="sgMine" class="sg-mine"></div>
       <div style="height:50px;"></div>
     </div>
+
+    <p class="app-version">Version <span id="appVersion">…</span></p>
   </div>
 
   <style>
@@ -905,7 +941,6 @@
     .sg-badge.denied { color:#ff9b94; border-color:#7a4b4b; }
     .sg-badge.pending { opacity:0.7; }
   </style>
-<p class="app-version">Version <span id="appVersion">…</span></p>
   <script src="nouislider.min.js"></script>
   <script>
     const { ipcRenderer } = require('electron');
@@ -941,6 +976,7 @@
       thirdColor: "#d92d2d", 
       textColor: "#ffffff",
       font: "Pixel",
+      fontSmoothing: "sharp",
       borderRadius: 0,
       autoUpdates: true,
       discordPresence: true,
@@ -1037,17 +1073,13 @@
       // back later. Every one of these says which it is.
       function relayTrouble(error) {
         const m = String(error || '');
+        // Said plainly, with nothing in it addressed to whoever runs the
+        // server: the person reading this can only wait and try again.
         if (/certificate has expired|CERT_HAS_EXPIRED/i.test(m)) {
-          return {
-            text: "The suggestions server's security certificate has expired. That is at our end, not yours — it will work again once it has been renewed.",
-            retry: true,
-          };
+          return { text: 'Suggestions are unavailable at the moment. Please try again later.', retry: true };
         }
         if (/self.signed|UNABLE_TO_VERIFY|DEPTH_ZERO|ERR_TLS|ALT_NAME/i.test(m)) {
-          return {
-            text: "The suggestions server's security certificate could not be verified, so nothing was sent. That is at our end, not yours.",
-            retry: true,
-          };
+          return { text: 'Suggestions are unavailable at the moment. Please try again later.', retry: true };
         }
         if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|timed? ?out|ETIMEDOUT|socket hang up/i.test(m)) {
           return { text: 'The suggestions server could not be reached. Check your connection, or try again in a minute.', retry: true };
@@ -1268,6 +1300,33 @@
         }
       });
 
+      // Everything that has to follow a change of theme colour, wherever that
+      // change came from -- a preset, a hand-picked colour, a reset, a
+      // restored theme. This page sets the colour variables itself rather than
+      // going through applyTheme, so what applyTheme would have done
+      // afterwards has to be done here too, in one place: setting
+      // `--text-color` and leaving `--text-outline` behind was how white text
+      // ended up with a white outline, which is an unreadable blob.
+      function themeColorsChanged() {
+        const text = (document.getElementById('text-color') || {}).value;
+        if (text) {
+          // Light text wants a dark edge and dark text a light one -- Rec. 709
+          // luminance, the same sum applyTheme uses.
+          const n = parseInt(text.replace('#', ''), 16);
+          const lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+          document.documentElement.style.setProperty('--text-outline',
+            lum > 0.5 ? 'rgba(0, 0, 0, 0.85)' : 'rgba(255, 255, 255, 0.85)');
+        }
+        if (window.LauncherOutline) window.LauncherOutline.refresh();
+        // The icon's coloured parts follow the base colour, so the picture of
+        // it in the App icon section has to be re-tinted as well -- it is the
+        // one thing that was not, which made it look as though the icon did
+        // not follow the theme at all.
+        const base = (document.getElementById('base-color') || {}).value;
+        if (window.__previewAppIcon) window.__previewAppIcon(base || undefined);
+      }
+      window.__themeColorsChanged = themeColorsChanged;
+
       colorSettings.forEach(([colorId, codeId, key, def]) => {
         const color = document.getElementById(colorId);
         const code = document.getElementById(codeId);
@@ -1293,8 +1352,7 @@
           if (key === 'secondaryColor' && sync && sync.checked && window.__syncBackgroundToTheme) {
             window.__syncBackgroundToTheme(color.value);
           }
-          // The icon's red follows the base colour, so the preview has to.
-          if (key === 'baseColor' && window.__previewAppIcon) window.__previewAppIcon(color.value);
+          themeColorsChanged();
         }
 
         color.addEventListener('input', () => {
@@ -1385,6 +1443,7 @@
             const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
             localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...themeUpdate }));
             updateThirdColor(true);
+            themeColorsChanged();
           });
 
           themeList.appendChild(btn);
@@ -1398,6 +1457,19 @@
       fontSelect.value = getSetting('font');
       fontSelect.addEventListener('change', () => {
         const updateObj = { font: fontSelect.value };
+        ipcRenderer.send('save-settings', updateObj);
+        const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+        localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
+      });
+
+      // How glyphs are rasterised. Applied straight away so the difference is
+      // visible in the page you are changing it on.
+      const smoothSelect = document.getElementById('font-smoothing');
+      smoothSelect.value = getSetting('fontSmoothing') || 'sharp';
+      document.documentElement.dataset.smoothing = smoothSelect.value;
+      smoothSelect.addEventListener('change', () => {
+        document.documentElement.dataset.smoothing = smoothSelect.value;
+        const updateObj = { fontSmoothing: smoothSelect.value };
         ipcRenderer.send('save-settings', updateObj);
         const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
         localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
@@ -1600,15 +1672,25 @@
         const r = await ipcRenderer.invoke('icon:previewApp', { color });
         if (r && r.success) iconPreview.src = r.dataUrl;
       };
+      // There is no button for following the theme, because following the
+      // theme is not a choice to make -- it is simply what the launcher's own
+      // icon does. The only thing to decide is whether a picture of your own
+      // is being used instead, so the second button exists only to undo that.
+      const iconBack = document.getElementById('app-icon-theme');
+      let iconIsPicture = false;
+      const showIconMode = (isPicture) => {
+        iconIsPicture = isPicture;
+        iconBack.style.display = isPicture ? '' : 'none';
+      };
       ipcRenderer.invoke('icon:app').then(async (r) => {
         const icon = (r && r.icon) || { kind: 'theme' };
-        if (icon.kind === 'image' && icon.dataUrl) iconPreview.src = icon.dataUrl;
-        else showAppIcon();
+        if (icon.kind === 'image' && icon.dataUrl) { iconPreview.src = icon.dataUrl; showIconMode(true); }
+        else { showIconMode(false); showAppIcon(); }
       }).catch(() => { });
 
-      document.getElementById('app-icon-theme').addEventListener('click', async () => {
+      iconBack.addEventListener('click', async () => {
         const r = await ipcRenderer.invoke('icon:setApp', { icon: { kind: 'theme' } });
-        if (r && r.success) { iconPreview.src = r.dataUrl; if (window.notify) notify('The icon follows the theme', 'success'); }
+        if (r && r.success) { iconPreview.src = r.dataUrl; showIconMode(false); if (window.notify) notify('Back to the launcher\'s icon', 'success'); }
         else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
       });
       document.getElementById('app-icon-pick').addEventListener('click', async () => {
@@ -1616,12 +1698,13 @@
         if (!pick || pick.canceled) return;
         if (pick.error) { if (window.notify) notify(pick.error, 'error'); return; }
         const r = await ipcRenderer.invoke('icon:setApp', { icon: { kind: 'image', dataUrl: pick.dataUrl } });
-        if (r && r.success) { iconPreview.src = r.dataUrl; if (window.notify) notify('Icon changed', 'success'); }
+        if (r && r.success) { iconPreview.src = r.dataUrl; showIconMode(true); if (window.notify) notify('Icon changed', 'success'); }
         else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
       });
       // Changing the base colour re-tints the preview, since that is the
-      // colour the icon's red follows.
-      window.__previewAppIcon = showAppIcon;
+      // colour the icon's coloured parts follow -- unless a picture of your
+      // own is in use, which no colour has any business repainting.
+      window.__previewAppIcon = (color) => { if (!iconIsPicture) showAppIcon(color); };
 
       // Picking a block to tile. The game's blocks, but as flat face
       // textures rather than rendered cubes: a wall of dirt, not a wall of
@@ -1846,12 +1929,31 @@
 
       // ── a picture ──
       const bgImageName = document.getElementById('bg-image-name');
+      const bgImageColors = document.getElementById('bg-image-colors');
       const showImageName = () => {
         bgImageName.textContent = bg.image.file
           ? String(bg.image.file).split(/[\\/]/).pop()
           : 'nothing chosen yet';
+        // Only worth offering once there is a picture to take them from.
+        bgImageColors.style.display = bg.image.file ? '' : 'none';
       };
       showImageName();
+      // The same thing the block panel offers: the theme's two colours taken
+      // from what is actually behind the window.
+      bgImageColors.addEventListener('click', async () => {
+        if (!bg.image.file) return;
+        const r = await ipcRenderer.invoke('model:blockColors', { file: bg.image.file });
+        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'No colours could be read', 'error'); return; }
+        const put = (id, code, value) => {
+          const el = document.getElementById(id), c = document.getElementById(code);
+          if (!el || !c) return;
+          el.value = value; c.value = value;
+          el.dispatchEvent(new Event('input'));
+        };
+        put('base-color', 'base-color-code', r.dark);
+        put('secondary-color', 'secondary-color-code', r.light);
+        if (window.notify) notify('Theme taken from the picture', 'success');
+      });
       document.getElementById('bg-pick-image').addEventListener('click', async () => {
         const r = await ipcRenderer.invoke('bg:pickImage');
         if (!r || r.canceled) return;
@@ -1921,6 +2023,7 @@
             const b = document.createElement('button');
             b.type = 'button';
             b.className = 'bg-face' + (f.texture === bg.block.texture ? ' on' : '');
+            b.dataset.texture = f.texture;
             b.innerHTML = `<img src="${f.url}" alt=""><span>${f.label}</span>`;
             b.onclick = () => pickFace(f.texture);
             bgFaceRow.appendChild(b);
@@ -1938,27 +2041,33 @@
       // Fetch the tile for the chosen face and settings, and keep what it
       // came back as -- the tile may be a patch of several cells, which the
       // background has to know to size it right.
+      // Nothing is kept unless the tile actually came back: a block that
+      // cannot be read leaves the one that was already chosen alone rather
+      // than half-replacing it with a name that has no picture behind it.
       async function refreshBlockTile() {
-        if (!bg.block.id) return;
+        if (!bg.block.id) return false;
         const r = await ipcRenderer.invoke('model:blockTile', {
           id: bg.block.id, texture: bg.block.texture || null, random: !!bg.block.random,
         });
-        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'That block could not be read', 'error'); return; }
+        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'That block could not be read', 'error'); return false; }
         bg.block = { ...bg.block, url: r.url, texture: r.texture, label: r.label, cells: r.cells };
         showBlockName(); paintBackground(); saveBackground();
         for (const b of bgFaceRow.querySelectorAll('.bg-face')) {
-          b.classList.toggle('on', b.querySelector('img').src === (bgFaces && (bgFaces.faces.find(f => f.texture === r.texture) || {}).url));
+          b.classList.toggle('on', b.dataset.texture === r.texture);
         }
+        return true;
       }
 
       const pickFace = async (texture) => {
+        const was = bg.block.texture;
         bg.block.texture = texture;
-        await refreshBlockTile();
+        if (!await refreshBlockTile()) { bg.block.texture = was; return; }
         await loadBlockFaces();
       };
       bgRandom.addEventListener('change', async () => {
+        const was = bg.block.random;
         bg.block.random = bgRandom.checked;
-        await refreshBlockTile();
+        if (!await refreshBlockTile()) { bg.block.random = was; bgRandom.checked = !!was; }
       });
       bgBlockColors.addEventListener('click', async () => {
         if (!bg.block.url) return;
@@ -1980,10 +2089,14 @@
       document.getElementById('bg-pick-block').addEventListener('click', async () => {
         const picked = await openBlockBackgroundPicker(bg.block.id);
         if (!picked) return;
+        // A different block means a different set of faces, so the face and
+        // its label are cleared and whatever the new block's first face is
+        // becomes the choice.
+        const was = bg.block;
         bg.block = { ...bg.block, id: picked.id, name: picked.name, texture: null, label: null };
         bg.mode = 'block';
         showBgPanels();
-        await refreshBlockTile();
+        if (!await refreshBlockTile()) { bg.block = was; showBlockName(); return; }
         await loadBlockFaces();
       });
       // Whatever was already chosen, so the face row and the random toggle

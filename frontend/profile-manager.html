@@ -16,6 +16,7 @@
   <script src="modelpicker.js"></script>
   <script src="versionicon.js"></script>
   <script src="theme-boot.js"></script>
+  <script src="outline.js" defer></script>
   <style>
     /* Modals float on their own shadow — no dim/blur pane behind them. A painted
        rectangle can't follow the window's rounded top-left corner and always
@@ -82,9 +83,7 @@
       top: 0;
       z-index: 3;
       padding: 8px 0;
-      background: var(--very-dark);
-      /* Rounded where it meets the rounded panel it sits in. */
-      border-radius: var(--border-radius) var(--border-radius) 0 0;
+      /* The background itself: see `.sticky-strip` in server.css. */
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -451,7 +450,7 @@
 
       <div id="pm-sections" style="display:none;">
         <div>
-          <div class="cards-header"><span>Your Skins</span>
+          <div class="sticky-strip cards-header"><span>Your Skins</span>
             <span class="hdr-acts">
               <button class="hdr-btn" id="skinsResetBtn" title="Go back to the default skin for this account"><i class="material-icons">restart_alt</i></button>
               <button class="hdr-btn" id="skinsReloadBtn" title="Reload your skins from Mojang"><i class="material-icons">refresh</i></button>
@@ -461,7 +460,7 @@
         </div>
 
         <div id="capes-section">
-          <div class="cards-header"><span>Capes</span>
+          <div class="sticky-strip cards-header"><span>Capes</span>
             <span class="hdr-acts">
               <button class="hdr-btn" id="capesResetBtn" title="Take the cape off"><i class="material-icons">restart_alt</i></button>
               <button class="hdr-btn" id="capesReloadBtn" title="Reload your capes from Mojang"><i class="material-icons">refresh</i></button>

@@ -302,7 +302,65 @@ catch (e) {
   process.exit(1);
 }
 
-const secureContext = tls.createSecureContext(tlsOptions);
+// The certificate is re-read when it changes on disk.
+//
+// It used to be read once here and baked into a single secure context for the
+// life of the process, which meant certbot's renewal never reached the running
+// relay: it carried on presenting the expired chain, and every client kept
+// refusing it with "certificate has expired" however many times they renewed
+// or restarted their launcher. Only restarting the relay fixed it, which is
+// not something a renewal does.
+//
+// Watched AND polled, because certbot does not rewrite these files -- it
+// writes a new directory and moves the `live` symlink, which a watch on the
+// path itself does not always see.
+let certLoadedAt = 0;
+let certStamp = "";
+let secureContext = tls.createSecureContext(tlsOptions);
+const CERT_RECHECK_MS = 60 * 1000;
+
+const certFingerprint = () => {
+  try {
+    const a = fs.statSync(TLS_CERT), b = fs.statSync(TLS_KEY);
+    return `${a.mtimeMs}:${a.size}:${b.mtimeMs}:${b.size}`;
+  } catch { return certStamp; }         // unreadable for a moment: keep what works
+};
+certStamp = certFingerprint();
+
+function reloadCertIfChanged(force = false) {
+  const now = Date.now();
+  if (!force && now - certLoadedAt < CERT_RECHECK_MS) return;
+  certLoadedAt = now;
+  const stamp = certFingerprint();
+  if (!force && stamp === certStamp) return;
+  try {
+    const next = { key: fs.readFileSync(TLS_KEY), cert: fs.readFileSync(TLS_CERT) };
+    secureContext = tls.createSecureContext(next);
+    tlsOptions = next;
+    certStamp = stamp;
+    console.log(`[Redstone Relay] Reloaded the TLS certificate${certExpiry() ? `, good until ${certExpiry()}` : ""}.`);
+  } catch (e) {
+    // A half-written file during a renewal: keep serving the old context and
+    // try again on the next connection rather than dropping TLS entirely.
+    console.error(`[Redstone Relay] Could not reload the TLS certificate (${e.code || e.message}); keeping the one in use.`);
+  }
+}
+
+// When the certificate in use runs out, so the log says so before clients do.
+function certExpiry() {
+  try {
+    const pem = String(tlsOptions.cert);
+    const der = Buffer.from(pem.split("-----")[2].replace(/\s+/g, ""), "base64");
+    const x = new crypto.X509Certificate(der);
+    return x.validTo;
+  } catch { return ""; }
+}
+
+try {
+  // The directory, not the file: a moved symlink shows up as a change here.
+  fs.watch(path.dirname(TLS_CERT), { persistent: false }, () => reloadCertIfChanged(true));
+} catch { /* no watch available: the poll below still covers it */ }
+setInterval(() => reloadCertIfChanged(true), CERT_RECHECK_MS).unref();
 // ── Per-account storage ─────────────────────────────────────────────────────
 // A place for a signed-in account to keep things that should follow it between
 // computers — its skin library, to begin with. Keyed by the Mojang UUID that
@@ -1159,6 +1217,9 @@ const control = net.createServer((raw) => {
     if (!chunk) { try { raw.destroy(); } catch { /* ignore */ } return; }
     raw.unshift(chunk); // put the peeked byte back for the real handler
     if (chunk[0] === 0x16) {
+      // Cheap and throttled: a renewal between two connections is picked up
+      // on the next one rather than at the next restart.
+      reloadCertIfChanged();
       const tlsSock = new tls.TLSSocket(raw, { isServer: true, secureContext });
       tlsSock.on("error", () => { try { tlsSock.destroy(); } catch { /* ignore */ } });
       handleControl(tlsSock);
@@ -1170,7 +1231,9 @@ const control = net.createServer((raw) => {
   });
   raw.on("error", () => { /* ignore */ });
 });
-control.listen(CONTROL_PORT, () => log(`control TLS + pack HTTP on :${CONTROL_PORT}`));
+control.listen(CONTROL_PORT, () => log(
+  `control TLS + pack HTTP on :${CONTROL_PORT}` +
+  (certExpiry() ? ` (certificate good until ${certExpiry()})` : "")));
 
 // Serve a resource-pack HTTP request (arriving on the control port). Reads the
 // token from the URL (/<player>/<token>/<pack>.zip), finds the host that

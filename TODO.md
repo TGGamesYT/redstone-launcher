@@ -9,11 +9,139 @@ started.
 
 ---
 
+## 0. Round 36
+
+In the order it was given.
+
+### The home page
+- [ ] **A segment's size is not editable** — not by dragging and not in its
+      own settings.
+- [ ] **At the smallest window size the segments are cropped off the right**
+      instead of being laid out to fit.
+- [ ] **No list-or-grid choice** in a segment's settings.
+- [ ] **The title text is not a segment**, so it cannot be moved or removed.
+- [ ] **The first segment's buttons have their tops cut off.**
+- [ ] **Only the vertical order can be changed** — segments cannot be put
+      beside each other, and neither width nor height can be set.
+- [ ] **The segment picker is ugly** — icons and a great deal of text.
+- [ ] **The snapshots segment should be the changelogs** from
+      `launchercontent.mojang.com/v2/javaPatchNotes.json`.
+- [ ] **And a Minecraft news segment** from Mojang's launcher content.
+- [x] **The friends API is pinged every time the home page opens.** — *There
+      was nothing between the page and Mojang at all: both the list and the
+      presence report went out on every open. An answer is kept for a minute
+      (thirty seconds for presence, which changes more), and a 429 now puts
+      that endpoint to sleep for exactly as long as Mojang's `Retry-After`
+      asks, serving the last good list meanwhile rather than a red message.
+      Refresh and any change to your own status still go straight out — an
+      "appear offline" answered out of a cache would not appear offline — and
+      adding or removing somebody drops what is held.*
+- [ ] **The player segment wants settings**: whether it can be dragged,
+      whether it has physics/animation, its size and its position.
+- [ ] **The mods/modpacks segment lost its "featured" ordering** — it used to
+      vary by day, popular but not always the most popular.
+- [ ] **The icons are different sizes.**
+- [ ] **The edit button should be the icon alone, at the bottom right.**
+- [ ] **Replace the up/down buttons with dragging**, as on the accounts page;
+      holding over another segment for about half a second puts it beside that
+      one; and a resize handle in each corner.
+- [ ] **"Continue playing" wants a choice of play button or info** per entry —
+      the play button was removed outright.
+- [ ] **Discover's featured items, the same** — and the play button it had did
+      not work: it should open instance creation when no instance for that
+      modpack or mod exists yet.
+
+### The mod browser
+- [ ] **Clicking a creator should open their profile** as another sub-page of
+      the browser: their projects and their stats.
+- [ ] **A project's gallery images are not as large as they could be** and are
+      not a consistent size; clicking one should open it full size, zoomable.
+- [ ] **Installing should be able to make a new instance** for the thing, not
+      only add it to an existing one.
+
+### Everywhere
+- [ ] **Rework every tab strip to Modrinth's shape** (browser, mod details,
+      creator details, instance, server details): one joined background behind
+      the whole strip, rounded at its ends, with only the selected tab carrying
+      its own rounded highlight — and the highlight slides between them.
+- [x] **Highlight the current page in the left sidebar.** — *There was no way
+      to tell which page you were on: every button looked the same. The link
+      that points at the page we are already on is marked — sidebar.js has
+      always worked that out, for in-page navigation. Not the hover look, which
+      has to keep meaning "this is what clicking does": a filled button with a
+      bar down its leading edge, and it does not lift.*
+- [x] **The version text in Settings sits outside the panel.** — *It was
+      pinned to the WINDOW's bottom-right, which is past the panel's right edge
+      and out in the margin. Pinned to the panel now.*
+- [x] **Sticky headers show the app background straight through.** — *A sticky
+      strip has to be opaque or the rows scroll past behind it, and it was
+      painted in the panel's own dark shade — a solid block over whatever the
+      user chose as a background. It paints that background instead, lined up
+      with the window's own (`background-attachment: fixed`), so the strip is a
+      window through to the wallpaper rather than a lid over the cards. With no
+      custom background there is nothing to see through to, so it falls back to
+      the panel shade. The corner radius is gone: it was there to sit against a
+      rounded panel, and a strip showing the background through it is not a
+      panel edge. All three of them — the skins and capes headers, Add New
+      Player, and the mod browser's install sections.*
+
+### Instances
+- [x] **Cancelling at the version step quits instance creation.** — *The
+      comment above it said "Cancel on a step means not this one, which is the
+      same as Back" and the line under it called `close`. ✕ and clicking away
+      still mean the whole thing.*
+- [x] **The line under the instance name is unreadable.** — *Loader, version
+      and two full timestamps all ran together on one line, so the loader and
+      version — which is what that line is for — could not be picked out of it.
+      The line under the name is now what the instance IS and how long it has
+      been played; the dates sit below it, quieter.*
+- [x] **Servers tab: re-pinging blanks the MOTDs.** — *Every render set the
+      line to "Pinging…" and only filled it back in when the ping came home, so
+      returning to the app flashed the whole list. What each server last said
+      is kept and drawn straight away, and the new answer replaces it in place
+      — which nobody sees unless it actually changed. A ping that fails leaves
+      what is on screen rather than replacing it with the address.*
+- [x] **Servers and Worlds tabs: the play buttons are not disabled.** —
+      *Joining a server and playing a world are both launches of the instance,
+      so they are no more available than any other action there while the game
+      is running. The Worlds tab did not even ask whether it was running.*
+- [x] **A modpack whose name has a `:` in it fails to install.** — *An
+      instance's folder was named with whatever the thing was called, and
+      Windows cannot have a colon in a path at all. Names are made safe at the
+      one place folders are created: the characters Windows forbids, trailing
+      dots and spaces (which it drops silently, so the folder you make and the
+      folder you look for stop matching), the device names, and a length cap.
+      What the instance is CALLED keeps its colon — only the folder changes.*
+- [x] **A Forge mod with only one compatible version still opens the version
+      picker.** — *A question with one possible answer is not a question. Both
+      that step and the loader step are skipped when the mod has already
+      settled them, and Back skips them again on the way out — otherwise it
+      would land on a page with one option, or bounce forward and appear to do
+      nothing.*
+
+---
+
 ## 0. Round 35
 
 Corrections to Round 34, in the order they were given — plus the launch crash
 that came in while they were being worked through, which goes first because
 nothing else can be looked at until the app starts.
+
+### Found while testing, not reported
+- [x] **The launcher could crash outright during a download.** — *On any
+      failure the download destroys the part-file it is writing to. A write
+      already handed to the filesystem then comes back as
+      `ERR_STREAM_DESTROYED` and is emitted as an `error` event — and with
+      nothing listening, node turns that into an uncaught exception, which in
+      the main process is the launcher simply gone, mid-download. The
+      listeners around `drain` and `end` did not cover it, because a connection
+      that drops mid-transfer reaches the handler with neither attached. So
+      every ordinary bad connection was a chance of this, on top of the
+      truncated file it was already causing. Found because the download suite
+      kept "flaking" about one run in eight, which is what an intermittent
+      uncaught exception looks like from the outside; it is now reproduced
+      three times a run and checked for. The same pass stopped that loop
+      leaking a dead listener per chunk.*
 
 ### The app would not start at all
 - [x] **`ReferenceError: Cannot access 'dataDir' before initialization`.**
@@ -27,26 +155,101 @@ nothing else can be looked at until the app starts.
       because the order of ten thousand lines of declarations is not something
       to hold in your head.*
 
-- [ ] **The "follow the theme" button is still there, and the icon does not
-      follow on its own.**
-- [ ] **A block background cannot be changed once one is set.**
-- [ ] **Nor can the picture, once an image background is set.**
-- [ ] **Suggestions still unreachable after the certificate was renewed**, even
-      across a restart; "Try again" does nothing. And the message about it was
-      addressed to me, which does not belong in the app.
-- [ ] **Most text on the background has no outline.**
-- [ ] **Some settings text sits out the tab-change animation** — "Font", the
-      border-radius label and its value, the "RAM for …" labels.
-- [ ] **`background: colour` shades the sidebar's top-right** differently from
-      `background: theme` at the same colour.
-- [ ] **The image background wants the "from theme" button too.**
-- [ ] **The app-icon preview in Settings does not update with the theme**, even
-      though the real window icon does; and the desktop icon is not immediate.
-- [ ] **The instance-creation modal loses its scroll position** going back from
-      the version list, and the backdrop blur drops out between steps.
-- [ ] **The text outline must follow the text colour** as it is changed in
-      Settings — white on white is an unreadable blob.
-- [ ] **A font-smoothing setting on the Styles tab** — the font renders blurry.
+- [x] **The "follow the theme" button is still there, and the icon does not
+      follow on its own.** — *The button is gone. Following the theme is not a
+      choice to make, it is simply what the launcher's own icon does, so the
+      only thing left to decide is whether a picture of your own is being used
+      instead — and the second button now exists only to undo that, and is
+      hidden until there is something to undo.*
+- [x] **A block background cannot be changed once one is set.** — *One
+      identifier. `model:blockTile` resolved the newest version into `v` and
+      then asked `blockFaces` for `version` — the raw argument, which the
+      window never sends. So every tile request read assets for `undefined`,
+      came back "no assets for this version yet", and the pick was dropped.
+      Its sibling `model:blockFace` had it right, which is why the face row
+      filled in while the tile behind it never arrived. A pick is also only
+      kept now if the tile really came back, so a block that cannot be read
+      leaves the one in use alone instead of putting the new name against the
+      old picture.*
+- [x] **Nor can the picture, once an image background is set.** — *Every
+      chosen file was copied in as `wallpaper<ext>`, so a second picture handed
+      the window the identical `file://` URL — and a URL that has not changed
+      is served out of the renderer's cache, so the old picture stayed on
+      screen. Each one gets a name of its own now, and the older copies are
+      swept away only after the new one is safely in place (deleting first is
+      also how Windows could fail the copy outright, the old file still being
+      open).*
+- [x] **Suggestions still unreachable after the certificate was renewed.** —
+      *Not the launcher: the relay. It read the certificate once at startup and
+      built one secure context for the life of the process, so certbot renewing
+      changed nothing — it carried on presenting the expired chain, and every
+      launcher kept refusing it however many times you renewed and restarted.
+      Only restarting the relay would have fixed it, which is not something a
+      renewal does. It watches and polls the files now and rebuilds the context
+      when they change, keeping the one in use if it catches a half-written
+      file mid-renewal, and logs the expiry date it is serving. **The relay
+      needs restarting once for this to take effect.** The message in the app
+      no longer explains the situation to whoever runs the server; it says
+      suggestions are unavailable and offers Try again.*
+- [x] **Most text on the background has no outline.** — *The rule named its
+      selectors by hand — `h1`–`h5` and anything tagged `.on-background` — so
+      it covered almost nothing: labels, values, button captions, the home
+      page's segment text. "Is there a panel behind me" is a question about
+      every ancestor's computed background and cannot be asked in CSS at all,
+      so it is measured instead: `frontend/outline.js` walks up from each run
+      of text until it finds something that actually paints, and marks the text
+      that reaches `<html>` without finding one. A tint you can see through
+      does not count as cover. Nothing has to be tagged, and text added later
+      is picked up by an observer.*
+- [x] **Some settings text sits out the tab-change animation.** — *`transform`
+      does nothing at all to a non-replaced inline element, so the inline
+      children faded in without moving while the panel around them rose. They
+      are promoted to `inline-block` for the 160ms the animation runs; each has
+      a `<br>` either side of it so the layout is identical, and anything that
+      sets its own display — the flex toggles — is left alone.*
+- [x] **`background: colour` shades the sidebar's top-right** differently from
+      `background: theme`. — *`--sidebar-bg` ran its gradient along
+      `--gradient-angle`, which is the BACKGROUND's angle and has nothing to do
+      with the sidebar. Without a custom background a separate rule overrode it
+      with a fixed 180°; with one, the saved angle applied and tilted the
+      shading across the corner. The sidebar runs straight down now whatever
+      the background is, and the stale variable is gone.*
+- [x] **The image background wants the "from theme" button too.** — *Added,
+      as the block panel's one: it takes the theme's base and secondary from
+      the picture's middling-dark and middling-bright. `model:blockColors`
+      takes a file as well as a data URL now, and shrinks a photograph first —
+      the answer does not need four million pixels, and shrinking averages away
+      sensor noise and JPEG blocking.*
+- [x] **The app-icon preview in Settings does not update with the theme**, and
+      the desktop icon is not immediate. — *The preview: the preset-theme path
+      set every colour and saved them and never told the preview; only the
+      hand-picked colour path did. Both go through one `themeColorsChanged()`
+      now, which also fixes the outline below. The desktop icon: both shells
+      cache an icon against the file it came from, and the icon was rewritten
+      to the same `app.ico` / `app.png` every time, so the old picture stayed
+      until the cache happened to be rebuilt. Each write gets a name that has
+      never been seen before, the older ones are swept afterwards, and Explorer
+      is told the association changed rather than left to notice.*
+- [x] **The instance-creation modal loses its scroll position**, and the
+      backdrop blur drops out between steps. — *The blur was on each step, and
+      each step replaces the one before it, so it left with the step going out
+      and came back with the one arriving — the page behind visibly snapped
+      sharp and then blurred again, both going forward and coming back. It is
+      its own element now, kept for as long as any step is open, with only the
+      card inside changing. The scroll position of each list is remembered and
+      restored after the rows have been laid out.*
+- [x] **The text outline must follow the text colour** as it is changed. —
+      *The settings page sets `--text-color` itself rather than going through
+      `applyTheme`, and left `--text-outline` where it was, so light text could
+      keep a light edge. Both paths now go through `themeColorsChanged()`,
+      which works the edge out from the text colour's luminance — the same sum
+      `applyTheme` uses.*
+- [x] **A font-smoothing setting on the Styles tab.** — *The launcher's font
+      is drawn from square pixels and the browser's antialiasing smears every
+      edge of it into a grey halo, which is what made it look soft. "Edges" on
+      the Styles tab: Sharp (no smoothing, the default), Smooth, or whatever
+      the system does. Applied before the first paint so text is never drawn
+      smoothed and then redrawn sharp, and it travels with a saved theme.*
 
 ---
 

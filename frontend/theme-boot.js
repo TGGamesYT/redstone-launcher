@@ -43,6 +43,9 @@
     set('--text-font', cached.font);
     if (cached.borderRadius !== undefined) set('--border-radius', cached.borderRadius + 'px');
   }
+  // Before the first paint, so text is never drawn smoothed and then
+  // redrawn sharp.
+  document.documentElement.dataset.smoothing = cached.fontSmoothing || 'sharp';
 
   // ── the background ──
   // The same five modes sidebar.js knows about. Kept in step with

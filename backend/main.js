@@ -768,6 +768,10 @@ const DEFAULT_SETTINGS = {
   thirdColor: "#d92d2d",
   textColor: "#ffffff",
   font: "Pixel",
+  // The launcher's own font is a pixel face, and the browser's default
+  // antialiasing smears every edge of it into a grey halo -- which is why
+  // it looked soft. Off by default; a normal typeface wants it back on.
+  fontSmoothing: "sharp",
   borderRadius: 0,
   autoUpdates: true,
   discordPresence: true,
@@ -1601,6 +1605,31 @@ function notifyReauthNeeded(player) {
   }
 }
 
+// A name people chose, turned into a name a filesystem will take.
+//
+// An instance's id IS its folder under client/, and the id was whatever the
+// thing was called. Plenty of modpacks have a colon in their name -- and
+// Windows cannot have a colon in a path at all, so installing one died on
+// `ENOENT ... mkdir 'client\Some: Pack'` and the instance opened empty.
+//
+// Windows is the strict one, so its rules are applied everywhere: an instance
+// folder copied or synced between computers has to work on all of them.
+const RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+function safeFolderName(baseName) {
+  let s = String(baseName == null ? "" : baseName);
+  // The characters Windows forbids outright, plus the control range.
+  s = s.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, " ");
+  // A name may not end in a dot or a space: Windows silently drops them,
+  // which makes the folder you created and the folder you look for differ.
+  s = s.replace(/\s+/g, " ").trim().replace(/[. ]+$/, "");
+  // Device names are taken whatever the extension.
+  if (RESERVED_NAMES.test(s.split(".")[0])) s = `_${s}`;
+  // Long names are the other way a path fails on Windows, which has a limit
+  // for the whole path and not just a part of it.
+  if (s.length > 64) s = s.slice(0, 64).trim().replace(/[. ]+$/, "");
+  return s || "Instance";
+}
+
 function getUniqueFolderName(baseName) {
   const clientDir = path.join(dataDir, 'client');
 
@@ -1611,11 +1640,12 @@ function getUniqueFolderName(baseName) {
     fs.statSync(path.join(clientDir, f)).isDirectory()
   );
 
-  let uniqueName = baseName;
+  const safe = safeFolderName(baseName);
+  let uniqueName = safe;
   let counter = 1;
 
   while (existingFolders.includes(uniqueName)) {
-    uniqueName = `${baseName}-${counter}`;
+    uniqueName = `${safe}-${counter}`;
     counter++;
   }
 
@@ -2831,12 +2861,21 @@ ipcMain.handle("bg:pickImage", async () => {
     const ext = (path.extname(src) || ".png").toLowerCase();
     const dir = path.join(dataDir, "background");
     fs.mkdirSync(dir, { recursive: true });
-    // Any older copy goes, whatever it was called.
-    for (const f of fs.readdirSync(dir)) {
-      if (/^wallpaper\./i.test(f)) { try { fs.unlinkSync(path.join(dir, f)); } catch { /* fine */ } }
-    }
-    const dest = path.join(dir, "wallpaper" + ext);
+    // Each picture is copied in under a name of its own. It used to be
+    // "wallpaper<ext>" every time, which meant choosing a second picture
+    // handed the window the identical file:// URL -- and a URL that has not
+    // changed is served out of the renderer's cache, so the old picture
+    // stayed on screen and a new one could never be chosen. (On Windows the
+    // copy could not always be made either: deleting a file the compositor
+    // still has open fails.)
+    const dest = path.join(dir, `wallpaper-${Date.now().toString(36)}${ext}`);
     fs.copyFileSync(src, dest);
+    // Now that the new one is safely in place, the older copies go --
+    // including the single fixed name used before this.
+    for (const f of fs.readdirSync(dir)) {
+      if (!/^wallpaper[-.]/i.test(f) || path.join(dir, f) === dest) continue;
+      try { fs.unlinkSync(path.join(dir, f)); } catch { /* it will go next time */ }
+    }
     return { file: dest, url: pathToFileURL(dest).href, name: path.basename(src) };
   } catch (e) { return { error: e.message }; }
 });
@@ -4911,7 +4950,7 @@ ipcMain.handle("suggest:mine", async () => suggestCall({ op: "mine" }));
 // can be checked again later without being online.
 const THEME_FIELDS = [
   "baseColor", "secondaryColor", "thirdColor", "autoThird",
-  "textColor", "font", "borderRadius", "background",
+  "textColor", "font", "fontSmoothing", "borderRadius", "background",
 ];
 const themesPath = path.join(dataDir, "themes.json");
 const loadThemes = () => { try { return JSON.parse(fs.readFileSync(themesPath, "utf8")) || []; } catch { return []; } };
@@ -9602,7 +9641,7 @@ ipcMain.handle("model:blockTile", async (event, { version, id, texture, random }
   try {
     const v = await newestBlockVersion(version);
     if (!v) return { error: "No Minecraft version could be read yet" };
-    const got = await iconModels.blockFaces({ version, id });
+    const got = await iconModels.blockFaces({ version: v, id });
     if (!got || got.error) return got || { error: "that block could not be read" };
     const face = (got.faces || []).find(f => f.texture === texture) || (got.faces || [])[0];
     if (!face) return { error: "that block has no face to tile" };
@@ -9625,10 +9664,17 @@ ipcMain.handle("model:blockTile", async (event, { version, id, texture, random }
 // the middling-dark of it, which is what "make the theme match this block"
 // means. The extremes are no use -- a texture's lightest pixel is usually one
 // stray highlight and its darkest an outline.
-ipcMain.handle("model:blockColors", async (event, { url } = {}) => {
+ipcMain.handle("model:blockColors", async (event, { url, file } = {}) => {
   try {
-    if (!url) return { error: "no texture" };
-    const { data } = await sharp(fromDataUrl(url)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    if (!url && !file) return { error: "no texture" };
+    // A block's face arrives as a data URL; a background picture is a file on
+    // disk, and the same two colours are wanted from either.
+    const source = file ? fs.readFileSync(file) : fromDataUrl(url);
+    // A photograph is millions of pixels and the answer does not need them:
+    // shrunk first, which also averages away sensor noise and JPEG blocking.
+    const { data } = await sharp(source)
+      .resize(160, 160, { fit: "inside", withoutEnlargement: true })
+      .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const px = [];
     for (let i = 0; i < data.length; i += 4) {
       if (data[i + 3] < 128) continue;                 // see-through pixels are not colours
@@ -13262,7 +13308,62 @@ async function mcFriendsRequest(accountId, endpoint, method = "GET", body = null
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); } catch { data = text; }
-  return { ok: res.ok, status: res.status, data };
+  return { ok: res.ok, status: res.status, data, retryAfter: res.headers.get("retry-after") };
+}
+
+// ── How often Mojang is actually asked ──────────────────────────────────────
+//
+// The friends list and the presence report were sent every single time the
+// home page was opened, with nothing in between -- and the home page is opened
+// constantly. Mojang answers HTTP 429 to that quickly, and then the friends
+// segment shows an error for everybody whose only crime was clicking Home.
+//
+// So an answer is kept for a short while and handed back instead of asking
+// again, and a 429 puts the endpoint to sleep for as long as Mojang asks for
+// (it sends Retry-After) rather than being retried straight into another one.
+// A deliberate Refresh passes `force` and skips the keeping -- but not the
+// sleeping, because hammering a 429 is what got us here.
+const FRIENDS_FRESH = { "/friends": 60_000, "/presence": 30_000 };
+const FRIENDS_DEFAULT_BACKOFF = 60_000;
+const friendsCache = new Map();        // `${accountId}|${endpoint}` -> { at, value }
+const friendsCooldown = new Map();     // same key -> when it may be asked again
+
+async function friendsCached(accountId, endpoint, { force = false, fetcher } = {}) {
+  const key = `${accountId}|${endpoint}`;
+  const now = Date.now();
+  const held = friendsCache.get(key);
+  const fresh = FRIENDS_FRESH[endpoint] || 30_000;
+
+  if (!force && held && now - held.at < fresh) return { ...held.value, cached: true };
+
+  // Still being told to wait: the last answer is far better than an error,
+  // and where there is no last answer, say what is actually happening.
+  const until = friendsCooldown.get(key) || 0;
+  if (now < until) {
+    if (held) return { ...held.value, cached: true };
+    return { success: false, error: "Mojang is asking us to slow down. This will sort itself out in a minute.", rateLimited: true };
+  }
+
+  const r = await fetcher();
+  if (r && r.status === 429) {
+    const wait = Math.max(5_000, Math.min(10 * 60_000,
+      (Number(r.retryAfter) * 1000) || FRIENDS_DEFAULT_BACKOFF));
+    friendsCooldown.set(key, Date.now() + wait);
+    if (held) return { ...held.value, cached: true };
+    return { success: false, error: "Mojang is asking us to slow down. This will sort itself out in a minute.", rateLimited: true };
+  }
+  friendsCooldown.delete(key);
+  // Only a good answer is worth keeping; an error must not be served for the
+  // next minute in place of trying again.
+  if (r && r.value && r.value.success) friendsCache.set(key, { at: Date.now(), value: r.value });
+  return r ? r.value : { success: false, error: "No answer" };
+}
+
+// Changing the friends list makes what is held about it wrong.
+function dropFriendsCache(accountId) {
+  for (const key of [...friendsCache.keys()]) {
+    if (key.startsWith(`${accountId}|`)) friendsCache.delete(key);
+  }
 }
 
 // The error shape is { details: { status, errorMessage }, errorMessage }.
@@ -13272,34 +13373,47 @@ function friendsError(r) {
     || (typeof d === "string" && d) || `HTTP ${r && r.status}`;
 }
 
-ipcMain.handle("friends:list", async (event, { accountId }) => {
+ipcMain.handle("friends:list", async (event, { accountId, force } = {}) => {
   try {
-    const r = await mcFriendsRequest(accountId, "/friends");
-    if (!r.ok) return { success: false, error: friendsError(r) };
-    const d = r.data || {};
-    return {
-      success: true,
-      friends: d.friends || [],
-      incoming: d.incomingRequests || [],
-      outgoing: d.outgoingRequests || [],
-    };
+    return await friendsCached(accountId, "/friends", {
+      force,
+      fetcher: async () => {
+        const r = await mcFriendsRequest(accountId, "/friends");
+        if (!r.ok) return { status: r.status, retryAfter: r.retryAfter, value: { success: false, error: friendsError(r) } };
+        const d = r.data || {};
+        return {
+          status: r.status,
+          value: {
+            success: true,
+            friends: d.friends || [],
+            incoming: d.incomingRequests || [],
+            outgoing: d.outgoingRequests || [],
+          },
+        };
+      },
+    });
   } catch (err) {
     return { success: false, error: String(err && err.message || err) };
   }
 });
 
 // Reporting presence is also how the online friends are read back.
-ipcMain.handle("friends:presence", async (event, { accountId, status }) => {
+ipcMain.handle("friends:presence", async (event, { accountId, status, force } = {}) => {
   try {
-    const r = await mcFriendsRequest(accountId, "/presence", "POST", { status: status || "ONLINE" });
-    if (!r.ok) return { success: false, error: friendsError(r) };
-    const list = (r.data && r.data.presence) || [];
-    const byId = {};
-    for (const p of list) {
-      if (!p || !p.profileId) continue;
-      byId[String(p.profileId).replace(/-/g, "")] = p.status || "ONLINE";
-    }
-    return { success: true, presence: byId };
+    return await friendsCached(accountId, "/presence", {
+      force,
+      fetcher: async () => {
+        const r = await mcFriendsRequest(accountId, "/presence", "POST", { status: status || "ONLINE" });
+        if (!r.ok) return { status: r.status, retryAfter: r.retryAfter, value: { success: false, error: friendsError(r) } };
+        const list = (r.data && r.data.presence) || [];
+        const byId = {};
+        for (const p of list) {
+          if (!p || !p.profileId) continue;
+          byId[String(p.profileId).replace(/-/g, "")] = p.status || "ONLINE";
+        }
+        return { status: r.status, value: { success: true, presence: byId } };
+      },
+    });
   } catch (err) {
     return { success: false, error: String(err && err.message || err) };
   }
@@ -13327,6 +13441,9 @@ ipcMain.handle("friends:update", async (event, { accountId, player, type }) => {
           : msg,
       };
     }
+    // Adding or removing somebody makes what is held about the list wrong,
+    // so the next read asks Mojang rather than serving the old answer.
+    dropFriendsCache(accountId);
     return { success: true };
   } catch (err) {
     return { success: false, error: String(err && err.message || err) };
