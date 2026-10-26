@@ -272,10 +272,22 @@ change — the version dropdown included.
       a customise button like a dev mod's.
 
 ### J. Onboarding
-- [ ] **It still tells you to click the tab.**
-- [ ] **On the instances page, the "my instances" highlight lands in the
+- [x] **It still tells you to click the tab.** — *Each step put up an "Open
+      Instances" prompt and armed that tab's click, which with a Next button
+      sitting beside it was two instructions for one step. The sidebar is on
+      every page, so the ring lands on the right row wherever you are and
+      there was never anything to click for. Next moves the tour on; the
+      handoff that keeps the tour alive when you navigate of your own accord
+      is kept, because clicking a tab or a pinned instance still has to leave
+      it standing.*
+- [x] **On the instances page, the "my instances" highlight lands in the
       middle of the page** instead of on the same thing it highlights
-      elsewhere.
+      elsewhere. — *A typo, and only on that one page: `instances.html` called
+      the sidebar's middle list `menu medium` where all eleven other pages
+      call it `menu middle`. The step's selector found nothing, and a step
+      whose target is missing dims everything and centres the popup — which is
+      exactly what was being seen. Renamed, along with the one script that
+      had matched the typo.*
 
 ## 0. Round 33
 

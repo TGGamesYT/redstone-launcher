@@ -36,14 +36,10 @@
       .ob-pop .row { display:flex; gap:8px; justify-content:space-between; align-items:center; }
       /* A call to action, not a sentence in the body text. It used to be
          var(--base-color) on the panel, which on a red theme is red on red. */
-      .ob-pop .ob-ask { margin:0 0 12px; padding:7px 10px; font-size:12px; line-height:1.4;
-        display:flex; align-items:center; gap:7px; border-radius:var(--border-radius);
-        background:var(--base-color); color:#fff; font-weight:600;
-        border:1px solid rgba(255,255,255,0.25); text-shadow:0 1px 2px rgba(0,0,0,0.45); }
-      .ob-pop .ob-ask i { font-size:16px; }
-      /* A soft pulse on the thing we are asking them to click, so "click this"
-         reads as an instruction rather than decoration. */
-      .ob-ring.ob-ask-ring { animation: ob-pulse 1.5s ease-in-out infinite; }
+      /* A soft pulse on whatever the step is pointing at, so the eye goes
+         there. The tour used to ask for a click as well, which with a Next
+         button beside it was two instructions for one step. */
+      .ob-ring { animation: ob-pulse 1.5s ease-in-out infinite; }
       @keyframes ob-pulse {
         0%, 100% { box-shadow:0 0 0 3px color-mix(in srgb, var(--base-color) 40%, transparent); }
         50% { box-shadow:0 0 0 9px color-mix(in srgb, var(--base-color) 10%, transparent); }
@@ -485,11 +481,15 @@
   }
 
   // ── Onboarding ────────────────────────────────────────────────────────────
-  // Each step points at a real sidebar item and asks the user to click it, so
-  // the tour teaches where things are rather than just describing them.
-  // `page` is the file a step's tab opens. Steps that have one ask to be
-  // clicked and the tour picks itself up on the page that opens; steps without
-  // one are just explained where they are.
+  // Each step points at a real sidebar item, so the tour teaches where things
+  // are rather than just describing them. Next moves on.
+  //
+  // It used to ASK to be clicked -- "Open Instances" -- and wait. The sidebar
+  // is on every page, so the ring lands on the right row wherever you are and
+  // there was never anything to click for: being told to click a tab, and then
+  // having to press Next anyway once you had, is two instructions for one
+  // step. `page` is kept because clicking a tab of your own accord still has
+  // to leave the tour standing, which the handoff below takes care of.
   const STEPS = [
     { sel: 'a[href="index.html"]', page: 'index.html', title: 'Home', body: "Where you land. Recent instances and what's new." },
     { sel: 'a[href="instances.html"]', page: 'instances.html', title: 'Instances', body: 'Every copy of the game you have set up. Create one here, or import from another launcher.' },
@@ -549,30 +549,16 @@
     document.body.appendChild(pop);
 
     let i = Math.max(0, Math.min(STEPS.length - 1, Number(startAt) || 0));
-    // The element this step asks to be clicked, so the handler can come off
-    // again when the step changes.
-    let armed = null, armedHandler = null;
 
-    // Whatever navigates the page, the tour goes with it. Arming the step's own
-    // tab only covered the tabs; clicking a pinned instance in the sidebar (the
-    // "Your instances" step literally asks you to look at them) opened that
-    // instance and the tour died on the spot. beforeunload catches every route
-    // out of the page, so the tour always comes back.
-    const handoff = () => {
-      // Clicking the step's OWN tab advances; anything else resumes where it is.
-      if (!writeState._armedFired) {
-        writeState({ i, andImport: !!openOnboarding._andImport });
-      }
-      writeState._armedFired = false;
-    };
+    // Whatever navigates the page, the tour goes with it, and comes back on
+    // the same step. Nothing here asks to be clicked, but a tab or a pinned
+    // instance can still be clicked at any point -- the "Your instances" step
+    // is literally about them -- and the tour used to die on the spot when
+    // that happened. beforeunload catches every route out of the page.
+    const handoff = () => writeState({ i, andImport: !!openOnboarding._andImport });
     window.addEventListener('beforeunload', handoff);
 
-    const disarm = () => {
-      if (armed && armedHandler) armed.removeEventListener('click', armedHandler, true);
-      armed = null; armedHandler = null;
-    };
     const cleanup = () => {
-      disarm();
       shades.forEach(s => s.remove());
       ring.remove(); pop.remove();
       window.removeEventListener('resize', place);
@@ -599,35 +585,6 @@
       return el ? el.getBoundingClientRect() : null;
     }
 
-    // True when this step's tab would actually take us somewhere — on the page
-    // it points at, clicking it is a no-op, so the step is explained in place.
-    function leadsAway(step) {
-      if (!step.page) return false;
-      const here = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
-      return here !== step.page.toLowerCase();
-    }
-
-    // Hand the tour to the next page. Written before navigation so whichever
-    // page loads next picks up where this one left off.
-    function arm(step) {
-      disarm();
-      if (!leadsAway(step)) return false;
-      const el = stepEl();
-      if (!el) return false;
-      armed = el;
-      armedHandler = () => {
-        // Stay on THIS step. Clicking the tab is how you see what it opens --
-        // being thrown onto the next step the instant you did meant you never
-        // got to look at the page you had just been asked to open. Next is how
-        // you move on.
-        writeState({ i, andImport: !!openOnboarding._andImport });
-        writeState._armedFired = true;
-      };
-      // Capture, so the state is saved even if something else handles the
-      // click first and navigates.
-      el.addEventListener('click', armedHandler, true);
-      return true;
-    }
 
     function place() {
       const r = targetRect();
@@ -664,11 +621,8 @@
 
     function render() {
       const s = STEPS[i];
-      const asking = arm(s);
-      ring.classList.toggle('ob-ask-ring', asking);
       pop.innerHTML = `
         <h3></h3><p></p>
-        ${asking ? '<p class="ob-ask"></p>' : ''}
         <div class="row">
           <span class="ob-step">${i + 1} of ${STEPS.length}</span>
           <span style="display:flex;gap:6px;">
@@ -679,11 +633,6 @@
         </div>`;
       pop.querySelector('h3').textContent = s.title;
       pop.querySelector('p').textContent = s.body;
-      if (asking) {
-        const ask = pop.querySelector('.ob-ask');
-        ask.innerHTML = '<i class="material-icons">ads_click</i><span></span>';
-        ask.querySelector('span').textContent = `Open ${s.title}`;
-      }
       pop.querySelector('.ob-skip').onclick = () => finish(true);
       const back = pop.querySelector('.ob-back');
       if (back) back.onclick = () => { i--; render(); place(); };
