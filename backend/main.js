@@ -9,7 +9,7 @@ import fs from 'fs';
 const fsp = fs.promises;
 import { ssim } from "ssim.js";
 import sharp from "sharp";
-import { shell, app, BrowserWindow, ipcMain, dialog, utilityProcess } from 'electron';
+import { shell, app, BrowserWindow, ipcMain, dialog, utilityProcess, nativeImage } from 'electron';
 import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
 import { getLaunchConfig, resolveNeoForgeVersion, resolveForgeVersion, neoPrefix, compareVersions as loaderCompareVersions } from './loader-versions.js';
 import { Client } from 'minecraft-launcher-core';
@@ -4256,6 +4256,307 @@ async function suggestCall(req) {
 ipcMain.handle("suggest:submit", async (event, { title, body } = {}) =>
   suggestCall({ op: "submit", title, body }));
 ipcMain.handle("suggest:mine", async () => suggestCall({ op: "mine" }));
+
+// ── Themes: saving, sharing and the app's icon ──────────────────────────────
+//
+// A theme is every setting that decides how the launcher looks: the colours,
+// the font, the corner radius and the whole Background section. Saved under a
+// name it joins the built-in list; exported it becomes a file that can be
+// passed around.
+//
+// A shared theme names the person who made it, and anybody can edit a JSON
+// file, so the name on its own is worth nothing. The relay signs it: it has
+// already proved the connection's Minecraft account with Mojang, so the author
+// is taken from the connection and the signature covers the author and the
+// theme's hash TOGETHER. Change either and it stops verifying, and only the
+// relay can produce a new signature. The relay's public key is fetched over
+// the same verified TLS as everything else and then remembered, so a theme
+// can be checked again later without being online.
+const THEME_FIELDS = [
+  "baseColor", "secondaryColor", "thirdColor", "autoThird",
+  "textColor", "font", "borderRadius", "background",
+];
+const themesPath = path.join(dataDir, "themes.json");
+const loadThemes = () => { try { return JSON.parse(fs.readFileSync(themesPath, "utf8")) || []; } catch { return []; } };
+const saveThemes = (list) => {
+  try { fs.writeFileSync(themesPath, JSON.stringify(list, null, 2)); return true; }
+  catch { return false; }
+};
+
+// The theme as it is now, and nothing else — a theme file that carried
+// unrelated settings would change them on whoever imported it.
+function currentThemeData() {
+  const out = {};
+  for (const k of THEME_FIELDS) out[k] = settings.get(k);
+  return out;
+}
+
+// The bytes a signature is over. Keys in a fixed order at every level, so the
+// same theme always hashes the same whatever order it was built in.
+function canonicalJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
+  const keys = Object.keys(value).sort();
+  return "{" + keys.map(k => JSON.stringify(k) + ":" + canonicalJson(value[k])).join(",") + "}";
+}
+const themeHash = (data) => crypto.createHash("sha256").update(canonicalJson(data)).digest("hex");
+
+async function themeRelayCall(req) {
+  const account = await relayAccountForSync();
+  if (!account) return { ok: false, error: "Sign in with a Microsoft account to sign a theme." };
+  const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
+  try {
+    return await relayClient.themeRelay({
+      host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+      account, rejectUnauthorized, req,
+    });
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+}
+
+// The relay's public key, remembered after the first time so a theme can be
+// checked without being online. Pinned: once a key is known it is not
+// silently replaced, because swapping it is exactly how a forged author
+// would be made to verify.
+function knownThemeKey() { return settings.get("themeSigningKey", null) || null; }
+async function themeVerifyKey() {
+  const known = knownThemeKey();
+  if (known) return known;
+  const r = await themeRelayCall({ op: "key" });
+  if (r && r.ok && r.publicKey) {
+    settings.set("themeSigningKey", r.publicKey);
+    return r.publicKey;
+  }
+  return null;
+}
+
+// Does this theme file's author hold up?
+function verifyThemeAuthor(file, publicKey) {
+  const author = file && file.author;
+  if (!author || !author.signature) return { verified: false, reason: "It does not say who made it." };
+  if (!publicKey) return { verified: false, reason: "The signing key could not be fetched — try again online." };
+  try {
+    const hash = themeHash(file.theme);
+    if (hash !== author.hash) return { verified: false, reason: "The theme has been changed since it was signed." };
+    const message = Buffer.from(`redstone-theme:v1\n${author.uuid}\n${author.name}\n${hash}`, "utf8");
+    const ok = crypto.verify(null, message, crypto.createPublicKey(publicKey), Buffer.from(author.signature, "base64"));
+    return ok ? { verified: true } : { verified: false, reason: "The name on it is not the one it was signed with." };
+  } catch (e) {
+    return { verified: false, reason: String(e && e.message || e) };
+  }
+}
+
+ipcMain.handle("theme:list", () => ({ success: true, themes: loadThemes() }));
+
+ipcMain.handle("theme:save", async (event, { name, icon } = {}) => {
+  const clean = String(name || "").trim().slice(0, 60);
+  if (!clean) return { success: false, error: "Give the theme a name" };
+  const list = loadThemes();
+  const theme = currentThemeData();
+  // The icon is saved with it, so a theme carries the look of the app's own
+  // icon as well as the window's colours.
+  const entry = {
+    id: crypto.randomUUID(), name: clean, at: Date.now(),
+    theme, icon: icon || settings.get("appIcon", null) || null,
+  };
+  const at = list.findIndex(t => t.name.toLowerCase() === clean.toLowerCase());
+  if (at >= 0) { entry.id = list[at].id; list[at] = entry; } else list.push(entry);
+  if (!saveThemes(list)) return { success: false, error: "The theme could not be saved" };
+  return { success: true, themes: list, theme: entry };
+});
+
+ipcMain.handle("theme:delete", (event, { id } = {}) => {
+  const list = loadThemes().filter(t => t.id !== id);
+  saveThemes(list);
+  return { success: true, themes: list };
+});
+
+ipcMain.handle("theme:apply", async (event, { id } = {}) => {
+  const t = loadThemes().find(x => x.id === id);
+  if (!t) return { success: false, error: "That theme is gone" };
+  for (const k of THEME_FIELDS) if (k in t.theme) settings.set(k, t.theme[k]);
+  if (t.icon) await applyAppIcon(t.icon);
+  // Every open window re-reads the settings and repaints itself, the same way
+  // it does when a colour is changed in the settings page.
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("settings-updated", t.theme); } catch { /* gone */ }
+  }
+  return { success: true, theme: t.theme, icon: t.icon || null };
+});
+
+// Export: sign it if we can, write it either way. A theme that cannot be
+// signed is still a perfectly good theme -- it just arrives saying it does
+// not know who made it, rather than claiming someone.
+ipcMain.handle("theme:export", async (event, { id, name } = {}) => {
+  const saved = id ? loadThemes().find(t => t.id === id) : null;
+  const theme = saved ? saved.theme : currentThemeData();
+  const icon = saved ? saved.icon : (settings.get("appIcon", null) || null);
+  const title = String((saved && saved.name) || name || "My theme").trim().slice(0, 60);
+
+  const file = { format: "redstone-theme", version: 1, name: title, theme, icon, author: null };
+  const signed = await themeRelayCall({ op: "sign", hash: themeHash(theme) });
+  let note = null;
+  if (signed && signed.ok && signed.signature) {
+    file.author = {
+      uuid: signed.author.uuid, name: signed.author.name,
+      hash: signed.hash, signature: signed.signature,
+      algorithm: signed.algorithm, version: signed.version,
+    };
+    if (signed.publicKey && !knownThemeKey()) settings.set("themeSigningKey", signed.publicKey);
+  } else {
+    note = (signed && signed.error) || "It could not be signed, so it will not say who made it.";
+  }
+
+  const r = await dialog.showSaveDialog({
+    title: "Export theme",
+    defaultPath: `${title.replace(/[^\w .-]+/g, "_") || "theme"}.rstheme`,
+    filters: [{ name: "Redstone theme", extensions: ["rstheme", "json"] }],
+  });
+  if (r.canceled || !r.filePath) return { canceled: true };
+  try {
+    fs.writeFileSync(r.filePath, JSON.stringify(file, null, 2));
+    return { success: true, file: r.filePath, signed: !!file.author, note };
+  } catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle("theme:import", async () => {
+  const r = await dialog.showOpenDialog({
+    title: "Import a theme",
+    filters: [{ name: "Redstone theme", extensions: ["rstheme", "json"] }],
+    properties: ["openFile"],
+  });
+  if (r.canceled || !r.filePaths.length) return { canceled: true };
+  let file;
+  try { file = JSON.parse(fs.readFileSync(r.filePaths[0], "utf8")); }
+  catch (e) { return { success: false, error: "That file could not be read: " + e.message }; }
+  if (!file || file.format !== "redstone-theme" || !file.theme || typeof file.theme !== "object") {
+    return { success: false, error: "That is not a Redstone theme file" };
+  }
+  // Only the fields a theme is allowed to carry, so an edited file cannot
+  // reach any other setting.
+  const theme = {};
+  for (const k of THEME_FIELDS) if (k in file.theme) theme[k] = file.theme[k];
+
+  const key = await themeVerifyKey();
+  const check = verifyThemeAuthor({ ...file, theme: file.theme }, key);
+  const list = loadThemes();
+  const entry = {
+    id: crypto.randomUUID(),
+    name: String(file.name || "Imported theme").trim().slice(0, 60),
+    at: Date.now(), theme, icon: file.icon || null,
+    author: check.verified ? { uuid: file.author.uuid, name: file.author.name } : null,
+    imported: true,
+  };
+  const at = list.findIndex(t => t.name.toLowerCase() === entry.name.toLowerCase());
+  if (at >= 0) { entry.id = list[at].id; list[at] = entry; } else list.push(entry);
+  saveThemes(list);
+  return {
+    success: true, themes: list, theme: entry,
+    author: entry.author, verified: check.verified, reason: check.reason || null,
+  };
+});
+
+// ── The app's own icon ──────────────────────────────────────────────────────
+//
+// The shipped icon is red because the launcher's own theme is, so changing
+// the theme's colours and leaving the icon alone looks like an oversight. The
+// red parts are re-tinted to the theme instead: every pixel whose hue is near
+// the icon's red is turned the same distance around to the theme's own hue,
+// keeping its own lightness, so the shading survives. Anything that is not
+// red -- the greys, the outline -- is left exactly as it is.
+//
+// A custom picture can be used instead, and whichever is in use is saved with
+// the theme.
+const ICON_SOURCE = () => path.join(app.getAppPath(), "frontend", "icon.png");
+const ICON_OUT = () => path.join(dataDir, "app-icon.png");
+// The hue of the shipped icon's red, which is the theme's own default base.
+const ICON_BASE_HUE = 0;
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const hue = (t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return [hue(h + 1 / 3), hue(h), hue(h - 1 / 3)].map(v => Math.round(v * 255));
+}
+
+async function retintIcon(hex) {
+  const [tr, tg, tb] = [1, 3, 5].map(i => parseInt(String(hex).replace("#", "").slice(i - 1, i + 1), 16));
+  const targetHue = rgbToHsl(tr, tg, tb)[0];
+  const src = ICON_SOURCE();
+  const { data, info } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const out = Buffer.from(data);
+  for (let i = 0; i < out.length; i += 4) {
+    if (out[i + 3] < 8) continue;                       // see-through, nothing to tint
+    const [h, s, l] = rgbToHsl(out[i], out[i + 1], out[i + 2]);
+    // Only what is actually red, and actually coloured: a grey has no hue to
+    // turn and turning it would paint the whole icon.
+    const away = Math.min(Math.abs(h - ICON_BASE_HUE), 360 - Math.abs(h - ICON_BASE_HUE));
+    if (s < 0.25 || away > 35) continue;
+    const [r2, g2, b2] = hslToRgb(targetHue + (h - ICON_BASE_HUE), s, l);
+    out[i] = r2; out[i + 1] = g2; out[i + 2] = b2;
+  }
+  return sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+}
+
+// Put an icon on the windows and remember it. `icon` is either
+// { kind: 'theme' } or { kind: 'image', dataUrl }.
+async function applyAppIcon(icon) {
+  try {
+    let png;
+    if (icon && icon.kind === "image" && icon.dataUrl) {
+      const b64 = String(icon.dataUrl).replace(/^data:image\/[\w+.-]+;base64,/, "");
+      png = await sharp(Buffer.from(b64, "base64")).resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+    } else {
+      png = await retintIcon(settings.get("baseColor", "#b30c0c"));
+    }
+    fs.writeFileSync(ICON_OUT(), png);
+    const img = nativeImage.createFromBuffer(png);
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.setIcon(img); } catch { /* not every platform takes one */ }
+    }
+    settings.set("appIcon", icon || { kind: "theme" });
+    return { success: true, dataUrl: "data:image/png;base64," + png.toString("base64") };
+  } catch (e) {
+    return { success: false, error: String(e && e.message || e) };
+  }
+}
+
+ipcMain.handle("icon:app", () => ({
+  success: true,
+  icon: settings.get("appIcon", null) || { kind: "theme" },
+  file: fs.existsSync(ICON_OUT()) ? ICON_OUT() : null,
+}));
+ipcMain.handle("icon:setApp", async (event, { icon } = {}) => applyAppIcon(icon));
+// What the icon would look like for a colour, without committing to it.
+ipcMain.handle("icon:previewApp", async (event, { color } = {}) => {
+  try {
+    const png = await retintIcon(color || settings.get("baseColor", "#b30c0c"));
+    return { success: true, dataUrl: "data:image/png;base64," + png.toString("base64") };
+  } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+});
 
 // ── The admin panel ────────────────────────────────────────────────────────
 // Opened by typing viewAdmin("…") into devtools. Nothing about what is in it

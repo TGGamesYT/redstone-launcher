@@ -5,7 +5,7 @@ import net from "net";
 import tls from "tls";
 import https from "https";
 
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23 };
 
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
@@ -190,6 +190,19 @@ function askRelay({ host, controlPort, account, req, ask, reply, rejectUnauthori
  */
 export function suggestRelay(opts) {
   return askRelay({ ...opts, ask: T.SUGGEST, reply: T.SUGGEST_DATA });
+}
+
+/**
+ * Signing a theme for sharing: { op: 'sign', hash } or { op: 'key' }.
+ *
+ * The relay signs the author and the theme's hash together, and takes the
+ * author from the connection it has already verified with Mojang -- never
+ * from the request. That is what makes the name on a shared theme mean
+ * something: the signature stops verifying if either the author or the theme
+ * is changed, and only the relay can make a new one.
+ */
+export function themeRelay(opts) {
+  return askRelay({ ...opts, ask: T.THEME, reply: T.THEME_DATA });
 }
 
 /**

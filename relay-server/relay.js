@@ -48,7 +48,7 @@ process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.
 // served on the SAME public port as Minecraft (25565) — a Minecraft handshake
 // never begins with an HTTP method, so we can tell the two apart from the first
 // bytes and route by the token in the request URL. No extra port to open.
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23 };
 
 // URL token (the "random safety token" in the pack path) -> the host serving it.
 const packRoutes = new Map();
@@ -444,6 +444,71 @@ const adminSuggestion = (s) => ({
   who: s.name || s.uuid, timedOut: timedOutUntil(s.uuid) || null,
 });
 
+// ───────────────────────── Signing a shared theme ────────────────────────
+//
+// A theme can be exported and passed around, and it names the person who
+// made it. Anybody can edit a JSON file, so the name on its own means
+// nothing: it has to be impossible to take someone else's theme, put your own
+// name on it, and still have it check out — and equally impossible to keep
+// their name on something you changed.
+//
+// So the relay signs it. It is the only party here that knows who anybody is:
+// the connection has already proved its Minecraft account with Mojang's
+// hasJoined, so the author is taken from the CONNECTION and never from the
+// request. The signature covers the author and the theme's hash together,
+// which is what fuses the two: change either and it stops verifying.
+//
+// The key pair is the relay's, made once and kept here. Only the public half
+// ever leaves, and a launcher fetches that over the same verified TLS it uses
+// for everything else, then remembers it.
+const THEME_KEY_FILE = process.env.RELAY_THEME_KEY || path.join(__dirname, "relay-theme-key.json");
+let themeKeys = null;
+function themeKeyPair() {
+  if (themeKeys) return themeKeys;
+  try {
+    const saved = JSON.parse(fs.readFileSync(THEME_KEY_FILE, "utf8"));
+    themeKeys = {
+      privateKey: crypto.createPrivateKey(saved.privateKey),
+      publicKeyPem: saved.publicKey,
+    };
+    return themeKeys;
+  } catch { /* none yet */ }
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+  const privatePem = privateKey.export({ type: "pkcs8", format: "pem" });
+  const publicPem = publicKey.export({ type: "spki", format: "pem" });
+  try {
+    fs.writeFileSync(THEME_KEY_FILE, JSON.stringify({ privateKey: privatePem, publicKey: publicPem }, null, 2), { mode: 0o600 });
+  } catch (e) { log(`theme key could not be saved: ${e.message}`); }
+  themeKeys = { privateKey, publicKeyPem: publicPem };
+  return themeKeys;
+}
+
+function handleTheme(req, who) {
+  const op = String((req && req.op) || "");
+  if (op === "key") {
+    return { ok: true, publicKey: themeKeyPair().publicKeyPem, algorithm: "ed25519" };
+  }
+  if (op === "sign") {
+    const hash = String((req && req.hash) || "");
+    // A sha-256 of the theme and nothing else: the relay never sees or stores
+    // the theme itself, only the fingerprint it is asked to vouch for.
+    if (!/^[0-9a-f]{64}$/.test(hash)) return { ok: false, error: "A theme hash is required" };
+    if (!who || !who.uuid || !who.name) return { ok: false, error: "Sign in with a Minecraft account first" };
+    const { privateKey, publicKeyPem } = themeKeyPair();
+    // The exact bytes a launcher will rebuild to verify. Fixed order, one
+    // separator that cannot appear in any of the three fields.
+    const message = Buffer.from(`redstone-theme:v1\n${who.uuid}\n${who.name}\n${hash}`, "utf8");
+    const signature = crypto.sign(null, message, privateKey).toString("base64");
+    return {
+      ok: true,
+      author: { uuid: who.uuid, name: who.name },
+      hash, signature, algorithm: "ed25519", version: 1,
+      publicKey: publicKeyPem,
+    };
+  }
+  return { ok: false, error: `Unknown theme op: ${op}` };
+}
+
 function handleSuggest(req, who) {
   const op = String(req.op || "");
 
@@ -723,6 +788,14 @@ function handleControl(sock) {
       try { out = handleSuggest(req, { uuid: state.uuid, name: state.name }); }
       catch (e) { out = { ok: false, error: String(e && e.message || e) }; }
       send(T.SUGGEST_DATA, streamId, Buffer.from(JSON.stringify(out)));
+      return;
+    }
+    if (type === T.THEME) {
+      let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      let out;
+      try { out = handleTheme(req, { uuid: state.uuid, name: state.name }); }
+      catch (e) { out = { ok: false, error: String(e && e.message || e) }; }
+      send(T.THEME_DATA, streamId, Buffer.from(JSON.stringify(out)));
       return;
     }
     if (type === T.ADMIN) {

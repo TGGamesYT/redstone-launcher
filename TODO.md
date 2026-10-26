@@ -175,13 +175,38 @@ change — the version dropdown included.
       little lighter to a little darker. It works for themes nobody wrote a
       table entry for, including one mixed by hand, and it follows a
       hand-picked colour and not just the presets.*
-- [ ] **Save a custom theme under a name**, listed with the built-in ones.
-- [ ] **Set the app's icon.** The icon's red parts follow the theme, so
-      changing the colours re-tints it; a custom image can be used instead;
-      the icon is saved with the theme.
-- [ ] **Export and import a theme** (background settings included), carrying
+- [x] **Save a custom theme under a name**, listed with the built-in ones. —
+      *A theme is every setting that decides how the launcher looks: the
+      colours, the font, the corner radius, the whole Background section and
+      the app icon. Saved ones appear under the built-in list, apply on a
+      click and can be forgotten again. Importing or applying one reloads the
+      page, so every field, the Background section and the icon all agree
+      rather than half the page still showing the old theme.*
+- [x] **Set the app's icon.** — *The shipped icon's red is the launcher's own
+      theme colour, so it follows the base colour: every pixel whose hue is
+      within 35° of the icon's red and has some saturation is turned the same
+      distance around to the theme's hue, keeping its own lightness — so all
+      38 shades of shading survive and the 235,136 grey pixels and the
+      outline are left exactly as they are. A picture can be used instead,
+      and whichever is in use is saved with the theme.*
+- [x] **Export and import a theme** (background settings included), carrying
       the original author — a premium account — fused into the data so it
-      cannot be edited to say somebody else.
+      cannot be edited to say somebody else. — *Anybody can edit a JSON file,
+      so a name written in one is worth nothing; it had to be impossible both
+      to put your own name on someone else's theme and to keep their name on
+      something you changed. The relay signs it, because it is the only party
+      that knows who anybody is — the connection has already proved its
+      Minecraft account with Mojang's hasJoined, so the author is taken from
+      the CONNECTION and never from the request (asking it to sign as
+      somebody else is simply ignored). An Ed25519 signature covers the
+      author and the theme's hash together, which is the fusing: change
+      either and it stops verifying, and a new hash needs a new signature,
+      which only the relay can make. Its public key is fetched over the same
+      verified TLS as everything else and then remembered, so a theme can be
+      checked again offline. A theme that cannot be signed still exports —
+      it just says it does not know who made it, rather than claiming
+      somebody — and one whose author does not check out is imported with
+      "author unverified" rather than being trusted.*
 
 ### E. Settings
 - [ ] **Drop the long inline descriptions.** A short description on hover

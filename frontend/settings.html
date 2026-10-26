@@ -219,6 +219,63 @@
       text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
     }
 
+    /* ── Saving and sharing a theme ── */
+    .theme-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+
+    .theme-actions input { width: 200px; }
+
+    /* A saved theme carries who made it, where it came from. */
+    .theme-author {
+      font-size: 10px;
+      opacity: 0.7;
+      display: block;
+      margin-top: 2px;
+    }
+
+    .theme-author.unverified { opacity: 0.55; font-style: italic; }
+
+    .theme-del {
+      margin-left: 6px;
+      padding: 0 4px;
+      background: transparent;
+      border: none;
+      color: var(--text-color);
+      opacity: 0.6;
+      cursor: pointer;
+    }
+
+    .theme-del:hover { opacity: 1; }
+
+    .appicon-row {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      margin-top: 10px;
+    }
+
+    .appicon-row img {
+      width: 64px;
+      height: 64px;
+      image-rendering: pixelated;
+      border-radius: var(--border-radius);
+      background: var(--menu-bg);
+      border: 1px solid var(--border-dark);
+      flex: 0 0 auto;
+    }
+
+    .appicon-btns {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+
     /* ── Background ── */
     .bg-modes {
       display: flex;
@@ -501,6 +558,32 @@
     <div class="section settings-scrolly" id="theme" style="display: none;" data-fit-height>
       <h3>Themes</h3>
       <div class="theme-list" id="theme-list"></div>
+
+      <!-- Themes of the user's own, beside the built-in ones. -->
+      <div id="saved-themes-wrap" style="display:none;">
+        <h4 style="margin-top:22px;">Saved</h4>
+        <div class="theme-list" id="saved-theme-list"></div>
+      </div>
+
+      <div class="theme-actions">
+        <input type="text" id="theme-save-name" placeholder="Name this theme" maxlength="60">
+        <button type="button" id="theme-save">Save</button>
+        <button type="button" id="theme-export">Export…</button>
+        <button type="button" id="theme-import">Import…</button>
+      </div>
+
+      <h4 style="margin-top: 30px;">App icon</h4>
+      <div class="appicon-row">
+        <img id="app-icon-preview" alt="">
+        <div>
+          <div class="bg-hint">The icon's red is the launcher's own theme colour, so it follows the theme —
+            change the base colour and the icon is re-tinted with it.</div>
+          <div class="appicon-btns">
+            <button type="button" id="app-icon-theme">Follow the theme</button>
+            <button type="button" id="app-icon-pick">Use a picture…</button>
+          </div>
+        </div>
+      </div>
 
       <h3 style="margin-top: 30px;">Custom colors</h3>
 
@@ -1038,6 +1121,8 @@
           if (key === 'secondaryColor' && sync && sync.checked && window.__syncBackgroundToTheme) {
             window.__syncBackgroundToTheme(color.value);
           }
+          // The icon's red follows the base colour, so the preview has to.
+          if (key === 'baseColor' && window.__previewAppIcon) window.__previewAppIcon(color.value);
         }
 
         color.addEventListener('input', () => {
@@ -1158,6 +1243,121 @@
         const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
         localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
       });
+
+      // ── Themes of the user's own ──
+      //
+      // Everything that decides how the launcher looks, saved under a name
+      // and listed beside the built-in ones. Exported it becomes a file that
+      // can be passed around, carrying who made it -- and because anybody
+      // can edit a JSON file, the name is signed by the relay rather than
+      // simply written down. A theme whose author does not check out says so
+      // instead of being trusted.
+      const savedWrap = document.getElementById('saved-themes-wrap');
+      const savedList = document.getElementById('saved-theme-list');
+
+      function drawSavedThemes(themes) {
+        savedList.innerHTML = '';
+        const list = themes || [];
+        savedWrap.style.display = list.length ? '' : 'none';
+        for (const t of list) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'theme-btn';
+          const sw = (c) => `<div class="theme-swatch" style="background:${c || '#000'}"></div>`;
+          const who = t.author
+            ? `<span class="theme-author">by ${t.author.name}</span>`
+            : (t.imported ? '<span class="theme-author unverified">author unverified</span>' : '');
+          btn.innerHTML = `<span>${t.name}</span>${who}
+            <div class="theme-colors">
+              ${sw(t.theme && t.theme.baseColor)}${sw(t.theme && t.theme.secondaryColor)}${sw(t.theme && t.theme.textColor)}
+            </div>`;
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'theme-del';
+          del.innerHTML = '<i class="material-icons" style="font-size:16px;vertical-align:middle;">delete</i>';
+          del.title = 'Forget this theme';
+          del.onclick = async (e) => {
+            e.stopPropagation();
+            const r = await ipcRenderer.invoke('theme:delete', { id: t.id });
+            drawSavedThemes(r && r.themes);
+          };
+          btn.appendChild(del);
+          btn.addEventListener('click', async () => {
+            const r = await ipcRenderer.invoke('theme:apply', { id: t.id });
+            if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'That theme could not be applied', 'error'); return; }
+            // The page is showing the old theme in every control; reload so
+            // every field, the background section and the icon all agree.
+            location.reload();
+          });
+          savedList.appendChild(btn);
+        }
+      }
+
+      ipcRenderer.invoke('theme:list').then(r => drawSavedThemes(r && r.themes)).catch(() => { });
+
+      document.getElementById('theme-save').addEventListener('click', async () => {
+        const nameEl = document.getElementById('theme-save-name');
+        const name = nameEl.value.trim();
+        if (!name) { if (window.notify) notify('Give the theme a name first', 'error'); return; }
+        const r = await ipcRenderer.invoke('theme:save', { name });
+        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'It could not be saved', 'error'); return; }
+        nameEl.value = '';
+        drawSavedThemes(r.themes);
+        if (window.notify) notify(`Saved "${name}"`, 'success');
+      });
+
+      document.getElementById('theme-export').addEventListener('click', async () => {
+        const name = document.getElementById('theme-save-name').value.trim();
+        const r = await ipcRenderer.invoke('theme:export', { name });
+        if (!r || r.canceled) return;
+        if (!r.success) { if (window.notify) notify(r.error || 'It could not be exported', 'error'); return; }
+        // Saying whether it is signed matters: an unsigned theme is still a
+        // theme, it just cannot say who made it.
+        if (!r.signed && window.uiAlert) await uiAlert(r.note || 'It was exported without an author.', { title: 'Exported, unsigned' });
+        else if (window.notify) notify('Exported', 'success');
+      });
+
+      document.getElementById('theme-import').addEventListener('click', async () => {
+        const r = await ipcRenderer.invoke('theme:import');
+        if (!r || r.canceled) return;
+        if (!r.success) { if (window.notify) notify(r.error || 'It could not be imported', 'error'); return; }
+        drawSavedThemes(r.themes);
+        if (r.verified) {
+          if (window.notify) notify(`Imported "${r.theme.name}" by ${r.author.name}`, 'success');
+        } else if (window.uiAlert) {
+          await uiAlert(`"${r.theme.name}" was imported, but who made it could not be confirmed.\n\n${r.reason || ''}`,
+            { title: 'Imported, author unverified' });
+        }
+      });
+
+      // ── the app's own icon ──
+      const iconPreview = document.getElementById('app-icon-preview');
+      const showAppIcon = async (color) => {
+        const r = await ipcRenderer.invoke('icon:previewApp', { color });
+        if (r && r.success) iconPreview.src = r.dataUrl;
+      };
+      ipcRenderer.invoke('icon:app').then(async (r) => {
+        const icon = (r && r.icon) || { kind: 'theme' };
+        if (icon.kind === 'image' && icon.dataUrl) iconPreview.src = icon.dataUrl;
+        else showAppIcon();
+      }).catch(() => { });
+
+      document.getElementById('app-icon-theme').addEventListener('click', async () => {
+        const r = await ipcRenderer.invoke('icon:setApp', { icon: { kind: 'theme' } });
+        if (r && r.success) { iconPreview.src = r.dataUrl; if (window.notify) notify('The icon follows the theme', 'success'); }
+        else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
+      });
+      document.getElementById('app-icon-pick').addEventListener('click', async () => {
+        const pick = await ipcRenderer.invoke('pick-image', { title: 'Choose an app icon' });
+        if (!pick || pick.canceled) return;
+        if (pick.error) { if (window.notify) notify(pick.error, 'error'); return; }
+        const r = await ipcRenderer.invoke('icon:setApp', { icon: { kind: 'image', dataUrl: pick.dataUrl } });
+        if (r && r.success) { iconPreview.src = r.dataUrl; if (window.notify) notify('Icon changed', 'success'); }
+        else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
+      });
+      // Changing the base colour re-tints the preview, since that is the
+      // colour the icon's red follows.
+      window.__previewAppIcon = showAppIcon;
 
       // Picking a block to tile. The game's blocks, but as flat face
       // textures rather than rendered cubes: a wall of dirt, not a wall of
