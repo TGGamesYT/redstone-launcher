@@ -384,6 +384,10 @@
       margin: -10px -10px 8px;
       padding: 14px 10px 12px;
       background: var(--very-dark);
+      /* The strip takes the panel's own corner radius at the top, where it
+         sits against the rounded scroller; square corners there showed as a
+         notch either side. */
+      border-radius: var(--border-radius) var(--border-radius) 0 0;
       box-shadow: 0 6px 10px -6px rgba(0, 0, 0, 0.6);
     }
 

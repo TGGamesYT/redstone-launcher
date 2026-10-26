@@ -1345,12 +1345,20 @@ ipcMain.handle('set-setting', (event, key, value) => {
 
 ipcMain.on('save-settings', (event, newsettings) => {
   let oldshouldconnect = settings.get('discordPresence', true);
+  const wasBase = settings.get('baseColor', "#b30c0c");
   settings.set(newsettings);
   const color = settings.get('baseColor', "#FF0000");
   if (typeof mainWindow.setAccentColor === "function") {
     mainWindow.setAccentColor(color);
   }
   if (oldshouldconnect != settings.get('discordPresence', true)) updateDiscordPresenceToggle();
+  // An icon that follows the theme has to actually follow it: changing the
+  // base colour -- by hand, by picking a preset, or by applying a saved
+  // theme -- re-tints it there and then, rather than waiting to be asked.
+  if (color !== wasBase) {
+    const icon = settings.get('appIcon', null) || { kind: 'theme' };
+    if (icon.kind !== 'image') applyAppIcon({ kind: 'theme' }).catch(() => { /* non-fatal */ });
+  }
 });
 
 ipcMain.handle('get-system-ram', () => {
@@ -4505,9 +4513,16 @@ function hslToRgb(h, s, l) {
   return [hue(h + 1 / 3), hue(h), hue(h - 1 / 3)].map(v => Math.round(v * 255));
 }
 
+// The icon's own red, as the default base colour states it. Everything is
+// measured against this: a pixel 20 degrees round from it stays 20 degrees
+// round from whatever the theme's hue is.
+const ICON_REF = { h: 0, s: 0.874, l: 0.376 };      // #b30c0c in HSL
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
 async function retintIcon(hex) {
-  const [tr, tg, tb] = [1, 3, 5].map(i => parseInt(String(hex).replace("#", "").slice(i - 1, i + 1), 16));
-  const targetHue = rgbToHsl(tr, tg, tb)[0];
+  const clean = String(hex || "#b30c0c").replace("#", "");
+  const [tr, tg, tb] = [0, 2, 4].map(i => parseInt(clean.slice(i, i + 2), 16) || 0);
+  const [targetH, targetS, targetL] = rgbToHsl(tr, tg, tb);
   const src = ICON_SOURCE();
   const { data, info } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const out = Buffer.from(data);
@@ -4516,9 +4531,19 @@ async function retintIcon(hex) {
     const [h, s, l] = rgbToHsl(out[i], out[i + 1], out[i + 2]);
     // Only what is actually red, and actually coloured: a grey has no hue to
     // turn and turning it would paint the whole icon.
-    const away = Math.min(Math.abs(h - ICON_BASE_HUE), 360 - Math.abs(h - ICON_BASE_HUE));
+    const away = Math.min(Math.abs(h - ICON_REF.h), 360 - Math.abs(h - ICON_REF.h));
     if (s < 0.25 || away > 35) continue;
-    const [r2, g2, b2] = hslToRgb(targetHue + (h - ICON_BASE_HUE), s, l);
+    // Saturation is scaled rather than kept, which is what makes a grey,
+    // white or black theme work at all: rotating the hue towards a colour
+    // that HAS no hue did nothing, so the icon stayed red for every theme
+    // without one. A target with no saturation takes the red down to a grey
+    // of the same shade.
+    const sat = clamp01(s * (targetS / ICON_REF.s));
+    // And the lightness leans towards the target, so a white theme lightens
+    // the icon and a black one darkens it -- partway, so the shading that
+    // makes the icon readable survives.
+    const lit = clamp01(l + (targetL - ICON_REF.l) * 0.6);
+    const [r2, g2, b2] = hslToRgb(targetH + (h - ICON_REF.h), sat, lit);
     out[i] = r2; out[i + 1] = g2; out[i + 2] = b2;
   }
   return sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
@@ -4541,7 +4566,18 @@ async function applyAppIcon(icon) {
       try { if (!w.isDestroyed()) w.setIcon(img); } catch { /* not every platform takes one */ }
     }
     settings.set("appIcon", icon || { kind: "theme" });
-    return { success: true, dataUrl: "data:image/png;base64," + png.toString("base64") };
+    // A window's icon is the taskbar while the app is running and nothing
+    // else, which is why the one on the desktop stayed as it was. The desktop
+    // entry has to be told separately.
+    let outside = { updated: [], skipped: [] };
+    try { outside = shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher" }); }
+    catch (e) { outside = { updated: [], skipped: [String(e && e.message || e)] }; }
+    return {
+      success: true,
+      dataUrl: "data:image/png;base64," + png.toString("base64"),
+      desktop: outside.updated.length,
+      desktopNote: outside.updated.length ? null : (outside.skipped[0] || null),
+    };
   } catch (e) {
     return { success: false, error: String(e && e.message || e) };
   }
@@ -8779,20 +8815,210 @@ ipcMain.handle("model:describe", async (event, opts = {}) => {
   try { return await iconModels.describeModel(opts); }
   catch (err) { return { error: String(err && err.message || err) }; }
 });
+// ── A block's face, as something that can be tiled ──────────────────────────
+//
+// Three things have to happen to a texture before it can go behind the
+// launcher, and none of them are the asset layer's business:
+//
+//   An animated texture is a COLUMN of frames -- a command block is four
+//   stacked pictures -- so tiling the file tiles the whole strip. Only the
+//   first frame is a face.
+//
+//   A face with a tintindex is drawn in greys and coloured in by the game, so
+//   leaves and grass tiled straight off the file come out grey. The tint is
+//   the colour the renders use, multiplied in the same way.
+//
+//   A block the game turns at random -- bedrock, the top of a grass block --
+//   looks nothing like the game when every tile is the same way up. Asked
+//   for, the tile becomes a patch of cells each turned at random, so the
+//   repeat carries the variety instead of one picture over and over.
+const BLOCK_TILE_CELLS = 4;
+
+async function firstFrame(buf) {
+  const meta = await sharp(buf).metadata();
+  if (!meta.width || !meta.height || meta.height <= meta.width) return buf;
+  // Only a whole number of square frames is an animation strip; anything
+  // else is a texture that simply is not square and is left alone.
+  if (meta.height % meta.width !== 0) return buf;
+  return sharp(buf).extract({ left: 0, top: 0, width: meta.width, height: meta.width }).png().toBuffer();
+}
+
+// A face is a STACK of textures, not one: a grass block's side is its dirt
+// side with a tinted overlay over the top, and the game draws both. Each
+// layer is de-animated, tinted if it asks to be, and drawn in order.
+async function faceLayersPng(layers, tint) {
+  const prepared = [];
+  for (const l of layers || []) {
+    let buf = await firstFrame(fromDataUrl(l.url));
+    if (l.tinted && tint) buf = await tintTexture(buf, tint);
+    prepared.push(buf);
+  }
+  if (!prepared.length) return null;
+  if (prepared.length === 1) return prepared[0];
+  // Everything is scaled to the bottom layer's size: a 16-pixel base with a
+  // 32-pixel overlay from a resource pack would otherwise refuse to composite.
+  const meta = await sharp(prepared[0]).metadata();
+  const n = meta.width || 16;
+  const composites = [];
+  for (const buf of prepared.slice(1)) {
+    const m = await sharp(buf).metadata();
+    composites.push({
+      input: (m.width === n && m.height === n)
+        ? buf
+        : await sharp(buf).resize(n, n, { kernel: "nearest" }).png().toBuffer(),
+    });
+  }
+  return sharp(await sharp(prepared[0]).resize(n, n, { kernel: "nearest" }).png().toBuffer())
+    .composite(composites).png().toBuffer();
+}
+
+async function tintTexture(buf, rgb) {
+  if (!rgb) return buf;
+  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const out = Buffer.from(data);
+  for (let i = 0; i < out.length; i += 4) {
+    if (!out[i + 3]) continue;
+    out[i] = Math.round(out[i] * rgb[0] / 255);
+    out[i + 1] = Math.round(out[i + 1] * rgb[1] / 255);
+    out[i + 2] = Math.round(out[i + 2] * rgb[2] / 255);
+  }
+  return sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+}
+
+// One tile, ready to repeat. `cells` greater than 1 builds a patch of that
+// many cells each way, each turned at random from the turns the game uses.
+async function blockTilePng(buf, { rotations = [0], cells = 1 } = {}) {
+  const base = await sharp(buf).png().toBuffer();
+  const meta = await sharp(base).metadata();
+  const n = meta.width || 16;
+  const turns = (rotations && rotations.length ? rotations : [0]).map(r => ((r % 360) + 360) % 360);
+  if (cells <= 1 || turns.length <= 1) return { png: base, cells: 1, size: n };
+
+  // Pre-rotated once each, then placed; rotating per cell would redo the
+  // same work sixteen times.
+  const rotated = {};
+  for (const t of new Set(turns)) {
+    rotated[t] = t ? await sharp(base).rotate(t).png().toBuffer() : base;
+  }
+  const composites = [];
+  for (let y = 0; y < cells; y++) {
+    for (let x = 0; x < cells; x++) {
+      const t = turns[Math.floor(Math.random() * turns.length)];
+      composites.push({ input: rotated[t], left: x * n, top: y * n });
+    }
+  }
+  const png = await sharp({
+    create: { width: n * cells, height: n * cells, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  }).composite(composites).png().toBuffer();
+  return { png, cells, size: n * cells };
+}
+
+const asDataUrl = (png) => "data:image/png;base64," + png.toString("base64");
+const fromDataUrl = (u) => Buffer.from(String(u).replace(/^data:image\/[\w+.-]+;base64,/, ""), "base64");
+
 // Flat face textures of full blocks, for tiling one behind the launcher.
-// The background is not any one instance's, so with no version named it is
-// read from the newest release.
+// The background is not any one instance's, and the point of it is to be able
+// to pick from everything the game has -- so it reads the newest SNAPSHOT
+// rather than the newest release.
+async function newestBlockVersion(asked) {
+  if (asked) return asked;
+  const manifest = await getVersionManifest();
+  const latest = manifest && manifest.latest;
+  return (latest && (latest.snapshot || latest.release)) || null;
+}
+
 ipcMain.handle("model:blockFaces", async (event, opts = {}) => {
   try {
-    let version = opts.version;
-    if (!version) {
-      const manifest = await getVersionManifest();
-      version = manifest && manifest.latest && manifest.latest.release;
-      if (!version) return { items: [], total: 0, error: "No Minecraft version could be read yet" };
+    const version = await newestBlockVersion(opts.version);
+    if (!version) return { items: [], total: 0, error: "No Minecraft version could be read yet" };
+    const got = await iconModels.listBlockFaces({ ...opts, version });
+    // De-animated and coloured in, so the grid shows what tiling it would
+    // actually look like.
+    for (const it of got.items || []) {
+      try {
+        let buf = await firstFrame(fromDataUrl(it.url));
+        if (it.tinted && it.tint) buf = await tintTexture(buf, it.tint);
+        it.url = asDataUrl(buf);
+        it.height = it.width;
+        it.frames = 1;
+      } catch { /* leave it as it came */ }
     }
-    return await iconModels.listBlockFaces({ ...opts, version });
+    return got;
   } catch (err) { return { items: [], total: 0, error: String(err && err.message || err) }; }
 });
+
+// Everything one block offers: a tile per distinct face texture, and whether
+// the game turns it at random.
+ipcMain.handle("model:blockFace", async (event, opts = {}) => {
+  try {
+    const version = await newestBlockVersion(opts.version);
+    if (!version) return { error: "No Minecraft version could be read yet" };
+    const got = await iconModels.blockFaces({ ...opts, version });
+    if (!got || got.error) return got || { error: "that block could not be read" };
+    for (const f of got.faces || []) {
+      try {
+        const png = await faceLayersPng(f.layers, got.tint);
+        if (png) {
+          f.url = asDataUrl(png);
+          f.height = f.width;
+          f.frames = 1;
+        }
+      } catch { /* leave it as it came */ }
+      delete f.layers;                 // the pictures are built; the parts are not the window's business
+    }
+    return got;
+  } catch (err) { return { error: String(err && err.message || err) }; }
+});
+
+// The tile itself, once a face has been chosen: de-animated, coloured in,
+// and optionally a patch of randomly turned cells.
+ipcMain.handle("model:blockTile", async (event, { version, id, texture, random } = {}) => {
+  try {
+    const v = await newestBlockVersion(version);
+    if (!v) return { error: "No Minecraft version could be read yet" };
+    const got = await iconModels.blockFaces({ version, id });
+    if (!got || got.error) return got || { error: "that block could not be read" };
+    const face = (got.faces || []).find(f => f.texture === texture) || (got.faces || [])[0];
+    if (!face) return { error: "that block has no face to tile" };
+    const buf = await faceLayersPng(face.layers, got.tint);
+    if (!buf) return { error: "that face has no texture" };
+    const tile = await blockTilePng(buf, {
+      rotations: got.rotations,
+      // Only a block the game itself places at random is scattered.
+      cells: (random && got.random) ? BLOCK_TILE_CELLS : 1,
+    });
+    return {
+      success: true, id, texture: face.texture, label: face.label,
+      url: asDataUrl(tile.png), cells: tile.cells,
+      rotations: got.rotations, random: !!got.random, tinted: face.tinted,
+    };
+  } catch (err) { return { error: String(err && err.message || err) }; }
+});
+
+// The two colours a theme would take from a texture: the middling-bright and
+// the middling-dark of it, which is what "make the theme match this block"
+// means. The extremes are no use -- a texture's lightest pixel is usually one
+// stray highlight and its darkest an outline.
+ipcMain.handle("model:blockColors", async (event, { url } = {}) => {
+  try {
+    if (!url) return { error: "no texture" };
+    const { data } = await sharp(fromDataUrl(url)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const px = [];
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] < 128) continue;                 // see-through pixels are not colours
+      const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+      px.push({ r, g, b, l: (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 });
+    }
+    if (!px.length) return { error: "that texture has nothing solid in it" };
+    px.sort((a, b) => a.l - b.l);
+    // The middle of the darker half and the middle of the lighter half.
+    const dark = px[Math.floor(px.length * 0.25)];
+    const light = px[Math.floor(px.length * 0.75)];
+    const hex = (p) => "#" + [p.r, p.g, p.b].map(v => v.toString(16).padStart(2, "0")).join("");
+    return { success: true, dark: hex(dark), light: hex(light), count: px.length };
+  } catch (err) { return { error: String(err && err.message || err) }; }
+});
+
 ipcMain.handle("model:states", async (event, opts = {}) => {
   try { return await iconModels.modelStates(opts); }
   catch { return []; }

@@ -58,6 +58,12 @@
       font-weight: bold;
     }
 
+    /* Switching tabs: the panel itself stays put and only its contents
+       change, so there is nothing to fade the panel for. The old tab used to
+       be hidden outright and the new one faded up from nothing over a
+       quarter of a second, which reads as the page emptying and then filling
+       -- a gap, not a transition. The panel is constant now and the contents
+       rise in quickly from most of the way there. */
     .section {
       display: none;
       background: color-mix(in srgb, var(--secondary-color) 70%, black);
@@ -65,8 +71,23 @@
       border-top: none;
       border-radius: var(--border-radius);
       padding: 30px 40px;
-      animation: fadeIn 0.25s ease;
       box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.4);
+    }
+
+    .section.just-shown > * {
+      animation: section-in 0.16s ease both;
+    }
+
+    @keyframes section-in {
+      from {
+        opacity: 0.35;
+        transform: translateY(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: none;
+      }
     }
 
     .section.active {
@@ -240,34 +261,15 @@
       box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
       pointer-events: none;
       opacity: 0;
-      transform: translateY(3px);
-      transition: opacity 0.12s ease, transform 0.12s ease;
+      transform: translateY(6px) scale(0.97);
+      transform-origin: top left;
+      transition: opacity 0.16s ease, transform 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
     }
 
     #setting-tip.on {
       opacity: 1;
-      transform: translateY(0);
+      transform: translateY(0) scale(1);
     }
-
-    /* A setting with an explanation says so, faintly. */
-    [data-tip] { position: relative; }
-
-    label[data-tip]::after {
-      content: "?";
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 13px;
-      height: 13px;
-      margin-left: 6px;
-      border-radius: 50%;
-      border: 1px solid currentColor;
-      font-size: 9px;
-      opacity: 0.4;
-      flex: 0 0 auto;
-    }
-
-    label[data-tip]:hover::after { opacity: 0.85; }
 
     /* ── Custom CSS, with developer mode on ── */
     #custom-css-wrap { display: none; }
@@ -479,13 +481,49 @@
     .bgb-cell.on { border-color: var(--base-color); background: var(--third-color); }
 
     /* The texture itself, blown up and kept sharp — the same way it will be
-       tiled behind the launcher. */
+       tiled behind the launcher. The theme's own colour behind it, because a
+       texture with see-through pixels (glass, leaves, iron bars) showed the
+       page's white through the holes. */
     .bgb-cell img {
       width: 48px;
       height: 48px;
       image-rendering: pixelated;
       object-fit: cover;
       object-position: top left;
+      background: var(--very-dark);
+    }
+
+    /* Which face of a block to tile. */
+    .bg-faces {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .bg-face {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 5px;
+      border: 2px solid var(--border-dark);
+      background: var(--menu-bg);
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .bg-face.on {
+      border-color: var(--base-color);
+      background: var(--third-color);
+    }
+
+    .bg-face img {
+      width: 40px;
+      height: 40px;
+      image-rendering: pixelated;
+      background: var(--very-dark);
     }
 
     .bgb-cell span {
@@ -638,13 +676,11 @@
       <h4 style="margin-top: 30px;">App icon</h4>
       <div class="appicon-row">
         <img id="app-icon-preview" alt="">
-        <div>
-          <div class="bg-hint">The icon's red is the launcher's own theme colour, so it follows the theme —
-            change the base colour and the icon is re-tinted with it.</div>
-          <div class="appicon-btns">
-            <button type="button" id="app-icon-theme">Follow the theme</button>
-            <button type="button" id="app-icon-pick">Use a picture…</button>
-          </div>
+        <div class="appicon-btns">
+          <button type="button" id="app-icon-theme"
+            data-tip="The icon's coloured parts are the launcher's own theme colour, so they follow the base colour — change it and the icon is re-tinted to match.">Follow the theme</button>
+          <button type="button" id="app-icon-pick"
+            data-tip="Use a picture of your own instead. It is saved with the theme, like the colours are.">Use a picture…</button>
         </div>
       </div>
 
@@ -758,9 +794,19 @@
           <button type="button" id="bg-pick-block" class="bg-btn">Choose a block…</button>
           <span id="bg-block-name" class="bg-hint"></span>
         </div>
+        <!-- Which face, for a block whose sides are not all the same. -->
+        <div id="bg-face-row" class="bg-faces" style="display:none;"></div>
+        <button type="button" id="bg-block-colors" class="bg-btn" style="margin-top:10px;display:none;"
+          data-tip="Takes the theme's base and secondary colours from this texture — the middling-dark and middling-bright of it, rather than its lightest and darkest pixels, which are usually one stray highlight and an outline.">Match the theme to this block</button>
+        <label class="setting-toggle" id="bg-block-random-row" style="margin-top:10px;display:none;"
+          data-tip="Some blocks are placed at random turns by the game — bedrock, the top of a grass block. Tiles them the same way instead of every one the same way up."><input type="checkbox" id="bg-block-random"> Turn the tiles at random</label>
         <label style="margin-top:12px; display:block;">Tile size</label>
-        <input type="range" id="bg-block-size" min="8" max="256" step="1" style="width: 200px;" value="64">
-        <span class="slider-value" id="bg-block-size-value">64px</span>
+        <div class="bg-blockrow">
+          <input type="range" id="bg-block-size" min="8" max="256" step="1" style="width: 200px;" value="64">
+          <span class="slider-value" id="bg-block-size-value">64px</span>
+          <button type="button" id="bg-block-size-reset" class="bg-btn"
+            data-tip="Back to 64 pixels a tile.">Reset</button>
+        </div>
         <div class="bg-hint">Drawn pixel-sharp however far it is scaled up.</div>
       </div>
 
@@ -793,11 +839,8 @@
            moved or restyled by hand. -->
       <div id="custom-css-wrap">
         <h4 style="margin-top:22px;">Custom CSS</h4>
-        <div class="bg-hint" style="max-width:760px;margin-bottom:8px;">
-          Applied to every page in the launcher, after its own styles — so you can move,
-          hide or restyle anything the settings above do not reach. Saved as you go.
-        </div>
         <textarea id="custom-css" spellcheck="false"
+          data-tip="Applied to every page in the launcher, after its own styles, so it can move, hide or restyle anything the settings above do not reach. Saved as you type."
           placeholder="/* e.g. */&#10;.sidebar { width: 90px; }&#10;h1 { letter-spacing: 0.04em; }"></textarea>
         <div class="ccss-row">
           <button type="button" id="custom-css-apply">Apply now</button>
@@ -937,10 +980,20 @@
 
       document.querySelectorAll('.section-switcher button').forEach(btn => {
         btn.addEventListener('click', () => {
-          document.querySelectorAll('.section').forEach(sec => sec.style.display = 'none');
+          document.querySelectorAll('.section').forEach(sec => {
+            sec.style.display = 'none';
+            sec.classList.remove('just-shown');
+          });
           const target = btn.dataset.section;
           const section = document.getElementById(target);
-          if (section) section.style.display = 'block';
+          if (section) {
+            section.style.display = 'block';
+            // A CSS animation does not run again just because the element
+            // was shown again, so it is re-armed: taken off, the layout read
+            // once to make the removal stick, then put back.
+            void section.offsetHeight;
+            section.classList.add('just-shown');
+          }
           if (target === 'suggest') loadMySuggestions();
         });
       });
@@ -977,17 +1030,53 @@
         catch { return new Date(ms).toISOString().slice(0, 10); }
       };
 
+      // What a relay error actually means, and whose problem it is. "certificate
+      // has expired" is the raw words out of TLS, and on its own it reads as
+      // something the user has done wrong and can fix -- when it is the
+      // server's certificate, at our end, and there is nothing to do but come
+      // back later. Every one of these says which it is.
+      function relayTrouble(error) {
+        const m = String(error || '');
+        if (/certificate has expired|CERT_HAS_EXPIRED/i.test(m)) {
+          return {
+            text: "The suggestions server's security certificate has expired. That is at our end, not yours — it will work again once it has been renewed.",
+            retry: true,
+          };
+        }
+        if (/self.signed|UNABLE_TO_VERIFY|DEPTH_ZERO|ERR_TLS|ALT_NAME/i.test(m)) {
+          return {
+            text: "The suggestions server's security certificate could not be verified, so nothing was sent. That is at our end, not yours.",
+            retry: true,
+          };
+        }
+        if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|timed? ?out|ETIMEDOUT|socket hang up/i.test(m)) {
+          return { text: 'The suggestions server could not be reached. Check your connection, or try again in a minute.', retry: true };
+        }
+        if (/Microsoft account|Sign in/i.test(m)) return { text: m, retry: false };
+        return { text: m || 'Could not reach the suggestions service.', retry: true };
+      }
+
       async function loadMySuggestions() {
         if (!sgMine) return;
         sgMine.innerHTML = '<div style="opacity:0.6;font-size:12px;">Loading…</div>';
         let r;
-        try { r = await ipcRenderer.invoke('suggest:mine'); } catch { r = null; }
+        try { r = await ipcRenderer.invoke('suggest:mine'); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
         if (!r || !r.ok) {
           sgMine.innerHTML = '';
+          const trouble = relayTrouble(r && r.error);
           const d = document.createElement('div');
-          d.style.cssText = 'opacity:0.7;font-size:12px;';
-          d.textContent = (r && r.error) || 'Could not reach the suggestions service.';
+          d.style.cssText = 'opacity:0.8;font-size:12px;line-height:1.5;';
+          d.textContent = trouble.text;
           sgMine.appendChild(d);
+          // Something to do about it, rather than a dead end.
+          if (trouble.retry) {
+            const again = document.createElement('button');
+            again.type = 'button';
+            again.textContent = 'Try again';
+            again.style.marginTop = '8px';
+            again.onclick = () => loadMySuggestions();
+            sgMine.appendChild(again);
+          }
           return;
         }
         // A timeout outlives this load, so it is remembered rather than just
@@ -1048,7 +1137,9 @@
           try {
             const r = await ipcRenderer.invoke('suggest:submit', { title, body });
             if (!r || !r.ok) {
-              sgSay((r && r.error) || 'That did not go through.', 'bad');
+              // The same plain words as the list above, so a server-side
+              // certificate problem does not read as something the user did.
+              sgSay(relayTrouble(r && r.error).text, 'bad');
               return;
             }
             sgTitle.value = ''; sgBody.value = ''; countUp();
@@ -1332,14 +1423,19 @@
       // find the one switch you came for. The explanation belongs to the
       // switch, and is shown when it is asked for.
       (function settingTips() {
+        // Long enough that it only appears when it is being asked for:
+        // hovering something on the way past should not throw a panel up.
+        const TIP_DELAY = 1200;
         const tip = document.createElement('div');
         tip.id = 'setting-tip';
         document.body.appendChild(tip);
-        let over = null;
+        let over = null, timer = null;
         const place = (el) => {
           const r = el.getBoundingClientRect();
+          // Measured before it is shown, so the size is real but nothing
+          // flickers in the wrong place first.
           tip.style.visibility = 'hidden';
-          tip.classList.add('on');
+          tip.style.opacity = '0';
           const t = tip.getBoundingClientRect();
           // Below by default, above when there is no room -- a tooltip off
           // the bottom of the window is no tooltip.
@@ -1347,17 +1443,32 @@
           tip.style.top = (below ? r.bottom + 8 : r.top - t.height - 8) + 'px';
           tip.style.left = Math.max(8, Math.min(r.left, window.innerWidth - t.width - 8)) + 'px';
           tip.style.visibility = '';
+          tip.style.opacity = '';
         };
         const show = (el) => {
-          over = el;
           tip.textContent = el.dataset.tip;
           place(el);
+          // A frame between being put in place and being switched on, or the
+          // browser never paints the starting state and there is nothing for
+          // the transition to animate from -- which is why it used to simply
+          // appear.
+          requestAnimationFrame(() => {
+            if (over === el) tip.classList.add('on');
+          });
         };
-        const hide = () => { over = null; tip.classList.remove('on'); };
+        const hide = () => {
+          clearTimeout(timer);
+          over = null;
+          tip.classList.remove('on');
+        };
         document.addEventListener('mouseover', (e) => {
           const el = e.target.closest && e.target.closest('[data-tip]');
           if (!el) { if (over) hide(); return; }
-          if (el !== over) show(el);
+          if (el === over) return;
+          clearTimeout(timer);
+          tip.classList.remove('on');
+          over = el;
+          timer = setTimeout(() => { if (over === el) show(el); }, TIP_DELAY);
         });
         document.addEventListener('mouseout', (e) => {
           if (over && e.target.closest && e.target.closest('[data-tip]') === over
@@ -1541,6 +1652,8 @@
             const mine = ++seq;
             msg.textContent = 'Reading the game’s blocks…';
             grid.innerHTML = '';
+            // No version named: the newest snapshot, so everything the game
+            // has is there to pick from.
             const r = await ipcRenderer.invoke('model:blockFaces', { version: null, query, limit: 120 });
             if (mine !== seq) return;                    // a later search won
             if (r && r.error) { msg.textContent = r.error; return; }
@@ -1557,12 +1670,6 @@
               const img = document.createElement('img');
               img.src = it.url;
               img.alt = it.name;
-              // An animated texture is a column of frames; show the first.
-              if (it.frames > 1) {
-                img.style.objectFit = 'none';
-                img.style.transform = `scale(${48 / it.width})`;
-                img.style.transformOrigin = 'top left';
-              }
               const name = document.createElement('span');
               name.textContent = it.name;
               cell.appendChild(img); cell.appendChild(name);
@@ -1766,22 +1873,122 @@
       const bgBlockName = document.getElementById('bg-block-name');
       const bgBlockSize = document.getElementById('bg-block-size');
       const bgBlockSizeValue = document.getElementById('bg-block-size-value');
-      const showBlockName = () => { bgBlockName.textContent = bg.block.name || 'nothing chosen yet'; };
+      const bgFaceRow = document.getElementById('bg-face-row');
+      const bgRandomRow = document.getElementById('bg-block-random-row');
+      const bgRandom = document.getElementById('bg-block-random');
+      const bgBlockColors = document.getElementById('bg-block-colors');
+      const BG_TILE_DEFAULT = 64;
+
+      const showBlockName = () => {
+        bgBlockName.textContent = bg.block.name
+          ? (bg.block.label && bg.block.label !== 'All sides' ? `${bg.block.name} — ${bg.block.label.toLowerCase()}` : bg.block.name)
+          : 'nothing chosen yet';
+      };
+      const setTileSize = (n) => {
+        bg.block.size = n;
+        bgBlockSize.value = String(n);
+        bgBlockSizeValue.innerText = n + 'px';
+      };
+      setTileSize(bg.block.size || BG_TILE_DEFAULT);
       showBlockName();
-      bgBlockSize.value = bg.block.size || 64;
-      bgBlockSizeValue.innerText = bgBlockSize.value + 'px';
       bgBlockSize.addEventListener('input', () => {
-        bgBlockSizeValue.innerText = bgBlockSize.value + 'px';
-        bg.block.size = parseInt(bgBlockSize.value, 10);
+        setTileSize(parseInt(bgBlockSize.value, 10));
         paintBackground(); saveBackground();
       });
+      document.getElementById('bg-block-size-reset').addEventListener('click', () => {
+        setTileSize(BG_TILE_DEFAULT);
+        paintBackground(); saveBackground();
+      });
+
+      // Everything about the chosen block: which faces it offers, whether the
+      // game turns it at random, and the tile itself.
+      let bgFaces = null;
+      async function loadBlockFaces() {
+        bgFaceRow.style.display = 'none';
+        bgRandomRow.style.display = 'none';
+        bgBlockColors.style.display = 'none';
+        bgFaces = null;
+        if (!bg.block.id) return;
+        const r = await ipcRenderer.invoke('model:blockFace', { id: bg.block.id });
+        if (!r || r.error) return;
+        bgFaces = r;
+        // A block whose sides are not all the same gets a choice of face: a
+        // crafting table's top, its front and its side are three different
+        // pictures and only one of them was ever offered.
+        if ((r.faces || []).length > 1) {
+          bgFaceRow.innerHTML = '';
+          for (const f of r.faces) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bg-face' + (f.texture === bg.block.texture ? ' on' : '');
+            b.innerHTML = `<img src="${f.url}" alt=""><span>${f.label}</span>`;
+            b.onclick = () => pickFace(f.texture);
+            bgFaceRow.appendChild(b);
+          }
+          bgFaceRow.style.display = 'flex';
+        }
+        // Only worth offering where the game really does turn it.
+        if ((r.rotations || []).length > 1) {
+          bgRandomRow.style.display = '';
+          bgRandom.checked = !!bg.block.random;
+        }
+        bgBlockColors.style.display = '';
+      }
+
+      // Fetch the tile for the chosen face and settings, and keep what it
+      // came back as -- the tile may be a patch of several cells, which the
+      // background has to know to size it right.
+      async function refreshBlockTile() {
+        if (!bg.block.id) return;
+        const r = await ipcRenderer.invoke('model:blockTile', {
+          id: bg.block.id, texture: bg.block.texture || null, random: !!bg.block.random,
+        });
+        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'That block could not be read', 'error'); return; }
+        bg.block = { ...bg.block, url: r.url, texture: r.texture, label: r.label, cells: r.cells };
+        showBlockName(); paintBackground(); saveBackground();
+        for (const b of bgFaceRow.querySelectorAll('.bg-face')) {
+          b.classList.toggle('on', b.querySelector('img').src === (bgFaces && (bgFaces.faces.find(f => f.texture === r.texture) || {}).url));
+        }
+      }
+
+      const pickFace = async (texture) => {
+        bg.block.texture = texture;
+        await refreshBlockTile();
+        await loadBlockFaces();
+      };
+      bgRandom.addEventListener('change', async () => {
+        bg.block.random = bgRandom.checked;
+        await refreshBlockTile();
+      });
+      bgBlockColors.addEventListener('click', async () => {
+        if (!bg.block.url) return;
+        const r = await ipcRenderer.invoke('model:blockColors', { url: bg.block.url });
+        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'No colours could be read', 'error'); return; }
+        // The brighter of the two is the secondary colour, which is what the
+        // bars and panels are shaded from; the darker is the base.
+        const put = (id, code, value) => {
+          const el = document.getElementById(id), c = document.getElementById(code);
+          if (!el || !c) return;
+          el.value = value; c.value = value;
+          el.dispatchEvent(new Event('input'));
+        };
+        put('base-color', 'base-color-code', r.dark);
+        put('secondary-color', 'secondary-color-code', r.light);
+        if (window.notify) notify(`Theme taken from ${bg.block.name || 'the block'}`, 'success');
+      });
+
       document.getElementById('bg-pick-block').addEventListener('click', async () => {
         const picked = await openBlockBackgroundPicker(bg.block.id);
         if (!picked) return;
-        bg.block = { ...bg.block, id: picked.id, name: picked.name, url: picked.url };
+        bg.block = { ...bg.block, id: picked.id, name: picked.name, texture: null, label: null };
         bg.mode = 'block';
-        showBlockName(); showBgPanels(); paintBackground(); saveBackground();
+        showBgPanels();
+        await refreshBlockTile();
+        await loadBlockFaces();
       });
+      // Whatever was already chosen, so the face row and the random toggle
+      // are right when the page opens rather than after the first click.
+      if (bg.mode === 'block' && bg.block.id) loadBlockFaces();
 
       // Taking the theme's background colours, when that is asked for. The
       // gradient becomes a gradient OF the background rather than of the

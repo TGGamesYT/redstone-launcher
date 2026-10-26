@@ -220,11 +220,14 @@
   box-sizing: border-box;
 }
 
-/* Sticky section headers */
+/* Sticky section headers. The strip they paint takes the panel's corner
+   radius: against a rounded panel a square-cornered block is visible as a
+   notch at either end of the header. */
 .install-scroll-area h4 {
   position: sticky;
   top: 0;
   background: var(--very-dark);
+  border-radius: var(--border-radius) var(--border-radius) 0 0;
   z-index: 10;
   padding: 8px 12px;
   font-size: 1.1em;

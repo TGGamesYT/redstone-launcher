@@ -747,14 +747,160 @@ const spansCube = (e) => {
 const isFullCube = (flat) =>
   !!flat && flat.kind === 'elements' && Array.isArray(flat.elements) && flat.elements.some(spansCube);
 
-// Which of a cube's textures to tile. The sides first: a wall of grass should
-// be the grassy side, not the top seen flat on.
+// Which of a cube's textures to show first. The sides before the top: a wall
+// of grass should be the grassy side, not the top seen flat on.
 const FACE_KEYS = ['all', 'side', 'texture', 'north', 'end', 'particle', 'top', 'up'];
 const faceTextureId = (flat) => {
   const t = (flat && flat.textures) || {};
   for (const k of FACE_KEYS) if (t[k]) return t[k];
   return Object.values(t).find(Boolean) || null;
 };
+
+// The six faces of the cube element, as { face: { texture, tintindex } }. A
+// face names its texture as "#side", which is a key into the model's own
+// texture map.
+function cubeFaces(flat) {
+  const el = (flat.elements || []).find(spansCube);
+  const out = {};
+  for (const [name, f] of Object.entries((el && el.faces) || {})) {
+    if (!f || !f.texture) continue;
+    const key = String(f.texture).replace(/^#/, '');
+    const id = (flat.textures || {})[key] || (String(f.texture).startsWith('#') ? null : f.texture);
+    if (!id) continue;
+    out[name] = { key, id, tintindex: f.tintindex };
+  }
+  // A model with no faces spelled out (plain `cube_all`) still has textures.
+  if (!Object.keys(out).length) {
+    const id = faceTextureId(flat);
+    if (id) for (const n of ['up', 'down', 'north', 'south', 'east', 'west']) out[n] = { key: 'all', id, tintindex: undefined };
+  }
+  return out;
+}
+
+const SIDE_FACES = ['north', 'south', 'east', 'west'];
+function faceGroupLabel(names) {
+  const set = new Set(names);
+  if (set.size >= 6) return 'All sides';
+  if (SIDE_FACES.every(n => set.has(n)) && set.size === 4) return 'Sides';
+  const pretty = { up: 'Top', down: 'Bottom', north: 'North', south: 'South', east: 'East', west: 'West' };
+  return [...set].map(n => pretty[n] || n).join(' & ');
+}
+
+// What a block offers to tile.
+//
+// One entry per distinct STACK of textures across its faces, not per
+// texture: a grass block's side is its dirt side with a tinted overlay drawn
+// on top of it, and listing the two separately offered "Sides" twice -- once
+// as plain dirt and once as a green smear -- when what anybody wants is the
+// two together, which is what the game draws.
+//
+// Random rotation is read from the blockstate itself rather than through
+// blockStates(), which keeps only the first variant of each state. A state
+// whose value is an ARRAY is the game saying "pick one of these at random",
+// and that is the only thing that counts as varying: a command block has
+// four rotations too, but they are its FACING states, and offering to scatter
+// those would be offering nonsense.
+export async function blockFaces({ profileId, version, id } = {}) {
+  const st = await stackFor({ profileId, version, overrides: false });
+  if (!st) return { error: 'no assets for this version yet' };
+  const json = await st.models.json(MA.blockstatePath(id));
+  if (!json) return { error: 'that block has no blockstate' };
+
+  // Every (model, rotation) the block can be placed as, and whether the game
+  // chooses between them at random.
+  const placements = [];
+  let random = false;
+  const take = (v) => {
+    const list = Array.isArray(v) ? v : [v];
+    if (list.length > 1) random = true;
+    for (const p of list) {
+      if (!p || !p.model) continue;
+      placements.push({ model: MA.blockstateModelId(p.model), y: ((p.y || 0) % 360 + 360) % 360 });
+    }
+  };
+  if (json.variants && typeof json.variants === 'object') {
+    // The plain state if there is one, so a directional block is described
+    // as it looks placed facing nowhere in particular.
+    const keys = Object.keys(json.variants);
+    const plain = keys.find(k => k === '' || k === 'normal');
+    if (plain != null) take(json.variants[plain]);
+    else if (keys.length) take(json.variants[keys[0]]);
+  } else if (Array.isArray(json.multipart)) {
+    for (const part of json.multipart) if (!part.when) take(part.apply);
+    if (!placements.length && json.multipart[0]) take(json.multipart[0].apply);
+  }
+  if (!placements.length) return { error: 'that block has no model to read' };
+
+  // Which textures each face is made of, in the order they are drawn.
+  const stacks = new Map();        // face name -> [{ id, tinted }]
+  for (const place of placements.slice(0, 1).concat(placements.filter(p => p.model !== placements[0].model))) {
+    let flat = null;
+    try { flat = await MA.flattenModelJson(st.models, place.model); } catch { continue; }
+    if (!isFullCube(flat)) continue;
+    for (const el of flat.elements || []) {
+      if (!spansCube(el)) continue;
+      for (const [name, f] of Object.entries(el.faces || {})) {
+        if (!f || !f.texture) continue;
+        const key = String(f.texture).replace(/^#/, '');
+        const texId = (flat.textures || {})[key] || (String(f.texture).startsWith('#') ? null : f.texture);
+        if (!texId) continue;
+        const list = stacks.get(name) || [];
+        if (!list.some(l => l.id === texId)) list.push({ id: texId, tinted: f.tintindex != null });
+        stacks.set(name, list);
+      }
+    }
+    // A model with no faces spelled out (plain cube_all) still has textures.
+    if (!stacks.size) {
+      const only = faceTextureId(flat);
+      if (only) for (const n of ['up', 'down', 'north', 'south', 'east', 'west']) stacks.set(n, [{ id: only, tinted: false }]);
+    }
+  }
+  if (!stacks.size) return { error: 'that block is not a full cube' };
+
+  // Faces drawn from the same stack of textures are one choice.
+  const groups = new Map();
+  for (const [name, list] of stacks) {
+    const sig = list.map(l => `${l.id}${l.tinted ? '~t' : ''}`).join('|');
+    const g = groups.get(sig) || { layers: list, faces: [] };
+    g.faces.push(name);
+    groups.set(sig, g);
+  }
+
+  const tint = await tintFor(st.textures, id);
+  const wanted = [...new Set([...groups.values()].flatMap(g => g.layers.map(l => l.id)))];
+  const loaded = await MA.loadTextures(st.textures, wanted);
+  const { ns, name } = MA.splitId(id);
+  const faces = [];
+  for (const g of groups.values()) {
+    const layers = g.layers
+      .map(l => (loaded[l.id] ? { texture: l.id, tinted: l.tinted, url: loaded[l.id].url, width: loaded[l.id].width, height: loaded[l.id].height, frames: loaded[l.id].frames } : null))
+      .filter(Boolean);
+    if (!layers.length) continue;
+    faces.push({
+      // The stack's signature identifies the choice -- a face group is not
+      // one texture any more, so one texture id cannot name it.
+      texture: layers.map(l => l.texture).join('|'),
+      label: faceGroupLabel(g.faces),
+      faces: g.faces,
+      layers,
+      tinted: layers.some(l => l.tinted),
+      // What the grid and the panel show before compositing: the top layer.
+      url: layers[layers.length - 1].url,
+      width: layers[0].width, height: layers[0].height, frames: layers[0].frames,
+    });
+  }
+  // The side faces first, which is what a wall wants, then the top.
+  const rank = (f) => (f.label === 'All sides' ? 0 : f.label === 'Sides' ? 1 : f.label === 'Top' ? 3 : f.label === 'Bottom' ? 4 : 2);
+  faces.sort((a, b) => rank(a) - rank(b));
+  return {
+    id, ns, name, faces,
+    // The turns the game places it at, and only when it picks between them
+    // at random.
+    rotations: random ? [...new Set(placements.map(p => p.y))].sort((a, b) => a - b) : [0],
+    random,
+    tint: tint ? tint.map(v => Math.round(v * 255)) : null,
+  };
+}
 
 export async function listBlockFaces({
   profileId, version, query = '', limit = 60, offset = 0,
@@ -772,7 +918,7 @@ export async function listBlockFaces({
   let seen = 0, skipped = 0;
   for (const b of all.items) {
     if (items.length >= limit) break;
-    let face = null, flat = null;
+    let face = null, flat = null, tinted = false;
     try {
       const states = await MA.blockStates(st.models, b.id);
       const chosen = MA.preferredState(states);
@@ -783,17 +929,22 @@ export async function listBlockFaces({
       if (!isFullCube(flat)) { skipped++; continue; }
       face = faceTextureId(flat);
       if (!face) { skipped++; continue; }
+      // Does the face that will be shown want colouring in?
+      for (const f of Object.values(cubeFaces(flat))) {
+        if (f.id === face && f.tintindex != null) { tinted = true; break; }
+      }
     } catch { skipped++; continue; }
     if (seen++ < offset) continue;
     // Textures come out of their own stack: pre-1.14 reads them from the 1.13
     // jar, which is what stackFor set that up for.
     const loaded = await MA.loadTextures(st.textures, [face]);
     const tex = loaded[face];
-    // An animated texture is a column of frames; only the first is the face.
     if (!tex) { skipped++; continue; }
     items.push({
       id: b.id, name: b.name, ns: b.ns, from: b.from,
       url: tex.url, width: tex.width, height: tex.height, frames: tex.frames,
+      tinted,
+      tint: tinted ? (await tintFor(st.textures, b.id)).map(v => Math.round(v * 255)) : null,
     });
   }
   // `total` is what was offered to be filtered, which is as close to a count

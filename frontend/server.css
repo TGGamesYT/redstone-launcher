@@ -24,6 +24,7 @@
      sidebar.js sets these from the Background setting. */
   --app-gradient: none;
   --app-background: none;
+  --app-bg-color: transparent;
   --app-bg-size: auto;
   --app-bg-repeat: no-repeat;
   --app-bg-render: auto;
@@ -634,7 +635,50 @@ html {
    while a page scrolls, and keeps a tile grid from sliding about.
    image-rendering applies to background images, which is what keeps a 16-pixel
    block texture sharp when it is tiled at 64. */
+/* ── Text straight on the background ────────────────────────────────────────
+   With a custom background, the headings and anything else that sits on it
+   with no panel behind are over whatever the user chose -- and white text on
+   a light picture, or on a tiled stone wall, is unreadable. An outline in the
+   opposite direction to the text colour fixes it for both: a dark one behind
+   light text, a light one behind dark text, worked out from the text colour
+   itself rather than guessed per theme.
+
+   Only where there IS a custom background: over the launcher's own panel the
+   contrast is already known and an outline would just look heavy.
+   The outline colour itself is worked out from the text colour in script
+   (applyTheme in sidebar.js, and theme-boot.js before that), because the
+   decision is "is this text light or dark", which CSS cannot ask. */
+:root {
+  --text-outline: rgba(0, 0, 0, 0.85);
+}
+
+html.custom-bg h1,
+html.custom-bg h2,
+html.custom-bg h3,
+html.custom-bg h4,
+html.custom-bg h5,
+html.custom-bg .on-background {
+  /* Four offsets rather than a blur: a crisp one-pixel edge, which suits a
+     pixel font and does not smear. paint-order keeps the stroke behind the
+     glyph where the browser supports it. */
+  text-shadow:
+    1px 0 0 var(--text-outline),
+    -1px 0 0 var(--text-outline),
+    0 1px 0 var(--text-outline),
+    0 -1px 0 var(--text-outline),
+    1px 1px 0 var(--text-outline),
+    -1px -1px 0 var(--text-outline),
+    1px -1px 0 var(--text-outline),
+    -1px 1px 0 var(--text-outline);
+  paint-order: stroke fill;
+}
+
 html.custom-bg {
+  /* A flat colour is a background-COLOR; everything else is an image. Handing
+     a hex over as the image made the whole declaration invalid, which is why
+     a flat colour came out white. The colour also sits behind a tiled block,
+     so a texture with see-through pixels does not show the window through. */
+  background-color: var(--app-bg-color);
   background-image: var(--app-background);
   background-size: var(--app-bg-size);
   background-repeat: var(--app-bg-repeat);

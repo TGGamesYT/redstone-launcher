@@ -104,7 +104,7 @@ const BG_FALLBACK = {
   mode: 'theme', color: '#121212',
   gradient: { colors: ['#ff4d4d', '#b30c0c'], angle: 180 },
   image: { file: null, fit: 'cover' },
-  block: { url: null, size: 64 },
+  block: { url: null, size: 64, cells: 1 },
 };
 // A path to something on disk, as a url the page may load.
 function fileUrl(p) {
@@ -114,17 +114,19 @@ function fileUrl(p) {
 }
 function backgroundCss(bg) {
   const b = { ...BG_FALLBACK, ...(bg || {}) };
+  // `color` is painted as background-COLOR and `image` as background-image.
+  // A flat colour used to be handed over as the image, which is not a valid
+  // background-image at all -- so the whole declaration was dropped and the
+  // window came up white whatever colour had been picked.
+  const none = { image: 'none', color: 'transparent', size: 'auto', repeat: 'no-repeat', render: 'auto' };
   if (b.mode === 'color' && b.color) {
-    return { image: b.color, size: 'auto', repeat: 'no-repeat', render: 'auto' };
+    return { ...none, color: b.color };
   }
   if (b.mode === 'gradient') {
     const g = { ...BG_FALLBACK.gradient, ...(b.gradient || {}) };
     const colors = (g.colors || []).filter(Boolean);
     if (colors.length) {
-      return {
-        image: `linear-gradient(${g.angle ?? 180}deg, ${colors.join(', ')})`,
-        size: 'auto', repeat: 'no-repeat', render: 'auto',
-      };
+      return { ...none, image: `linear-gradient(${g.angle ?? 180}deg, ${colors.join(', ')})` };
     }
   }
   if (b.mode === 'image') {
@@ -133,19 +135,32 @@ function backgroundCss(bg) {
     if (url) {
       // Stretched fills the window and distorts; fitted shows all of it with
       // bars; covered fills and crops. Covered is what a wallpaper usually
-      // wants, and is the default.
+      // wants, and is the default. Fitted leaves bars, which are the theme's
+      // own colour rather than nothing.
       const size = im.fit === 'stretch' ? '100% 100%' : im.fit === 'contain' ? 'contain' : 'cover';
-      return { image: `url("${url}")`, size, repeat: 'no-repeat', render: 'auto' };
+      return { ...none, image: `url("${url}")`, size, color: 'var(--very-dark)' };
     }
   }
   if (b.mode === 'block') {
     const bl = { ...BG_FALLBACK.block, ...(b.block || {}) };
     if (bl.url) {
       const n = Math.max(8, Math.min(512, Number(bl.size) || 64));
+      // A tile turned at random is not one texture but a patch of several
+      // cells, so one repeat of it is that many tiles across. Sizing it as a
+      // single tile would shrink every cell to a quarter.
+      const cells = Math.max(1, Math.min(8, Number(bl.cells) || 1));
+      const span = n * cells;
       // A 16-pixel texture blown up to 64 has to stay sharp, or a tiled dirt
       // wall turns into a blur. `image-rendering` applies to background
       // images, so the whole tiling is pixel-for-pixel.
-      return { image: `url("${bl.url}")`, size: `${n}px ${n}px`, repeat: 'repeat', render: 'pixelated' };
+      //
+      // The theme's own colour goes behind it: a texture with see-through
+      // pixels -- glass, leaves, iron bars -- showed the window's white
+      // through the holes otherwise.
+      return {
+        ...none, image: `url("${bl.url}")`, size: `${span}px ${span}px`,
+        repeat: 'repeat', render: 'pixelated', color: 'var(--very-dark)',
+      };
     }
   }
   return null;                       // the app's own panel
@@ -156,11 +171,13 @@ function applyBackground(settings) {
   const root = document.documentElement;
   if (!css) {
     root.style.setProperty('--app-background', 'none');
+    root.style.setProperty('--app-bg-color', 'transparent');
     root.classList.remove('custom-bg');
     if (document.body) document.body.classList.remove('custom-bg');
     return;
   }
   root.style.setProperty('--app-background', css.image);
+  root.style.setProperty('--app-bg-color', css.color);
   root.style.setProperty('--app-bg-size', css.size);
   root.style.setProperty('--app-bg-repeat', css.repeat);
   root.style.setProperty('--app-bg-render', css.render);
@@ -169,6 +186,14 @@ function applyBackground(settings) {
 }
 // The settings page previews with these, and so does its own head script.
 window.LauncherBackground = { css: backgroundCss, apply: applyBackground, FALLBACK: BG_FALLBACK };
+
+// Light text wants a dark outline, dark text a light one. Rec. 709
+// luminance, which is what "does this look light" comes down to.
+function outlineFor(textColor) {
+  const [r, g, b] = hexToRgb(textColor, '#ffffff');
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return lum > 0.5 ? 'rgba(0, 0, 0, 0.85)' : 'rgba(255, 255, 255, 0.85)';
+}
 
 function applyTheme(settings) {
   settings = { ...THEME_FALLBACK, ...(settings || {}) };
@@ -187,6 +212,10 @@ function applyTheme(settings) {
   document.documentElement.style.setProperty('--secondary-color', secondary);
   document.documentElement.style.setProperty('--third-color', mid);
   document.documentElement.style.setProperty('--text-color', textColor);
+  // The outline behind text that sits straight on a custom background. Light
+  // text needs a dark edge and dark text a light one, which is a question
+  // about the text colour's brightness and so cannot be asked in CSS.
+  document.documentElement.style.setProperty('--text-outline', outlineFor(textColor));
   document.documentElement.style.setProperty('--text-font', textFont);
   document.documentElement.style.setProperty('--border-radius', `${settings.borderRadius}px`);
   document.documentElement.style.setProperty('--gradient-angle', `${settings.gradientAngle ?? 180}deg`);

@@ -8,6 +8,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { app } from "electron";
+import { execFileSync } from "child_process";
 
 // --- PNG → .ico (single image; ICO may embed a PNG payload directly) ---
 function pngDimensions(png) {
@@ -125,4 +126,105 @@ export function rewriteIcon(iconPath, pngBuffer) {
   } catch { return false; }
 }
 
-export default { createShortcut, rewriteIcon };
+// ── The launcher's own icon, outside the launcher ───────────────────────────
+//
+// Setting a window's icon changes it in the taskbar while the app is running
+// and nowhere else, which is why the icon on the desktop stayed red. The
+// desktop entry has to be told separately, and each platform keeps it
+// somewhere different:
+//
+//   Windows — the installer leaves a .lnk, whose icon lives inside the
+//     shortcut file. A .lnk is a COM object, so it is rewritten through the
+//     Windows Script Host, the way any installer would.
+//   Linux — a .desktop file with an `Icon=` line, rewritten in place.
+//   macOS — the icon belongs to the .app bundle and is signed with it;
+//     nothing here touches that, and it is reported as untouched rather than
+//     silently doing nothing.
+//
+// Returns the files it managed to change, so the launcher can say what
+// happened instead of claiming more than it did.
+export function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", exec } = {}) {
+  if (!pngBuffer) return { updated: [], skipped: ["no icon given"] };
+  const updated = [], skipped = [];
+  const dir = iconsDir();
+  const desktop = (() => { try { return app.getPath("desktop"); } catch { return null; } })();
+  const home = os.homedir();
+
+  try {
+    if (process.platform === "win32") {
+      const ico = path.join(dir, "app.ico");
+      fs.writeFileSync(ico, pngToIco(pngBuffer));
+      // Wherever an installer puts them: the desktop, and the Start menu for
+      // this user and for everybody.
+      const places = [
+        desktop,
+        path.join(home, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs"),
+        path.join(process.env.ProgramData || "C:\\ProgramData", "Microsoft", "Windows", "Start Menu", "Programs"),
+      ].filter(Boolean);
+      const links = [];
+      for (const place of places) {
+        let names = [];
+        try { names = fs.readdirSync(place); } catch { continue; }
+        for (const n of names) {
+          if (!/\.lnk$/i.test(n)) continue;
+          if (!n.toLowerCase().includes(appName.toLowerCase().split(" ")[0])) continue;
+          links.push(path.join(place, n));
+        }
+      }
+      if (!links.length) skipped.push("no shortcut found to change");
+      for (const lnk of links) {
+        // One quoted script, so a path with spaces or an apostrophe in the
+        // user's name survives. Doubling a single quote is how PowerShell
+        // escapes one inside a single-quoted string.
+        const q = (v) => String(v).replace(/'/g, "''");
+        const ps = `$s=(New-Object -ComObject WScript.Shell).CreateShortcut('${q(lnk)}');`
+          + `$s.IconLocation='${q(ico)},0';$s.Save()`;
+        try {
+          execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps],
+            { windowsHide: true, timeout: 15000 });
+          updated.push(lnk);
+        } catch (e) { skipped.push(`${path.basename(lnk)}: ${e.message}`); }
+      }
+      return { updated, skipped, icon: ico };
+    }
+
+    if (process.platform === "darwin") {
+      return { updated: [], skipped: ["a macOS app's icon belongs to its signed bundle"] };
+    }
+
+    // Linux: the .desktop entries, wherever they are.
+    const png = path.join(dir, "app.png");
+    fs.writeFileSync(png, pngBuffer);
+    const places = [desktop, path.join(home, ".local", "share", "applications")].filter(Boolean);
+    const want = appName.toLowerCase().split(" ")[0];
+    let found = 0;
+    for (const place of places) {
+      let names = [];
+      try { names = fs.readdirSync(place); } catch { continue; }
+      for (const n of names) {
+        if (!/\.desktop$/i.test(n)) continue;
+        const full = path.join(place, n);
+        let text = "";
+        try { text = fs.readFileSync(full, "utf8"); } catch { continue; }
+        // Ours, not every shortcut on the desktop: either the file is named
+        // after the app or its Exec points at this very binary.
+        const mine = n.toLowerCase().includes(want)
+          || (exec && text.includes(exec))
+          || text.includes(process.execPath);
+        if (!mine) continue;
+        found++;
+        const next = /^Icon=.*$/m.test(text)
+          ? text.replace(/^Icon=.*$/m, `Icon=${png}`)
+          : text.replace(/^\[Desktop Entry\]\s*$/m, `[Desktop Entry]\nIcon=${png}`);
+        try { fs.writeFileSync(full, next); updated.push(full); }
+        catch (e) { skipped.push(`${n}: ${e.message}`); }
+      }
+    }
+    if (!found) skipped.push("no desktop entry found to change");
+    return { updated, skipped, icon: png };
+  } catch (e) {
+    return { updated, skipped: [...skipped, String(e && e.message || e)] };
+  }
+}
+
+export default { createShortcut, rewriteIcon, setAppShortcutIcon };

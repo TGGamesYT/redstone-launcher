@@ -35,6 +35,11 @@
       ? cached.thirdColor
       : middle(cached.baseColor, cached.secondaryColor));
     set('--text-color', cached.textColor);
+    // The outline behind text sitting straight on a custom background: a dark
+    // edge under light text, a light one under dark text.
+    const tc = hex(cached.textColor) || [255, 255, 255];
+    const lum = (0.2126 * tc[0] + 0.7152 * tc[1] + 0.0722 * tc[2]) / 255;
+    set('--text-outline', lum > 0.5 ? 'rgba(0, 0, 0, 0.85)' : 'rgba(255, 255, 255, 0.85)');
     set('--text-font', cached.font);
     if (cached.borderRadius !== undefined) set('--border-radius', cached.borderRadius + 'px');
   }
@@ -44,31 +49,45 @@
   // backgroundCss() there; this copy exists only because nothing else is
   // loaded this early.
   const b = cached.background;
-  let image = null, size = 'auto', repeat = 'no-repeat', render = 'auto';
+  let image = 'none', color = 'transparent', size = 'auto', repeat = 'no-repeat', render = 'auto';
+  let custom = false;
   if (b && b.mode && b.mode !== 'theme') {
     if (b.mode === 'color' && b.color) {
-      image = b.color;
+      // A background-COLOR, not an image: a hex handed over as the image is
+      // not a valid background-image, which is why this came up white.
+      color = b.color;
+      custom = true;
     } else if (b.mode === 'gradient' && b.gradient && (b.gradient.colors || []).length) {
       image = `linear-gradient(${b.gradient.angle ?? 180}deg, ${b.gradient.colors.join(', ')})`;
+      custom = true;
     } else if (b.mode === 'image' && b.image && (b.image.url || b.image.file)) {
       const u = b.image.url
         || ('file:///' + String(b.image.file).replace(/\\/g, '/').replace(/^\/+/, ''));
       image = `url("${u}")`;
       size = b.image.fit === 'stretch' ? '100% 100%' : b.image.fit === 'contain' ? 'contain' : 'cover';
+      color = 'var(--very-dark)';
+      custom = true;
     } else if (b.mode === 'block' && b.block && b.block.url) {
       const n = Math.max(8, Math.min(512, Number(b.block.size) || 64));
+      // A randomly turned tile is a patch of cells, so one repeat is that
+      // many tiles across.
+      const cells = Math.max(1, Math.min(8, Number(b.block.cells) || 1));
       image = `url("${b.block.url}")`;
-      size = `${n}px ${n}px`;
+      size = `${n * cells}px ${n * cells}px`;
       repeat = 'repeat';
       render = 'pixelated';            // a 16-pixel texture tiled at 64 stays sharp
+      color = 'var(--very-dark)';      // behind a texture with see-through pixels
+      custom = true;
     }
   } else if (!b && cached.gradientEnabled && (cached.gradientColors || []).length) {
     // A save from before the Background section.
     image = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
+    custom = true;
   }
 
-  if (image) {
+  if (custom) {
     set('--app-background', image);
+    set('--app-bg-color', color);
     set('--app-bg-size', size);
     set('--app-bg-repeat', repeat);
     set('--app-bg-render', render);
