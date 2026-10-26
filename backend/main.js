@@ -720,6 +720,17 @@ const DEFAULT_SETTINGS = {
   gradientEnabled: false,
   gradientColors: ["#ff4d4d", "#b30c0c"],
   gradientAngle: 180,
+  // What is behind the launcher. `theme` is the shaded panel the app has
+  // always had; the rest are the four the Background section offers. The
+  // gradient keys above are kept so a save made before this still works, and
+  // are migrated into here on first read.
+  background: {
+    mode: "theme",
+    color: "#121212",
+    gradient: { colors: ["#ff4d4d", "#b30c0c"], angle: 180 },
+    image: { file: null, fit: "cover" },
+    block: { id: null, name: null, url: null, size: 64 },
+  },
   predefinedThemeSync: false,
   syncOptions: false,
   syncServers: false,
@@ -727,6 +738,22 @@ const DEFAULT_SETTINGS = {
 for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
   if (!settings.has(k)) settings.set(k, v);
 }
+// A save from before the Background section had a gradient toggle and nothing
+// else. Carry it across once, so turning the gradient on long ago still shows
+// a gradient rather than quietly reverting to the plain panel.
+(() => {
+  const bg = settings.get("background");
+  if (bg && bg.migrated) return;
+  const next = { ...DEFAULT_SETTINGS.background, ...(bg || {}), migrated: true };
+  if (settings.get("gradientEnabled")) {
+    next.mode = "gradient";
+    next.gradient = {
+      colors: settings.get("gradientColors") || DEFAULT_SETTINGS.background.gradient.colors,
+      angle: settings.get("gradientAngle") ?? 180,
+    };
+  }
+  settings.set("background", next);
+})();
 const sortStore = new Store({ name: "instance-sorting" });
 if (!sortStore.has("sortMode")) sortStore.set("sortMode", "created-desc");
 if (!sortStore.has("customOrder")) sortStore.set("customOrder", []);
@@ -2710,6 +2737,35 @@ ipcMain.handle("pick-image", async (event, opts) => {
       : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif"
         : ext === ".bmp" ? "image/bmp" : "image/png";
     return { dataUrl: `data:${mime};base64,` + buf.toString("base64"), name: path.basename(p) };
+  } catch (e) { return { error: e.message }; }
+});
+
+// A picture to put behind the launcher. Copied into the launcher's own folder
+// rather than referred to where it sits: a background that vanishes because
+// the file was moved, renamed or cleared out of Downloads is worse than no
+// background at all. The copy keeps one name, so choosing another picture
+// replaces it instead of filling the folder up.
+ipcMain.handle("bg:pickImage", async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: "Choose a background picture",
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"] }],
+      properties: ["openFile"],
+    });
+    if (canceled || !filePaths.length) return { canceled: true };
+    const src = filePaths[0];
+    const st = fs.statSync(src);
+    if (st.size > 64 * 1024 * 1024) return { error: "That picture is too big (over 64 MB)." };
+    const ext = (path.extname(src) || ".png").toLowerCase();
+    const dir = path.join(dataDir, "background");
+    fs.mkdirSync(dir, { recursive: true });
+    // Any older copy goes, whatever it was called.
+    for (const f of fs.readdirSync(dir)) {
+      if (/^wallpaper\./i.test(f)) { try { fs.unlinkSync(path.join(dir, f)); } catch { /* fine */ } }
+    }
+    const dest = path.join(dir, "wallpaper" + ext);
+    fs.copyFileSync(src, dest);
+    return { file: dest, url: pathToFileURL(dest).href, name: path.basename(src) };
   } catch (e) { return { error: e.message }; }
 });
 
@@ -8418,6 +8474,20 @@ ipcMain.handle("model:list", async (event, opts = {}) => {
 ipcMain.handle("model:describe", async (event, opts = {}) => {
   try { return await iconModels.describeModel(opts); }
   catch (err) { return { error: String(err && err.message || err) }; }
+});
+// Flat face textures of full blocks, for tiling one behind the launcher.
+// The background is not any one instance's, so with no version named it is
+// read from the newest release.
+ipcMain.handle("model:blockFaces", async (event, opts = {}) => {
+  try {
+    let version = opts.version;
+    if (!version) {
+      const manifest = await getVersionManifest();
+      version = manifest && manifest.latest && manifest.latest.release;
+      if (!version) return { items: [], total: 0, error: "No Minecraft version could be read yet" };
+    }
+    return await iconModels.listBlockFaces({ ...opts, version });
+  } catch (err) { return { items: [], total: 0, error: String(err && err.message || err) }; }
 });
 ipcMain.handle("model:states", async (event, opts = {}) => {
   try { return await iconModels.modelStates(opts); }

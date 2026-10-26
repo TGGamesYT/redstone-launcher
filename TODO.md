@@ -140,21 +140,41 @@ change — the version dropdown included.
       dependency tables, which are rewritten.*
 
 ### D. Themes and the background
-- [ ] **Replace the gradient settings with a Background section**, which can
-      be: the theme's own colour, a custom single colour, a gradient, an
-      uploaded image, or a block texture.
-- [ ] **An uploaded image needs a fit mode**: stretched (to the background
-      area, which excludes the top and left bars), fitted (whole image inside
-      the area, nothing cropped), or covered (fills the area, overflow
-      allowed, never distorted).
-- [ ] **A block picker** like the icon one, but showing each full block's FACE
-      texture flat rather than a render. Picking one tiles it over the whole
-      background, with a slider for the size of one tile.
-- [ ] **A tiled block background must be pixel-sharp** however low-resolution
-      the texture is.
-- [ ] **Predefined theme sync sets the wrong gradient.** It should be a
-      gradient of what the background colour actually is, not a gradient
-      through the theme's main colours.
+- [x] **Replace the gradient settings with a Background section** — *Five
+      modes, one setting, each keeping its own details so switching to a
+      picture and back does not lose the gradient you had. The gradient was a
+      toggle writing three top-level settings; the mode is the choice now.
+      Every page's `<head>` had its own copy of the boot script that paints
+      the background before anything renders, and they had drifted — some
+      checked the wrong setting, some set the class on `<html>` only and some
+      on `<body>` too, which is how a page could open with no background over
+      a transparent body: a white window until the next navigation. One
+      `theme-boot.js` now, and one `backgroundCss()` in sidebar.js that the
+      settings page previews through, so what is previewed is what is
+      painted. The notch between the bars is drawn back for all five modes,
+      not only for a gradient.*
+- [x] **A picture, with stretched / fitted / covered** — *Covered by default.
+      The file is copied into the launcher's own folder, so a background does
+      not vanish when the picture is moved out of Downloads.*
+- [x] **A block's face, tiled, with a size slider, pixel-sharp** — *Flat face
+      textures rather than rendered cubes: a wall of dirt, not a wall of
+      little dirt cubes in perspective. Only full blocks are offered, which is
+      a real test rather than a guess — some element of the model runs the
+      whole 0–16 cube — so a slab, a fence or a flower is left out. "Some
+      element", not "one": a grass block is the cube plus a second cube
+      carrying its tinted side overlay, and demanding a single element threw
+      away every block drawn that way. The side texture is preferred over the
+      top, so a wall of grass is the grassy side. `image-rendering: pixelated`
+      on the background keeps a 16-pixel texture sharp at any tile size.*
+- [x] **Fix the predefined theme sync** so it matches what the background
+      actually is — *There was a table of two BRIGHT colours per theme, which
+      is why syncing quartz gave a near-white gradient over a dark panel:
+      those are a theme's accent colours, not its background. It is derived
+      from the theme's own secondary colour now — the panel is
+      `color-mix(secondary 30%, black)`, so the synced gradient is that mix a
+      little lighter to a little darker. It works for themes nobody wrote a
+      table entry for, including one mixed by hand, and it follows a
+      hand-picked colour and not just the presets.*
 - [ ] **Save a custom theme under a name**, listed with the built-in ones.
 - [ ] **Set the app's icon.** The icon's red parts follow the theme, so
       changing the colours re-tints it; a custom image can be used instead;

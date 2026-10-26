@@ -726,6 +726,81 @@ export async function listModels({
   return { items: match.slice(offset, offset + limit), total: match.length };
 }
 
+// ── Block faces, flat ───────────────────────────────────────────────────────
+//
+// For tiling a block behind the whole launcher, which wants the texture
+// itself and not a render of the block: a wall of dirt, not a wall of little
+// dirt cubes in perspective.
+//
+// Only FULL blocks, which is a real definition rather than a guess: some
+// element of the model runs the whole 0–16 cube. A slab, a fence or a flower
+// tiles into a mess, and a block whose model is a flat sprite has no face to
+// tile at all.
+//
+// "Some element", not "one element": a grass block is the cube plus a second
+// cube carrying its tinted side overlay, and demanding a single element threw
+// away every block drawn that way.
+const spansCube = (e) => {
+  const f = (e && e.from) || [], t = (e && e.to) || [];
+  return f[0] === 0 && f[1] === 0 && f[2] === 0 && t[0] === 16 && t[1] === 16 && t[2] === 16;
+};
+const isFullCube = (flat) =>
+  !!flat && flat.kind === 'elements' && Array.isArray(flat.elements) && flat.elements.some(spansCube);
+
+// Which of a cube's textures to tile. The sides first: a wall of grass should
+// be the grassy side, not the top seen flat on.
+const FACE_KEYS = ['all', 'side', 'texture', 'north', 'end', 'particle', 'top', 'up'];
+const faceTextureId = (flat) => {
+  const t = (flat && flat.textures) || {};
+  for (const k of FACE_KEYS) if (t[k]) return t[k];
+  return Object.values(t).find(Boolean) || null;
+};
+
+export async function listBlockFaces({
+  profileId, version, query = '', limit = 60, offset = 0,
+  vanilla = true, modded = true,
+} = {}) {
+  const st = await stackFor({ profileId, version, overrides: false });
+  if (!st) return { items: [], total: 0 };
+  // The ordinary catalogue, blocks only, then narrowed to the ones that are
+  // actually a full cube. The narrowing costs a model read apiece, so it is
+  // done a page at a time rather than over all twenty thousand.
+  const all = await listModels({
+    profileId, version, query, kinds: ['block'], limit: 1e9, offset: 0, vanilla, modded,
+  });
+  const items = [];
+  let seen = 0, skipped = 0;
+  for (const b of all.items) {
+    if (items.length >= limit) break;
+    let face = null, flat = null;
+    try {
+      const states = await MA.blockStates(st.models, b.id);
+      const chosen = MA.preferredState(states);
+      // blockStates already hands back a full model id per part.
+      const modelId = chosen && chosen.parts && chosen.parts[0] && chosen.parts[0].model;
+      if (!modelId) { skipped++; continue; }
+      flat = await MA.flattenModelJson(st.models, modelId);
+      if (!isFullCube(flat)) { skipped++; continue; }
+      face = faceTextureId(flat);
+      if (!face) { skipped++; continue; }
+    } catch { skipped++; continue; }
+    if (seen++ < offset) continue;
+    // Textures come out of their own stack: pre-1.14 reads them from the 1.13
+    // jar, which is what stackFor set that up for.
+    const loaded = await MA.loadTextures(st.textures, [face]);
+    const tex = loaded[face];
+    // An animated texture is a column of frames; only the first is the face.
+    if (!tex) { skipped++; continue; }
+    items.push({
+      id: b.id, name: b.name, ns: b.ns, from: b.from,
+      url: tex.url, width: tex.width, height: tex.height, frames: tex.frames,
+    });
+  }
+  // `total` is what was offered to be filtered, which is as close to a count
+  // as there is without reading every model in the instance.
+  return { items, total: all.total, skipped };
+}
+
 // The oldest version whose entity models can be read at all.
 //
 // `createRoots` belongs to the model-layer system, which arrived in 1.17;

@@ -90,6 +90,86 @@ function getMiddleColor(hex1, hex2) {
   return rgbToHex(middle[0], middle[1], middle[2]);
 }
 
+// ── What is behind the launcher ─────────────────────────────────────────────
+//
+// Five things it can be: the app's own shaded panel, one flat colour, a
+// gradient, a picture, or a block's face tiled across. All five come out of
+// one setting and are turned into CSS here, so every page agrees and the
+// settings page can preview exactly what it will save.
+//
+// The custom-bg class is what the stylesheet keys off, and it is on <html>
+// alone. Two elements had to be kept in step before, and a page that set only
+// one of them left the window white until the next navigation.
+const BG_FALLBACK = {
+  mode: 'theme', color: '#121212',
+  gradient: { colors: ['#ff4d4d', '#b30c0c'], angle: 180 },
+  image: { file: null, fit: 'cover' },
+  block: { url: null, size: 64 },
+};
+// A path to something on disk, as a url the page may load.
+function fileUrl(p) {
+  if (!p) return null;
+  const s = String(p).replace(/\\/g, '/');
+  return 'file:///' + s.replace(/^\/+/, '').replace(/[?#]/g, encodeURIComponent);
+}
+function backgroundCss(bg) {
+  const b = { ...BG_FALLBACK, ...(bg || {}) };
+  if (b.mode === 'color' && b.color) {
+    return { image: b.color, size: 'auto', repeat: 'no-repeat', render: 'auto' };
+  }
+  if (b.mode === 'gradient') {
+    const g = { ...BG_FALLBACK.gradient, ...(b.gradient || {}) };
+    const colors = (g.colors || []).filter(Boolean);
+    if (colors.length) {
+      return {
+        image: `linear-gradient(${g.angle ?? 180}deg, ${colors.join(', ')})`,
+        size: 'auto', repeat: 'no-repeat', render: 'auto',
+      };
+    }
+  }
+  if (b.mode === 'image') {
+    const im = { ...BG_FALLBACK.image, ...(b.image || {}) };
+    const url = im.url || fileUrl(im.file);
+    if (url) {
+      // Stretched fills the window and distorts; fitted shows all of it with
+      // bars; covered fills and crops. Covered is what a wallpaper usually
+      // wants, and is the default.
+      const size = im.fit === 'stretch' ? '100% 100%' : im.fit === 'contain' ? 'contain' : 'cover';
+      return { image: `url("${url}")`, size, repeat: 'no-repeat', render: 'auto' };
+    }
+  }
+  if (b.mode === 'block') {
+    const bl = { ...BG_FALLBACK.block, ...(b.block || {}) };
+    if (bl.url) {
+      const n = Math.max(8, Math.min(512, Number(bl.size) || 64));
+      // A 16-pixel texture blown up to 64 has to stay sharp, or a tiled dirt
+      // wall turns into a blur. `image-rendering` applies to background
+      // images, so the whole tiling is pixel-for-pixel.
+      return { image: `url("${bl.url}")`, size: `${n}px ${n}px`, repeat: 'repeat', render: 'pixelated' };
+    }
+  }
+  return null;                       // the app's own panel
+}
+
+function applyBackground(settings) {
+  const css = backgroundCss(settings && settings.background);
+  const root = document.documentElement;
+  if (!css) {
+    root.style.setProperty('--app-background', 'none');
+    root.classList.remove('custom-bg');
+    if (document.body) document.body.classList.remove('custom-bg');
+    return;
+  }
+  root.style.setProperty('--app-background', css.image);
+  root.style.setProperty('--app-bg-size', css.size);
+  root.style.setProperty('--app-bg-repeat', css.repeat);
+  root.style.setProperty('--app-bg-render', css.render);
+  root.classList.add('custom-bg');
+  if (document.body) document.body.classList.add('custom-bg');
+}
+// The settings page previews with these, and so does its own head script.
+window.LauncherBackground = { css: backgroundCss, apply: applyBackground, FALLBACK: BG_FALLBACK };
+
 function applyTheme(settings) {
   settings = { ...THEME_FALLBACK, ...(settings || {}) };
   const textColor = settings.textColor;
@@ -111,17 +191,7 @@ function applyTheme(settings) {
   document.documentElement.style.setProperty('--border-radius', `${settings.borderRadius}px`);
   document.documentElement.style.setProperty('--gradient-angle', `${settings.gradientAngle ?? 180}deg`);
   
-  // Apply app gradient if enabled
-  if (settings.gradientEnabled && settings.gradientColors && settings.gradientColors.length > 0) {
-    const gradientStr = `linear-gradient(${settings.gradientAngle ?? 180}deg, ${settings.gradientColors.join(', ')})`;
-    document.documentElement.style.setProperty('--app-gradient', gradientStr);
-    document.documentElement.classList.add('gradient-enabled');
-    document.body.classList.add('gradient-enabled');
-  } else {
-    document.documentElement.style.setProperty('--app-gradient', 'none');
-    document.documentElement.classList.remove('gradient-enabled');
-    document.body.classList.remove('gradient-enabled');
-  }
+  applyBackground(settings);
 }
 
 // Theming must never be able to take the page down with it: a corrupt cache or a

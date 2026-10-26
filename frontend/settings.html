@@ -4,27 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Redstone Launcher — Settings</title>
-  <script>
-const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
-if (cached.baseColor) {
-  document.documentElement.style.setProperty('--base-color', cached.baseColor);
-  document.documentElement.style.setProperty('--secondary-color', cached.secondaryColor);
-  var _third = (cached.autoThird === false && cached.thirdColor) ? cached.thirdColor : (function(a,b){try{var p=function(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(function(c){return c+c;}).join('');return [0,2,4].map(function(i){return parseInt(h.slice(i,i+2),16);});};var x=p(a),y=p(b);return '#'+[0,1,2].map(function(i){return Math.round((x[i]+y[i])/2).toString(16).padStart(2,'0');}).join('');}catch(e){return b;}})(cached.baseColor, cached.secondaryColor);
-      if (_third) document.documentElement.style.setProperty('--third-color', _third);
-  document.documentElement.style.setProperty('--text-color', cached.textColor);
-  document.documentElement.style.setProperty('--text-font', cached.font);
-  if (cached.borderRadius !== undefined) document.documentElement.style.setProperty('--border-radius', cached.borderRadius + 'px');
-}
-// The gradient is drawn whenever it is ON. It used to need predefinedThemeSync
-// as well, which is a different setting entirely -- whether picking a theme
-// also picks its gradient -- so this page drew itself differently from every
-// other one.
-if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.length > 0) {
-  const gradientStr = `linear-gradient(${cached.gradientAngle || 180}deg, ${cached.gradientColors.join(', ')})`;
-  document.documentElement.style.setProperty('--app-gradient', gradientStr);
-  document.documentElement.classList.add('gradient-enabled');
-}
-</script>
+  <script src="theme-boot.js"></script>
   <link href="nouislider.min.css" rel="stylesheet">
   <link rel="stylesheet" href="server.css" />
   <link rel="stylesheet" href="material-icons.css">
@@ -238,6 +218,151 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       z-index: 20;
       text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
     }
+
+    /* ── Background ── */
+    .bg-modes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 0 14px;
+    }
+
+    .bg-mode {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border: 2px solid var(--border-dark);
+      background: var(--menu-bg);
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .bg-mode.on {
+      border-color: var(--base-color);
+      background: var(--third-color);
+    }
+
+    .bg-swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 4px;
+      border: 1px solid var(--border-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .bg-swatch .material-icons { font-size: 15px; }
+
+    .bg-sw-theme { background: linear-gradient(180deg, var(--toolbar-bg) 0 35%, var(--very-dark) 35% 100%); }
+    .bg-sw-color { background: var(--base-color); }
+    .bg-sw-grad { background: linear-gradient(135deg, var(--secondary-color), var(--base-color)); }
+    .bg-sw-img, .bg-sw-block { background: var(--very-dark); }
+
+    .bg-panel {
+      display: none;
+      border: 1px solid var(--border-dark);
+      padding: 15px;
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--secondary-color) 50%, black);
+    }
+
+    .bg-panel.on { display: block; }
+
+    .bg-hint {
+      font-size: 12px;
+      opacity: 0.7;
+    }
+
+    .bg-btn {
+      padding: 6px 12px;
+      background: var(--base-color);
+      color: var(--text-color);
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    .bg-fits, .bg-blockrow {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+
+    .bg-fit {
+      padding: 6px 12px;
+      border: 2px solid var(--border-dark);
+      background: var(--menu-bg);
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .bg-fit.on {
+      border-color: var(--base-color);
+      background: var(--third-color);
+    }
+
+    /* The preview is the real thing at a small size, tiling and all, so what
+       is saved is what was seen. */
+    .bg-preview {
+      margin-top: 15px;
+      height: 90px;
+      border-radius: 5px;
+      border: 1px solid var(--border-dark);
+      background-position: center center;
+      background-color: var(--very-dark);
+    }
+
+    /* Picking a block to tile. */
+    .bgb-search { width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+
+    .bgb-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+      gap: 8px;
+      max-height: 46vh;
+      overflow-y: auto;
+    }
+
+    .bgb-cell {
+      border: 2px solid transparent;
+      border-radius: 4px;
+      background: var(--menu-bg);
+      cursor: pointer;
+      padding: 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .bgb-cell:hover { border-color: var(--base-color); }
+
+    .bgb-cell.on { border-color: var(--base-color); background: var(--third-color); }
+
+    /* The texture itself, blown up and kept sharp — the same way it will be
+       tiled behind the launcher. */
+    .bgb-cell img {
+      width: 48px;
+      height: 48px;
+      image-rendering: pixelated;
+      object-fit: cover;
+      object-position: top left;
+    }
+
+    .bgb-cell span {
+      font-size: 10px;
+      opacity: 0.75;
+      text-align: center;
+      word-break: break-all;
+      line-height: 1.2;
+    }
 </style>
   <script src="uimodal.js"></script>
 </head>
@@ -426,26 +551,76 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       <input type="range" id="border-radius" min="0" max="25" step="0.2" style="width: 200px;">
       <span class="slider-value" id="border-radius-value"></span>
 
-      <h4 style="margin-top: 40px;">Gradient Settings: <span style="background: #ff9800; color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; margin-left: 10px;">BETA</span></h4>
-      <label class="setting-toggle"><input type="checkbox" id="gradient-enabled"> Enable Global Gradient</label>
-      <label class="setting-toggle"><input type="checkbox" id="predefined-theme-sync"> Predefined Theme Sync</label>
-      <br>
+      <h4 style="margin-top: 40px;">Background</h4>
+      <div class="bg-modes" id="bg-modes">
+        <button type="button" class="bg-mode" data-mode="theme" title="The shaded panel the launcher draws itself">
+          <span class="bg-swatch bg-sw-theme"></span><span>Theme</span>
+        </button>
+        <button type="button" class="bg-mode" data-mode="color" title="One flat colour of your choosing">
+          <span class="bg-swatch bg-sw-color"></span><span>Colour</span>
+        </button>
+        <button type="button" class="bg-mode" data-mode="gradient" title="A gradient between two or more colours">
+          <span class="bg-swatch bg-sw-grad"></span><span>Gradient</span>
+        </button>
+        <button type="button" class="bg-mode" data-mode="image" title="A picture from your computer">
+          <span class="bg-swatch bg-sw-img"><i class="material-icons">image</i></span><span>Image</span>
+        </button>
+        <button type="button" class="bg-mode" data-mode="block" title="A block's texture, tiled">
+          <span class="bg-swatch bg-sw-block"><i class="material-icons">grid_on</i></span><span>Block</span>
+        </button>
+      </div>
 
-      <div id="gradient-controls" style="display: none; border: 1px solid var(--border-dark); padding: 15px; border-radius: 5px; background: color-mix(in srgb, var(--secondary-color) 50%, black);">
-        <label>Gradient Angle (deg):</label>
+      <!-- One panel per mode; only the chosen one is shown. -->
+      <div class="bg-panel" id="bg-panel-theme">
+        <div class="bg-hint">The launcher's own panel, shaded from the theme's colours.</div>
+      </div>
+
+      <div class="bg-panel" id="bg-panel-color">
+        <div class="color-input">
+          <span class="color-title">Background</span>
+          <input type="color" id="bg-color">
+          <input type="text" id="bg-color-code" placeholder="#RRGGBB">
+          <button type="button" id="bg-color-fromtheme" title="Take the colour the theme would have used">From theme</button>
+        </div>
+      </div>
+
+      <div class="bg-panel" id="bg-panel-gradient">
+        <label>Angle</label>
         <br>
         <input type="range" id="gradient-angle" min="0" max="360" step="1" style="width: 200px;" value="180">
         <span class="slider-value" id="gradient-angle-value">180°</span>
         <br><br>
-
-        <label>Gradient Colors:</label>
-        <br>
-        <div id="gradient-colors-list" style="margin-top: 10px;">
-        </div>
-        <button id="add-gradient-color" style="margin-top: 10px; padding: 6px 12px; background: var(--base-color); color: var(--text-color); border: none; border-radius: 3px; cursor: pointer;">+ Add Color</button>
-
-        <div id="gradient-preview" style="margin-top: 15px; height: 60px; border-radius: 5px; border: 1px solid var(--border-dark); background: linear-gradient(180deg, #ff4d4d, #b30c0c);"></div>
+        <label>Colours</label>
+        <div id="gradient-colors-list" style="margin-top: 10px;"></div>
+        <button type="button" id="add-gradient-color" class="bg-btn">+ Add colour</button>
       </div>
+
+      <div class="bg-panel" id="bg-panel-image">
+        <button type="button" id="bg-pick-image" class="bg-btn">Choose a picture…</button>
+        <span id="bg-image-name" class="bg-hint" style="margin-left:10px;"></span>
+        <br><br>
+        <label>How it fills the window</label>
+        <div class="bg-fits" id="bg-fits">
+          <button type="button" class="bg-fit" data-fit="cover" title="Fill the window, cropping what does not fit">Covered</button>
+          <button type="button" class="bg-fit" data-fit="contain" title="Show all of it, with bars where it does not reach">Fitted</button>
+          <button type="button" class="bg-fit" data-fit="stretch" title="Fill the window exactly, distorting it">Stretched</button>
+        </div>
+      </div>
+
+      <div class="bg-panel" id="bg-panel-block">
+        <div class="bg-blockrow">
+          <button type="button" id="bg-pick-block" class="bg-btn">Choose a block…</button>
+          <span id="bg-block-name" class="bg-hint"></span>
+        </div>
+        <label style="margin-top:12px; display:block;">Tile size</label>
+        <input type="range" id="bg-block-size" min="8" max="256" step="1" style="width: 200px;" value="64">
+        <span class="slider-value" id="bg-block-size-value">64px</span>
+        <div class="bg-hint">Drawn pixel-sharp however far it is scaled up.</div>
+      </div>
+
+      <div id="bg-preview" class="bg-preview"></div>
+
+      <label class="setting-toggle" style="margin-top:14px;"><input type="checkbox" id="predefined-theme-sync"> Match the background to the theme</label>
 
     </div>
 
@@ -570,18 +745,22 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
       predefinedThemeSync: false
     };
 
-    const themeGradients = {
-      redstone: ['#ff4d4d', '#b30c0c'],
-      diamond: ['#5ad6ff', '#0a74da'],
-      emerald: ['#97bc62', '#2b580c'],
-      gold: ['#fff275', '#ffcc00'],
-      iron: ['#dddddd', '#aaaaaa'],
-      coal: ['#555555', '#333333'],
-      lapis: ['#5c90ff', '#1a3f8f'],
-      netherite: ['#6e6e6e', '#3c3c3c'],
-      quartz: ['#e6e6e6', '#f2f2f2'],
-      copper: ['#d99058', '#b87333']
+    // What the background actually is, for a given theme, as a gradient of
+    // itself. There used to be a table of two bright colours per theme here,
+    // which is why syncing quartz gave a near-white gradient over a dark
+    // panel: those are the theme's accent colours, not its background. The
+    // panel is `color-mix(secondary 30%, black)`, so a gradient of the
+    // background is that same mix a little lighter to a little darker --
+    // which works for a theme nobody wrote a table entry for, including one
+    // the user mixed themselves.
+    const mixWithBlack = (hex, amount) => {
+      const h = String(hex || '#000000').replace(/^#/, '');
+      const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+      if (!/^[0-9a-f]{6}$/i.test(full)) return '#000000';
+      const parts = [0, 2, 4].map(i => Math.round(parseInt(full.substr(i, 2), 16) * amount));
+      return '#' + parts.map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
     };
+    const themeBackgroundGradient = (secondary) => [mixWithBlack(secondary, 0.42), mixWithBlack(secondary, 0.16)];
 
 
     async function init() {
@@ -852,6 +1031,13 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
           if (document.getElementById('auto-third').checked) {
             updateThirdColor(true);
           }
+          // The background is shaded from the secondary colour, so with
+          // matching switched on it has to follow a hand-picked colour too --
+          // not only the preset themes.
+          const sync = document.getElementById('predefined-theme-sync');
+          if (key === 'secondaryColor' && sync && sync.checked && window.__syncBackgroundToTheme) {
+            window.__syncBackgroundToTheme(color.value);
+          }
         }
 
         color.addEventListener('input', () => {
@@ -926,21 +1112,16 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
               }
             });
 
-            // "Predefined Theme Sync" means a theme brings its own gradient
-            // COLOURS. It does not mean picking a theme decides whether you
-            // have a gradient at all: it used to switch one on for anybody
+            // "Match the background to the theme" brings the background's
+            // COLOURS across. It does not decide whether there is a custom
+            // background at all: it used to switch a gradient on for anybody
             // with the sync ticked, and switch one OFF -- one they had built
-            // themselves -- for everybody else. Whether the gradient is on is
-            // the gradient toggle's business and nothing else's.
+            // themselves -- for everybody else. Which mode is in use is the
+            // Background section's business and nothing else's.
             const predefinedThemeSyncCheckbox = document.getElementById('predefined-theme-sync');
-            if (predefinedThemeSyncCheckbox && predefinedThemeSyncCheckbox.checked) {
-              const gradientColors = themeGradients[key];
-              if (gradientColors) {
-                currentGradientColors = gradientColors;
-                renderGradientColors();
-                themeUpdate.gradientColors = gradientColors;
-                if (gradientEnabledState) updateGradientPreview();
-              }
+            if (predefinedThemeSyncCheckbox && predefinedThemeSyncCheckbox.checked
+              && window.__syncBackgroundToTheme) {
+              window.__syncBackgroundToTheme(theme.secondaryColor);
             }
 
             ipcRenderer.send('save-settings', themeUpdate);
@@ -978,123 +1159,298 @@ if (cached.gradientEnabled && cached.gradientColors && cached.gradientColors.len
         localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
       });
 
-      // === Gradient Settings ===
-      const gradientEnabled = document.getElementById('gradient-enabled');
-      const gradientControls = document.getElementById('gradient-controls');
-      const gradientAngle = document.getElementById('gradient-angle');
-      const gradientValue = document.getElementById('gradient-angle-value');
-      const addColorBtn = document.getElementById('add-gradient-color');
-      const gradientColorsList = document.getElementById('gradient-colors-list');
-      const gradientPreview = document.getElementById('gradient-preview');
+      // Picking a block to tile. The game's blocks, but as flat face
+      // textures rather than rendered cubes: a wall of dirt, not a wall of
+      // little dirt cubes in perspective. Only full blocks are offered,
+      // since a slab or a fence tiles into a mess.
+      function openBlockBackgroundPicker(selectedId) {
+        return new Promise((resolve) => {
+          const ov = document.createElement('div');
+          ov.className = 'modal-overlay active';
+          ov.style.zIndex = 7000;
+          ov.innerHTML = `
+            <div class="modal-content" style="max-width:640px; width:92%;">
+              <div class="modal-header"><h2>Pick a block</h2><button class="modal-close" id="bgbX">✕</button></div>
+              <input id="bgbSearch" class="bgb-search" type="search" placeholder="Search blocks…" spellcheck="false">
+              <div id="bgbGrid" class="bgb-grid"></div>
+              <div id="bgbMsg" class="bg-hint" style="margin-top:8px;"></div>
+            </div>`;
+          document.body.appendChild(ov);
+          const grid = ov.querySelector('#bgbGrid');
+          const msg = ov.querySelector('#bgbMsg');
+          const search = ov.querySelector('#bgbSearch');
+          const close = (picked) => { ov.remove(); resolve(picked || null); };
+          ov.querySelector('#bgbX').onclick = () => close(null);
+          ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(null); });
 
-      let currentGradientColors = getSetting('gradientColors') || ['#ff4d4d', '#b30c0c'];
-      let gradientEnabledState = getSetting('gradientEnabled') || false;
-
-      function renderGradientColors() {
-        gradientColorsList.innerHTML = '';
-        if (!currentGradientColors || !Array.isArray(currentGradientColors)) {
-          currentGradientColors = ['#ff4d4d', '#b30c0c'];
-        }
-        currentGradientColors.forEach((color, index) => {
-          const colorDiv = document.createElement('div');
-          colorDiv.style.display = 'flex';
-          colorDiv.style.alignItems = 'center';
-          colorDiv.style.marginBottom = '8px';
-          colorDiv.style.gap = '10px';
-
-          const colorInput = document.createElement('input');
-          colorInput.type = 'color';
-          colorInput.value = color;
-          colorInput.style.cursor = 'pointer';
-          colorInput.addEventListener('input', (e) => {
-            currentGradientColors[index] = e.target.value;
-            updateGradientPreview();
-            saveGradientSettings();
-          });
-
-          const removeBtn = document.createElement('button');
-          removeBtn.innerText = 'Remove';
-          removeBtn.style.padding = '4px 8px';
-          removeBtn.style.background = 'var(--third-color)';
-          removeBtn.style.color = 'var(--text-color)';
-          removeBtn.style.border = 'none';
-          removeBtn.style.borderRadius = '3px';
-          removeBtn.style.cursor = 'pointer';
-          removeBtn.style.fontSize = '0.85rem';
-          removeBtn.disabled = currentGradientColors.length <= 2;
-          removeBtn.addEventListener('click', () => {
-            if (currentGradientColors.length > 2) {
-              currentGradientColors.splice(index, 1);
-              renderGradientColors();
-              updateGradientPreview();
-              saveGradientSettings();
+          let seq = 0;
+          const load = async (query) => {
+            const mine = ++seq;
+            msg.textContent = 'Reading the game’s blocks…';
+            grid.innerHTML = '';
+            const r = await ipcRenderer.invoke('model:blockFaces', { version: null, query, limit: 120 });
+            if (mine !== seq) return;                    // a later search won
+            if (r && r.error) { msg.textContent = r.error; return; }
+            const items = (r && r.items) || [];
+            if (!items.length) {
+              msg.textContent = query ? 'No full blocks match that.' : 'No blocks could be read yet.';
+              return;
             }
+            msg.textContent = `${items.length} block${items.length === 1 ? '' : 's'}`;
+            for (const it of items) {
+              const cell = document.createElement('button');
+              cell.type = 'button';
+              cell.className = 'bgb-cell' + (it.id === selectedId ? ' on' : '');
+              const img = document.createElement('img');
+              img.src = it.url;
+              img.alt = it.name;
+              // An animated texture is a column of frames; show the first.
+              if (it.frames > 1) {
+                img.style.objectFit = 'none';
+                img.style.transform = `scale(${48 / it.width})`;
+                img.style.transformOrigin = 'top left';
+              }
+              const name = document.createElement('span');
+              name.textContent = it.name;
+              cell.appendChild(img); cell.appendChild(name);
+              cell.onclick = () => close(it);
+              grid.appendChild(cell);
+            }
+          };
+          let timer = null;
+          search.addEventListener('input', () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => load(search.value.trim()), 220);
           });
-
-          colorDiv.appendChild(colorInput);
-          colorDiv.appendChild(removeBtn);
-          gradientColorsList.appendChild(colorDiv);
+          load('');
+          setTimeout(() => search.focus(), 30);
         });
       }
 
-      function updateGradientPreview() {
-        const gradientString = `linear-gradient(${gradientAngle.value}deg, ${currentGradientColors.join(', ')})`;
-        gradientPreview.style.background = gradientString;
-        if (gradientEnabledState) {
-          document.documentElement.style.setProperty('--app-gradient', gradientString);
+      // === Background ===
+      //
+      // Five modes, one setting. The gradient used to be the only one, behind
+      // a toggle, and the toggle wrote three top-level settings; now the mode
+      // is the choice and each mode keeps its own details, so switching to a
+      // picture and back does not lose the gradient you had.
+      const BG_DEFAULT = {
+        mode: 'theme', color: '#121212',
+        gradient: { colors: ['#ff4d4d', '#b30c0c'], angle: 180 },
+        image: { file: null, url: null, fit: 'cover' },
+        block: { id: null, name: null, url: null, size: 64 },
+      };
+      let bg = (() => {
+        const had = getSetting('background') || {};
+        const out = { ...BG_DEFAULT, ...had };
+        out.gradient = { ...BG_DEFAULT.gradient, ...(had.gradient || {}) };
+        out.image = { ...BG_DEFAULT.image, ...(had.image || {}) };
+        out.block = { ...BG_DEFAULT.block, ...(had.block || {}) };
+        // A save from before this section: carry the old toggle across.
+        if (!had.mode && getSetting('gradientEnabled')) {
+          out.mode = 'gradient';
+          out.gradient = {
+            colors: getSetting('gradientColors') || BG_DEFAULT.gradient.colors,
+            angle: getSetting('gradientAngle') ?? 180,
+          };
+        }
+        return out;
+      })();
+
+      const bgPreview = document.getElementById('bg-preview');
+      const gradientAngle = document.getElementById('gradient-angle');
+      const gradientValue = document.getElementById('gradient-angle-value');
+      const gradientColorsList = document.getElementById('gradient-colors-list');
+
+      // What the background will look like, as CSS. sidebar.js holds the one
+      // definition of what a mode means, so this page previews exactly what
+      // every other page will paint.
+      const bgCss = (b) => (window.LauncherBackground ? window.LauncherBackground.css(b) : null);
+
+      function paintBackground() {
+        // The live window, so the choice is visible everywhere at once.
+        if (window.LauncherBackground) window.LauncherBackground.apply({ background: bg });
+        // And the preview, which shows the same thing at a small size --
+        // including the tiling, so the tile-size slider means something.
+        const css = bgCss(bg);
+        bgPreview.style.backgroundImage = css
+          ? css.image
+          : 'linear-gradient(180deg, var(--toolbar-bg) 0 18%, var(--very-dark) 18% 100%)';
+        bgPreview.style.backgroundSize = css ? css.size : 'auto';
+        bgPreview.style.backgroundRepeat = css ? css.repeat : 'no-repeat';
+        bgPreview.style.imageRendering = css ? css.render : 'auto';
+      }
+
+      function saveBackground() {
+        ipcRenderer.send('save-settings', { background: bg });
+        const cachedNow = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+        localStorage.setItem('launcherTheme', JSON.stringify({ ...cachedNow, background: bg }));
+      }
+
+      function showBgPanels() {
+        for (const b of document.querySelectorAll('.bg-mode')) {
+          b.classList.toggle('on', b.dataset.mode === bg.mode);
+        }
+        for (const p of document.querySelectorAll('.bg-panel')) {
+          p.classList.toggle('on', p.id === 'bg-panel-' + bg.mode);
+        }
+        for (const f of document.querySelectorAll('.bg-fit')) {
+          f.classList.toggle('on', f.dataset.fit === bg.image.fit);
         }
       }
 
-      function saveGradientSettings() {
-        const updateObj = {
-          gradientEnabled: gradientEnabledState,
-          gradientColors: currentGradientColors,
-          gradientAngle: parseInt(gradientAngle.value)
-        };
-        ipcRenderer.send('save-settings', updateObj);
-        const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
-        localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
+      for (const b of document.querySelectorAll('.bg-mode')) {
+        b.addEventListener('click', () => {
+          bg.mode = b.dataset.mode;
+          showBgPanels(); paintBackground(); saveBackground();
+        });
       }
 
-      gradientEnabled.checked = gradientEnabledState;
-      gradientControls.style.display = gradientEnabledState ? 'block' : 'none';
-      gradientAngle.value = getSetting('gradientAngle', 180);
-      gradientValue.innerText = gradientAngle.value + '°';
-      renderGradientColors();
-      updateGradientPreview();
-
-      // Turning it off has to take the class off too. Setting --app-gradient
-      // to none on its own left <html> with the class and no gradient, and
-      // <body> see-through over it -- a white window until the next page load.
-      function showGradient(on) {
-        document.documentElement.classList.toggle('gradient-enabled', !!on);
-        document.body.classList.toggle('gradient-enabled', !!on);
-        if (!on) document.documentElement.style.setProperty('--app-gradient', 'none');
-      }
-
-      gradientEnabled.addEventListener('change', () => {
-        gradientEnabledState = gradientEnabled.checked;
-        gradientControls.style.display = gradientEnabledState ? 'block' : 'none';
-        showGradient(gradientEnabledState);
-        if (gradientEnabledState) updateGradientPreview();
-        saveGradientSettings();
+      // ── one colour ──
+      const bgColor = document.getElementById('bg-color');
+      const bgColorCode = document.getElementById('bg-color-code');
+      bgColor.value = bg.color; bgColorCode.value = bg.color;
+      const setBgColor = (v) => {
+        if (!/^#[0-9a-f]{6}$/i.test(v)) return;
+        bg.color = v.toLowerCase();
+        bgColor.value = bg.color; bgColorCode.value = bg.color;
+        paintBackground(); saveBackground();
+      };
+      bgColor.addEventListener('input', () => setBgColor(bgColor.value));
+      bgColorCode.addEventListener('change', () => setBgColor(bgColorCode.value.trim()));
+      // The colour the theme's own panel is, so "a flat version of the theme"
+      // is one click rather than a guess at the hex.
+      document.getElementById('bg-color-fromtheme').addEventListener('click', () => {
+        const v = getComputedStyle(document.documentElement).getPropertyValue('--very-dark').trim();
+        setBgColor(cssColorToHex(v) || bg.color);
       });
 
+      // --very-dark is a color-mix(), so it has to be resolved through
+      // something that has actually painted it.
+      function cssColorToHex(value) {
+        if (!value) return null;
+        if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
+        const probe = document.createElement('span');
+        probe.style.color = value;
+        probe.style.display = 'none';
+        document.body.appendChild(probe);
+        const rgb = getComputedStyle(probe).color;
+        probe.remove();
+        const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(rgb);
+        if (!m) return null;
+        return '#' + [1, 2, 3].map(i => Number(m[i]).toString(16).padStart(2, '0')).join('');
+      }
+
+      // ── a gradient ──
+      function renderGradientColors() {
+        gradientColorsList.innerHTML = '';
+        if (!Array.isArray(bg.gradient.colors) || bg.gradient.colors.length < 2) {
+          bg.gradient.colors = [...BG_DEFAULT.gradient.colors];
+        }
+        bg.gradient.colors.forEach((color, index) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;margin-bottom:8px;gap:10px;';
+          const input = document.createElement('input');
+          input.type = 'color';
+          input.value = color;
+          input.style.cursor = 'pointer';
+          input.addEventListener('input', (e) => {
+            bg.gradient.colors[index] = e.target.value;
+            paintBackground(); saveBackground();
+          });
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.innerText = 'Remove';
+          remove.style.cssText = 'padding:4px 8px;background:var(--third-color);color:var(--text-color);border:none;border-radius:3px;cursor:pointer;font-size:0.85rem;';
+          remove.disabled = bg.gradient.colors.length <= 2;
+          remove.addEventListener('click', () => {
+            if (bg.gradient.colors.length <= 2) return;
+            bg.gradient.colors.splice(index, 1);
+            renderGradientColors(); paintBackground(); saveBackground();
+          });
+          row.appendChild(input); row.appendChild(remove);
+          gradientColorsList.appendChild(row);
+        });
+      }
+      gradientAngle.value = bg.gradient.angle ?? 180;
+      gradientValue.innerText = gradientAngle.value + '°';
       gradientAngle.addEventListener('input', () => {
         gradientValue.innerText = gradientAngle.value + '°';
-        updateGradientPreview();
-        saveGradientSettings();
+        bg.gradient.angle = parseInt(gradientAngle.value, 10);
+        paintBackground(); saveBackground();
+      });
+      document.getElementById('add-gradient-color').addEventListener('click', () => {
+        if (bg.gradient.colors.length >= 6) return;
+        bg.gradient.colors.push(bg.gradient.colors[bg.gradient.colors.length - 1]);
+        renderGradientColors(); paintBackground(); saveBackground();
       });
 
-      addColorBtn.addEventListener('click', () => {
-        if (currentGradientColors.length < 6) {
-          const lastColor = currentGradientColors[currentGradientColors.length - 1];
-          currentGradientColors.push(lastColor);
-          renderGradientColors();
-          updateGradientPreview();
-          saveGradientSettings();
-        }
+      // ── a picture ──
+      const bgImageName = document.getElementById('bg-image-name');
+      const showImageName = () => {
+        bgImageName.textContent = bg.image.file
+          ? String(bg.image.file).split(/[\\/]/).pop()
+          : 'nothing chosen yet';
+      };
+      showImageName();
+      document.getElementById('bg-pick-image').addEventListener('click', async () => {
+        const r = await ipcRenderer.invoke('bg:pickImage');
+        if (!r || r.canceled) return;
+        if (r.error) { if (window.notify) notify(r.error, 'error'); return; }
+        // The file is copied into the launcher's own folder, so a background
+        // does not vanish when the picture is moved or deleted.
+        bg.image = { ...bg.image, file: r.file, url: r.url };
+        bg.mode = 'image';
+        showImageName(); showBgPanels(); paintBackground(); saveBackground();
       });
+      for (const f of document.querySelectorAll('.bg-fit')) {
+        f.addEventListener('click', () => {
+          bg.image.fit = f.dataset.fit;
+          showBgPanels(); paintBackground(); saveBackground();
+        });
+      }
+
+      // ── a block, tiled ──
+      const bgBlockName = document.getElementById('bg-block-name');
+      const bgBlockSize = document.getElementById('bg-block-size');
+      const bgBlockSizeValue = document.getElementById('bg-block-size-value');
+      const showBlockName = () => { bgBlockName.textContent = bg.block.name || 'nothing chosen yet'; };
+      showBlockName();
+      bgBlockSize.value = bg.block.size || 64;
+      bgBlockSizeValue.innerText = bgBlockSize.value + 'px';
+      bgBlockSize.addEventListener('input', () => {
+        bgBlockSizeValue.innerText = bgBlockSize.value + 'px';
+        bg.block.size = parseInt(bgBlockSize.value, 10);
+        paintBackground(); saveBackground();
+      });
+      document.getElementById('bg-pick-block').addEventListener('click', async () => {
+        const picked = await openBlockBackgroundPicker(bg.block.id);
+        if (!picked) return;
+        bg.block = { ...bg.block, id: picked.id, name: picked.name, url: picked.url };
+        bg.mode = 'block';
+        showBlockName(); showBgPanels(); paintBackground(); saveBackground();
+      });
+
+      // Taking the theme's background colours, when that is asked for. The
+      // gradient becomes a gradient OF the background rather than of the
+      // theme's accents, and a flat background becomes the panel's own
+      // colour. Which mode is in use is left alone: syncing colours is not
+      // choosing a mode.
+      function syncBackgroundToTheme(secondary) {
+        const sec = secondary
+          || (document.getElementById('secondary-color') || {}).value
+          || '#ff4d4d';
+        bg.gradient = { ...bg.gradient, colors: themeBackgroundGradient(sec) };
+        bg.color = mixWithBlack(sec, 0.30);
+        bgColor.value = bg.color; bgColorCode.value = bg.color;
+        renderGradientColors();
+        paintBackground();
+        saveBackground();
+      }
+      window.__syncBackgroundToTheme = syncBackgroundToTheme;
+
+      showBgPanels();
+      renderGradientColors();
+      paintBackground();
 
       const autoUpdates = document.getElementById('auto-updates');
       autoUpdates.checked = getSetting('autoUpdates');

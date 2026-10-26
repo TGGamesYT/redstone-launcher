@@ -20,7 +20,13 @@
   --text-font: Pixel;
   --border-radius: 8px;
   --gradient-angle: 180deg;
+  /* What is behind the launcher, when it is not the app's own panel.
+     sidebar.js sets these from the Background setting. */
   --app-gradient: none;
+  --app-background: none;
+  --app-bg-size: auto;
+  --app-bg-repeat: no-repeat;
+  --app-bg-render: auto;
   --toolbar-bg: var(--secondary-color);
   --sidebar-bg: linear-gradient(var(--gradient-angle), var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
   --sidebar-border: color-mix(in srgb, var(--secondary-color) 50%, black);
@@ -623,9 +629,18 @@ html {
       var(--very-dark) 100%);
 }
 
-html.gradient-enabled {
-  background: var(--app-gradient);
+/* A colour, a gradient, a picture or a tiled block face -- all four arrive as
+   one background-image, so one rule paints them. `fixed` keeps a picture still
+   while a page scrolls, and keeps a tile grid from sliding about.
+   image-rendering applies to background images, which is what keeps a 16-pixel
+   block texture sharp when it is tiled at 64. */
+html.custom-bg {
+  background-image: var(--app-background);
+  background-size: var(--app-bg-size);
+  background-repeat: var(--app-bg-repeat);
+  background-position: center center;
   background-attachment: fixed;
+  image-rendering: var(--app-bg-render);
 }
 
 body {
@@ -644,25 +659,25 @@ body {
 }
 
 /* Keyed off <html> alone, not off a class on <body> as well. Two elements
-   had to be kept in step by every piece of code that touched the gradient,
+   had to be kept in step by every piece of code that touched the background,
    and the settings page's own head script only ever set the one on <html> --
-   so turning the gradient off there left <body> transparent over an <html>
-   with no gradient left on it, which is a white window until the next page
-   load. One class decides it now. */
-html:not(.gradient-enabled) body {
+   so turning it off there left <body> transparent over an <html> with no
+   background left on it, which is a white window until the next page load.
+   One class decides it now. */
+html:not(.custom-bg) body {
   background: var(--very-dark);
 }
 
 /* The notch where the top bar meets the side bar.
-   With no gradient it is free: <html> paints its top tenth in the toolbar's
-   colour, and the bit of that showing through the rounded corner <body> cuts
-   out of itself is what joins the two bars. Turn the gradient on and <html>
-   paints the gradient instead, so the corner fills with gradient and the
-   notch is gone. This draws it back -- just the wedge, so the gradient still
+   With the app's own panel it is free: <html> paints its top tenth in the
+   toolbar's colour, and the bit of that showing through the rounded corner
+   <body> cuts out of itself is what joins the two bars. Give <html> a
+   background of its own and the corner fills with that instead, so the notch
+   is gone. This draws it back -- just the wedge, so the background still
    shows everywhere <body> is see-through. The circle is centred on the inside
    of the corner: transparent within the radius, where the panel's own curve
    is, and the toolbar's colour outside it. */
-html.gradient-enabled::before {
+html.custom-bg::before {
   content: "";
   position: fixed;
   left: 70px;
@@ -864,7 +879,7 @@ textarea::placeholder {
 #toolbar .logo-icon {
   display: none;
 }
-html:not(.gradient-enabled) .sidebar {
+html:not(.custom-bg) .sidebar {
   background: linear-gradient(180deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
 }
 
