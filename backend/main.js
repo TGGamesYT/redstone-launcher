@@ -21,6 +21,7 @@ import fileManager from './fileManager.js';
 import remod from './remod.js';
 import { convertSkinPixels, slimFromPixels } from './skin-model.js';
 import shortcuts from './shortcuts.js';
+import totem from './totem.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
 import { exec, execSync, spawn } from "child_process";
@@ -3203,6 +3204,9 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
   instanceLogs.delete(profileId); // fresh console for this launch (previous session was kept until now)
   // Pick up any dev-mod builds produced while the launcher wasn't watching.
   try { await syncDevMods("instance", profileId); } catch { /* non-fatal */ }
+  // A totem pack set to follow the account is rebuilt here: the skin may have
+  // changed since it was made, and following the account is the whole point.
+  try { await refreshGeneratedPacks(profileId); } catch { /* non-fatal */ }
   // Pick up anything edited elsewhere, and relink this instance's servers.dat,
   // which its last session detached by renaming over it. Also runs when a game
   // exits, so the other instances don't stay stale until their next launch.
@@ -3819,6 +3823,204 @@ function contentPath(type, id, tab, filename) {
   if (!filename || path.dirname(full) !== dir) return null;
   return full;
 }
+
+// ── Resource packs the launcher makes ───────────────────────────────────────
+//
+// Two generators, reached from the Tools button on an instance's Resource
+// packs tab. A generated pack is marked in the list the way a dev mod is,
+// because it is the same kind of thing: not something you installed, but
+// something the launcher keeps up to date for you.
+//
+// The totem pack is rebuilt before every launch when it follows the account's
+// skin, so changing your skin changes your totem without a thought. A pack
+// pinned to one particular skin is built once and left alone.
+const genPacksPath = path.join(dataDir, "generated-packs.json");
+const loadGenPacks = () => { try { return JSON.parse(fs.readFileSync(genPacksPath, "utf8")) || {}; } catch { return {}; } };
+const saveGenPacks = (o) => { try { fs.writeFileSync(genPacksPath, JSON.stringify(o, null, 2)); } catch { /* a note that cannot be written only costs a rebuild */ } };
+const TOTEM_PACK_FILE = "redstone-totem.zip";
+const VT_PACK_FILE = "redstone-vanillatweaks.zip";
+
+// Which skin a totem should wear: the selected account's, or one pinned to
+// the pack.
+async function skinForTotem(spec) {
+  if (spec && spec.kind === "fixed" && spec.base64) return Buffer.from(spec.base64, "base64");
+  // The account the launcher is set to, premium or offline -- the same skin
+  // the game will be wearing.
+  const id = storage.get("selectedPlayerId", null);
+  const players = loadPlayers();
+  const player = players.find(x => String(x.id) === String(id)) || players[0];
+  if (!player) return null;
+  try {
+    const skin = await headSkinFor({
+      uuid: (player.auth && player.auth.uuid) || player.uuid,
+      name: (player.auth && player.auth.name) || player.username,
+      playerId: player.type !== "microsoft" ? player.id : null,
+      offline: player.type !== "microsoft",
+    });
+    return skin && skin.base64 ? Buffer.from(skin.base64, "base64") : null;
+  } catch { return null; }
+}
+
+async function buildTotemPack(profileId, spec) {
+  const skinPng = await skinForTotem(spec);
+  if (!skinPng) return { success: false, error: "No skin could be read for that account" };
+  const { data, info } = await sharp(skinPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const px = totem.totemPixels(data, info.width, info.height);
+  const png = await sharp(Buffer.from(px), { raw: { width: 16, height: 16, channels: 4 } }).png().toBuffer();
+
+  const zip = new AdmZip();
+  zip.addFile("pack.mcmeta", Buffer.from(JSON.stringify(totem.TOTEM_PACK_MCMETA, null, 4)));
+  zip.addFile("pack.png", png);
+  zip.addFile(totem.TOTEM_TEXTURE_PATH, png);
+  const dest = contentPath("instance", profileId, "resourcepacks", TOTEM_PACK_FILE);
+  if (!dest) return { success: false, error: "That instance has nowhere to put it" };
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, zip.toBuffer());
+  return { success: true, file: TOTEM_PACK_FILE, png: "data:image/png;base64," + png.toString("base64") };
+}
+
+ipcMain.handle("pack:totem", async (event, { profileId, skin, enable = true } = {}) => {
+  try {
+    const spec = skin && skin.kind === "fixed"
+      ? { kind: "fixed", base64: String(skin.base64 || "").replace(/^data:image\/[\w+.-]+;base64,/, "") }
+      : { kind: "account" };
+    const r = await buildTotemPack(profileId, spec);
+    if (!r.success) return r;
+    const store = loadGenPacks();
+    const key = String(profileId);
+    store[key] = { ...(store[key] || {}), totem: { ...spec, at: Date.now(), file: TOTEM_PACK_FILE } };
+    saveGenPacks(store);
+    // Switched on, or it sits in the folder doing nothing.
+    if (enable) {
+      const entry = "file/" + TOTEM_PACK_FILE;
+      const packs = readEnabledResourcePacks(profileId);
+      if (!packs.includes(entry)) writeEnabledResourcePacks(profileId, [...packs, entry]);
+    }
+    return r;
+  } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+});
+
+// Rebuilt before a launch, for every instance whose totem follows the
+// account. The skin may have changed since it was made, and the whole point
+// of it following the account is that nobody has to remember that.
+async function refreshGeneratedPacks(profileId) {
+  const entry = loadGenPacks()[String(profileId)];
+  if (!entry || !entry.totem || entry.totem.kind !== "account") return;
+  const dest = contentPath("instance", profileId, "resourcepacks", TOTEM_PACK_FILE);
+  if (!dest) return;
+  try {
+    const r = await buildTotemPack(profileId, { kind: "account" });
+    if (r.success) devtoolsLog(`[packs] rebuilt the totem pack for ${profileId}`);
+  } catch (e) { devtoolsLog("[packs] the totem pack could not be rebuilt:", e.message); }
+}
+
+// Which packs in an instance the launcher made, so the list can say so.
+// The account a generated pack would follow, and the skins it could be
+// pinned to. One call, because the window would otherwise need the selected
+// id, the player list and the library separately.
+ipcMain.handle("pack:skinChoices", async () => {
+  try {
+    const id = storage.get("selectedPlayerId", null);
+    const players = loadPlayers();
+    const player = players.find(x => String(x.id) === String(id)) || players[0];
+    if (!player) return { success: true, account: null, skins: [] };
+    const uuid = String((player.auth && player.auth.uuid) || player.uuid || "").replace(/-/g, "");
+    const name = (player.auth && player.auth.name) || player.username || "";
+    // The same view of the library the skins page gets.
+    let skins = [];
+    try { skins = skinViewFor(loadSkinLib(), uuid) || []; } catch { skins = []; }
+    return {
+      success: true,
+      account: { id: player.id, uuid, name, offline: player.type !== "microsoft" },
+      skins: skins.map(x => ({ id: x.id, name: x.name || null, base64: x.base64 || null, variant: x.variant || "classic" })),
+    };
+  } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+});
+
+ipcMain.handle("pack:generated", (event, { profileId } = {}) => {
+  const entry = loadGenPacks()[String(profileId)] || {};
+  const out = {};
+  if (entry.totem) out[TOTEM_PACK_FILE] = { kind: "totem", follows: entry.totem.kind === "account", at: entry.totem.at || null };
+  if (entry.vt) out[VT_PACK_FILE] = { kind: "vanillatweaks", version: entry.vt.version || null, picks: entry.vt.picks || {}, at: entry.vt.at || null };
+  return { success: true, packs: out };
+});
+
+ipcMain.handle("pack:forget", (event, { profileId, kind } = {}) => {
+  const store = loadGenPacks();
+  const key = String(profileId);
+  if (store[key]) { delete store[key][kind]; saveGenPacks(store); }
+  return { success: true };
+});
+
+// ── Vanilla Tweaks ─────────────────────────────────────────────────────────
+//
+// Their own API, which is what the website uses: the categories as JSON, then
+// a POST naming the packs wanted, which answers with a link to a zip built on
+// the spot. Nothing is scraped and nothing is reimplemented -- picking the
+// packs is the only part that belongs here.
+const VT_BASE = "https://vanillatweaks.net";
+const _vtCategories = new Map();
+
+ipcMain.handle("pack:vtCategories", async (event, { version } = {}) => {
+  try {
+    const v = String(version || "").trim();
+    if (!/^\d+\.\d+(\.\d+)?$/.test(v)) return { success: false, error: "That is not a version Vanilla Tweaks would know" };
+    // Their packs are per minor version: 1.21.4 is covered by 1.21.
+        const short = v.split(".").slice(0, 2).join(".");
+    if (_vtCategories.has(short)) return _vtCategories.get(short);
+    const res = await fetch(`${VT_BASE}/assets/resources/json/${short}/rpcategories.json`);
+    if (!res.ok) return { success: false, error: `Vanilla Tweaks has nothing for ${short} (HTTP ${res.status})` };
+    const json = await res.json();
+    const out = { success: true, version: short, categories: json.categories || [] };
+    _vtCategories.set(short, out);
+    return out;
+  } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+});
+
+ipcMain.handle("pack:vtBuild", async (event, { profileId, version, picks, enable = true } = {}) => {
+  try {
+    const short = String(version || "").split(".").slice(0, 2).join(".");
+    const chosen = {};
+    for (const [cat, list] of Object.entries(picks || {})) {
+      const keep = (Array.isArray(list) ? list : []).filter(Boolean);
+      if (keep.length) chosen[cat] = keep;
+    }
+    if (!Object.keys(chosen).length) return { success: false, error: "Nothing was picked" };
+
+    const body = new URLSearchParams();
+    body.set("version", short);
+    body.set("packs", JSON.stringify(chosen));
+    const res = await fetch(`${VT_BASE}/assets/server/zipresourcepacks.php`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+    if (!res.ok) return { success: false, error: `Vanilla Tweaks said HTTP ${res.status}` };
+    const made = await res.json();
+    if (!made || made.status !== "success" || !made.link) {
+      return { success: false, error: (made && made.message) || "Vanilla Tweaks would not build that" };
+    }
+    const zip = await fetch(VT_BASE + made.link);
+    if (!zip.ok) return { success: false, error: `The pack could not be downloaded (HTTP ${zip.status})` };
+    const buf = Buffer.from(await zip.arrayBuffer());
+    const dest = contentPath("instance", profileId, "resourcepacks", VT_PACK_FILE);
+    if (!dest) return { success: false, error: "That instance has nowhere to put it" };
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, buf);
+
+    const store = loadGenPacks();
+    const key = String(profileId);
+    const count = Object.values(chosen).reduce((n, l) => n + l.length, 0);
+    store[key] = { ...(store[key] || {}), vt: { version: short, picks: chosen, at: Date.now(), file: VT_PACK_FILE } };
+    saveGenPacks(store);
+    if (enable) {
+      const entry = "file/" + VT_PACK_FILE;
+      const packs = readEnabledResourcePacks(profileId);
+      if (!packs.includes(entry)) writeEnabledResourcePacks(profileId, [...packs, entry]);
+    }
+    return { success: true, file: VT_PACK_FILE, count, version: short };
+  } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+});
 
 ipcMain.handle("remod:open", async (event, { type, id, tab, filename }) => {
   try {
@@ -12027,7 +12229,11 @@ async function playerHead({ name, uuid, offline, playerId }) {
 // heads use. The render on the skins page used to ask an avatar service for
 // this, which has the same problem: throttled, it answers 200 with a default
 // skin and the page shows the wrong character without saying so.
-ipcMain.handle("head:skin", async (event, { name, uuid, offline, playerId } = {}) => {
+// A player's skin: their own if Mojang is serving one, the offline skin this
+// launcher holds for them if they have one, or the default they would be
+// given. Lifted out of the IPC handler because the totem-pack generator wants
+// exactly the same answer -- the skin the game will be wearing.
+async function headSkinFor({ name, uuid, offline, playerId } = {}) {
   let id = String(uuid || "").replace(/-/g, "") || null;
   if (playerId != null) {
     try {
@@ -12069,7 +12275,9 @@ ipcMain.handle("head:skin", async (event, { name, uuid, offline, playerId } = {}
   } catch (err) {
     return { error: String(err && err.message || err) };
   }
-});
+}
+
+ipcMain.handle("head:skin", async (event, opts = {}) => headSkinFor(opts));
 
 // A username -> the account Mojang has for it, or nothing. Used by the
 // friends panel's Add box, which looks a player up and shows them before it

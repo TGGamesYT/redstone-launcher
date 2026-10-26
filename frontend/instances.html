@@ -200,6 +200,106 @@
 
     .inline-check input { width: auto; margin: 0; }
 
+    /* ── Resource-pack tools ── */
+    .pt-tool {
+      border: 1px solid var(--border-dark);
+      border-radius: var(--border-radius);
+      background: var(--menu-bg);
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .pt-head { display: flex; gap: 12px; align-items: flex-start; }
+
+    .pt-head img {
+      width: 56px;
+      height: 56px;
+      image-rendering: pixelated;
+      border-radius: 4px;
+      background: var(--very-dark);
+      flex: 0 0 auto;
+    }
+
+    .pt-name { font-weight: bold; font-size: 14px; }
+
+    .pt-sub { font-size: 12px; opacity: 0.7; margin-top: 2px; }
+
+    .pt-state { font-size: 12px; opacity: 0.85; margin-top: 6px; }
+
+    .pt-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+
+    .pt-pick {
+      padding: 6px 12px;
+      border: 2px solid var(--border-dark);
+      background: var(--menu-bg);
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .pt-pick.on { border-color: var(--base-color); background: var(--third-color); }
+
+    .pt-skins {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      max-height: 180px;
+      overflow-y: auto;
+      margin-top: 10px;
+    }
+
+    .pt-skin {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      padding: 4px;
+      border: 2px solid transparent;
+      border-radius: 4px;
+      background: var(--very-dark);
+      cursor: pointer;
+      font-size: 10px;
+    }
+
+    .pt-skin.on { border-color: var(--base-color); }
+
+    .pt-skin img {
+      width: 44px;
+      height: 44px;
+      image-rendering: pixelated;
+      object-fit: none;
+      object-position: -8px -8px;   /* the face out of the skin sheet */
+    }
+
+    .pt-skin span { max-width: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Vanilla Tweaks' own categories. */
+    .vt-list { max-height: 52vh; overflow-y: auto; }
+
+    .vt-group { margin-bottom: 12px; }
+
+    .vt-group-name {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      opacity: 0.6;
+      margin-bottom: 4px;
+    }
+
+    .vt-pack {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 13px;
+      padding: 3px 4px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .vt-pack:hover { background: var(--menu-bg); }
+
+    .vt-pack input { width: auto; margin: 0; flex: 0 0 auto; }
+
     /* ── Adding a dev mod ── */
     .dm-pickrow { margin-bottom: 12px; }
 
@@ -2443,6 +2543,268 @@
           return installBtn;
         };
 
+        // ── Resource-pack tools ─────────────────────────────────────────────
+        // Packs the launcher makes rather than ones you install. A generated
+        // pack is marked in the list the way a dev mod is, because it is the
+        // same kind of thing: the launcher keeps it up to date for you.
+        async function openPackToolsModal(profile, onChange) {
+          const ov = document.createElement('div');
+          ov.className = 'modal-overlay active'; ov.style.zIndex = 5200;
+          ov.innerHTML = `<div class="modal-content" style="max-width:620px;">
+            <div class="modal-header"><h2>Resource pack tools</h2><button class="modal-close" id="ptX">\u2715</button></div>
+
+            <div class="pt-tool">
+              <div class="pt-head">
+                <img id="ptTotemShot" alt="">
+                <div style="flex:1;min-width:0;">
+                  <div class="pt-name">Totem of Undying</div>
+                  <div class="pt-sub">A totem wearing a player's skin.</div>
+                  <div class="pt-state" id="ptTotemState"></div>
+                </div>
+              </div>
+              <div class="pt-row">
+                <button type="button" class="pt-pick on" id="ptTotemFollow"
+                  data-tip="Rebuilt from the signed-in account's skin before every launch, so changing your skin changes your totem.">Follow my skin</button>
+                <button type="button" class="pt-pick" id="ptTotemPin"
+                  data-tip="Built once from a skin you choose, and left alone after that.">Pin a skin…</button>
+              </div>
+              <div id="ptSkins" class="pt-skins" style="display:none;"></div>
+              <div class="pt-row">
+                <button type="button" id="ptTotemMake">Generate</button>
+                <button type="button" id="ptTotemDrop" style="display:none;">Remove</button>
+              </div>
+            </div>
+
+            <div class="pt-tool">
+              <div class="pt-head">
+                <div style="flex:1;min-width:0;">
+                  <div class="pt-name">Vanilla Tweaks</div>
+                  <div class="pt-sub">Built by Vanilla Tweaks themselves, for this instance's version.</div>
+                  <div class="pt-state" id="ptVtState"></div>
+                </div>
+              </div>
+              <div class="pt-row">
+                <button type="button" id="ptVtPick">Customise\u2026</button>
+                <button type="button" id="ptVtMake">Generate</button>
+              </div>
+            </div>
+
+            <div class="modal-actions" style="margin-top:14px;"><button type="button" id="ptDone">Done</button></div>
+          </div>`;
+          document.body.appendChild(ov);
+          const close = () => ov.remove();
+          ov.querySelector('#ptX').onclick = close;
+          ov.querySelector('#ptDone').onclick = close;
+          ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+
+          const totemState = ov.querySelector('#ptTotemState');
+          const totemShot = ov.querySelector('#ptTotemShot');
+          const vtState = ov.querySelector('#ptVtState');
+          const skinsBox = ov.querySelector('#ptSkins');
+          let pinned = null;                       // { base64, name } when a skin is pinned
+          let vtPicks = {};
+
+          // What is already generated for this instance.
+          const refreshState = async () => {
+            const r = await ipcRenderer.invoke('pack:generated', { profileId: profile.id });
+            const packs = (r && r.packs) || {};
+            const t = Object.values(packs).find(x => x.kind === 'totem');
+            totemState.textContent = t
+              ? (t.follows ? 'In this instance, following your skin.' : 'In this instance, pinned to one skin.')
+              : 'Not in this instance yet.';
+            ov.querySelector('#ptTotemDrop').style.display = t ? '' : 'none';
+            const v = Object.values(packs).find(x => x.kind === 'vanillatweaks');
+            const picked = v ? Object.values(v.picks || {}).reduce((n, l) => n + l.length, 0) : 0;
+            vtState.textContent = v
+              ? `In this instance: ${picked} pack${picked === 1 ? '' : 's'} for ${v.version}.`
+              : 'Not in this instance yet.';
+            if (v && v.picks) vtPicks = v.picks;
+          };
+          refreshState();
+
+          // ── which skin the totem wears ──
+          const follow = ov.querySelector('#ptTotemFollow');
+          const pin = ov.querySelector('#ptTotemPin');
+          const setMode = (following) => {
+            follow.classList.toggle('on', following);
+            pin.classList.toggle('on', !following);
+            skinsBox.style.display = following ? 'none' : '';
+            if (following) pinned = null;
+          };
+          follow.onclick = () => setMode(true);
+          pin.onclick = async () => {
+            setMode(false);
+            if (skinsBox.dataset.loaded) return;
+            skinsBox.dataset.loaded = '1';
+            skinsBox.innerHTML = '<div class="pt-sub">Reading your skins\u2026</div>';
+            const r = await ipcRenderer.invoke('pack:skinChoices');
+            const skins = (r && r.skins) || [];
+            if (!skins.length) {
+              skinsBox.innerHTML = '<div class="pt-sub">No skins in your library to pin to — it will follow your account instead.</div>';
+              setMode(true);
+              return;
+            }
+            skinsBox.innerHTML = '';
+            for (const sk of skins) {
+              if (!sk.base64) continue;
+              const b = document.createElement('button');
+              b.type = 'button';
+              b.className = 'pt-skin';
+              const src = sk.base64.startsWith('data:') ? sk.base64 : 'data:image/png;base64,' + sk.base64;
+              b.innerHTML = `<img src="${src}" alt=""><span>${sk.name || 'skin'}</span>`;
+              b.onclick = () => {
+                pinned = { base64: src, name: sk.name || 'skin' };
+                for (const other of skinsBox.querySelectorAll('.pt-skin')) other.classList.toggle('on', other === b);
+              };
+              skinsBox.appendChild(b);
+            }
+          };
+
+          ov.querySelector('#ptTotemMake').onclick = async () => {
+            const btn = ov.querySelector('#ptTotemMake');
+            btn.disabled = true; btn.textContent = 'Generating…';
+            const skin = pinned ? { kind: 'fixed', base64: pinned.base64 } : { kind: 'account' };
+            const r = await ipcRenderer.invoke('pack:totem', { profileId: profile.id, skin });
+            btn.disabled = false; btn.textContent = 'Generate';
+            if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'The totem pack could not be made', 'error'); return; }
+            if (r.png) totemShot.src = r.png;
+            await refreshState();
+            onChange && onChange();
+            if (window.notify) notify('The totem pack is in and switched on.', 'success');
+          };
+          ov.querySelector('#ptTotemDrop').onclick = async () => {
+            await ipcRenderer.invoke('pack:forget', { profileId: profile.id, kind: 'totem' });
+            // The file itself is left for the ordinary delete button, which is
+            // where every other pack is removed.
+            await refreshState();
+            onChange && onChange();
+            if (window.notify) notify('It will not be rebuilt again. Delete the pack itself in the list.', 'info');
+          };
+
+          // ── Vanilla Tweaks ──
+          ov.querySelector('#ptVtPick').onclick = async () => {
+            const chosen = await openVanillaTweaksPicker(profile.version, vtPicks);
+            if (!chosen) return;
+            vtPicks = chosen;
+            const n = Object.values(vtPicks).reduce((a, l) => a + l.length, 0);
+            vtState.textContent = `${n} pack${n === 1 ? '' : 's'} chosen — press Generate.`;
+          };
+          ov.querySelector('#ptVtMake').onclick = async () => {
+            const btn = ov.querySelector('#ptVtMake');
+            if (!Object.values(vtPicks).reduce((a, l) => a + l.length, 0)) {
+              if (window.notify) notify('Pick some packs first with Customise', 'error');
+              return;
+            }
+            btn.disabled = true; btn.textContent = 'Building…';
+            const r = await ipcRenderer.invoke('pack:vtBuild', {
+              profileId: profile.id, version: profile.version, picks: vtPicks,
+            });
+            btn.disabled = false; btn.textContent = 'Generate';
+            if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'Vanilla Tweaks would not build that', 'error'); return; }
+            await refreshState();
+            onChange && onChange();
+            if (window.notify) notify(`${r.count} Vanilla Tweaks pack${r.count === 1 ? '' : 's'} are in and switched on.`, 'success');
+          };
+        }
+
+        // Their own categories, as their site lists them: groups of groups of
+        // packs. Nothing here decides what exists -- that comes from Vanilla
+        // Tweaks, so a pack added there turns up without a launcher release.
+        function openVanillaTweaksPicker(version, already) {
+          return new Promise((resolve) => {
+            const ov = document.createElement('div');
+            ov.className = 'modal-overlay active'; ov.style.zIndex = 5400;
+            ov.innerHTML = `<div class="modal-content" style="max-width:680px;">
+              <div class="modal-header"><h2>Vanilla Tweaks</h2><button class="modal-close" id="vtX">\u2715</button></div>
+              <input id="vtSearch" class="bgb-search" type="search" placeholder="Search packs…" spellcheck="false">
+              <div id="vtList" class="vt-list"></div>
+              <div class="modal-actions" style="margin-top:12px;">
+                <span id="vtCount" class="pt-sub" style="margin-right:auto;"></span>
+                <button type="button" id="vtCancel">Cancel</button>
+                <button type="button" id="vtOk">Use these</button>
+              </div>
+            </div>`;
+            document.body.appendChild(ov);
+            const done = (v) => { ov.remove(); resolve(v || null); };
+            ov.querySelector('#vtX').onclick = () => done(null);
+            ov.querySelector('#vtCancel').onclick = () => done(null);
+            ov.addEventListener('mousedown', (e) => { if (e.target === ov) done(null); });
+
+            const list = ov.querySelector('#vtList');
+            const count = ov.querySelector('#vtCount');
+            // category key -> Set of pack names
+            const picks = new Map();
+            for (const [k, v] of Object.entries(already || {})) picks.set(k, new Set(v));
+            const tally = () => {
+              let n = 0;
+              for (const set of picks.values()) n += set.size;
+              count.textContent = n ? `${n} pack${n === 1 ? '' : 's'} chosen` : 'nothing chosen';
+            };
+            tally();
+
+            ov.querySelector('#vtOk').onclick = () => {
+              const out = {};
+              for (const [k, set] of picks) if (set.size) out[k] = [...set];
+              done(out);
+            };
+
+            list.innerHTML = '<div class="pt-sub">Asking Vanilla Tweaks what it has…</div>';
+            ipcRenderer.invoke('pack:vtCategories', { version }).then((r) => {
+              if (!ov.isConnected) return;
+              if (!r || !r.success) { list.innerHTML = `<div class="pt-sub">${(r && r.error) || 'Vanilla Tweaks could not be reached.'}</div>`; return; }
+              list.innerHTML = '';
+              // Their shape: a top category, optional sub-categories, and
+              // packs at either level. The key a pack is sent under is its
+              // TOP category's name, lowercased, which is what their site
+              // posts.
+              const draw = (top, group, packs) => {
+                if (!packs || !packs.length) return;
+                const key = String(top).toLowerCase();
+                const sec = document.createElement('div');
+                sec.className = 'vt-group';
+                sec.innerHTML = `<div class="vt-group-name">${top}${group && group !== top ? ' · ' + group : ''}</div>`;
+                for (const pk of packs) {
+                  const row = document.createElement('label');
+                  row.className = 'vt-pack';
+                  row.dataset.search = `${top} ${group || ''} ${pk.display || pk.name}`.toLowerCase();
+                  const cb = document.createElement('input');
+                  cb.type = 'checkbox';
+                  cb.checked = !!(picks.get(key) && picks.get(key).has(pk.name));
+                  cb.onchange = () => {
+                    const set = picks.get(key) || new Set();
+                    if (cb.checked) set.add(pk.name); else set.delete(pk.name);
+                    picks.set(key, set);
+                    tally();
+                  };
+                  const text = document.createElement('span');
+                  text.textContent = pk.display || pk.name;
+                  row.append(cb, text);
+                  if (pk.description) row.title = String(pk.description).replace(/<[^>]*>/g, '');
+                  sec.appendChild(row);
+                }
+                list.appendChild(sec);
+              };
+              for (const top of r.categories || []) {
+                draw(top.category, null, top.packs);
+                for (const sub of top.categories || []) draw(top.category, sub.category, sub.packs);
+              }
+              const search = ov.querySelector('#vtSearch');
+              search.addEventListener('input', () => {
+                const q = search.value.trim().toLowerCase();
+                for (const row of list.querySelectorAll('.vt-pack')) {
+                  row.style.display = !q || row.dataset.search.includes(q) ? '' : 'none';
+                }
+                for (const g of list.querySelectorAll('.vt-group')) {
+                  const any = [...g.querySelectorAll('.vt-pack')].some(r2 => r2.style.display !== 'none');
+                  g.style.display = any ? '' : 'none';
+                }
+              });
+            }).catch(() => {
+              if (ov.isConnected) list.innerHTML = '<div class="pt-sub">Vanilla Tweaks could not be reached.</div>';
+            });
+          });
+        }
+
         // ── Dev-mods modal: register mod build-output folders to hot-swap from.
         // Enabling/disabling lives in the instance's Advanced settings; this
         // modal just manages the folders. Uses an inline add form (no prompt()).
@@ -2792,7 +3154,8 @@
           if (p.disabled) li.style.opacity = "0.45";
           // Is this the hot-swapped jar of a registered dev mod?
           const devMod = (devMods || []).find(m => p.filename === m.modId + "-dev.jar" || p.filename === m.modId + "-dev.jar.disabled");
-          if (devMod) li.style.borderColor = "var(--accent)";
+          const genPack = genPacks[String(p.filename || "").replace(/\.disabled$/i, "")] || null;
+          if (devMod || genPack) li.style.borderColor = "var(--accent)";
 
           // The list is painted twice: once from what's on disk, then again once
           // Modrinth/CurseForge have been asked. Showing an icon before it has
@@ -2821,7 +3184,12 @@
           info.className = "profile-info";
           const name = document.createElement("div");
           name.className = "profile-name";
-          name.textContent = p.name + (devMod ? "  (devmod)" : "") + (p.disabled ? "  (disabled)" : "");
+          const genLabel = genPack
+            ? (genPack.kind === "totem"
+              ? (genPack.follows ? "  (generated · follows your skin)" : "  (generated)")
+              : "  (generated)")
+            : "";
+          name.textContent = p.name + (devMod ? "  (devmod)" : "") + genLabel + (p.disabled ? "  (disabled)" : "");
           const details = document.createElement("div");
           details.className = "profile-details";
           // Resource packs: render the pack.mcmeta description with Minecraft's
@@ -3416,6 +3784,15 @@
                 if (tabName === "mods") devState = await ipcRenderer.invoke("devmod:get", { type: "instance", id: profile.id });
                 if (!ensureStillActive()) return;
                 const devMods = (devState && devState.mods) || [];
+                // Packs the launcher made, marked in the list the way a dev
+                // mod is: not something you installed, but something kept up
+                // to date for you.
+                let genPacks = {};
+                if (tabName === "resourcepacks") {
+                  const g = await ipcRenderer.invoke("pack:generated", { profileId: profile.id });
+                  genPacks = (g && g.packs) || {};
+                  if (!ensureStillActive()) return;
+                }
                 // Developer mode puts a Remod (edit) button on every archive.
                 const devOn = !!(await ipcRenderer.invoke("get-setting", "devMode"));
                 if (!ensureStillActive()) return;
@@ -3480,6 +3857,14 @@
                     devBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Add dev mod`;
                     devBtn.onclick = () => openAddDevModModal("instance", profile.id, () => renderContentTab());
                     bar.appendChild(devBtn);
+                  }
+                  // Packs the launcher can make, rather than ones you install.
+                  if (tabName === "resourcepacks") {
+                    const toolsBtn = document.createElement("button");
+                    toolsBtn.className = "tab-install-btn secondary";
+                    toolsBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">build</i> Tools`;
+                    toolsBtn.onclick = () => openPackToolsModal(profile, () => renderContentTab());
+                    bar.appendChild(toolsBtn);
                   }
                   return bar;
                 };

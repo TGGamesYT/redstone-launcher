@@ -280,15 +280,35 @@ declares, which is what that was built for.
       instance's own page as well.
 
 ### I. Resource-pack tools
-- [ ] **A Tools button on an instance's Resourcepacks tab**, opening a picker
-      like the version one.
-- [ ] **A totem resource-pack generator**, marked like a dev mod, which
-      updates to the right skin when the instance launches — the totem tool
-      from `tggamesyt/tggamesyt.github.io`'s `totem` directory, 1:1 — and can
-      be pinned to a chosen skin instead, using the launcher's usual skin
-      picker.
-- [ ] **Vanilla Tweaks**, the whole generator, in the same tools picker, with
-      a customise button like a dev mod's.
+- [x] **A Tools button on an instance's Resourcepacks tab** — *Both
+      generators live behind it. A pack either of them makes is marked in the
+      list the way a dev mod is, because it is the same kind of thing: not
+      something you installed, but something the launcher keeps up to date.*
+- [x] **A totem resource-pack generator**, 1:1 with the site's tool, updating
+      to the right skin at launch, or pinned to a chosen skin. — *Ported as it
+      stands: every draw in its original order at its original coordinates,
+      since the totem is a hand-made arrangement of a skin's pixels and moving
+      any one of them changes it. The original runs on a 2D canvas, which
+      composites source-over; there is no canvas in the backend, so the same
+      compositing is done on raw pixels — which is what makes a part-
+      transparent hat work. "1:1" is checked rather than claimed: the test
+      lifts the original's own `test()` into a real canvas and compares the
+      two pixel for pixel on five skins, including a 64×32 one (the other
+      branch of every `height > 32`), one where every pixel is unique (so a
+      single wrong coordinate would show) and one with a half-transparent hat
+      (so replacing instead of blending would show). All five match exactly.
+      A pack set to follow the account is rebuilt before every launch, so
+      changing your skin changes your totem; one pinned to a skin from the
+      library is built once and left alone.*
+- [x] **Vanilla Tweaks**, the whole generator, with a customise button. —
+      *Their own API: the categories as JSON, then a POST naming the packs
+      wanted, which answers with a link to a zip they build on the spot.
+      Nothing is scraped and nothing is reimplemented, so a pack added on
+      their side turns up without a launcher release. Customise lists their
+      categories as they group them, searchable, and a pack from a
+      sub-category is posted under its top category's name — which is what
+      their own site does. The version is the instance's, cut to the minor one
+      they publish for.*
 
 ### J. Onboarding
 - [x] **It still tells you to click the tab.** — *Each step put up an "Open
