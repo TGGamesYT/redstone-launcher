@@ -9,6 +9,47 @@ started.
 
 ---
 
+## 0. Round 35
+
+Corrections to Round 34, in the order they were given — plus the launch crash
+that came in while they were being worked through, which goes first because
+nothing else can be looked at until the app starts.
+
+### The app would not start at all
+- [x] **`ReferenceError: Cannot access 'dataDir' before initialization`.**
+      Round 34's playtime counter put `const playtimePath = path.join(dataDir,
+      "playtime.json")` at line 394, four hundred lines above `const dataDir`.
+      A `const` read before its own declaration does not come out undefined —
+      it throws, at import time, before a window exists, so the launcher died
+      on the splash. — *`playtimePath` is a function now, worked out when it
+      is asked for. Guarded by a new suite that parses each backend file and
+      flags any top-level initializer naming a binding declared below it,
+      because the order of ten thousand lines of declarations is not something
+      to hold in your head.*
+
+- [ ] **The "follow the theme" button is still there, and the icon does not
+      follow on its own.**
+- [ ] **A block background cannot be changed once one is set.**
+- [ ] **Nor can the picture, once an image background is set.**
+- [ ] **Suggestions still unreachable after the certificate was renewed**, even
+      across a restart; "Try again" does nothing. And the message about it was
+      addressed to me, which does not belong in the app.
+- [ ] **Most text on the background has no outline.**
+- [ ] **Some settings text sits out the tab-change animation** — "Font", the
+      border-radius label and its value, the "RAM for …" labels.
+- [ ] **`background: colour` shades the sidebar's top-right** differently from
+      `background: theme` at the same colour.
+- [ ] **The image background wants the "from theme" button too.**
+- [ ] **The app-icon preview in Settings does not update with the theme**, even
+      though the real window icon does; and the desktop icon is not immediate.
+- [ ] **The instance-creation modal loses its scroll position** going back from
+      the version list, and the backdrop blur drops out between steps.
+- [ ] **The text outline must follow the text colour** as it is changed in
+      Settings — white on white is an unreadable blob.
+- [ ] **A font-smoothing setting on the Styles tab** — the font renders blurry.
+
+---
+
 ## 0. Round 34
 
 A large batch. Ordered roughly as it was given, but worked through by how much

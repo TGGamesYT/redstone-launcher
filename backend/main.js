@@ -391,9 +391,12 @@ function isPidAlive(pid) {
 // the tracker persists its sessions and picks them up again on startup --
 // and a session whose start time is lost contributes nothing rather than
 // contributing nonsense.
-const playtimePath = path.join(dataDir, "playtime.json");
-const loadPlaytime = () => { try { return JSON.parse(fs.readFileSync(playtimePath, "utf8")) || {}; } catch { return {}; } };
-const savePlaytime = (o) => { try { fs.writeFileSync(playtimePath, JSON.stringify(o, null, 2)); } catch { /* a total that cannot be written is only a total */ } };
+// Asked for when it is needed rather than worked out here: this sits above
+// where dataDir is declared, and a const read before its declaration is a
+// crash at import time, not a stale value.
+const playtimePath = () => path.join(dataDir, "playtime.json");
+const loadPlaytime = () => { try { return JSON.parse(fs.readFileSync(playtimePath(), "utf8")) || {}; } catch { return {}; } };
+const savePlaytime = (o) => { try { fs.writeFileSync(playtimePath(), JSON.stringify(o, null, 2)); } catch { /* a total that cannot be written is only a total */ } };
 
 function addPlaytime(id, ms) {
   const n = Number(ms);
