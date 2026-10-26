@@ -260,8 +260,16 @@ function createMcReader(onPacket) {
 // ───────────────────────── state / admins ───────────────────────────────
 function loadJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; } }
 let adminUuids = new Set((loadJson(ADMINS_FILE, { uuids: [] }).uuids || []).map(u => String(u).replace(/-/g, "").toLowerCase()));
-let recentSubs = loadJson(STATE_FILE, {}); // subdomain -> lastUsed ms
+// subdomain -> { last, uuid, name }. A file written before the owner was
+// recorded holds a bare timestamp instead, which recentSubUsed reads too.
+let recentSubs = loadJson(STATE_FILE, {});
 function saveState() { try { fs.writeFileSync(STATE_FILE, JSON.stringify(recentSubs)); } catch { /* ignore */ } }
+const recentSubEntry = (host) => {
+  const v = recentSubs[host];
+  if (v == null) return null;
+  return typeof v === "object" ? v : { last: Number(v) || 0, uuid: null, name: null };
+};
+const recentSubUsed = (host) => { const e = recentSubEntry(host); return e ? e.last : 0; };
 
 // ───────────────────────── Mojang hasJoined auth ────────────────────────
 function hasJoined(username, serverId) {
@@ -654,7 +662,129 @@ const SUGGESTIONS_PANEL = {
   ],
 };
 
-const ADMIN_PANELS = [SUGGESTIONS_PANEL];
+// ── Who has used the launcher ───────────────────────────────────────────────
+//
+// Everything the relay knows about an account, which is: a name, when it was
+// first seen and when it was last seen, whether it is timed out, and how many
+// other accounts have connected from somewhere it has. Nothing is collected
+// for this -- it is the `seen` record the friends list already reads, shown
+// whole.
+const USERS_PANEL = {
+  id: "users",
+  title: "Users",
+  empty: "Nobody has used the launcher yet.",
+  list: { op: "users.list" },
+  key: "uuid",
+  search: ["name", "uuid"],
+  filters: {
+    field: "when", empty: "older",
+    options: [
+      { value: "", label: "All" },
+      { value: "today", label: "Today" },
+      { value: "week", label: "This week" },
+      { value: "month", label: "This month" },
+      { value: "older", label: "Older" },
+    ],
+  },
+  row: {
+    head: { uuid: "uuid", name: "name" },
+    title: "name", sub: "lastText",
+    badge: { field: "state", empty: "ok", tone: { admin: "good", "timed out": "bad" } },
+  },
+  detail: [
+    // The player as the friend-info modal shows one: a render you can turn,
+    // not a 34-pixel head.
+    { kind: "player", head: { uuid: "uuid", name: "name" } },
+    { kind: "heading", field: "name" },
+    {
+      kind: "meta", head: { uuid: "uuid", name: "name" },
+      parts: [
+        { field: "uuid" },
+        { field: "first", as: "date", prefix: "first seen " },
+        { field: "last", as: "date", prefix: "last seen " },
+        { field: "state", empty: "ok" },
+        { field: "timedOut", as: "date", prefix: "timed out until " },
+      ],
+    },
+    { kind: "note", field: "linkedText", label: "Accounts sharing a connection" },
+    { kind: "note", field: "addressText", label: "Relay addresses" },
+    {
+      kind: "form", label: "Suggestions:",
+      inputs: [{ id: "days", placeholder: "Days", value: "7", width: 90, number: true }],
+      actions: [
+        {
+          label: "Time out", tone: "bad", op: "suggestions.timeout", send: { uuid: "uuid" }, with: ["days"],
+          confirm: {
+            text: "Stop {name} — and every account that has connected from the same place — "
+              + "from sending suggestions for {days#day}?",
+            ok: "Time out", danger: true,
+          },
+          refresh: true,
+        },
+        { label: "Lift", op: "suggestions.timeout", args: { days: 0 }, send: { uuid: "uuid" }, refresh: true },
+      ],
+    },
+  ],
+};
+
+// ── What is being relayed ───────────────────────────────────────────────────
+//
+// Every address the relay has registered: whose it is, when it was last used,
+// and whether it is up this second. The live ones come from the connection
+// table and the rest from the file that outlives a restart.
+const RELAY_PANEL = {
+  id: "relay",
+  title: "Relay",
+  empty: "No address has ever been registered.",
+  list: { op: "relay.list" },
+  key: "host",
+  search: ["host", "name", "uuid"],
+  filters: {
+    field: "state", empty: "offline",
+    options: [
+      { value: "", label: "All" },
+      { value: "up", label: "Up now" },
+      { value: "offline", label: "Offline" },
+    ],
+  },
+  row: {
+    head: { uuid: "uuid", name: "name" },
+    title: "host", sub: "lastText",
+    badge: { field: "state", empty: "offline", tone: { up: "good" } },
+  },
+  detail: [
+    { kind: "heading", field: "host" },
+    {
+      kind: "meta", head: { uuid: "uuid", name: "name" },
+      parts: [
+        { field: "name", empty: "owner unknown" },
+        { field: "state", empty: "offline" },
+        { field: "since", as: "date", prefix: "up since " },
+        { field: "last", as: "date", prefix: "last used " },
+        { field: "streams", prefix: "players: " },
+        { field: "port", prefix: "their port " },
+      ],
+    },
+    { kind: "note", field: "packText", label: "Resource pack" },
+    {
+      kind: "form", label: "This address:",
+      actions: [
+        {
+          label: "Disconnect", tone: "bad", op: "relay.drop", send: { host: "host" },
+          confirm: { text: "Drop {host}? Anybody playing on it is thrown off.", ok: "Disconnect", danger: true },
+          refresh: true,
+        },
+        {
+          label: "Forget", op: "relay.forget", send: { host: "host" },
+          confirm: { text: "Forget {host}? It stops being offered as recently used.", ok: "Forget" },
+          refresh: true,
+        },
+      ],
+    },
+  ],
+};
+
+const ADMIN_PANELS = [SUGGESTIONS_PANEL, USERS_PANEL, RELAY_PANEL];
 
 const ADMIN_OPS = {
   "suggestions.list": () => ({
@@ -672,6 +802,111 @@ const ADMIN_OPS = {
     item.decidedAt = Date.now();
     saveSuggestions();
     return { ok: true, row: adminSuggestion(item) };
+  },
+
+  "users.list": () => {
+    const now = Date.now();
+    const band = (ms) => {
+      const age = now - Number(ms || 0);
+      if (age < 86400000) return "today";
+      if (age < 7 * 86400000) return "week";
+      if (age < 30 * 86400000) return "month";
+      return "older";
+    };
+    const ago = (ms) => {
+      const n = Number(ms || 0);
+      if (!n) return "never";
+      const mins = Math.floor((now - n) / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+      const days = Math.floor(hours / 24);
+      return `${days} day${days === 1 ? "" : "s"} ago`;
+    };
+    // Which addresses belong to each account, so a user's entry can say.
+    const byOwner = new Map();
+    const add = (uuid, host) => {
+      if (!uuid) return;
+      const list = byOwner.get(uuid) || [];
+      if (!list.includes(host)) list.push(host);
+      byOwner.set(uuid, list);
+    };
+    for (const [host, h] of hosts) add(h.uuid, host);
+    for (const host of Object.keys(recentSubs)) { const e = recentSubEntry(host); if (e) add(e.uuid, host); }
+
+    const rows = Object.entries(seenUsers).map(([uuid, u]) => {
+      const until = timedOutUntil(uuid);
+      const linked = linkedAccounts(uuid).filter(x => x !== uuid);
+      const mine = byOwner.get(uuid) || [];
+      return {
+        uuid, name: u.name || null,
+        first: u.first || null, last: u.last || null,
+        lastText: `last seen ${ago(u.last)}`,
+        when: band(u.last),
+        state: adminUuids.has(uuid) ? "admin" : (until ? "timed out" : "ok"),
+        timedOut: until || null,
+        linkedText: linked.length
+          ? `${linked.length} other account${linked.length === 1 ? "" : "s"} has connected from somewhere this one has`
+          : null,
+        addressText: mine.length ? mine.join(", ") : null,
+      };
+    });
+    rows.sort((a, b) => (b.last || 0) - (a.last || 0));
+    return { ok: true, rows };
+  },
+
+  "relay.list": () => {
+    const now = Date.now();
+    const rows = [];
+    const seenHosts = new Set();
+    for (const [host, h] of hosts) {
+      seenHosts.add(host);
+      const e = recentSubEntry(host);
+      rows.push({
+        host, uuid: h.uuid || (e && e.uuid) || null, name: h.name || (e && e.name) || null,
+        state: "up", since: h.at || null, last: (e && e.last) || h.at || null,
+        lastText: "up now",
+        streams: h.streams ? h.streams.size : 0,
+        port: h.port || null,
+        packText: packRoutes.has(host) ? "hosted here" : null,
+      });
+    }
+    for (const host of Object.keys(recentSubs)) {
+      if (seenHosts.has(host)) continue;
+      const e = recentSubEntry(host);
+      const days = e && e.last ? Math.floor((now - e.last) / 86400000) : null;
+      rows.push({
+        host, uuid: (e && e.uuid) || null, name: (e && e.name) || null,
+        state: "offline", since: null, last: (e && e.last) || null,
+        lastText: days == null ? "never used" : (days === 0 ? "used today" : `used ${days} day${days === 1 ? "" : "s"} ago`),
+        streams: 0, port: null,
+        packText: packRoutes.has(host) ? "hosted here" : null,
+      });
+    }
+    // Up first, then by when it was last used.
+    rows.sort((a, b) => (a.state === b.state ? (b.last || 0) - (a.last || 0) : a.state === "up" ? -1 : 1));
+    return { ok: true, rows };
+  },
+
+  "relay.drop": (req) => {
+    const host = String(req.host || "").toLowerCase();
+    const h = hosts.get(host);
+    if (!h) return { ok: false, error: "that address is not up" };
+    hosts.delete(host);
+    // Everybody playing through it is let go, rather than left on a stream
+    // the relay no longer has a route for.
+    try { for (const id of [...(h.streams ? h.streams.keys() : [])]) h.send(T.CLOSE, id, null); } catch { /* going anyway */ }
+    log("admin dropped", host);
+    return { ok: true, refresh: true, message: `${host} was disconnected.` };
+  },
+
+  "relay.forget": (req) => {
+    const host = String(req.host || "").toLowerCase();
+    if (!(host in recentSubs)) return { ok: false, error: "nothing is remembered about that address" };
+    delete recentSubs[host];
+    saveState();
+    return { ok: true, refresh: true, message: `${host} was forgotten.` };
   },
 
   "suggestions.timeout": (req) => {
@@ -775,8 +1010,15 @@ function handleControl(sock) {
       const fullHost = state.want ? `${state.want}.${domain}` : domain;
       if (hosts.has(fullHost)) { send(T.ERROR, 0, Buffer.from(JSON.stringify({ message: "That address is already in use right now" }))); return sock.destroy(); }
       state.authed = true; state.host = fullHost; state.domain = domain;
-      hosts.set(fullHost, { send, streams: state.streams, nextStream: () => state.nextStream++ });
-      recentSubs[fullHost] = Date.now(); saveState();
+      // The owner is kept with the registration: the admin panel's Relay
+      // list is "who, when, and is it still up", and the connection is the
+      // only place that knows the who.
+      hosts.set(fullHost, {
+        send, streams: state.streams, nextStream: () => state.nextStream++,
+        uuid: state.uuid, name: state.name, at: Date.now(), port: state.localPort || null,
+      });
+      recentSubs[fullHost] = { last: Date.now(), uuid, name: profile.name };
+      saveState();
       log("registered", fullHost, "->", profile.name, isAdmin ? "(admin)" : "");
       send(T.WELCOME, 0, Buffer.from(JSON.stringify({ address: fullHost, port: MC_PORT })));
       return;
@@ -875,7 +1117,15 @@ function handleControl(sock) {
   sock.on("data", decode);
   sock.on("close", () => {
     try {
-      if (state.host && hosts.get(state.host)?.send === send) { hosts.delete(state.host); recentSubs[state.host] = Date.now(); saveState(); log("unregistered", state.host); }
+      if (state.host && hosts.get(state.host)?.send === send) {
+        hosts.delete(state.host);
+        // An object rather than a bare timestamp, so a address that has gone
+        // still says whose it was. A file written by an older build holds
+        // plain numbers, which recentSubUsed() below still reads.
+        recentSubs[state.host] = { last: Date.now(), uuid: state.uuid || null, name: state.name || null };
+        saveState();
+        log("unregistered", state.host);
+      }
       if (state.cfRecord) cfRemoveDirect(state.cfRecord); // restore wildcard -> VPS
       if (state.packToken) packRoutes.delete(state.packToken);
       for (const p of state.streams.values()) { try { p.destroy(); } catch { /* ignore */ } }
@@ -973,7 +1223,7 @@ const mc = net.createServer((client) => {
       client.on("error", () => {});
     } else {
       // Not live: "offline" if used recently, else "doesn't exist".
-      const recent = recentSubs[fullHost] && (Date.now() - recentSubs[fullHost] < RECENT_MS);
+      const recent = Date.now() - recentSubUsed(fullHost) < RECENT_MS;
       servePlaceholder(client, hs, recent ? "offline" : "missing");
       // Re-feed any bytes that arrived after the handshake to the placeholder reader.
       const extra = acc.subarray(hs.consumed);

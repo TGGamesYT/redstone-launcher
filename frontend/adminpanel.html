@@ -30,6 +30,9 @@
   <script src="pixelart.js"></script>
   <script src="uimodal.js"></script>
   <script src="playerhead.js"></script>
+  <!-- For the Users panel's player render. Same bundle the accounts page
+       uses, so a player looks the same in both. -->
+  <script src="skinview3d.bundle.js"></script>
   <style>
     body { margin: 0; overflow: hidden; font-family: Verdana, sans-serif; font-size: 13px; }
     #toolbar .drag-region { flex: 1 1 auto; }
@@ -76,6 +79,14 @@
     .ap-text { white-space: pre-wrap; line-height: 1.6; background: var(--menu-bg);
       border: 1px solid var(--border-dark); border-radius: var(--border-radius); padding: 14px 16px; }
     .ap-note { margin-top: 12px; font-size: 13px; opacity: 0.85; }
+
+    /* A player, the way the friend-info modal shows one: a render you can
+       turn rather than a 22-pixel head. Falls back to the head when the skin
+       cannot be fetched or the viewer bundle is not there. */
+    .ap-player { display: flex; justify-content: center; margin-bottom: 14px; }
+    .ap-player canvas { cursor: grab; }
+    .ap-player canvas:active { cursor: grabbing; }
+    .ap-player img.fallback { width: 96px; height: 96px; border-radius: 6px; image-rendering: pixelated; }
     .ap-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; align-items: center; }
     .ap-form input { margin: 0; min-width: 0; }
     .ap-form input.grow { flex: 1 1 240px; }
@@ -331,6 +342,7 @@
 
     function show(row) {
       const d = document.getElementById('apDetail');
+      dropPlayer();
       d.innerHTML = '';
       for (const block of (panel.detail || [])) {
         const node = drawBlock(block, row);
@@ -373,8 +385,59 @@
         return el('div', 'ap-note', (block.label ? block.label + ': ' : '') + text);
       }
 
+      if (kind === 'player') return drawPlayer(block, row);
       if (kind === 'form') return drawForm(block, row);
       return null;
+    }
+
+    // One render at a time: the panel redraws whenever a row is clicked, and
+    // a viewer left behind holds a frame loop and listeners on a canvas that
+    // is about to be thrown away.
+    let apViewer = null;
+    function dropPlayer() {
+      if (!apViewer) return;
+      try { apViewer.dispose(); } catch { /* already gone */ }
+      apViewer = null;
+    }
+
+    function drawPlayer(block, row) {
+      const spec = block.head || { uuid: 'uuid', name: 'name' };
+      const uuid = row[spec.uuid] || null;
+      const name = row[spec.name] || null;
+      if (!uuid && !name) return null;
+      dropPlayer();
+      const box = el('div', 'ap-player');
+      const canvas = el('canvas');
+      box.appendChild(canvas);
+      // The head stands in until the skin arrives, and stays if it cannot be
+      // fetched -- an empty space where a person should be says nothing.
+      const showHead = () => {
+        if (!box.isConnected) return;
+        canvas.remove();
+        const img = el('img', 'fallback');
+        head(img, row, spec, 96);
+        box.appendChild(img);
+      };
+      if (typeof skinview3d === 'undefined') { showHead(); return box; }
+      ipcRenderer.invoke('head:skin', { uuid, name }).then(async (skin) => {
+        if (!box.isConnected) return;
+        if (!skin || !skin.base64) return showHead();
+        const v = new skinview3d.SkinViewer({ canvas, width: 200, height: 330 });
+        apViewer = v;
+        v.zoom = 0.9;
+        v.autoRotate = false;
+        try {
+          // The same pitch stops and no wheel zoom as the accounts page: a
+          // picture of somebody to turn around, not something to fly into.
+          v.controls.minPolarAngle = Math.PI / 2 - 0.55;
+          v.controls.maxPolarAngle = Math.PI / 2 + 0.55;
+          v.controls.enableZoom = false;
+        } catch { /* an older bundle */ }
+        await v.loadSkin('data:image/png;base64,' + skin.base64, { model: skin.slim ? 'slim' : 'default' });
+        if (!box.isConnected) { dropPlayer(); return; }
+        if (skin.capeUrl) { try { await v.loadCape(skin.capeUrl); } catch { /* no cape, no matter */ } }
+      }).catch(() => showHead());
+      return box;
     }
 
     function drawForm(block, row) {

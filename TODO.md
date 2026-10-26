@@ -244,10 +244,29 @@ change — the version dropdown included.
       the list with no way to look.*
 
 ### G. The admin window
-- [ ] **A Users panel**: everyone with a record of using the launcher and when
-      they last did, shown the way the friend-info modal shows a player.
-- [ ] **A Relay panel**: recent relay usage — who, when, and whether it is
-      still up. Everything the server knows.
+- [x] **A Users panel**: everyone with a record of using the launcher and when
+      they last did, shown the way the friend-info modal shows a player. —
+      *The `seen` record the friends list already reads, shown whole: name,
+      first and last seen in words, banded so the filter can narrow it to
+      today / this week / this month, marked where an account is an admin or
+      timed out, with how many other accounts have connected from somewhere it
+      has and which relay addresses are its. The detail pane shows the player
+      as a render you can turn — a new `player` block in the admin window,
+      using the same bundle as the accounts page, falling back to the head
+      when the skin cannot be fetched.*
+- [x] **A Relay panel**: recent relay usage — who, when, and whether it is
+      still up. Everything the server knows. — *Every address ever registered:
+      the live ones from the connection table with their owner, how many are
+      playing through them, the port they point at and whether they are
+      hosting a pack; the rest from the file that outlives a restart, with
+      when each was last used. An address can be disconnected (everybody
+      playing through it is let go rather than left on a stream with no route)
+      or forgotten. The registration now records its owner, since the
+      connection was the only thing that knew it — a state file from before
+      that holds a bare timestamp and still reads, ownerless.*
+
+Both are relay-side only: the admin window draws whatever panels the relay
+declares, which is what that was built for.
 
 ### H. The main page, editable
 - [ ] **An edit button, bottom left**, opening an editor with the page's
