@@ -15,6 +15,7 @@ import { getLaunchConfig, resolveNeoForgeVersion, resolveForgeVersion, neoPrefix
 import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
 import serverManager from './serverManager.js';
+import eventServers from './event-server.js';
 import upnp from './upnp.js';
 import relayClient from './relayClient.js';
 import fileManager from './fileManager.js';
@@ -3838,6 +3839,267 @@ ipcMain.handle("server-eula:accept", (event, id) => {
 
 ipcMain.handle("list-servers", () => {
   return serverManager.getServers();
+});
+
+// ── Event servers ───────────────────────────────────────────────────────────
+//
+// A server described in a file: what to ask, what to build from the answers,
+// and what to do at each point in its life. See backend/event-server.js for
+// the format; this is the part that carries one out.
+
+const eventServersPath = () => path.join(dataDir, "event-servers.json");
+const loadEventServers = () => {
+  try { return JSON.parse(fs.readFileSync(eventServersPath(), "utf8")) || []; }
+  catch { return []; }
+};
+const saveEventServers = (list) => {
+  try { fs.writeFileSync(eventServersPath(), JSON.stringify(list, null, 2)); return true; }
+  catch { return false; }
+};
+
+// What the editor needs in order to offer what the runner understands,
+// rather than leaving somebody to guess at it.
+ipcMain.handle("eventserver:schema", () => ({
+  success: true,
+  phases: eventServers.PHASES,
+  questionTypes: eventServers.QUESTION_TYPES,
+  loaders: eventServers.LOADERS,
+  contentKinds: eventServers.CONTENT_KINDS,
+  providers: eventServers.PROVIDERS,
+}));
+
+ipcMain.handle("eventserver:list", () => ({ success: true, items: loadEventServers() }));
+
+ipcMain.handle("eventserver:validate", (event, { text } = {}) => {
+  const r = eventServers.parseEventServer(text);
+  return { success: r.ok, problems: r.problems, value: r.value };
+});
+
+ipcMain.handle("eventserver:save", (event, { id, text } = {}) => {
+  const r = eventServers.parseEventServer(text);
+  if (!r.ok) return { success: false, problems: r.problems };
+  const list = loadEventServers();
+  const entry = {
+    id: id || `ev-${Date.now().toString(36)}`,
+    name: r.value.name,
+    description: r.value.description,
+    text: typeof text === "string" ? text : JSON.stringify(text, null, 2),
+    at: Date.now(),
+  };
+  const i = list.findIndex(x => x.id === entry.id);
+  if (i < 0) list.push(entry); else list[i] = entry;
+  saveEventServers(list);
+  return { success: true, id: entry.id, items: list };
+});
+
+ipcMain.handle("eventserver:delete", (event, { id } = {}) => {
+  const list = loadEventServers().filter(x => x.id !== id);
+  saveEventServers(list);
+  return { success: true, items: list };
+});
+
+// One run of one definition. It lives while the window is walking through the
+// questions and the stages, and is thrown away when it finishes or the
+// launcher closes -- there is nothing here worth keeping on disk.
+const eventRuns = new Map();
+
+const evSay = (run, text, kind) => {
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("eventserver-progress", { run: run.id, text, kind }); }
+    catch { /* gone */ }
+  }
+};
+
+ipcMain.handle("eventserver:begin", (event, { id, text } = {}) => {
+  const src = text != null ? text : (loadEventServers().find(x => x.id === id) || {}).text;
+  if (src == null) return { success: false, error: "There is no such event server." };
+  const r = eventServers.parseEventServer(src);
+  if (!r.ok) return { success: false, error: "That file has problems.", problems: r.problems };
+  const run = {
+    id: `run-${Date.now().toString(36)}`,
+    def: r.value, vars: {}, phase: "oncreated", server: null, stop: null,
+  };
+  eventRuns.set(run.id, run);
+  return { success: true, run: run.id, name: r.value.name, ...evStep(run) };
+});
+
+// Where a run is up to: the next question to put, or what it did instead.
+function evStep(run) {
+  const q = eventServers.nextQuestion(run.def, run.phase, run.vars);
+  if (q) return { done: false, question: q, phase: run.phase };
+  return { done: false, question: null, phase: run.phase, ready: true };
+}
+
+ipcMain.handle("eventserver:answer", async (event, { run: runId, value } = {}) => {
+  const run = eventRuns.get(runId);
+  if (!run) return { success: false, error: "That run is over." };
+  const q = eventServers.nextQuestion(run.def, run.phase, run.vars);
+  if (q) run.vars[q.var] = value == null ? "" : String(value);
+  return { success: true, ...evStep(run) };
+});
+
+// Every question of this stage is answered: get on with it.
+ipcMain.handle("eventserver:go", async (event, { run: runId } = {}) => {
+  const run = eventRuns.get(runId);
+  if (!run) return { success: false, error: "That run is over." };
+  try {
+    if (run.phase === "oncreated") return { success: true, ...(await evCreate(run)) };
+    if (run.phase === "onstarted") {
+      await evCommands(run, "onstarted");
+      // Nothing more is asked until the server says it has finished starting,
+      // which the watcher below is waiting for.
+      return { success: true, waiting: "onfullystarted" };
+    }
+    return { success: true, finished: true };
+  } catch (e) {
+    return { success: false, error: String(e && e.message || e) };
+  }
+});
+
+async function evCommands(run, phase) {
+  if (!run.server) return;
+  for (const cmd of eventServers.commandsFor(run.def, phase, run.vars)) {
+    try { serverManager.sendServerCommand(run.server, cmd); evSay(run, `> ${cmd}`); }
+    catch (e) { evSay(run, `could not send "${cmd}": ${e.message}`, "error"); }
+  }
+}
+
+// Make the server the file describes, fill it, and start it if asked.
+async function evCreate(run) {
+  const spec = eventServers.serverSpecFor(run.def, run.vars);
+  if (!spec) throw new Error("This file does not say what server to make.");
+  if (!spec.version) throw new Error("This file does not say which Minecraft version.");
+
+  // Names have to be unique and have to be a folder.
+  let name = safeFolderName(spec.name);
+  const taken = new Set((serverManager.getServers() || []).map(s2 => String(s2.name)));
+  let n = 1;
+  while (taken.has(name)) name = `${safeFolderName(spec.name)}-${n++}`;
+
+  evSay(run, `Making "${name}" -- ${spec.loader} ${spec.version}`);
+  let java = "java";
+  try { java = await getJavaForMinecraft(spec.version); } catch { /* the system one */ }
+  // `paper-latest` and friends: the manager takes the family and picks the
+  // newest build itself when no build is pinned.
+  const type = spec.loader.replace(/-latest$/, "");
+  await serverManager.makeServer({ name, version: spec.version, type, launchArgs: "" }, java);
+  run.server = name;
+
+  for (const [kind, items] of Object.entries(spec.content || {})) {
+    for (const ref of items) {
+      try {
+        const got = await evInstall(name, kind, ref, spec);
+        evSay(run, got ? `Added ${got}` : `Could not find ${ref}`, got ? null : "error");
+      } catch (e) {
+        evSay(run, `Could not add ${ref}: ${e.message}`, "error");
+      }
+    }
+  }
+
+  if (spec.autoEula) {
+    try {
+      fs.writeFileSync(path.join(dataDir, "servers", name, "eula.txt"), "eula=true\n");
+      evSay(run, "Accepted the EULA, as the file asked.");
+    } catch (e) { evSay(run, `Could not write eula.txt: ${e.message}`, "error"); }
+  }
+
+  run.phase = "onstarted";
+  if (!spec.autoStart) {
+    return { created: name, started: false, ...evStep(run) };
+  }
+
+  evSay(run, "Starting it…");
+  try { serverManager.startServer(name, settings, java); }
+  catch (e) { throw new Error(`It was made, but would not start: ${e.message}`); }
+
+  evWatch(run, name);
+  return { created: name, started: true, ...evStep(run) };
+}
+
+// One piece of content, into the right folder of the server.
+//
+// A plugin goes in plugins/, a mod in mods/, a data pack into the world, a
+// resource pack in resourcepacks/ -- the file says which kind it is and that
+// decides where it lands.
+async function evInstall(serverName, kind, ref, spec) {
+  const r = eventServers.splitRef(ref);
+  if (!r) throw new Error(`"${ref}" is not a provider and an id.`);
+  const where = (eventServers.CONTENT_KINDS.find(k => k.id === kind) || {}).dir;
+  if (!where) throw new Error(`"${kind}" is not a kind of content.`);
+  const dir = path.join(dataDir, "servers", serverName, where);
+  fs.mkdirSync(dir, { recursive: true });
+
+  let url = null, file = null;
+  if (r.provider === "modrinth") {
+    const res = await fetch(`https://api.modrinth.com/v2/project/${encodeURIComponent(r.id)}/version`);
+    if (!res.ok) throw new Error(`Modrinth said ${res.status}`);
+    const versions = await res.json();
+    if (!Array.isArray(versions) || !versions.length) throw new Error("it has no files");
+    // The newest build for this server's version, and for the loader where
+    // that matters -- a plugin is loader-agnostic, a mod is not.
+    const wantLoader = kind === "mods" ? spec.loader.replace(/-latest$/, "") : null;
+    const fits = versions.filter(v =>
+      (v.game_versions || []).includes(spec.version) &&
+      (!wantLoader || (v.loaders || []).includes(wantLoader)));
+    const pick = (fits.length ? fits : versions)
+      .sort((a, b) => new Date(b.date_published) - new Date(a.date_published))[0];
+    const f = (pick.files || []).find(x => x.primary) || (pick.files || [])[0];
+    if (!f) throw new Error("that version has no file");
+    url = f.url; file = f.filename;
+  } else {
+    // CurseForge, through the same worker the browser uses.
+    const res = await fetch(`${WORKER_URL}/mods?modId=${encodeURIComponent(r.id)}`, {
+      headers: { accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`CurseForge said ${res.status}`);
+    const data = await res.json();
+    const latest = ((data.data || {}).latestFiles || [])
+      .filter(f2 => !spec.version || (f2.gameVersions || []).includes(spec.version))
+      .sort((a, b) => new Date(b.fileDate) - new Date(a.fileDate))[0]
+      || ((data.data || {}).latestFiles || [])[0];
+    if (!latest || !latest.downloadUrl) throw new Error("no downloadable file");
+    url = latest.downloadUrl; file = latest.fileName;
+  }
+
+  const res2 = await fetch(url);
+  if (!res2.ok) throw new Error(`the download said ${res2.status}`);
+  const buf = Buffer.from(await res2.arrayBuffer());
+  const dest = path.join(dir, path.basename(file || `${r.id}.jar`));
+  fs.writeFileSync(dest, buf);
+  return path.basename(dest);
+}
+
+// Waiting for the server to say things, so the later stages happen when they
+// are supposed to rather than when somebody presses a button.
+function evWatch(run, name) {
+  if (run.stop) run.stop();
+  let fullyStarted = false;
+  run.stop = serverManager.watchServer(name, async (line) => {
+    if (line == null) { if (run.stop) run.stop(); run.stop = null; return; }
+    // 'Done (12.345s)! For help, type "help"'
+    if (!fullyStarted && /\bDone \([\d.]+s\)!/.test(line)) {
+      fullyStarted = true;
+      run.phase = "onfullystarted";
+      evSay(run, "It has finished starting.");
+      await evCommands(run, "onfullystarted");
+    }
+    // '<name> joined the game' -- also 'Steve[/1.2.3.4:5] logged in'
+    const joined = /:\s*(\w{3,16}) joined the game/.exec(line);
+    if (joined) {
+      const vars = { ...run.vars, player: joined[1] };
+      for (const cmd of eventServers.commandsFor(run.def, "onplayerjoin", vars)) {
+        try { serverManager.sendServerCommand(name, cmd); evSay(run, `> ${cmd}`); }
+        catch { /* it may have stopped between the join and this */ }
+      }
+    }
+  });
+}
+
+ipcMain.handle("eventserver:stop", (event, { run: runId } = {}) => {
+  const run = eventRuns.get(runId);
+  if (run && run.stop) { try { run.stop(); } catch { /* fine */ } }
+  eventRuns.delete(runId);
+  return { success: true };
 });
 
 ipcMain.handle("server-console", (event, id) => {

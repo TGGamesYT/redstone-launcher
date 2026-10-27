@@ -280,19 +280,50 @@ function startServer(name, settings, javaPath) {
   proc.stdout.on("data", (data) => {
     const msg = data.toString();
     server.logs.push(msg);
+    tell(name, msg);
     console.log(`[SERVER ${name}] ${msg}`);
   });
 
   proc.stderr.on("data", (data) => {
     const msg = "[ERR] " + data.toString();
     server.logs.push(msg);
+    tell(name, msg);
     console.error(`[SERVER ${name}] ${msg}`);
   });
 
   proc.on("close", () => {
     server.process = null;
     server.status = "stopped";
+    tell(name, null);                     // it has gone
   });
+}
+
+// ── Watching a server's console ──────────────────────────────────────────
+//
+// The console was only ever pulled -- getConsole hands back what has piled
+// up. An event server has to act the moment the server says it has finished
+// starting, or that somebody has joined, which means being told rather than
+// asking. A watcher is given each line as it arrives, and null when the
+// server stops.
+const watchers = new Map();               // name -> Set<fn>
+
+function tell(name, line) {
+  const set = watchers.get(name);
+  if (!set) return;
+  for (const fn of [...set]) {
+    try { fn(line); } catch { /* a watcher's problem is its own */ }
+  }
+}
+
+function watchServer(name, fn) {
+  if (!watchers.has(name)) watchers.set(name, new Set());
+  watchers.get(name).add(fn);
+  return () => {
+    const set = watchers.get(name);
+    if (!set) return;
+    set.delete(fn);
+    if (!set.size) watchers.delete(name);
+  };
 }
 
 function stopServer(name) {
@@ -462,4 +493,5 @@ export default {
   writeFile,
   deleteFile,
   safeServerPath,
+  watchServer,
 };
