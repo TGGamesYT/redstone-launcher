@@ -147,16 +147,22 @@ because most of these are things the last few rounds broke or left half done.
       and exactly those mods.**
 
 ### Event servers
-- [ ] **A described server that sets itself up.** A JSON file of phases —
-      `oncreated`, `onstarted`, `onfullystarted`, `onplayerjoin` — each able to
-      ask questions whose answers become variables, make a server (loader,
-      version, EULA, auto-start, plugins/mods/packs by `modrinth:`/
-      `curseforge:` id) and run console commands, with conditions on the
-      answers.
-- [ ] **Running one asks each question in a modal**, then makes the server and
-      carries out each phase as it happens.
-- [ ] **And something to write them in** that suggests what is available
-      rather than leaving you to type it blind.
+- [x] **A described server that sets itself up.** — *All of it, in
+      `backend/event-server.js`, which documents the corrected format in full.
+      The shape given was not valid JSON — it used arrays where it meant
+      objects and repeated keys, which an object cannot carry — so repeated
+      things are lists of objects and conditions are a `when` field.*
+- [x] **Running one asks each question in a modal.** — *One at a time, since
+      a question can depend on an earlier answer; a version question offers
+      the real version list rather than a blank box. Then it builds the
+      server, saying what it is doing as it goes, and carries on through the
+      stages — waiting for the server's own "Done" line rather than guessing
+      at a delay, and watching for players joining.*
+- [x] **And something to write them in.** — *The stages, question types,
+      loaders and content kinds are offered as chips that drop into the file
+      where the cursor is, each saying what it means and where it ends up, and
+      the file is checked against the real parser as it is typed — it cannot
+      be saved while it is wrong. A new one starts from a working example.*
 
 ---
 

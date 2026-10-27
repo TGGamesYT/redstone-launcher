@@ -173,6 +173,7 @@
       <div id="server-search-sort">
         <div class="ss-row">
           <button id="addServerBtn" class="add-server-btn" title="Create a server"><i class="material-icons">add</i></button>
+          <button id="eventServersBtn" class="add-server-btn" title="Event servers — a server described in a file, which sets itself up"><i class="material-icons">bolt</i></button>
           <input id="srvSearch" type="text" placeholder="Search servers..." style="flex:2; min-width:180px;" />
           <select id="srvTypeFilter" style="flex:1; min-width:130px;">
             <option value="">All types</option>
@@ -1261,6 +1262,12 @@
     });
     // Ask how first, same as a new instance: most servers start from a modpack
     // rather than from a blank version/loader form.
+    // A server described in a file, which sets itself up.
+    const evBtn = $('eventServersBtn');
+    if (evBtn) evBtn.onclick = () => {
+      if (window.EventServers) window.EventServers.openList(() => loadServers());
+    };
+
     $('addServerBtn').onclick = () => {
       if (!window.NewInstance) return openServerModal(null);
       window.NewInstance.choose({
@@ -1378,6 +1385,7 @@
     function updatePresence(details, state = 'Idle') { ipcRenderer.send('update-discord-presence', { details, state }); }
     updatePresence('Managing servers');
   </script>
+  <script src="eventservers.js"></script>
   <script src="filetree.js"></script>
   <!-- This page has its own inline files explorer; FileBrowser is here for
        Remod's "Edit assets", which mounts it on the unpacked archive. -->
