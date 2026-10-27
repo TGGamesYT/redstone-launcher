@@ -9,6 +9,151 @@ started.
 
 ---
 
+## 0. Round 38
+
+Corrections to Rounds 35–37, in the order given. Worked before Round 37
+because most of these are things the last few rounds broke or left half done.
+
+### The tab strips
+- [x] **The settings tabs only half took the strip.** — *Its handler never
+      marked the selected button at all, so the strip had nothing to put a
+      highlight on.*
+- [x] **That one should fill the width.** — *It switches the whole page
+      rather than labelling a panel, so unlike the others it spans the width
+      and shares it out between its tabs.*
+- [x] **The selected one is not highlighted** there. — *Covered by the
+      first: nothing was ever marked.*
+- [x] **Take the hover colour off the tabs.** — *The only thing a tab's
+      background says now is which one you are on.*
+
+### The app icon
+- [x] **The taskbar icon does not update straight away.** — *Setting the
+      window icon, which IS the taskbar button, was queued behind writing an
+      .ico and running PowerShell for the desktop shortcut. It happens first
+      now and the shortcut follows.*
+- [x] **Updating the desktop icon reloads every icon on the desktop.** —
+      *It sent SHCNE_ASSOCCHANGED, which means "file associations have
+      changed" — the shell answers that by throwing away its icon cache and
+      rebuilding the lot. It names the one shortcut now (SHCNE_UPDATEITEM).*
+- [x] **Changing the custom colours re-tints on every keystroke.** — *A
+      colour picker reports every step of a drag, and each one was a full
+      re-tint, an .ico and a PowerShell run — dozens a second. Only the colour
+      it comes to rest on is drawn, and the preview waits too.*
+- [x] **"Match the theme" is a toggle now.** — *Pressed once, it left the
+      theme on the old block's colours as soon as you chose another. While the
+      toggle is on they are re-taken whenever the block or picture changes.*
+- [ ] **The launcher's icon should offer what an instance's icon offers** — the
+      item, block and entity renders, and the block-face pictures.
+- [ ] **And a toggle to merge the theme's block into the icon's uncoloured
+      parts**, re-done whenever it changes.
+
+### The home page
+- [x] **Nothing can change how big the contents of a segment are.** — *Every
+      segment has a content size now, as a percentage, and everything inside
+      is sized from it.*
+- [x] **The dashed outline is the theme colour.** — *It was the base colour
+      at 70%, which on a red theme over a red panel is almost invisible. It is
+      white, over a slight darkening, and does not depend on the theme.*
+- [x] **And it is cut off at the corners.** — *It followed the segment's
+      border radius while being offset outside it, which snipped the dashes.
+      It is its own rectangle now.*
+- [x] **The resize handles sometimes do not appear.** — *They hung outside
+      the segment, and a segment with a set height has to clip its contents —
+      so it clipped the handles away with them. They sit just inside now, and
+      the contents scroll rather than the segment clipping.*
+- [x] **Editing makes the page scroll sideways.** — *The outline was offset
+      six pixels outside each segment, which pushed the right-hand column past
+      the edge of the page.*
+- [x] **Making one segment wider does not make its neighbour narrower.** —
+      *It takes the room from whoever shares the row, largest first, so the row
+      still adds up and nobody is pushed off it.*
+- [x] **Nor does changing its height change an aligned neighbour's.** — *It
+      does now: a row of different heights is not a row.*
+- [x] **Width and height snap while dragging.** — *The page was twelve
+      columns, so every drag jumped a twelfth of it. Widths are percentages
+      now. They are laid out as a wrapping row rather than a grid, because a
+      hundred-column grid would multiply its gap by ninety-nine and make the
+      page several thousand pixels wide — the gutter is each segment's own
+      padding instead.*
+- [x] **A segment too small for its contents does not shrink them.** — *The
+      content size above does that by hand, and a segment with a set height
+      scrolls its contents rather than clipping them off.*
+- [x] **The player render still has no physics.** — *skinview3d has none of
+      its own: let go and it stops dead. It carries the speed you were turning
+      it at, bleeds it off over about a second, and swings the arms and legs
+      with that speed.*
+- [x] **The friends segment cannot be tiles, and clicking does nothing.** —
+      *Both: tiles are a choice, and a friend opens on the players page.*
+- [x] **The move, settings and remove buttons are too small.** — *Holding
+      the segment anywhere moves it, so the move button is gone and the other
+      two are twice the size.*
+- [x] **Holding over another segment can only place it beside.** — *Four
+      answers now, from where over it the pointer is: near the left edge goes
+      before, near the right edge after, over the lower part below on a row of
+      its own, over the middle beside it sharing the row. Each is drawn before
+      you let go — a line down the side it will go to, or the word "beside".*
+- [x] **Editing, adding or changing one segment redraws them all.** — *Only
+      what changed is drawn again: a resize touches nothing but the numbers, a
+      settings change redraws that one segment, and entering edit mode only
+      puts the handles on.*
+- [x] **Clicking edit loses the scroll position.** — *It redrew the page;
+      now it does not.*
+- [x] **The Mojang patch-note link is wrong.** — *It was built as
+      `minecraft-java-edition-<version>` for everything, which is right for a
+      release and wrong for a snapshot. Built from the version rather than the
+      feed's id, too, since that is a readable slug for the newest few entries
+      and a sha256 for everything older.*
+- [x] **The patch notes cannot be shown as a grid.** — *Both Mojang feeds
+      take the same list-or-tiles choice as everything else.*
+- [x] **A toggle for whether a tiled block background scrolls.** — *Added;
+      it chooses between a wall that stays put behind the page and one that
+      travels with it.*
+
+### Elsewhere
+- [x] **The skins page's player render is cut off as it turns.** — *The
+      canvas was half the height it was tall, which fits a player facing
+      forward and nothing more: turned 45 degrees one is about an eighth wider
+      than face-on, and there was no room for it.*
+- [x] **The "Edges" setting does nothing.** — *`-webkit-font-smoothing` is a
+      macOS property; Chromium ignores it on Windows and Linux entirely, which
+      is where the font looked soft. The levers that work there are Chromium's
+      own switches, which have to be set before the app starts — so it takes a
+      restart, and the setting says so.*
+- [ ] **Make the launcher one page.** The sidebars and toolbar stay put and
+      only the content changes, so moving between pages does not reload
+      everything — with the sidebar highlight sliding, as the tabs do.
+      *Held over to the next round at the owner's request.*
+
+---
+
+## 0. Round 37
+
+### Joining a server
+- [ ] **A Join button on a server**, opening its details on a new Join tab.
+- [ ] **That tab lists the instances that could join it**, or makes one, the
+      way installing a mod does.
+- [ ] **Only compatible instances are offered** — a vanilla or plugin server
+      wants its own version unless the server has ViaVersion/ViaBackwards or
+      the instance has ViaFabricPlus; a modded server wants the loader, the
+      version and the same mods.
+- [ ] **With a "join anyway" on every instance** regardless.
+- [ ] **An instance made for a modded server gets that loader, that version
+      and exactly those mods.**
+
+### Event servers
+- [ ] **A described server that sets itself up.** A JSON file of phases —
+      `oncreated`, `onstarted`, `onfullystarted`, `onplayerjoin` — each able to
+      ask questions whose answers become variables, make a server (loader,
+      version, EULA, auto-start, plugins/mods/packs by `modrinth:`/
+      `curseforge:` id) and run console commands, with conditions on the
+      answers.
+- [ ] **Running one asks each question in a modal**, then makes the server and
+      carries out each phase as it happens.
+- [ ] **And something to write them in** that suggests what is available
+      rather than leaving you to type it blind.
+
+---
+
 ## 0. Round 36
 
 In the order it was given.

@@ -1827,14 +1827,21 @@
         // WebGL context each time (dispose() doesn't release one), and once the
         // browser hit its limit it dropped the oldest contexts — which is what
         // blanked this render whenever a skin was added, removed or a modal opened.
+        // Wide enough for the model as it TURNS, not just facing forward.
+        //
+        // At half the height it fits front-on and nothing more, so the arms
+        // were sliced off either side as it spun: turned 45 degrees a player
+        // is about an eighth wider than face-on (hypotenuse of the 16-wide
+        // body and its 8 of depth), and there was no room for it.
+        const vw = Math.round(vh * 0.62);
         if (!window.skinViewer) {
           window.skinViewer = new skinview3d.SkinViewer({
             canvas: document.getElementById("skin_container"),
-            width: Math.round(vh * 0.5),
+            width: vw,
             height: vh
           });
         } else {
-          try { window.skinViewer.setSize(Math.round(vh * 0.5), vh); } catch { }
+          try { window.skinViewer.setSize(vw, vh); } catch { }
         }
         try { window.skinViewer.zoom = 0.82; } catch { }
         try { window.skinViewer.controls.enableZoom = false; } catch { }  // scroll = page scroll, not zoom

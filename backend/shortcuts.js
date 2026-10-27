@@ -171,13 +171,24 @@ function sweepOldIcons(dir, ext, keep) {
   }
 }
 
-// Tell Explorer the association changed, so it re-reads the shortcuts rather
-// than redrawing them from its cache at some point of its own choosing.
-function nudgeWindowsShell() {
-  const ps = "$sig='[DllImport(\"shell32.dll\")]public static extern void SHChangeNotify("
-    + "int wEventId,uint uFlags,IntPtr dwItem1,IntPtr dwItem2);';"
+// Tell Explorer that THESE shortcuts changed, so it re-reads them rather than
+// redrawing from its cache whenever it happens to get round to it.
+//
+// This used to send SHCNE_ASSOCCHANGED, which says "file associations have
+// changed" -- and the shell answers that by throwing away its icon cache and
+// rebuilding every icon on the desktop. Watching the whole desktop flicker
+// because the launcher re-tinted its own icon is not a fair trade.
+//
+// SHCNE_UPDATEITEM names one file, so only that shortcut is redrawn.
+function nudgeWindowsShell(links) {
+  const paths = (links || []).filter(Boolean);
+  if (!paths.length) return;
+  const q = (v) => String(v).replace(/'/g, "''");
+  const ps = "$sig='[DllImport(\"shell32.dll\",CharSet=CharSet.Unicode)]public static extern void SHChangeNotify("
+    + "int wEventId,uint uFlags,string dwItem1,IntPtr dwItem2);';"
     + "$t=Add-Type -MemberDefinition $sig -Name Sh -Namespace W -PassThru;"
-    + "$t::SHChangeNotify(0x08000000,0x0000,[IntPtr]::Zero,[IntPtr]::Zero)";
+    // 0x00002000 = SHCNE_UPDATEITEM, 0x0005 = SHCNF_PATHW
+    + paths.map(p2 => `$t::SHChangeNotify(0x00002000,0x0005,'${q(p2)}',[IntPtr]::Zero);`).join("");
   try {
     execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps],
       { windowsHide: true, timeout: 15000 });
@@ -226,7 +237,7 @@ export function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", e
           updated.push(lnk);
         } catch (e) { skipped.push(`${path.basename(lnk)}: ${e.message}`); }
       }
-      if (updated.length) { nudgeWindowsShell(); sweepOldIcons(dir, ".ico", ico); }
+      if (updated.length) { nudgeWindowsShell(updated); sweepOldIcons(dir, ".ico", ico); }
       return { updated, skipped, icon: ico };
     }
 

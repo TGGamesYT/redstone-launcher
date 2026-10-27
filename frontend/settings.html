@@ -31,12 +31,16 @@
        pages, the mod browser and the server pages use: one joined background
        with a highlight that slides to the selected tab. These carry emoji
        rather than words, so they want a little more room. */
+    /* This strip switches the whole page rather than labelling a panel, so
+       unlike the others it spans the width and shares it out between its
+       tabs. */
     .section-switcher {
-      justify-content: flex-start;
+      width: auto;
       margin-bottom: 10px;
     }
 
     .section-switcher button {
+      flex: 1;
       font-size: 1rem;
       padding: 8px 22px;
     }
@@ -735,12 +739,13 @@
         <option value="Custom">Custom (system)</option>
       </select>
       <br>
-      <label data-tip="The launcher's own font is drawn from square pixels, and smoothing blurs every edge of it. Sharp turns that off. A normal typeface looks jagged without it, so switch to Smooth if you have chosen one.">Edges</label>
+      <label data-tip="The launcher's own font is drawn from square pixels, and smoothing blurs every edge of it. Sharp turns that off. A normal typeface looks jagged without it, so switch to Smooth if you have chosen one. Chromium reads this when it starts, so it takes a restart.">Edges</label>
       <select id="font-smoothing" class="narrow-select">
         <option value="sharp">Sharp — no smoothing</option>
         <option value="smooth">Smooth</option>
         <option value="auto">Whatever the system does</option>
       </select>
+      <span id="font-smoothing-note" class="slider-value" style="display:none;opacity:0.75;font-size:12px;margin-left:8px;">Restart the launcher to see this</span>
       <br>
       <label>Border Radius (px):</label>
       <br>
@@ -801,8 +806,8 @@
           <button type="button" class="bg-fit" data-fit="contain" title="Show all of it, with bars where it does not reach">Fitted</button>
           <button type="button" class="bg-fit" data-fit="stretch" title="Fill the window exactly, distorting it">Stretched</button>
         </div>
-        <button type="button" id="bg-image-colors" class="bg-btn" style="margin-top:14px;display:none;"
-          data-tip="Takes the theme's base and secondary colours from this picture — the middling-dark and middling-bright of it, rather than its lightest and darkest pixels.">Match the theme to this picture</button>
+        <label class="setting-toggle" id="bg-image-colors-row" style="margin-top:14px;display:none;"
+          data-tip="Keeps the theme's base and secondary colours taken from the picture — the middling-dark and middling-bright of it, rather than its lightest and darkest pixels. Stays on, so choosing another picture re-takes them."><input type="checkbox" id="bg-image-colors"> Take the theme from the picture</label>
       </div>
 
       <div class="bg-panel" id="bg-panel-block">
@@ -812,8 +817,10 @@
         </div>
         <!-- Which face, for a block whose sides are not all the same. -->
         <div id="bg-face-row" class="bg-faces" style="display:none;"></div>
-        <button type="button" id="bg-block-colors" class="bg-btn" style="margin-top:10px;display:none;"
-          data-tip="Takes the theme's base and secondary colours from this texture — the middling-dark and middling-bright of it, rather than its lightest and darkest pixels, which are usually one stray highlight and an outline.">Match the theme to this block</button>
+        <label class="setting-toggle" id="bg-block-colors-row" style="margin-top:10px;display:none;"
+          data-tip="Keeps the theme's base and secondary colours taken from this texture — the middling-dark and middling-bright of it, rather than its lightest and darkest pixels, which are usually one stray highlight and an outline. Stays on, so choosing another block re-takes them."><input type="checkbox" id="bg-block-colors"> Take the theme from the block</label>
+        <label class="setting-toggle" style="margin-top:10px;"
+          data-tip="Off, the wall stays put behind the page as it scrolls. On, it travels with it."><input type="checkbox" id="bg-block-scroll"> Scroll the wall with the page</label>
         <label class="setting-toggle" id="bg-block-random-row" style="margin-top:10px;display:none;"
           data-tip="Some blocks are placed at random turns by the game — bedrock, the top of a grass block. Tiles them the same way instead of every one the same way up."><input type="checkbox" id="bg-block-random"> Turn the tiles at random</label>
         <label style="margin-top:12px; display:block;">Tile size</label>
@@ -996,8 +1003,16 @@
         return settings[key] ?? defaultSettings[key] ?? defaultValue;
       }
 
-      document.querySelectorAll('.section-switcher button').forEach(btn => {
+      const switcherBtns = [...document.querySelectorAll('.section-switcher button')];
+      // Which one you are on was never marked here at all -- the handler
+      // showed the panel and left every button looking the same, so the
+      // strip had nothing to put its highlight on.
+      const markSwitcher = (btn) => {
+        for (const b of switcherBtns) b.classList.toggle('active', b === btn);
+      };
+      switcherBtns.forEach(btn => {
         btn.addEventListener('click', () => {
+          markSwitcher(btn);
           document.querySelectorAll('.section').forEach(sec => {
             sec.style.display = 'none';
             sec.classList.remove('just-shown');
@@ -1015,6 +1030,11 @@
           if (target === 'suggest') loadMySuggestions();
         });
       });
+      // Whichever panel the page opens on.
+      markSwitcher(switcherBtns.find(b => {
+        const sec = document.getElementById(b.dataset.section);
+        return sec && sec.classList.contains('active');
+      }) || switcherBtns[0]);
 
       // ── Suggestions ──────────────────────────────────────────────────────
       // Submitting needs a premium account, because the relay will not take a
@@ -1449,8 +1469,13 @@
       const smoothSelect = document.getElementById('font-smoothing');
       smoothSelect.value = getSetting('fontSmoothing') || 'sharp';
       document.documentElement.dataset.smoothing = smoothSelect.value;
+      const smoothWas = smoothSelect.value;
       smoothSelect.addEventListener('change', () => {
         document.documentElement.dataset.smoothing = smoothSelect.value;
+        // The part that actually bites on Windows and Linux is a Chromium
+        // switch, and Chromium reads those once when it starts.
+        const note = document.getElementById('font-smoothing-note');
+        if (note) note.style.display = smoothSelect.value === smoothWas ? 'none' : '';
         const updateObj = { fontSmoothing: smoothSelect.value };
         ipcRenderer.send('save-settings', updateObj);
         const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
@@ -1686,7 +1711,16 @@
       // Changing the base colour re-tints the preview, since that is the
       // colour the icon's coloured parts follow -- unless a picture of your
       // own is in use, which no colour has any business repainting.
-      window.__previewAppIcon = (color) => { if (!iconIsPicture) showAppIcon(color); };
+      //
+      // Held back until the colour stops moving: a colour picker reports
+      // every step of a drag, and each one is a round trip to the main
+      // process and a full re-render of the icon.
+      let previewSoon = null;
+      window.__previewAppIcon = (color) => {
+        if (iconIsPicture) return;
+        if (previewSoon) clearTimeout(previewSoon);
+        previewSoon = setTimeout(() => { previewSoon = null; showAppIcon(color); }, 220);
+      };
 
       // Picking a block to tile. The game's blocks, but as flat face
       // textures rather than rendered cubes: a wall of dirt, not a wall of
@@ -1917,24 +1951,18 @@
           ? String(bg.image.file).split(/[\\/]/).pop()
           : 'nothing chosen yet';
         // Only worth offering once there is a picture to take them from.
-        bgImageColors.style.display = bg.image.file ? '' : 'none';
+        const row = document.getElementById('bg-image-colors-row');
+        if (row) row.style.display = bg.image.file ? '' : 'none';
       };
       showImageName();
-      // The same thing the block panel offers: the theme's two colours taken
-      // from what is actually behind the window.
-      bgImageColors.addEventListener('click', async () => {
-        if (!bg.image.file) return;
-        const r = await ipcRenderer.invoke('model:blockColors', { file: bg.image.file });
-        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'No colours could be read', 'error'); return; }
-        const put = (id, code, value) => {
-          const el = document.getElementById(id), c = document.getElementById(code);
-          if (!el || !c) return;
-          el.value = value; c.value = value;
-          el.dispatchEvent(new Event('input'));
-        };
-        put('base-color', 'base-color-code', r.dark);
-        put('secondary-color', 'secondary-color-code', r.light);
-        if (window.notify) notify('Theme taken from the picture', 'success');
+      // The same offer the block panel makes, and the same toggle.
+      bgImageColors.checked = !!bg.image.followColors;
+      bgImageColors.addEventListener('change', () => {
+        bg.image.followColors = bgImageColors.checked;
+        saveBackground();
+        if (bgImageColors.checked && window.__followBackgroundColours) {
+          window.__followBackgroundColours({ loud: true });
+        }
       });
       document.getElementById('bg-pick-image').addEventListener('click', async () => {
         const r = await ipcRenderer.invoke('bg:pickImage');
@@ -1945,6 +1973,7 @@
         bg.image = { ...bg.image, file: r.file, url: r.url };
         bg.mode = 'image';
         showImageName(); showBgPanels(); paintBackground(); saveBackground();
+        if (window.__followBackgroundColours) window.__followBackgroundColours();
       });
       for (const f of document.querySelectorAll('.bg-fit')) {
         f.addEventListener('click', () => {
@@ -1990,7 +2019,8 @@
       async function loadBlockFaces() {
         bgFaceRow.style.display = 'none';
         bgRandomRow.style.display = 'none';
-        bgBlockColors.style.display = 'none';
+        const blockRowOff = document.getElementById('bg-block-colors-row');
+        if (blockRowOff) blockRowOff.style.display = 'none';
         bgFaces = null;
         if (!bg.block.id) return;
         const r = await ipcRenderer.invoke('model:blockFace', { id: bg.block.id });
@@ -2017,7 +2047,8 @@
           bgRandomRow.style.display = '';
           bgRandom.checked = !!bg.block.random;
         }
-        bgBlockColors.style.display = '';
+        const blockRow = document.getElementById('bg-block-colors-row');
+        if (blockRow) blockRow.style.display = '';
       }
 
       // Fetch the tile for the chosen face and settings, and keep what it
@@ -2034,6 +2065,8 @@
         if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'That block could not be read', 'error'); return false; }
         bg.block = { ...bg.block, url: r.url, texture: r.texture, label: r.label, cells: r.cells };
         showBlockName(); paintBackground(); saveBackground();
+        // A different block means different colours, while the toggle is on.
+        if (window.__followBackgroundColours) window.__followBackgroundColours();
         for (const b of bgFaceRow.querySelectorAll('.bg-face')) {
           b.classList.toggle('on', b.dataset.texture === r.texture);
         }
@@ -2046,26 +2079,64 @@
         if (!await refreshBlockTile()) { bg.block.texture = was; return; }
         await loadBlockFaces();
       };
+      const bgScroll = document.getElementById('bg-block-scroll');
+      bgScroll.checked = !!bg.block.scroll;
+      bgScroll.addEventListener('change', () => {
+        bg.block.scroll = bgScroll.checked;
+        paintBackground(); saveBackground();
+      });
       bgRandom.addEventListener('change', async () => {
         const was = bg.block.random;
         bg.block.random = bgRandom.checked;
         if (!await refreshBlockTile()) { bg.block.random = was; bgRandom.checked = !!was; }
       });
-      bgBlockColors.addEventListener('click', async () => {
-        if (!bg.block.url) return;
-        const r = await ipcRenderer.invoke('model:blockColors', { url: bg.block.url });
-        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'No colours could be read', 'error'); return; }
+      // Taking the theme from whatever is behind the window.
+      //
+      // These were buttons you pressed once, which meant choosing a different
+      // block or picture afterwards left the theme on the old one's colours.
+      // They are toggles now: while one is on, the colours are re-taken every
+      // time the thing they come from changes.
+      const putThemeColours = (r, what) => {
+        if (!r || !r.success) return false;
         // The brighter of the two is the secondary colour, which is what the
         // bars and panels are shaded from; the darker is the base.
         const put = (id, code, value) => {
           const el = document.getElementById(id), c = document.getElementById(code);
           if (!el || !c) return;
+          if (el.value === value) return;        // nothing to redo
           el.value = value; c.value = value;
           el.dispatchEvent(new Event('input'));
         };
         put('base-color', 'base-color-code', r.dark);
         put('secondary-color', 'secondary-color-code', r.light);
-        if (window.notify) notify(`Theme taken from ${bg.block.name || 'the block'}`, 'success');
+        if (what && window.notify) notify(`Theme taken from ${what}`, 'success');
+        return true;
+      };
+
+      // Called whenever the block or the picture changes, and when a toggle
+      // is first switched on.
+      async function followBackgroundColours({ loud = false } = {}) {
+        if (bg.mode === 'block' && bgBlockColors.checked && bg.block.url) {
+          const r = await ipcRenderer.invoke('model:blockColors', { url: bg.block.url });
+          if (!putThemeColours(r, loud ? (bg.block.name || 'the block') : null) && loud && window.notify) {
+            notify((r && r.error) || 'No colours could be read', 'error');
+          }
+          return;
+        }
+        if (bg.mode === 'image' && bgImageColors.checked && bg.image.file) {
+          const r = await ipcRenderer.invoke('model:blockColors', { file: bg.image.file });
+          if (!putThemeColours(r, loud ? 'the picture' : null) && loud && window.notify) {
+            notify((r && r.error) || 'No colours could be read', 'error');
+          }
+        }
+      }
+      window.__followBackgroundColours = followBackgroundColours;
+
+      bgBlockColors.checked = !!bg.block.followColors;
+      bgBlockColors.addEventListener('change', () => {
+        bg.block.followColors = bgBlockColors.checked;
+        saveBackground();
+        if (bgBlockColors.checked) followBackgroundColours({ loud: true });
       });
 
       document.getElementById('bg-pick-block').addEventListener('click', async () => {

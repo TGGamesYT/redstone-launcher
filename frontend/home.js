@@ -15,7 +15,8 @@
 
   let LAYOUT = [];
   let TYPES = [];
-  let COLUMNS = 12;
+  let COLUMNS = 100;
+  const MIN_W = 12;        // the narrowest a segment may be made
   let editing = false;
   let profilesCache = [];
   // Every timer and 3D viewer a drawn segment owns, so redrawing the page
@@ -46,10 +47,23 @@
          the right at small window sizes -- a grid item's default minimum is
          the width of its contents, so a row of cards refused to narrow and
          simply overflowed instead. */
-      #home-segments { display:grid; grid-template-columns:repeat(var(--home-cols, 12), minmax(0, 1fr));
-        gap:22px; align-content:start; padding:14px 2px 40px; }
-      .hs { position:relative; min-width:0; grid-column:span var(--w, 12); display:flex; flex-direction:column; }
-      .hs[data-h] { overflow:hidden; }
+      /* Widths are percentages, and the gutter between segments is each
+         segment's own padding rather than a grid gap.
+         A hundred-column grid would multiply that gap by ninety-nine and
+         push the page several thousand pixels wide; as padding it is inside
+         the width, so two halves really are two halves. */
+      #home-segments { display:flex; flex-wrap:wrap; align-content:flex-start;
+        padding:14px 0 40px; }
+      .hs { position:relative; box-sizing:border-box; min-width:0;
+        width:calc(var(--w, 100) * 1%); padding:0 11px 22px;
+        display:flex; flex-direction:column;
+        /* How big the things inside are drawn, as a multiplier. */
+        --s: 1; }
+      /* NOT overflow:hidden on the segment itself -- that clipped the resize
+         handles, which is why they sometimes seemed not to be there at all.
+         The contents scroll instead. */
+      .hs[data-h] > .hs-body, .hs[data-h] > .hs-list, .hs[data-h] > .hs-row,
+      .hs[data-h] > .hs-grid { overflow:auto; min-height:0; }
       .hs > h2, .hs > h3 { margin:0 0 10px; }
       .hs-body { min-height:0; flex:1; overflow:auto; }
       .hs-empty { opacity:0.6; font-size:13px; }
@@ -57,17 +71,18 @@
 
       /* Narrow windows: the spans collapse rather than the contents being cut
          off. Anything narrow becomes half-width, then everything goes full. */
-      @media (max-width: 1150px) { .hs { grid-column:span max(var(--w, 12), 6); } }
-      @media (max-width: 820px)  { .hs { grid-column:span 12; } }
+      @media (max-width: 1150px) { .hs { width:max(50%, calc(var(--w, 100) * 1%)); } }
+      @media (max-width: 820px)  { .hs { width:100%; } }
 
       /* A row of project cards, which scrolls sideways rather than wrapping
          into a block that pushes everything else off the page. */
       .hs-row { display:flex; gap:12px; overflow-x:auto; padding-bottom:6px; }
-      .hs-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+      .hs-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(calc(150px * var(--s)), 1fr));
+        gap:calc(12px * var(--s)); }
       .hs-grid .hs-card, .hs-grid .hs-tile { flex:none; }
-      .hs-card { flex:0 0 170px; background:var(--menu-bg); border:1px solid var(--border-dark);
-        border-radius:var(--border-radius); padding:10px; cursor:pointer; display:flex; flex-direction:column;
-        min-width:0; }
+      .hs-card { flex:0 0 calc(170px * var(--s)); background:var(--menu-bg); border:1px solid var(--border-dark);
+        border-radius:var(--border-radius); padding:calc(10px * var(--s)); cursor:pointer; display:flex;
+        flex-direction:column; min-width:0; }
       .hs-card:hover { border-color:var(--base-color); }
       /* Every icon the same size, whatever shape the file is. cover cropped
          non-square art to different-looking sizes; a fixed square box with
@@ -75,9 +90,9 @@
       .hs-card .ic { width:100%; aspect-ratio:1; border-radius:6px; background:var(--very-dark);
         display:flex; align-items:center; justify-content:center; overflow:hidden; flex:0 0 auto; }
       .hs-card .ic img { width:100%; height:100%; object-fit:contain; image-rendering:auto; display:block; }
-      .hs-card .t { font-weight:bold; font-size:13px; margin-top:8px;
+      .hs-card .t { font-weight:bold; font-size:calc(13px * var(--s)); margin-top:8px;
         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .hs-card .d { font-size:11px; opacity:0.7; margin-top:2px;
+      .hs-card .d { font-size:calc(11px * var(--s)); opacity:0.7; margin-top:2px;
         display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
       .hs-card .go { margin-top:8px; display:flex; gap:6px; }
       .hs-card .go button { flex:1; padding:5px 6px; font-size:11px; }
@@ -85,12 +100,14 @@
       .hs-sub { font-size:12px; opacity:0.7; margin-top:4px; }
       .hs-media { width:100%; border-radius:var(--border-radius); background:var(--very-dark); display:block; }
       .hs-list { display:flex; flex-direction:column; gap:6px; }
-      .hs-item { display:flex; align-items:center; gap:10px; background:var(--menu-bg);
-        border:1px solid var(--border-dark); border-radius:var(--border-radius); padding:8px 10px; min-width:0; }
-      .hs-item img { width:32px; height:32px; border-radius:4px; image-rendering:pixelated;
-        background:var(--very-dark); object-fit:contain; flex:0 0 auto; }
-      .hs-item .t { font-size:13px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .hs-item .s { font-size:11px; opacity:0.7; flex:0 0 auto; }
+      .hs-item { display:flex; align-items:center; gap:calc(10px * var(--s)); background:var(--menu-bg);
+        border:1px solid var(--border-dark); border-radius:var(--border-radius);
+        padding:calc(8px * var(--s)) calc(10px * var(--s)); min-width:0; }
+      .hs-item img { width:calc(32px * var(--s)); height:calc(32px * var(--s)); border-radius:4px;
+        image-rendering:pixelated; background:var(--very-dark); object-fit:contain; flex:0 0 auto; }
+      .hs-item .t { font-size:calc(13px * var(--s)); flex:1; min-width:0; overflow:hidden;
+        text-overflow:ellipsis; white-space:nowrap; }
+      .hs-item .s { font-size:calc(11px * var(--s)); opacity:0.7; flex:0 0 auto; }
       .hs-item .go { flex:0 0 auto; display:flex; gap:4px; }
       .hs-item .go button { padding:3px 7px; font-size:12px; line-height:1.2; }
       .hs-dot { width:8px; height:8px; border-radius:50%; background:#777; flex:0 0 auto; }
@@ -115,34 +132,57 @@
       #home-edit button.icon-only { width:40px; height:40px; padding:0; border-radius:50%;
         display:flex; align-items:center; justify-content:center; }
       #home-edit button.icon-only i { font-size:19px; }
-      body.home-editing .hs { outline:2px dashed color-mix(in srgb, var(--base-color) 70%, transparent);
-        outline-offset:6px; border-radius:var(--border-radius); }
+      /* The outline sits INSIDE the segment, in a colour of its own.
+         It used to be the theme's base colour at 70% -- which on a red theme
+         over a red panel is nearly invisible -- offset six pixels OUTSIDE the
+         segment, which pushed the right-hand column past the edge of the page
+         and made the whole thing scroll sideways while editing. The radius
+         went with it, so the dashes looked snipped off at the corners. */
+      body.home-editing .hs::before { content:""; position:absolute;
+        left:5px; right:5px; top:-4px; bottom:16px;
+        outline:2px dashed rgba(255,255,255,0.85);
+        background:rgba(0,0,0,0.18); pointer-events:none; z-index:2; }
       body.home-editing .hs-card, body.home-editing .hs-item, body.home-editing .hs-news { pointer-events:none; }
       /* Inside the segment, not above it: at -10px the first row's buttons
          were clipped by the top of the scroller. */
-      .hs-tools { position:absolute; top:4px; right:4px; display:none; gap:4px; z-index:6; }
+      /* Settings and remove only -- moving is done by holding the segment
+         itself, so there is no third little button to aim at. Bigger, too:
+         the old ones were a few pixels across. */
+      .hs-tools { position:absolute; top:4px; right:16px; display:none; gap:6px; z-index:8; }
       body.home-editing .hs-tools { display:flex; }
-      .hs-tools button { padding:2px 6px; line-height:1; font-size:12px;
-        background:var(--very-dark); border:1px solid var(--border-dark); }
-      .hs-tools button.grab { cursor:grab; }
-      .hs.dragging { opacity:0.45; }
-      .hs-drop { outline:2px solid var(--base-color) !important; }
-      /* Held over another segment: it will go BESIDE that one. */
-      .hs-beside { outline:3px solid #5ad65a !important; }
-      .hs-beside::after { content:"beside"; position:absolute; top:4px; left:4px; z-index:7;
+      .hs-tools button { width:30px; height:30px; padding:0; line-height:1; font-size:15px;
+        display:flex; align-items:center; justify-content:center;
+        background:var(--very-dark); border:1px solid rgba(255,255,255,0.35); border-radius:6px; }
+      .hs-tools button:hover { border-color:#fff; }
+      /* Held anywhere else on a segment: that is how it is moved. */
+      body.home-editing .hs { cursor:grab; }
+      body.home-editing .hs.dragging { cursor:grabbing; }
+      .hs.dragging { opacity:0.4; }
+      /* Where it will land if you let go now. A line down the side it will go
+         to, or a wash over the whole segment when it will share the row. */
+      .hs-drop { outline:3px solid #5ad65a !important; outline-offset:-3px; }
+      .hs-drop::after { content:attr(data-drop); position:absolute; top:6px; left:6px; z-index:8;
         font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
-        background:#5ad65a; color:#06290b; padding:2px 6px; border-radius:4px; }
+        background:#5ad65a; color:#06290b; padding:2px 7px; border-radius:4px; white-space:nowrap; }
+      .hs-edge { position:absolute; top:0; bottom:0; width:4px; background:#5ad65a;
+        border-radius:2px; z-index:8; pointer-events:none; }
+      .hs-edge.before { left:1px; }
+      .hs-edge.after { right:1px; }
+      .hs-edge.below { left:5px; right:5px; top:auto; bottom:12px; height:4px; width:auto; }
 
       /* A handle in each corner. The two bottom ones change the height as
          well, the top ones only the width. */
-      .hs-grip { position:absolute; width:14px; height:14px; z-index:6; display:none; }
+      /* Just INSIDE each corner. Hanging them outside meant a segment with a
+         height -- which has to clip its contents -- clipped these too, so
+         they simply were not there. */
+      .hs-grip { position:absolute; width:18px; height:18px; z-index:7; display:none; }
       body.home-editing .hs-grip { display:block; }
-      .hs-grip::before { content:""; position:absolute; inset:3px; border-radius:2px;
-        background:var(--base-color); opacity:0.85; }
-      .hs-grip.nw { left:-7px; top:-7px; cursor:nwse-resize; }
-      .hs-grip.ne { right:-7px; top:-7px; cursor:nesw-resize; }
-      .hs-grip.sw { left:-7px; bottom:-7px; cursor:nesw-resize; }
-      .hs-grip.se { right:-7px; bottom:-7px; cursor:nwse-resize; }
+      .hs-grip::before { content:""; position:absolute; inset:3px; border-radius:3px;
+        background:#fff; border:2px solid rgba(0,0,0,0.55); }
+      .hs-grip.nw { left:4px; top:-5px; cursor:nwse-resize; }
+      .hs-grip.ne { right:4px; top:-5px; cursor:nesw-resize; }
+      .hs-grip.sw { left:4px; bottom:15px; cursor:nesw-resize; }
+      .hs-grip.se { right:4px; bottom:15px; cursor:nwse-resize; }
       .hs-size { position:absolute; left:50%; top:-12px; transform:translateX(-50%); z-index:7;
         font-size:11px; background:var(--base-color); color:#fff; padding:1px 7px;
         border-radius:4px; display:none; white-space:nowrap; }
@@ -535,7 +575,7 @@
         return;
       }
       if (!r.items.length) { node.appendChild(el('div', 'hs-empty', 'Nothing yet.')); return; }
-      const list = el('div', 'hs-list');
+      const list = el('div', (seg.view || 'list') === 'grid' ? 'hs-grid' : 'hs-list');
       for (const n of r.items) {
         const box = el('div', 'hs-news');
         if (seg.images !== false && n.image) {
@@ -702,8 +742,37 @@
   // ── the page ───────────────────────────────────────────────────────────────
 
   function clearSegments() {
+    for (const node of document.querySelectorAll('#home-segments .hs')) {
+      if (node._cleanup) { try { node._cleanup(); } catch { /* going anyway */ } }
+    }
     for (const fn of cleanups) { try { fn(); } catch { /* going anyway */ } }
     cleanups = [];
+  }
+
+  // One segment's contents. Each type draws itself; an async one that fails
+  // must not take the rest of the page down with it.
+  //
+  // Anything a segment leaves running -- a clock's timer, a 3D viewer's frame
+  // loop -- is collected on the node itself rather than in one list for the
+  // whole page, so a single segment can be thrown away and redrawn without
+  // stopping everything else.
+  function drawInto(node, seg) {
+    const mine = [];
+    const was = cleanups;
+    cleanups = mine;
+    try {
+      const r = (DRAW[seg.type] || (() => { }))(seg, node);
+      if (r && typeof r.catch === 'function') {
+        r.catch((e) => {
+          node.appendChild(el('div', 'hs-error', 'This segment could not be drawn: ' + (e && e.message || e)));
+        });
+      }
+    } catch (e) {
+      node.appendChild(el('div', 'hs-error', 'This segment could not be drawn: ' + (e && e.message || e)));
+    } finally {
+      cleanups = was;
+    }
+    node._cleanup = () => { for (const fn of mine) { try { fn(); } catch { /* going anyway */ } } };
   }
 
   function drawAll() {
@@ -715,23 +784,14 @@
     for (const seg of LAYOUT) {
       const node = el('section', 'hs');
       node.dataset.id = seg.id;
-      // How wide, and how tall if a height was set. A segment with no height
-      // is as tall as its contents, which is how the page has always been.
+      // How wide, how tall if a height was set, and how big its contents are
+      // drawn. A segment with no height is as tall as its contents, which is
+      // how the page has always been.
       node.style.setProperty('--w', String(seg.w || COLUMNS));
+      node.style.setProperty('--s', String((seg.scale || 100) / 100));
       if (seg.h) { node.style.height = seg.h + 'px'; node.dataset.h = String(seg.h); }
       host.appendChild(node);
-      // Each type draws itself; an async one that fails must not take the
-      // rest of the page down with it.
-      try {
-        const r = (DRAW[seg.type] || (() => { }))(seg, node);
-        if (r && typeof r.catch === 'function') {
-          r.catch((e) => {
-            node.appendChild(el('div', 'hs-error', 'This segment could not be drawn: ' + (e && e.message || e)));
-          });
-        }
-      } catch (e) {
-        node.appendChild(el('div', 'hs-error', 'This segment could not be drawn: ' + (e && e.message || e)));
-      }
+      drawInto(node, seg);
       if (editing) addTools(node, seg);
     }
   }
@@ -749,116 +809,199 @@
 
   // ── moving a segment ────────────────────────────────────────────────────
   //
-  // The up and down buttons are gone. Dragging is how the accounts page
-  // reorders, and it is how this does now -- with one addition: hold a
-  // segment over another for half a second and it goes BESIDE that one
-  // instead of before it, the two of them splitting the row between them.
-  // That is the only way to put two things side by side.
-  const HOLD_MS = 500;
-  let dragId = null;
-  let hoverTimer = null;
-  let besideId = null;
+  // Held, not dragged by a handle. There were three buttons a few pixels
+  // across in the corner and one of them started the move; holding the
+  // segment itself is a much bigger target and leaves only two buttons.
+  //
+  // Where it will land is SHOWN rather than guessed at. Which side of the
+  // segment under the pointer you are on decides it:
+  //
+  //   near the left edge   -- goes before this one
+  //   near the right edge  -- goes after this one
+  //   over the lower part  -- goes below it, on its own row
+  //   over the middle      -- shares this one's row, side by side
+  //
+  // It used to be "before" always, unless you held still for half a second,
+  // which then meant "beside" -- and there was no way to ask for any of the
+  // others, nor anything on screen saying which you were about to get.
+  const HOLD_MS = 180;        // how long before a press counts as a move
+  let drag = null;            // { id, node, ghost }
+  let dropAt = null;          // { id, how }
+
+  const EDGE = 0.28;          // how much of the width counts as an edge
 
   function clearDropMarks() {
-    for (const n of document.querySelectorAll('.hs-drop, .hs-beside')) {
-      n.classList.remove('hs-drop', 'hs-beside');
+    for (const n of document.querySelectorAll('.hs-drop')) {
+      n.classList.remove('hs-drop');
+      n.removeAttribute('data-drop');
     }
+    for (const n of document.querySelectorAll('.hs-edge')) n.remove();
+  }
+
+  const DROP_WORDS = { before: 'before', after: 'after', below: 'below', beside: 'beside' };
+
+  function showDrop(node, how) {
+    clearDropMarks();
+    if (!node) return;
+    if (how === 'beside') {
+      node.classList.add('hs-drop');
+      node.setAttribute('data-drop', DROP_WORDS.beside);
+      return;
+    }
+    const mark = el('div', 'hs-edge ' + how);
+    node.appendChild(mark);
+  }
+
+  // What dropping here would mean, from where the pointer is over it.
+  function dropKind(node, x, y) {
+    const r = node.getBoundingClientRect();
+    const fx = (x - r.left) / Math.max(1, r.width);
+    const fy = (y - r.top) / Math.max(1, r.height);
+    if (fx < EDGE) return 'before';
+    if (fx > 1 - EDGE) return 'after';
+    if (fy > 0.65) return 'below';
+    return 'beside';
+  }
+
+  function onDragMove(e) {
+    if (!drag) return;
+    drag.ghost.style.left = (e.clientX - drag.dx) + 'px';
+    drag.ghost.style.top = (e.clientY - drag.dy) + 'px';
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const seg = under && under.closest ? under.closest('#home-segments .hs') : null;
+    if (!seg || seg === drag.node) { clearDropMarks(); dropAt = null; return; }
+    const how = dropKind(seg, e.clientX, e.clientY);
+    if (!dropAt || dropAt.id !== seg.dataset.id || dropAt.how !== how) {
+      dropAt = { id: seg.dataset.id, how };
+      showDrop(seg, how);
+    }
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    const { node, ghost } = drag;
+    const landed = dropAt;
+    drag = null;
+    dropAt = null;
+    ghost.remove();
+    node.classList.remove('dragging');
+    clearDropMarks();
+    document.removeEventListener('mousemove', onDragMove, true);
+    document.removeEventListener('mouseup', endDrag, true);
+    if (!landed) return;
+    placeSegment(node.dataset.id, landed.id, landed.how);
+  }
+
+  function startDrag(node, seg, e) {
+    const r = node.getBoundingClientRect();
+    const ghost = el('div');
+    ghost.style.cssText = `position:fixed;z-index:9500;pointer-events:none;opacity:0.85;
+      width:${r.width}px;height:${Math.min(r.height, 220)}px;overflow:hidden;
+      border:2px solid #5ad65a;border-radius:var(--border-radius);background:var(--menu-bg);
+      box-shadow:0 10px 30px rgba(0,0,0,0.5);`;
+    ghost.appendChild(el('div', '', typeSpec(seg.type).name || seg.type));
+    ghost.firstChild.style.cssText = 'padding:10px 12px;font-weight:bold;';
+    document.body.appendChild(ghost);
+    drag = { id: seg.id, node, ghost, dx: e.clientX - r.left, dy: e.clientY - r.top };
+    node.classList.add('dragging');
+    ghost.style.left = r.left + 'px';
+    ghost.style.top = r.top + 'px';
+    document.addEventListener('mousemove', onDragMove, true);
+    document.addEventListener('mouseup', endDrag, true);
   }
 
   function addTools(node, seg) {
     const tools = el('div', 'hs-tools');
-    const grab = el('button', 'grab', '⠿'); grab.title = 'Drag to move';
     const cog = el('button', '', '⚙'); cog.title = 'Settings';
     const rm = el('button', '', '✕'); rm.title = 'Remove';
-    cog.onclick = () => editSegment(seg.id);
-    rm.onclick = () => removeSegment(seg.id);
-    tools.append(grab, cog, rm);
+    cog.onclick = (e) => { e.stopPropagation(); editSegment(seg.id); };
+    rm.onclick = (e) => { e.stopPropagation(); removeSegment(seg.id); };
+    tools.append(cog, rm);
     node.appendChild(tools);
 
-    // Only the handle starts a drag, so selecting text or pressing a button
-    // inside the segment does not.
-    node.draggable = false;
-    grab.addEventListener('mousedown', () => { node.draggable = true; });
-    node.addEventListener('dragend', () => {
-      node.draggable = false;
-      node.classList.remove('dragging');
-      clearDropMarks();
-      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
-      dragId = null; besideId = null;
-    });
-    node.addEventListener('dragstart', (e) => {
-      dragId = seg.id;
-      besideId = null;
-      node.classList.add('dragging');
-      try { e.dataTransfer.setData('text/plain', seg.id); e.dataTransfer.effectAllowed = 'move'; } catch { /* fine */ }
-    });
-    node.addEventListener('dragover', (e) => {
-      if (!dragId || dragId === seg.id) return;
-      e.preventDefault();
-      if (node.classList.contains('hs-drop') || node.classList.contains('hs-beside')) return;
-      clearDropMarks();
-      node.classList.add('hs-drop');
-      // Held here long enough: it will land beside this one rather than
-      // before it.
-      if (hoverTimer) clearTimeout(hoverTimer);
-      hoverTimer = setTimeout(() => {
-        besideId = seg.id;
-        node.classList.remove('hs-drop');
-        node.classList.add('hs-beside');
-      }, HOLD_MS);
-    });
-    node.addEventListener('dragleave', () => {
-      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
-      if (besideId === seg.id) besideId = null;
-      node.classList.remove('hs-drop', 'hs-beside');
-    });
-    node.addEventListener('drop', (e) => {
-      e.preventDefault();
-      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
-      const from = dragId;
-      const pairUp = besideId === seg.id;
-      clearDropMarks();
-      dragId = null; besideId = null;
-      if (!from || from === seg.id) return;
-      pairUp ? placeBeside(from, seg.id) : placeBefore(from, seg.id);
+    // Hold the segment anywhere to move it. A short delay before it counts,
+    // so pressing one of the two buttons -- or simply clicking -- is not
+    // mistaken for the start of a drag.
+    node.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('.hs-tools') || e.target.closest('.hs-grip')) return;
+      const sx = e.clientX, sy = e.clientY;
+      let armed = setTimeout(() => { armed = null; startDrag(node, seg, e); }, HOLD_MS);
+      const giveUp = () => {
+        if (armed) { clearTimeout(armed); armed = null; }
+        document.removeEventListener('mouseup', giveUp, true);
+        document.removeEventListener('mousemove', maybe, true);
+      };
+      // Moved far enough before the timer: that is a drag too.
+      const maybe = (ev) => {
+        if (!armed) return;
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return;
+        clearTimeout(armed); armed = null;
+        document.removeEventListener('mouseup', giveUp, true);
+        document.removeEventListener('mousemove', maybe, true);
+        startDrag(node, seg, ev);
+      };
+      document.addEventListener('mouseup', giveUp, true);
+      document.addEventListener('mousemove', maybe, true);
     });
 
     addGrips(node, seg);
   }
 
-  function placeBefore(fromId, ontoId) {
+  // Where the dragged segment ends up, for each of the four answers the
+  // preview can give.
+  function placeSegment(fromId, ontoId, how) {
     const i = LAYOUT.findIndex(s => s.id === fromId);
-    if (i < 0) return;
-    const [moved] = LAYOUT.splice(i, 1);
-    const j = LAYOUT.findIndex(s => s.id === ontoId);
-    LAYOUT.splice(j < 0 ? LAYOUT.length : j, 0, moved);
-    save();
-  }
-
-  // Side by side: put it straight after the one it was held over and split
-  // that row between the two, so they actually end up next to each other
-  // rather than merely adjacent in the list and still a row each.
-  function placeBeside(fromId, ontoId) {
-    const i = LAYOUT.findIndex(s => s.id === fromId);
-    if (i < 0) return;
+    if (i < 0 || fromId === ontoId) return;
     const [moved] = LAYOUT.splice(i, 1);
     const j = LAYOUT.findIndex(s => s.id === ontoId);
     if (j < 0) { LAYOUT.push(moved); save(); return; }
     const onto = LAYOUT[j];
-    // Only share the row out when they would not fit as they are.
-    if ((onto.w || COLUMNS) + (moved.w || COLUMNS) > COLUMNS) {
-      onto.w = Math.floor(COLUMNS / 2);
-      moved.w = COLUMNS - onto.w;
+
+    if (how === 'beside') {
+      // Share that row between the two. Without this they are merely next to
+      // each other in the list and still a row each.
+      const room = COLUMNS - (onto.w || COLUMNS);
+      if (room < MIN_W) {
+        onto.w = Math.round(COLUMNS / 2);
+        moved.w = COLUMNS - onto.w;
+      } else {
+        moved.w = room;
+      }
+      LAYOUT.splice(j + 1, 0, moved);
+    } else if (how === 'below') {
+      // Its own row under that one.
+      moved.w = COLUMNS;
+      LAYOUT.splice(j + 1, 0, moved);
+    } else {
+      LAYOUT.splice(how === 'after' ? j + 1 : j, 0, moved);
     }
-    LAYOUT.splice(j + 1, 0, moved);
     save();
   }
 
   // ── resizing ────────────────────────────────────────────────────────────
   //
   // A handle in each corner. All four change the width; the bottom two change
-  // the height as well, which is the corner people reach for. The width snaps
-  // to the grid's columns, because that is what the layout is made of.
+  // the height as well, which is the corner people reach for.
+  //
+  // Widening a segment takes the room from whoever is beside it rather than
+  // pushing them onto the next row, and changing a height takes its
+  // neighbours with it so a row stays a row. Neither used to happen: making
+  // one wider simply left no space for the one next to it.
+
+  // Everything laid out on the same row as this one, in order.
+  function rowOf(id) {
+    const host = document.getElementById('home-segments');
+    if (!host) return [];
+    const me = host.querySelector(`.hs[data-id="${id}"]`);
+    if (!me) return [];
+    const top = Math.round(me.getBoundingClientRect().top);
+    return [...host.querySelectorAll('.hs')]
+      .filter(n => Math.abs(Math.round(n.getBoundingClientRect().top) - top) <= 2)
+      .map(n => LAYOUT.find(x => x.id === n.dataset.id))
+      .filter(Boolean);
+  }
+
   function addGrips(node, seg) {
     const host = document.getElementById('home-segments');
     const readout = el('div', 'hs-size');
@@ -870,7 +1013,7 @@
       grip.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const colW = (host.clientWidth + 22) / COLUMNS;   // the gap counts as part of a column
+        const colW = host.clientWidth / COLUMNS;   // one per cent of the page
         const startX = e.clientX, startY = e.clientY;
         const startW = seg.w || COLUMNS;
         const startH = seg.h || node.offsetHeight;
@@ -878,23 +1021,53 @@
         const south = corner === 'sw' || corner === 'se';
         node.classList.add('sizing');
 
+        // Who shares this row, and how much they can give up between them.
+        const row = rowOf(seg.id);
+        const others = row.filter(x => x.id !== seg.id);
+        const otherStart = new Map(others.map(x => [x.id, x.w || COLUMNS]));
+        const spare = others.reduce((n, x) => n + ((x.w || COLUMNS) - MIN_W), 0);
+        const nodeFor = (id) => host.querySelector(`.hs[data-id="${id}"]`);
+
         const show = (w, h) => {
-          readout.textContent = h ? `${w}/${COLUMNS} · ${Math.round(h)}px` : `${w}/${COLUMNS}`;
+          readout.textContent = h ? `${w}% · ${Math.round(h)}px` : `${w}%`;
         };
         show(startW, seg.h);
 
         const onMove = (ev) => {
           const dx = (ev.clientX - startX) * (east ? 1 : -1);
-          const w = Math.max(2, Math.min(COLUMNS, startW + Math.round(dx / colW)));
+          // No rounding to a coarse grid: a hundred columns is fine enough
+          // that this reads as continuous, which is what was asked for.
+          const want = startW + dx / colW;
+          const ceiling = others.length ? startW + spare : COLUMNS;
+          const w = Math.max(MIN_W, Math.min(Math.min(COLUMNS, ceiling), Math.round(want)));
           seg.w = w;
           node.style.setProperty('--w', String(w));
+
+          // Take what was gained out of the neighbours, biggest first, so the
+          // row still adds up and nobody is pushed off it.
+          let owed = w - startW;
+          for (const o of [...others].sort((a, b) => (otherStart.get(b.id)) - (otherStart.get(a.id)))) {
+            const was = otherStart.get(o.id);
+            const give = Math.max(-(COLUMNS), Math.min(owed, was - MIN_W));
+            o.w = was - give;
+            owed -= give;
+            const n2 = nodeFor(o.id);
+            if (n2) n2.style.setProperty('--w', String(o.w));
+          }
+
           let h = seg.h;
           if (south) {
             const dy = ev.clientY - startY;
-            h = Math.max(80, Math.min(1200, startH + dy));
+            h = Math.max(80, Math.min(1200, Math.round(startH + dy)));
             seg.h = h;
             node.style.height = h + 'px';
             node.dataset.h = String(h);
+            // A row of different heights is not a row, so the others follow.
+            for (const o of others) {
+              o.h = h;
+              const n2 = nodeFor(o.id);
+              if (n2) { n2.style.height = h + 'px'; n2.dataset.h = String(h); }
+            }
           }
           show(w, h);
         };
@@ -902,8 +1075,9 @@
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           node.classList.remove('sizing');
-          // Saving redraws, which is how the rest of the row reflows.
-          save();
+          // Only the numbers are stored; the page is already showing them, so
+          // there is nothing to redraw.
+          save({ redraw: false });
         };
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
@@ -911,14 +1085,66 @@
     }
   }
 
-  const save = async () => {
+  // Storing the layout does not mean rebuilding the page.
+  //
+  // Every change -- a resize, a setting, adding one -- redrew every segment,
+  // which threw the scroll position away, restarted every clock and fetched
+  // every project row again. Only what actually changed is redrawn now.
+  //
+  //   save()                   -- order or membership changed; redraw
+  //   save({ redraw: false })  -- only sizes changed; the page already shows them
+  //   save({ only: id })       -- one segment's settings changed
+  const save = async (opts = {}) => {
     const r = await ipcRenderer.invoke('home:setLayout', { layout: LAYOUT });
-    if (r && r.layout) LAYOUT = r.layout;
+    // Merged INTO the objects already in LAYOUT rather than replacing them.
+    //
+    // The handles and the settings dialog each hold on to the segment they
+    // were given, so swapping the array out from under them left those
+    // references pointing at objects no longer on the page -- and a second
+    // resize of the same segment went nowhere.
+    if (r && r.layout) {
+      const byId = new Map(LAYOUT.map(x => [x.id, x]));
+      LAYOUT = r.layout.map(x => {
+        const had = byId.get(x.id);
+        if (!had) return x;
+        for (const k of Object.keys(had)) if (!(k in x)) delete had[k];
+        return Object.assign(had, x);
+      });
+    }
+    if (opts.redraw === false) { applyGeometry(); return; }
+    if (opts.only) { redrawOne(opts.only); applyGeometry(); return; }
     drawAll();
   };
 
+  // The width, height and content scale of every segment, without touching
+  // what is inside them.
+  function applyGeometry() {
+    const host = document.getElementById('home-segments');
+    if (!host) return;
+    for (const seg of LAYOUT) {
+      const node = host.querySelector(`.hs[data-id="${seg.id}"]`);
+      if (!node) continue;
+      node.style.setProperty('--w', String(seg.w || COLUMNS));
+      node.style.setProperty('--s', String((seg.scale || 100) / 100));
+      if (seg.h) { node.style.height = seg.h + 'px'; node.dataset.h = String(seg.h); }
+      else { node.style.removeProperty('height'); delete node.dataset.h; }
+    }
+  }
+
+  // One segment's contents, in place.
+  function redrawOne(id) {
+    const host = document.getElementById('home-segments');
+    const node = host && host.querySelector(`.hs[data-id="${id}"]`);
+    const seg = LAYOUT.find(x => x.id === id);
+    if (!node || !seg) return;
+    if (node._cleanup) { try { node._cleanup(); } catch { /* going anyway */ } }
+    node.innerHTML = '';
+    drawInto(node, seg);
+    if (editing) addTools(node, seg);
+  }
+
   function removeSegment(id) {
-    LAYOUT = LAYOUT.filter(s => s.id !== id);
+    LAYOUT = LAYOUT.filter(x => x.id !== id);
     save();
   }
 
@@ -967,7 +1193,7 @@
         b.addEventListener('focus', say);
         b.onclick = () => {
           close();
-          const seg = { id: `${t.type}-${Date.now().toString(36)}`, type: t.type, w: 12, h: 0 };
+          const seg = { id: `${t.type}-${Date.now().toString(36)}`, type: t.type, w: COLUMNS, h: 0, scale: 100 };
           for (const o of t.options || []) seg[o.id] = o.default;
           LAYOUT.push(seg);
           save().then(() => editSegment(seg.id));
@@ -1054,11 +1280,11 @@
       // corner handles write the same two numbers.
       const sizeRow = el('div', 'he-size');
       const wWrap = el('div', 'he-opt');
-      wWrap.appendChild(el('label', '', `Width (of ${COLUMNS})`));
+      wWrap.appendChild(el('label', '', 'Width (% of the page)'));
       const wIn = el('input');
-      wIn.type = 'number'; wIn.min = 2; wIn.max = COLUMNS;
+      wIn.type = 'number'; wIn.min = MIN_W; wIn.max = COLUMNS;
       wIn.value = String(values.w || COLUMNS);
-      wIn.oninput = () => { values.w = Math.max(2, Math.min(COLUMNS, parseInt(wIn.value, 10) || COLUMNS)); };
+      wIn.oninput = () => { values.w = Math.max(MIN_W, Math.min(COLUMNS, parseInt(wIn.value, 10) || COLUMNS)); };
       wWrap.appendChild(wIn);
 
       const hWrap = el('div', 'he-opt');
@@ -1071,7 +1297,21 @@
         values.h = n ? Math.max(80, Math.min(1200, n)) : 0;
       };
       hWrap.appendChild(hIn);
-      sizeRow.append(wWrap, hWrap);
+
+      // How big the things inside are drawn. There was no way to change this
+      // at all, and after the page became a grid a list row came out far
+      // smaller than it used to be.
+      const sWrap = el('div', 'he-opt');
+      sWrap.appendChild(el('label', '', 'Size of what is inside (%)'));
+      const sIn = el('input');
+      sIn.type = 'number'; sIn.min = 50; sIn.max = 220; sIn.step = 5;
+      sIn.value = String(values.scale || 100);
+      sIn.oninput = () => {
+        values.scale = Math.max(50, Math.min(220, parseInt(sIn.value, 10) || 100));
+      };
+      sWrap.appendChild(sIn);
+
+      sizeRow.append(wWrap, hWrap, sWrap);
       body.appendChild(sizeRow);
 
       const actions = el('div', 'modal-actions');
@@ -1080,7 +1320,8 @@
       ok.onclick = () => {
         Object.assign(seg, values);
         close();
-        save();
+        // Only this segment changed, so only this one is drawn again.
+        save({ only: seg.id });
       };
       actions.appendChild(ok);
       box.appendChild(actions);
@@ -1117,13 +1358,23 @@
       edit.onclick = () => setEditing(true);
       bar.appendChild(edit);
     }
-    drawAll();
+    // Only the handles are being put on or taken off, so the segments
+    // themselves are left alone -- redrawing them threw away the scroll
+    // position every time the edit button was pressed.
+    const host = document.getElementById('home-segments');
+    if (host) {
+      for (const node of host.querySelectorAll('.hs')) {
+        const seg = LAYOUT.find(x => x.id === node.dataset.id);
+        for (const old2 of node.querySelectorAll(':scope > .hs-tools, :scope > .hs-grip, :scope > .hs-size')) old2.remove();
+        if (editing && seg) addTools(node, seg);
+      }
+    }
   }
 
   async function load() {
     const r = await ipcRenderer.invoke('home:layout');
     TYPES = (r && r.types) || [];
-    COLUMNS = (r && r.columns) || 12;
+    COLUMNS = (r && r.columns) || 100;
     LAYOUT = ((r && r.layout) || []).map(s => ({ ...s }));
     drawAll();
   }

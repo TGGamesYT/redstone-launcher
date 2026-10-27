@@ -119,7 +119,7 @@ function backgroundCss(bg) {
   // A flat colour used to be handed over as the image, which is not a valid
   // background-image at all -- so the whole declaration was dropped and the
   // window came up white whatever colour had been picked.
-  const none = { image: 'none', color: 'transparent', size: 'auto', repeat: 'no-repeat', render: 'auto' };
+  const none = { image: 'none', color: 'transparent', size: 'auto', repeat: 'no-repeat', render: 'auto', attach: 'fixed' };
   if (b.mode === 'color' && b.color) {
     return { ...none, color: b.color };
   }
@@ -161,6 +161,9 @@ function backgroundCss(bg) {
       return {
         ...none, image: `url("${bl.url}")`, size: `${span}px ${span}px`,
         repeat: 'repeat', render: 'pixelated', color: 'var(--very-dark)',
+        // A tiled wall can either stay put behind the page or travel with it
+        // as it scrolls; which of those looks right is a matter of taste.
+        attach: bl.scroll ? 'scroll' : 'fixed',
       };
     }
   }
@@ -183,6 +186,7 @@ function applyBackground(settings) {
   root.style.setProperty('--app-bg-size', css.size);
   root.style.setProperty('--app-bg-repeat', css.repeat);
   root.style.setProperty('--app-bg-render', css.render);
+  root.style.setProperty('--app-bg-attach', css.attach);
   root.classList.add('custom-bg');
   if (document.body) document.body.classList.add('custom-bg');
   // Which text needs an outline depends on what is behind it, so a change of

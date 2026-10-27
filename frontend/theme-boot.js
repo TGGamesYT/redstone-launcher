@@ -52,7 +52,7 @@
   // backgroundCss() there; this copy exists only because nothing else is
   // loaded this early.
   const b = cached.background;
-  let image = 'none', color = 'transparent', size = 'auto', repeat = 'no-repeat', render = 'auto';
+  let image = 'none', color = 'transparent', size = 'auto', repeat = 'no-repeat', render = 'auto', attach = 'fixed';
   let custom = false;
   if (b && b.mode && b.mode !== 'theme') {
     if (b.mode === 'color' && b.color) {
@@ -80,6 +80,7 @@
       repeat = 'repeat';
       render = 'pixelated';            // a 16-pixel texture tiled at 64 stays sharp
       color = 'var(--very-dark)';      // behind a texture with see-through pixels
+      attach = b.block.scroll ? 'scroll' : 'fixed';
       custom = true;
     }
   } else if (!b && cached.gradientEnabled && (cached.gradientColors || []).length) {
@@ -94,6 +95,7 @@
     set('--app-bg-size', size);
     set('--app-bg-repeat', repeat);
     set('--app-bg-render', render);
+    set('--app-bg-attach', attach);
     root.classList.add('custom-bg');
   }
 

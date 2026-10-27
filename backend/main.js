@@ -788,8 +788,8 @@ const DEFAULT_SETTINGS = {
     mode: "theme",
     color: "#121212",
     gradient: { colors: ["#ff4d4d", "#b30c0c"], angle: 180 },
-    image: { file: null, fit: "cover" },
-    block: { id: null, name: null, url: null, size: 64 },
+    image: { file: null, fit: "cover", followColors: false },
+    block: { id: null, name: null, url: null, size: 64, scroll: false, followColors: false },
   },
   predefinedThemeSync: false,
   // A style sheet of the user's own, applied to every page when developer
@@ -822,6 +822,31 @@ for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
   }
   settings.set("background", next);
 })();
+// ── How text is rasterised ──────────────────────────────────────────────────
+//
+// The "Edges" setting did nothing, because -webkit-font-smoothing is a macOS
+// property: Chromium ignores it on Windows and Linux entirely, which is where
+// the launcher's pixel font actually looked soft. The lever that works there
+// is Chromium's own, and it has to be set before the app is ready rather than
+// from a stylesheet -- so changing this takes a restart, which the window says.
+//
+//   disable-lcd-text                 -- grey antialiasing instead of subpixel
+//                                       (no colour fringing on glyph edges)
+//   disable-font-subpixel-positioning -- glyphs land on whole pixels, so a
+//                                       pixel font's columns stay columns
+(function applyFontSmoothing() {
+  try {
+    const how = settings.get("fontSmoothing", "sharp");
+    if (how === "sharp") {
+      app.commandLine.appendSwitch("disable-lcd-text");
+      app.commandLine.appendSwitch("disable-font-subpixel-positioning");
+    } else if (how === "smooth") {
+      app.commandLine.appendSwitch("disable-font-subpixel-positioning");
+    }
+    // "auto" adds nothing and leaves Chromium to its own defaults.
+  } catch { /* an older Electron: the stylesheet still covers macOS */ }
+})();
+
 const sortStore = new Store({ name: "instance-sorting" });
 if (!sortStore.has("sortMode")) sortStore.set("sortMode", "created-desc");
 if (!sortStore.has("customOrder")) sortStore.set("customOrder", []);
@@ -1422,9 +1447,22 @@ ipcMain.on('save-settings', (event, newsettings) => {
   // theme -- re-tints it there and then, rather than waiting to be asked.
   if (color !== wasBase) {
     const icon = settings.get('appIcon', null) || { kind: 'theme' };
-    if (icon.kind !== 'image') applyAppIcon({ kind: 'theme' }).catch(() => { /* non-fatal */ });
+    if (icon.kind !== 'image') retintAppIconSoon();
   }
 });
+
+// A colour picker reports every step of a drag, and each one used to re-tint
+// the icon: a sharp pass, an .ico, and a PowerShell run, dozens of times a
+// second. Only the colour it comes to rest on is worth drawing.
+let _retintSoon = null;
+const RETINT_SETTLE = 250;
+function retintAppIconSoon() {
+  if (_retintSoon) clearTimeout(_retintSoon);
+  _retintSoon = setTimeout(() => {
+    _retintSoon = null;
+    applyAppIcon({ kind: 'theme' }).catch(() => { /* non-fatal */ });
+  }, RETINT_SETTLE);
+}
 
 ipcMain.handle('get-system-ram', () => {
   return totalRAMMB;
@@ -3948,16 +3986,16 @@ const HOME_DEFAULT = [
   // The greeting is a segment like everything else now, so it can be moved,
   // reworded or taken off the page. It used to be an <h1> in the markup,
   // which meant it was the one thing on the home page nobody could change.
-  { id: "greeting", type: "greeting", w: 12, h: 0 },
-  { id: "recent", type: "recent", title: "Continue playing", count: 6, w: 7, h: 0, action: "both" },
-  { id: "player", type: "player", title: "", height: 260, w: 5, h: 0 },
+  { id: "greeting", type: "greeting", w: 100, h: 0 },
+  { id: "recent", type: "recent", title: "Continue playing", count: 6, w: 58, h: 0, action: "both" },
+  { id: "player", type: "player", title: "", height: 260, w: 42, h: 0 },
   {
     id: "modpacks", type: "projects", title: "Featured modpacks",
-    provider: "modrinth", kind: "modpack", sort: "featured", count: 6, w: 12, h: 0,
+    provider: "modrinth", kind: "modpack", sort: "featured", count: 6, w: 100, h: 0,
   },
   {
     id: "mods", type: "projects", title: "Featured mods",
-    provider: "modrinth", kind: "mod", sort: "featured", count: 6, w: 12, h: 0,
+    provider: "modrinth", kind: "mod", sort: "featured", count: 6, w: 100, h: 0,
   },
 ];
 
@@ -4015,6 +4053,7 @@ const HOME_TYPES = [
         ],
       },
       { id: "movable", label: "Let it be turned by dragging", kind: "toggle", default: true },
+      { id: "physics", label: "Keep spinning when let go, and swing with it", kind: "toggle", default: true },
       { id: "spin", label: "Turn slowly on its own", kind: "toggle", default: false },
       {
         id: "align", label: "Where in its space", kind: "choice", default: "center",
@@ -4029,6 +4068,10 @@ const HOME_TYPES = [
     options: [
       { id: "title", label: "Heading", kind: "text", default: "Friends" },
       { id: "count", label: "How many", kind: "number", default: 8, min: 1, max: 40 },
+      {
+        id: "view", label: "Shown as", kind: "choice", default: "list",
+        choices: [{ value: "list", label: "A list" }, { value: "grid", label: "Tiles" }],
+      },
       { id: "onlineOnly", label: "Only the ones online", kind: "toggle", default: false },
     ],
   },
@@ -4098,6 +4141,10 @@ const HOME_TYPES = [
       { id: "count", label: "How many", kind: "number", default: 4, min: 1, max: 20 },
       { id: "releasesToo", label: "Full releases as well", kind: "toggle", default: true },
       { id: "images", label: "Show their pictures", kind: "toggle", default: true },
+      {
+        id: "view", label: "Shown as", kind: "choice", default: "list",
+        choices: [{ value: "list", label: "A list" }, { value: "grid", label: "Tiles" }],
+      },
     ],
   },
   {
@@ -4108,6 +4155,10 @@ const HOME_TYPES = [
       { id: "count", label: "How many", kind: "number", default: 4, min: 1, max: 20 },
       { id: "category", label: "Only this category (blank for all)", kind: "text", default: "" },
       { id: "images", label: "Show their pictures", kind: "toggle", default: true },
+      {
+        id: "view", label: "Shown as", kind: "choice", default: "list",
+        choices: [{ value: "list", label: "A list" }, { value: "grid", label: "Tiles" }],
+      },
     ],
   },
   {
@@ -4168,9 +4219,16 @@ const HOME_TYPES = [
 // span and an optional height. These are not in `options` because they belong
 // to the layout rather than to what a segment shows -- the editor draws them
 // in their own section and the corner handles write to them directly.
-const HOME_COLUMNS = 12;
-const HOME_W_DEFAULT = 12;         // a row of its own, which is how it was
-const clampW = (v) => Math.max(2, Math.min(HOME_COLUMNS, Math.round(Number(v) || HOME_W_DEFAULT)));
+// A hundred columns, so a width is a percentage and dragging one is smooth.
+//
+// It was twelve, which meant every drag jumped a twelfth of the page at a
+// time -- the "snapping" that should not have been there. A hundred is fine
+// enough that it reads as continuous while still being a grid, which is what
+// lets two segments sit exactly side by side.
+const HOME_COLUMNS = 100;
+const HOME_W_DEFAULT = 100;        // a row of its own, which is how it was
+const HOME_W_MIN = 12;
+const clampW = (v) => Math.max(HOME_W_MIN, Math.min(HOME_COLUMNS, Math.round(Number(v) || HOME_W_DEFAULT)));
 // 0 means "however tall its contents are", which is the old behaviour.
 const clampH = (v) => {
   const n = Math.round(Number(v) || 0);
@@ -4178,9 +4236,16 @@ const clampH = (v) => {
   return Math.max(80, Math.min(1200, n));
 };
 
+// How big the things INSIDE a segment are drawn.
+//
+// There was no way to change this at all, so a list row came out at whatever
+// size the stylesheet said -- which after the grid rework was far smaller
+// than the home page used to show. It is a percentage, like the width.
+const clampScale = (v) => Math.max(50, Math.min(220, Math.round(Number(v) || 100)));
+
 const homeDefaults = (type) => {
   const spec = HOME_TYPES.find(t => t.type === type);
-  const out = { w: HOME_W_DEFAULT, h: 0 };
+  const out = { w: HOME_W_DEFAULT, h: 0, scale: 100 };
   for (const o of (spec && spec.options) || []) out[o.id] = o.default;
   return out;
 };
@@ -4196,8 +4261,13 @@ ipcMain.handle("home:layout", () => {
     custom: Array.isArray(saved) && saved.length > 0,
     layout: layout.map(seg => {
       const full = { ...homeDefaults(seg.type), ...seg };
+      // Widths were twelfths before they were percentages. Anything that
+      // small is a layout from then, so it is brought forward rather than
+      // coming out as a sliver.
+      if (full.w != null && Number(full.w) <= 12) full.w = Math.round(Number(full.w) / 12 * 100);
       full.w = clampW(full.w);
       full.h = clampH(full.h);
+      full.scale = clampScale(full.scale);
       return full;
     }),
   };
@@ -4210,7 +4280,7 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
     .filter(seg => seg && known.has(seg.type))
     .slice(0, 40)
     .map((seg, i) => {
-      const allowed = new Set(["id", "type", "w", "h",
+      const allowed = new Set(["id", "type", "w", "h", "scale",
         ...(HOME_TYPES.find(t => t.type === seg.type).options || []).map(o => o.id)]);
       const out = {};
       // Only the options this type declares, so an edited layout cannot
@@ -4220,6 +4290,7 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
       out.id = String(seg.id || `${seg.type}-${i}`).slice(0, 64);
       out.w = clampW(seg.w);
       out.h = clampH(seg.h);
+      out.scale = clampScale(seg.scale);
       return out;
     });
   settings.set("homeLayout", clean);
@@ -4442,6 +4513,22 @@ const mojangImage = (img) => {
   return /^https?:/i.test(u) ? u : MOJANG_MEDIA + (u.startsWith("/") ? u : "/" + u);
 };
 
+// Where a patch note lives on minecraft.net.
+//
+// This was built as `minecraft-java-edition-<version>` for everything, which
+// is right for a release and wrong for a snapshot: those are published as
+// `minecraft-<version>`, so every snapshot link 404'd.
+//
+// Built from `version` rather than `id`, because the feed's id is a readable
+// slug for the newest few entries and a sha256 for everything older.
+function articleUrl(e) {
+  const v = String(e && e.version || "").trim();
+  if (!v) return null;
+  const slug = v.replace(/\./g, "-").toLowerCase();
+  const release = String(e.type || "").toLowerCase() === "release";
+  return `https://www.minecraft.net/en-us/article/${release ? "minecraft-java-edition-" : "minecraft-"}${slug}`;
+}
+
 // Mojang's written changelogs: what actually changed in each snapshot and
 // release, rather than a list of version numbers.
 ipcMain.handle("home:patchnotes", async (event, { count = 4, releasesToo = true } = {}) => {
@@ -4461,7 +4548,7 @@ ipcMain.handle("home:patchnotes", async (event, { count = 4, releasesToo = true 
         // The body is HTML; the window shows the shortened text and opens the
         // full thing on the wiki rather than trying to render their markup.
         body: String(e.shortText || "").trim(),
-        url: e.version ? `https://www.minecraft.net/article/minecraft-java-edition-${String(e.version).replace(/\./g, "-")}` : null,
+        url: articleUrl(e),
       }));
     return { success: true, items };
   } catch (err) {
@@ -5497,7 +5584,25 @@ async function retintIcon(hex) {
 
 // Put an icon on the windows and remember it. `icon` is either
 // { kind: 'theme' } or { kind: 'image', dataUrl }.
-async function applyAppIcon(icon) {
+// Writing the shortcut on the desktop means an .ico, a PowerShell run per
+// shortcut and a word with the shell. That is far too much to do while
+// somebody is dragging a colour slider -- it was being done on every single
+// step of the drag, which spawned a PowerShell per frame and brought the
+// machine to its knees. The window's own icon is cheap, so it is still done
+// at once; the desktop follows when the colour has stopped moving.
+let _desktopIconSoon = null;
+const DESKTOP_ICON_SETTLE = 1500;
+
+function updateDesktopIconSoon(png) {
+  if (_desktopIconSoon) clearTimeout(_desktopIconSoon);
+  _desktopIconSoon = setTimeout(() => {
+    _desktopIconSoon = null;
+    try { shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher" }); }
+    catch { /* the window icon is already right; this is the one outside */ }
+  }, DESKTOP_ICON_SETTLE);
+}
+
+async function applyAppIcon(icon, { desktop = true } = {}) {
   try {
     let png;
     if (icon && icon.kind === "image" && icon.dataUrl) {
@@ -5507,22 +5612,20 @@ async function applyAppIcon(icon) {
       png = await retintIcon(settings.get("baseColor", "#b30c0c"));
     }
     fs.writeFileSync(ICON_OUT(), png);
+    // The window icon IS the taskbar button while the app is running, so this
+    // is the one that has to happen now rather than in a moment.
     const img = nativeImage.createFromBuffer(png);
     for (const w of BrowserWindow.getAllWindows()) {
       try { if (!w.isDestroyed()) w.setIcon(img); } catch { /* not every platform takes one */ }
     }
     settings.set("appIcon", icon || { kind: "theme" });
-    // A window's icon is the taskbar while the app is running and nothing
-    // else, which is why the one on the desktop stayed as it was. The desktop
-    // entry has to be told separately.
-    let outside = { updated: [], skipped: [] };
-    try { outside = shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher" }); }
-    catch (e) { outside = { updated: [], skipped: [String(e && e.message || e)] }; }
+    // A window's icon is the taskbar and nothing else, which is why the one
+    // on the desktop stayed as it was. That entry is told separately, and
+    // only once the colour has settled.
+    if (desktop) updateDesktopIconSoon(png);
     return {
       success: true,
       dataUrl: "data:image/png;base64," + png.toString("base64"),
-      desktop: outside.updated.length,
-      desktopNote: outside.updated.length ? null : (outside.skipped[0] || null),
     };
   } catch (e) {
     return { success: false, error: String(e && e.message || e) };

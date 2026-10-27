@@ -45,6 +45,7 @@ html[data-smoothing="smooth"] {
   --app-bg-size: auto;
   --app-bg-repeat: no-repeat;
   --app-bg-render: auto;
+  --app-bg-attach: fixed;
   /* What a sticky header paints.
      A sticky strip has to be opaque or the rows scroll past behind it, and it
      was painted in the panel's own dark shade -- a solid block that hid the
@@ -717,7 +718,10 @@ html.custom-bg {
   background-size: var(--app-bg-size);
   background-repeat: var(--app-bg-repeat);
   background-position: center center;
-  background-attachment: fixed;
+  /* Whether the background travels with the page as it scrolls, or stays put
+     behind it. A tiled block wall reads very differently each way, so it is a
+     setting rather than a decision. */
+  background-attachment: var(--app-bg-attach, fixed);
   image-rendering: var(--app-bg-render);
 }
 
@@ -1771,7 +1775,9 @@ body.app-offline [data-needs-net] {
   opacity: 0.75;
 }
 
-.tabstrip > button:hover { opacity: 1; background: color-mix(in srgb, var(--text-color) 10%, transparent); }
+/* No colour change on hover: the only thing a tab's background should
+   ever mean is "this is the one you are on". */
+.tabstrip > button:hover { opacity: 1; }
 .tabstrip > button.active { opacity: 1; font-weight: bold; background: none; }
 
 /* The fallback, for before tabstrip.js has measured anything. */
