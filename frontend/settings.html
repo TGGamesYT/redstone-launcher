@@ -18,6 +18,7 @@
   <script src="pixelart.js"></script>
   <script src="blockrender.js"></script>
   <script src="modelpicker.js"></script>
+  <script src="iconpicker.js"></script>
   <script src="versionicon.js"></script>
   <style>
     .settings-container {
@@ -688,10 +689,12 @@
       <div class="appicon-row">
         <img id="app-icon-preview" alt="">
         <div class="appicon-btns">
-          <button type="button" id="app-icon-pick"
-            data-tip="Use a picture of your own instead of the launcher's own icon. It is saved with the theme, like the colours are.">Use a picture…</button>
+          <button type="button" id="app-icon-choose"
+            data-tip="The same icons an instance can have: a block, an item, a mob render, a block's face, or a picture of your own.">Choose an icon…</button>
           <button type="button" id="app-icon-theme" style="display:none;"
             data-tip="Go back to the launcher's own icon, which is tinted to the base colour and follows it from then on.">Back to the launcher's icon</button>
+          <label class="setting-toggle" style="margin-top:4px;"
+            data-tip="Fills the parts of the launcher's icon that have no colour of their own with the block your background is made of, keeping its light and shade. Redone whenever the block changes."><input type="checkbox" id="app-icon-merge"> Show the background's block through it</label>
         </div>
       </div>
 
@@ -1700,13 +1703,28 @@
         if (r && r.success) { iconPreview.src = r.dataUrl; showIconMode(false); if (window.notify) notify('Back to the launcher\'s icon', 'success'); }
         else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
       });
-      document.getElementById('app-icon-pick').addEventListener('click', async () => {
-        const pick = await ipcRenderer.invoke('pick-image', { title: 'Choose an app icon' });
-        if (!pick || pick.canceled) return;
-        if (pick.error) { if (window.notify) notify(pick.error, 'error'); return; }
-        const r = await ipcRenderer.invoke('icon:setApp', { icon: { kind: 'image', dataUrl: pick.dataUrl } });
-        if (r && r.success) { iconPreview.src = r.dataUrl; showIconMode(true); if (window.notify) notify('Icon changed', 'success'); }
-        else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
+      // The same picker an instance's icon uses -- the bundled blocks, a
+      // rendered item, block or mob, a block's face, or a picture of your
+      // own. It used to be a file dialog and nothing else.
+      document.getElementById('app-icon-choose').addEventListener('click', () => {
+        if (!window.IconPicker) return;
+        window.IconPicker.open({
+          onPick: async (dataUrl) => {
+            if (!dataUrl) return;
+            const r = await ipcRenderer.invoke('icon:setApp', { icon: { kind: 'image', dataUrl } });
+            if (r && r.success) { iconPreview.src = r.dataUrl; showIconMode(true); if (window.notify) notify('Icon changed', 'success'); }
+            else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
+          },
+        });
+      });
+
+      const iconMerge = document.getElementById('app-icon-merge');
+      ipcRenderer.invoke('icon:app').then((r) => {
+        iconMerge.checked = !!((r && r.icon) || {}).mergeBlock;
+      }).catch(() => { });
+      iconMerge.addEventListener('change', async () => {
+        const r = await ipcRenderer.invoke('icon:setMergeBlock', { on: iconMerge.checked });
+        if (r && r.success && r.dataUrl) iconPreview.src = r.dataUrl;
       });
       // Changing the base colour re-tints the preview, since that is the
       // colour the icon's coloured parts follow -- unless a picture of your

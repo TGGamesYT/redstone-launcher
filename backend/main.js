@@ -1445,10 +1445,11 @@ ipcMain.on('save-settings', (event, newsettings) => {
   // An icon that follows the theme has to actually follow it: changing the
   // base colour -- by hand, by picking a preset, or by applying a saved
   // theme -- re-tints it there and then, rather than waiting to be asked.
-  if (color !== wasBase) {
-    const icon = settings.get('appIcon', null) || { kind: 'theme' };
-    if (icon.kind !== 'image') retintAppIconSoon();
-  }
+  const icon = settings.get('appIcon', null) || { kind: 'theme' };
+  // The block the icon borrows from is the background's, so changing that
+  // changes the icon too -- when it has been asked to.
+  const blockChanged = icon.mergeBlock && newsettings && newsettings.background;
+  if ((color !== wasBase || blockChanged) && icon.kind !== 'image') retintAppIconSoon();
 });
 
 // A colour picker reports every step of a drag, and each one used to re-tint
@@ -5582,6 +5583,50 @@ async function retintIcon(hex) {
   return sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
 }
 
+// The theme's block, through the icon's uncoloured parts.
+//
+// retintIcon above turns what is RED in the icon to the theme's colour and
+// deliberately leaves the greys alone, because a grey has no hue to turn.
+// This fills those greys in with whatever block the background is made of,
+// keeping each pixel's own shading so the icon still reads as an icon rather
+// than a flat sticker.
+async function mergeBlockIntoIcon(iconPng, blockDataUrl) {
+  if (!blockDataUrl) return iconPng;
+  const { data, info } = await sharp(iconPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  // The texture stretched over the icon, kept sharp -- it is sixteen pixels
+  // across and the icon is two hundred and fifty-six.
+  const tex = await sharp(fromDataUrl(blockDataUrl))
+    .resize(info.width, info.height, { kernel: "nearest" })
+    .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const out = Buffer.from(data);
+  for (let i = 0; i < out.length; i += 4) {
+    if (out[i + 3] < 8) continue;                      // see-through stays so
+    const [, sat, lit] = rgbToHsl(out[i], out[i + 1], out[i + 2]);
+    if (sat >= 0.25) continue;                         // a coloured part: the theme's
+    if (tex.data[i + 3] < 8) continue;                 // a hole in the texture
+    // The texture's colour, carrying this pixel's own light and shade: the
+    // icon's edges and highlights survive instead of being painted flat.
+    const [th, ts] = rgbToHsl(tex.data[i], tex.data[i + 1], tex.data[i + 2]);
+    const [, , tl] = rgbToHsl(tex.data[i], tex.data[i + 1], tex.data[i + 2]);
+    const [r2, g2, b2] = hslToRgb(th, ts, clamp01(tl * 0.55 + lit * 0.45));
+    out[i] = r2; out[i + 1] = g2; out[i + 2] = b2;
+  }
+  return sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+}
+
+// What the icon should be made of right now: the launcher's own mark, tinted
+// to the theme, with the background block merged in when that is asked for.
+async function themedIconPng() {
+  let png = await retintIcon(settings.get("baseColor", "#b30c0c"));
+  const icon = settings.get("appIcon", null) || {};
+  if (icon.mergeBlock) {
+    const bg = settings.get("background", null) || {};
+    const url = bg.block && bg.block.url;
+    if (url) { try { png = await mergeBlockIntoIcon(png, url); } catch { /* the plain one will do */ } }
+  }
+  return png;
+}
+
 // Put an icon on the windows and remember it. `icon` is either
 // { kind: 'theme' } or { kind: 'image', dataUrl }.
 // Writing the shortcut on the desktop means an .ico, a PowerShell run per
@@ -5609,7 +5654,7 @@ async function applyAppIcon(icon, { desktop = true } = {}) {
       const b64 = String(icon.dataUrl).replace(/^data:image\/[\w+.-]+;base64,/, "");
       png = await sharp(Buffer.from(b64, "base64")).resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
     } else {
-      png = await retintIcon(settings.get("baseColor", "#b30c0c"));
+      png = await themedIconPng();
     }
     fs.writeFileSync(ICON_OUT(), png);
     // The window icon IS the taskbar button while the app is running, so this
@@ -5618,7 +5663,11 @@ async function applyAppIcon(icon, { desktop = true } = {}) {
     for (const w of BrowserWindow.getAllWindows()) {
       try { if (!w.isDestroyed()) w.setIcon(img); } catch { /* not every platform takes one */ }
     }
-    settings.set("appIcon", icon || { kind: "theme" });
+    // `mergeBlock` is a preference about the icon rather than a kind of
+    // icon, so switching between the launcher's own mark and a picture of
+    // your own must not quietly forget it.
+    const was = settings.get("appIcon", null) || {};
+    settings.set("appIcon", { mergeBlock: !!was.mergeBlock, ...(icon || { kind: "theme" }) });
     // A window's icon is the taskbar and nothing else, which is why the one
     // on the desktop stayed as it was. That entry is told separately, and
     // only once the colour has settled.
@@ -5638,10 +5687,25 @@ ipcMain.handle("icon:app", () => ({
   file: fs.existsSync(ICON_OUT()) ? ICON_OUT() : null,
 }));
 ipcMain.handle("icon:setApp", async (event, { icon } = {}) => applyAppIcon(icon));
+// Whether the background's block shows through the icon's uncoloured parts.
+ipcMain.handle("icon:setMergeBlock", async (event, { on } = {}) => {
+  const icon = settings.get("appIcon", null) || { kind: "theme" };
+  settings.set("appIcon", { ...icon, mergeBlock: !!on });
+  if (icon.kind === "image") return { success: true, dataUrl: icon.dataUrl || null };
+  return applyAppIcon({ ...icon, mergeBlock: !!on });
+});
 // What the icon would look like for a colour, without committing to it.
-ipcMain.handle("icon:previewApp", async (event, { color } = {}) => {
+ipcMain.handle("icon:previewApp", async (event, { color, mergeBlock } = {}) => {
   try {
-    const png = await retintIcon(color || settings.get("baseColor", "#b30c0c"));
+    let png = await retintIcon(color || settings.get("baseColor", "#b30c0c"));
+    const want = mergeBlock == null
+      ? !!((settings.get("appIcon", null) || {}).mergeBlock)
+      : !!mergeBlock;
+    if (want) {
+      const bg = settings.get("background", null) || {};
+      const url = bg.block && bg.block.url;
+      if (url) { try { png = await mergeBlockIntoIcon(png, url); } catch { /* plain, then */ } }
+    }
     return { success: true, dataUrl: "data:image/png;base64," + png.toString("base64") };
   } catch (e) { return { success: false, error: String(e && e.message || e) }; }
 });

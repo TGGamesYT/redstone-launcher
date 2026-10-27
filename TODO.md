@@ -42,10 +42,16 @@ because most of these are things the last few rounds broke or left half done.
 - [x] **"Match the theme" is a toggle now.** — *Pressed once, it left the
       theme on the old block's colours as soon as you chose another. While the
       toggle is on they are re-taken whenever the block or picture changes.*
-- [ ] **The launcher's icon should offer what an instance's icon offers** — the
-      item, block and entity renders, and the block-face pictures.
-- [ ] **And a toggle to merge the theme's block into the icon's uncoloured
-      parts**, re-done whenever it changes.
+- [x] **The launcher's icon offers what an instance's offers.** — *The same
+      picker: the bundled blocks, a rendered item, block or mob, a block's
+      face, or a picture of your own. It was a file dialog and nothing else.*
+- [x] **A toggle to merge the theme's block into the icon's uncoloured
+      parts.** — *The re-tint turns what is RED in the icon and leaves the
+      greys alone, because a grey has no hue to turn. This fills those greys
+      with the block the background is made of, keeping each pixel's own light
+      and shade so it still reads as an icon rather than a flat sticker. Redone
+      when the block or the colour changes, and kept across switching to a
+      picture of your own and back.*
 
 ### The home page
 - [x] **Nothing can change how big the contents of a segment are.** — *Every
