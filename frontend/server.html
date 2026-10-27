@@ -241,6 +241,7 @@
       </div>
       <div class="srv-tabs tabstrip">
         <button class="srv-tab active" data-tab="console">Console</button>
+        <button class="srv-tab" data-tab="join">Join</button>
         <button class="srv-tab" data-tab="files">Files</button>
         <button class="srv-tab" data-tab="mods" id="srvModsTab" style="display:none;">Mods</button>
         <button class="srv-tab" data-tab="resourcepacks">Resource Packs</button>
@@ -251,6 +252,11 @@
           <input id="cmdInput" placeholder="say hello" />
           <button id="sendCmdBtn">Send</button>
         </div>
+      </div>
+      <!-- Which of your instances could play on this server, and what to make
+           if none of them can. Drawn by frontend/join.js. -->
+      <div class="srv-panel" data-panel="join">
+        <div id="joinBody" style="flex:1; min-height:0; overflow-y:auto; padding-right:4px;"></div>
       </div>
       <div class="srv-panel" data-panel="files">
         <div class="tab-action-bar" style="display:flex; gap:6px; margin-bottom:8px;">
@@ -503,7 +509,13 @@
         restart.innerHTML = `<i class="material-icons">restart_alt</i>`;
         restart.title = 'Restart';
         restart.onclick = async (e) => { e.stopPropagation(); await ipcRenderer.invoke('restart-server', s.name); openDetail(s); };
-        actions.append(toggle, restart);
+        // Playing on it is a different thing from running it, so it gets its
+        // own button rather than being buried a tab deep.
+        const join = document.createElement('button');
+        join.innerHTML = `<i class="material-icons">sports_esports</i>`;
+        join.title = 'Join this server';
+        join.onclick = (e) => { e.stopPropagation(); openDetail(s, false, 'join'); };
+        actions.append(join, toggle, restart);
         li.appendChild(actions);
 
         li.onclick = () => openDetail(s);
@@ -521,11 +533,14 @@
 
     // ---------- Detail ----------
     let detailStatusTimer = null;
-    async function openDetail(server, fromHistory) {
+    // `tab` opens the detail on something other than the console -- the Join
+    // button in the list goes straight to the Join tab.
+    async function openDetail(server, fromHistory, tab) {
       const already = !!selectedServer;
       selectedServer = server;
       // Push a history entry so the toolbar Back button returns to the list.
-      if (!fromHistory) history.pushState({ srvDetail: server.name }, '', location.pathname + '?srv=' + encodeURIComponent(server.name));
+      if (!fromHistory) history.pushState({ srvDetail: server.name, tab: tab || undefined }, '',
+        location.pathname + '?srv=' + encodeURIComponent(server.name) + (tab ? '&tab=' + encodeURIComponent(tab) : ''));
       $('serverListView').style.display = 'none';
       $('serverDetail').style.display = 'flex';
       $('srvDetailIcon').src = instanceIcon(server.icon);
@@ -534,8 +549,9 @@
       // Modded server types (Fabric/Forge/Quilt) get a Mods tab automatically.
       const modded = ['fabric', 'forge', 'quilt', 'neoforge'].includes((server.type || '').toLowerCase());
       $('srvModsTab').style.display = modded ? '' : 'none';
-      // Always land on the Console tab when (re)opening a server.
-      selectTab('console');
+      // Always land on the Console tab when (re)opening a server, unless the
+      // way in asked for a particular one.
+      selectTab(tab || 'console');
       setTimeout(() => { const c = $('cmdInput'); if (c && $('serverDetail').style.display !== 'none') c.focus(); }, 80);
       refreshDetailStatus();
       startConsolePolling();
@@ -613,6 +629,7 @@
       if (name === 'console') setTimeout(() => { const c = $('cmdInput'); if (c) c.focus(); }, 40);
       if (name === 'mods') loadServerMods();
       if (name === 'resourcepacks') loadServerPacks();
+      if (name === 'join' && selectedServer && window.ServerJoin) window.ServerJoin.render(selectedServer.name, $('joinBody'));
       if (push && selectedServer) {
         const u = location.pathname + '?srv=' + encodeURIComponent(selectedServer.name) + '&tab=' + encodeURIComponent(name);
         history.pushState({ srvDetail: selectedServer.name, tab: name }, '', u);
@@ -634,6 +651,9 @@
       await ipcRenderer.invoke('start-server', name);
       return true;
     }
+    // The Join tab starts the server before sending the game at it, and the
+    // EULA prompt belongs to this page.
+    window.startServerChecked = startServerChecked;
     $('dToggle').onclick = async () => {
       const running = $('dToggle').dataset.running === '1';
       if (running) await ipcRenderer.invoke('stop-server', selectedServer.name);
@@ -1377,7 +1397,9 @@
       const srv = params.get('srv');
       if (srv) {
         const s = servers.find(x => x.name === srv);
-        if (s) { openDetail(s, true); if (params.get('action') === 'start') startServerChecked(s.name).then(() => setTimeout(refreshDetailStatus, 800)); }
+        // The tab in the link was being dropped, so a back-button URL or a
+        // shortcut naming one always landed on the console.
+        if (s) { openDetail(s, true, params.get('tab') || undefined); if (params.get('action') === 'start') startServerChecked(s.name).then(() => setTimeout(refreshDetailStatus, 800)); }
       }
     })();
     setInterval(() => { if (!selectedServer) loadServers(); }, 4000);
@@ -1386,6 +1408,7 @@
     updatePresence('Managing servers');
   </script>
   <script src="eventservers.js"></script>
+  <script src="join.js"></script>
   <script src="filetree.js"></script>
   <!-- This page has its own inline files explorer; FileBrowser is here for
        Remod's "Edit assets", which mounts it on the unpacked archive. -->

@@ -135,16 +135,37 @@ because most of these are things the last few rounds broke or left half done.
 ## 0. Round 37
 
 ### Joining a server
-- [ ] **A Join button on a server**, opening its details on a new Join tab.
-- [ ] **That tab lists the instances that could join it**, or makes one, the
-      way installing a mod does.
-- [ ] **Only compatible instances are offered** — a vanilla or plugin server
-      wants its own version unless the server has ViaVersion/ViaBackwards or
-      the instance has ViaFabricPlus; a modded server wants the loader, the
-      version and the same mods.
-- [ ] **With a "join anyway" on every instance** regardless.
-- [ ] **An instance made for a modded server gets that loader, that version
-      and exactly those mods.**
+- [x] **A Join button on a server.** — *Beside the start and restart buttons
+      in the list, because playing on a server is a different thing from
+      running it and was not worth a tab's depth. It opens that server on the
+      Join tab, and the tab is in the address, so Back comes back to it — the
+      page was dropping the tab out of its own links.*
+- [x] **That tab lists the instances that could join it**, or makes one. —
+      *Every instance, in two lists: the ones that can get in, and the ones
+      that would not, each with the reason named. "Incompatible" on its own
+      says nothing about what to do next.*
+- [x] **Only compatible instances are offered.** — *Worked out in
+      `backend/server-join.js`, against what actually stops a join. A version
+      gap is bridged by ViaVersion on the server for a newer client and
+      ViaBackwards for an older one — which way round it is matters, and the
+      launcher says which end is doing the work — or by ViaFabricPlus and the
+      like in the instance. A modded server wants its loader (Quilt reads
+      Fabric mods, so that one crosses; Forge and NeoForge do not), its
+      version, and its mods, matched on the mod id out of the jar rather than
+      the file name, since the same mod is named differently in every pack. A
+      mod that says it is server-only is not asked of the client.*
+- [x] **With a "join anyway" on every instance** regardless. — *All of this is
+      read off file names and jar metadata, which can be wrong, so the
+      launcher does not get the last word on what you may try. Where the
+      reason is a fixable one — the server has mods you have not got — there
+      is also a button that copies them across, off the server itself rather
+      than downloading them again, which could land on a different build than
+      the server runs.*
+- [x] **An instance made for a modded server gets that loader, that version
+      and exactly those mods.** — *Its loader build too, so it is pinned to
+      what the mods were run against. Joining also starts the server if it is
+      stopped and waits for it to say it is ready, rather than firing the game
+      at a port nothing is listening on yet.*
 
 ### Event servers
 - [x] **A described server that sets itself up.** — *All of it, in

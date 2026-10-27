@@ -16,6 +16,7 @@ import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
 import serverManager from './serverManager.js';
 import eventServers from './event-server.js';
+import serverJoin from './server-join.js';
 import upnp from './upnp.js';
 import relayClient from './relayClient.js';
 import fileManager from './fileManager.js';
@@ -8072,14 +8073,17 @@ function readJarMeta(filePath) {
       const j = JSON.parse(zip.readAsText(fabric).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ""));
       if (j.quilt_loader) {
         const q = j.quilt_loader;
-        return { name: q.metadata?.name || q.id || null, version: q.version || null, authors: jarAuthorsToString(q.metadata?.contributors), icon: fabricIconPath(q.metadata?.icon) };
+        return { id: q.id || null, name: q.metadata?.name || q.id || null, version: q.version || null, authors: jarAuthorsToString(q.metadata?.contributors), icon: fabricIconPath(q.metadata?.icon), environment: q.minecraft?.environment || j.minecraft?.environment || null };
       }
-      return { name: j.name || j.id || null, version: j.version || null, authors: jarAuthorsToString(j.authors), icon: fabricIconPath(j.icon) };
+      // `environment` is the mod saying which side it belongs on. Whether a
+      // client needs a copy of a server's mod hangs on it.
+      return { id: j.id || null, name: j.name || j.id || null, version: j.version || null, authors: jarAuthorsToString(j.authors), icon: fabricIconPath(j.icon), environment: j.environment || null };
     }
     const toml = zip.getEntry("META-INF/mods.toml") || zip.getEntry("META-INF/neoforge.mods.toml");
     if (toml) {
       const t = zip.readAsText(toml);
       const name = (t.match(/displayName\s*=\s*["'](.*?)["']/) || [])[1] || null;
+      const id = (t.match(/modId\s*=\s*["'](.*?)["']/) || [])[1] || null;
       let version = (t.match(/\bversion\s*=\s*["'](.*?)["']/) || [])[1] || null;
       const authors = (t.match(/authors\s*=\s*["'](.*?)["']/) || [])[1] || null;
       const icon = (t.match(/logoFile\s*=\s*["'](.*?)["']/) || [])[1] || null;
@@ -8090,12 +8094,13 @@ function readJarMeta(filePath) {
           if (mv) version = mv.trim();
         }
       }
-      return { name, version, authors, icon };
+      return { id, name, version, authors, icon };
     }
     const yml = zip.getEntry("plugin.yml") || zip.getEntry("paper-plugin.yml");
     if (yml) {
       const y = zip.readAsText(yml);
       return {
+        id: (y.match(/^name:\s*(.*)$/m) || [])[1]?.trim() || null,
         name: (y.match(/^name:\s*(.*)$/m) || [])[1]?.trim() || null,
         version: (y.match(/^version:\s*["']?(.*?)["']?\s*$/m) || [])[1]?.trim() || null,
         authors: (y.match(/^author:\s*(.*)$/m) || [])[1]?.trim() || null
@@ -10572,6 +10577,151 @@ ipcMain.handle("server-mods:info", async (event, { name, dir }) => {
     for (const f of fs.readdirSync(iconsDir)) if (!keep.has(f)) fs.unlinkSync(path.join(iconsDir, f));
   } catch { /* no cache dir yet */ }
   return out;
+});
+
+/* ─────────────── Joining a server ───────────────
+ * Which of your instances could get into one of your servers, why the rest
+ * could not, and what to build if none of them can. The judging itself is in
+ * backend/server-join.js; everything here is the gathering of facts it needs.
+ */
+
+// The jars actually in a folder, each with whatever its own metadata says it
+// is. Disabled jars are left out of both sides: a mod that is not loaded is
+// not one the server requires, and not one the client has.
+async function jarsIn(dir) {
+  const out = [];
+  let files = [];
+  try { files = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  let since = 0;
+  for (const d of files) {
+    if (d.isDirectory() || !/\.jar$/i.test(d.name)) continue;
+    // Opening jars is synchronous, and a big modpack has hundreds of them.
+    if (++since >= 4) { since = 0; await new Promise(r => setImmediate(r)); }
+    const meta = readJarMeta(path.join(dir, d.name)) || {};
+    out.push({
+      filename: d.name, id: meta.id || null, name: meta.name || null,
+      version: meta.version || null, environment: meta.environment || null,
+    });
+  }
+  return out;
+}
+
+// Everything the Join tab shows: the server, each instance with its verdict,
+// and what making one for this server would amount to.
+ipcMain.handle("join:options", async (event, { name } = {}) => {
+  try {
+    const info = serverManager.getServerInfo(name);
+    if (!info || !info.version) return { success: false, error: "No such server" };
+    const root = serverRoot(name);
+    const server = {
+      name: info.name, type: info.type, version: info.version,
+      loaderVersion: info.loaderVersion || "",
+      mods: await jarsIn(path.join(root, "mods")),
+      plugins: await jarsIn(path.join(root, "plugins")),
+    };
+    const profiles = await loadProfiles();
+    const instances = [];
+    for (const p of profiles) {
+      if (!p || !p.id) continue;
+      const inst = {
+        loader: p.loader || "vanilla", version: p.version || "",
+        mods: await jarsIn(path.join(clientRoot(p.id), "mods")),
+      };
+      const v = serverJoin.judge(server, inst);
+      instances.push({
+        id: p.id, name: p.name, icon: p.icon || null,
+        loader: inst.loader, version: inst.version,
+        level: v.level, reasons: v.reasons, notes: v.notes,
+        missing: v.missing.map(m => ({ name: m.name || m.filename, filename: m.filename })),
+      });
+    }
+    // The ones that can join first, then the rest -- the whole point of the
+    // tab is the answer to "which of these works".
+    instances.sort((a, b) => (a.level === "no") - (b.level === "no") || String(a.name).localeCompare(String(b.name)));
+    const port = info.port || 25565;
+    return {
+      success: true,
+      server: {
+        name: info.name, type: info.type, version: info.version,
+        port, status: info.status, icon: info.icon || null,
+        kind: serverJoin.serverKind(info.type),
+        mods: server.mods.length, plugins: server.plugins.length,
+      },
+      // Its own machine, so its own address. A server shared over the relay is
+      // still reached locally from here, and by the shorter route.
+      address: `localhost:${port}`,
+      plan: serverJoin.planFor(server),
+      instances,
+    };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
+// Copy jars out of the server into an instance. The server's own files, not
+// another download of them: a mod fetched again today can be a different build
+// than the one the server is running, which is the thing being avoided.
+function copyServerJars(name, profileId, filenames) {
+  const from = path.join(serverRoot(name), "mods");
+  const to = path.join(clientRoot(profileId), "mods");
+  fs.mkdirSync(to, { recursive: true });
+  const copied = [], failed = [];
+  for (const f of filenames || []) {
+    // Only ever a file in that folder, never a path out of it.
+    if (!f || f !== path.basename(f)) continue;
+    const src = path.join(from, f);
+    try {
+      if (!fs.existsSync(src)) { failed.push(f); continue; }
+      fs.copyFileSync(src, path.join(to, f));
+      copied.push(f);
+    } catch { failed.push(f); }
+  }
+  return { copied, failed };
+}
+
+// An instance built for this server and nothing else: its loader, its loader
+// build, its version, its mods.
+ipcMain.handle("join:make", async (event, { name, instanceName } = {}) => {
+  try {
+    const info = serverManager.getServerInfo(name);
+    if (!info || !info.version) return { success: false, error: "No such server" };
+    const root = serverRoot(name);
+    const plan = serverJoin.planFor({
+      type: info.type, version: info.version, loaderVersion: info.loaderVersion || "",
+      mods: await jarsIn(path.join(root, "mods")),
+    });
+    const wanted = String(instanceName || "").trim() || `${info.name} (join)`;
+    const id = getUniqueFolderName(wanted);
+    fs.mkdirSync(clientRoot(id), { recursive: true });
+    const profiles = await loadProfiles();
+    profiles.push({
+      id, name: wanted,
+      version: plan.version, loader: plan.loader, loaderVersion: plan.loaderVersion,
+      icon: info.icon || null,
+      alwaysUpdate: false, autoUpdateVersion: false, launchArgs: "",
+      ramMin: null, ramMax: null,
+      // Which server it was built for, so the Join tab can say so next time.
+      joinServer: info.name,
+      created: Date.now(), lastUsed: Date.now(),
+    });
+    saveProfiles(profiles);
+    const { copied, failed } = copyServerJars(name, id, plan.mods);
+    try { event.sender.send("profiles-updated", await loadProfiles()); } catch { /* ignore */ }
+    return { success: true, profileId: id, copied: copied.length, failed };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+});
+
+// The one thing a verdict of "no" can offer to fix: put the server's mods into
+// an instance that is otherwise right for it.
+ipcMain.handle("join:addMods", async (event, { name, profileId, filenames } = {}) => {
+  try {
+    const { copied, failed } = copyServerJars(name, profileId, filenames);
+    return { success: true, copied: copied.length, failed };
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
 });
 
 ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
