@@ -13344,7 +13344,9 @@ async function skinByTextureHash(hash) {
 // here any more, but the hat is still composited on its own so that stays true
 // if anything ever does.
 async function headFromSkin(skinPng) {
-  const src = sharp(skinPng).ensureAlpha();
+  // Some Linux libvips builds leave PNGs without an assigned colourspace;
+  // extraction/compositing then fails instead of producing the small head.
+  const src = sharp(skinPng).toColourspace("srgb").ensureAlpha();
   const meta = await src.metadata();
   const scale = (meta.width || 0) / 64;
   if (!scale || scale !== Math.floor(scale)) {
@@ -13362,8 +13364,9 @@ async function headFromSkin(skinPng) {
   // way. A failure to read it just means a bare face.
   try {
     if (await hasUsableOverlay(skinPng, meta, scale)) {
-      const hat = await sharp(skinPng).ensureAlpha().extract(at(HAT_RECT)).png().toBuffer();
-      merged = await sharp(face).composite([{ input: hat, blend: "over" }]).png().toBuffer();
+      const hat = await sharp(skinPng).toColourspace("srgb").ensureAlpha().extract(at(HAT_RECT)).png().toBuffer();
+      merged = await sharp(face).toColourspace("srgb")
+        .composite([{ input: hat, blend: "over" }]).png().toBuffer();
     }
   } catch { /* no hat layer */ }
 
@@ -13380,7 +13383,7 @@ async function headFromSkin(skinPng) {
 // overlay meant it.
 async function hasUsableOverlay(skinPng, meta, scale) {
   if ((meta.height || 0) / scale !== 32) return true;      // not a legacy sheet
-  const px = await sharp(skinPng).ensureAlpha()
+  const px = await sharp(skinPng).toColourspace("srgb").ensureAlpha()
     .extract({ left: 32 * scale, top: 0, width: 32 * scale, height: 32 * scale })
     .raw().toBuffer();
   for (let i = 3; i < px.length; i += 4) if (px[i] < 255) return true;
