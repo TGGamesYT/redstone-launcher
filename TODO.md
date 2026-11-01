@@ -14,20 +14,28 @@ started.
 The newest batch, in the order it was given.
 
 ### The resource pack tools
-- [ ] **A generated pack does not appear as an ordinary resource pack**, which
-      is what it is.
-- [ ] **The totem pack shows no icon** until Generate is clicked, and still
-      none when the tools are reopened.
-- [ ] **The pack it writes does not use the online tool's `pack.mcmeta`.**
-      Exactly these are needed for every version to read it as compatible
-      (the description is free):
-      `{"pack":{"description":"...","pack_format":15,`
-      `"supported_formats":{"min_inclusive":15,"max_inclusive":999},`
-      `"min_format":15,"max_format":999}}`
-- [ ] **The Vanilla Tweaks one has no icon.**
-- [ ] **Picking Vanilla Tweaks packs should look like choosing an instance's
-      version** — toggles with the site's own preview pictures and icons
-      beside them, not a list of names.
+- [x] **A generated pack does not appear as an ordinary resource pack.** —
+      *It was in the folder and in the launcher's list all along; the game
+      was refusing it. See the `pack.mcmeta` item below — the same cause.*
+- [x] **The totem pack shows no icon.** — *The tool now draws the totem it
+      WOULD make the moment it opens, and redraws it when another skin is
+      picked. It is not a picture of the result: it is the result, built the
+      same way and not written anywhere.*
+- [x] **The pack it writes uses the online tool's `pack.mcmeta`.** —
+      *Exactly those values. `pack_format` was 1, which is the only key the
+      game read before 1.20.2 and has to BE a format it knows, so every
+      modern client filed the pack under "Incompatible"; and a ceiling of 100
+      without min_format/max_format is the "missing mandatory fields" the
+      game logs.*
+- [x] **The Vanilla Tweaks one has no icon.** — *Their logo, and the packs
+      already chosen shown as their own icons rather than only counted.*
+- [x] **Picking Vanilla Tweaks packs looks like choosing a version.** — *A
+      grid of cards carrying their own preview of each pack, animated where
+      they say it is animated, with the pack's icon in the corner. Each
+      picture is fetched only once its card comes into view: hundreds of
+      packs at a few hundred kilobytes each. Their warnings are kept, and two
+      packs they call incompatible are marked once both are on — marked, not
+      refused.*
 
 ### The main page
 - [ ] **Adding or changing a segment still redraws the ones already drawn.**
@@ -62,62 +70,93 @@ The newest batch, in the order it was given.
 - [ ] **Shrinking a row makes the next one curl up into it.**
 
 ### The mod browser
-- [ ] **A Modrinth creator's page calls the server type
-      `MINECRAFT_JAVA_SERVER`**, where the browser itself has it right.
+- [x] **A Modrinth creator's page named the server type
+      `MINECRAFT_JAVA_SERVER`.** — *No entry for that kind, so it fell
+      through to Modrinth's own identifier. It also handed that identifier to
+      the browser, which calls it "server".*
 
 ### The tab strips
-- [ ] **Hovering a tab still lights it up.**
+- [x] **Hovering a tab lit it up.** — *The rule said only `opacity`, which
+      left the page's blanket `button:hover` to paint the background, the
+      border and the shadow underneath. Each is turned off by name.*
 
 ### Settings
-- [ ] **"Take the theme from the picture" and "from the block" do not agree**,
-      and switching between a picture and a block does not take the theme
-      across.
-- [ ] **Changing the background does not animate.**
+- [x] **"Take the theme from the picture" and "from the block" now agree.** —
+      *They were two separate settings. It is one preference shown in both
+      panels, and switching between a picture and a block takes the theme
+      from the new one.*
+- [x] **Changing the background fades.** — *A background-image cannot be
+      transitioned, so the one leaving is held on a layer of its own and
+      faded out over the one arriving.*
 
 ### Making an instance
-- [ ] **NeoForge is missing for the 26.x versions**, stopping at 1.21.11 —
-      most likely how its version numbers are read.
-- [ ] **One modal fades out while the next is already coming up.**
-- [ ] **"More settings" leaves the blur over the modal behind it.**
+- [x] **NeoForge is back for the 26.x versions.** — *It numbers builds after
+      the Minecraft version, and the mapping insisted on a leading "1." — so
+      every 26.x version resolved to nothing and NeoForge stopped being
+      offered after 1.21.11, the last of the old numbering.*
+- [x] **One modal no longer fades out before the next comes up.** — *The
+      step leaving was removed first, leaving a blurred empty screen for the
+      whole of the incoming animation. They cross over now.*
+- [x] **"More settings" left the blur behind.** — *closeAll took the card
+      away and not the backdrop. So did making an instance.*
 
 ### The app's icon
-- [ ] **The icon was recoloured wrongly** — the parts that should keep their
-      own colour went green with the theme and have stayed green since, so
-      changing the theme no longer puts them back.
-- [ ] **"Show the background's block through it" does nothing.** It should
-      put the background's block behind the icon and keep the icon's
-      uncoloured parts over it.
-- [ ] **Build the icon from its pieces.** `frontend/assets/icon/` now has the
-      background, the gem and the cog separately: the background takes the
-      theme's base colour (a gradient, a picture or a block as well), the gem
-      the second colour, and the cog is never recoloured. The plain logo is
-      the default.
+- [x] **The icon was recoloured wrongly.** — *It worked on the finished logo
+      and told the layers apart by colour, which is a guess. It is built from
+      the three shipped layers now, and the cog comes out byte for byte as it
+      was drawn whatever the theme.*
+- [x] **"Show the background through it" does what it says.** — *It was
+      painting the block INTO the cog instead of behind the icon, which is
+      how the cog went green and stayed green. The backing now becomes the
+      block, picture or gradient behind the launcher, with the icon over it.*
+- [x] **The icon is built from its pieces.** — *Backing from the base colour
+      (or the theme's gradient), gem from the second colour, cog untouched.
+      Recolouring keeps each pixel's own light and shade, so a grey, white or
+      black theme works as well as a red one. It is also rebuilt when the
+      second colour or the background changes, not only the base colour.*
 
 ### Everywhere else
-- [ ] **"Scroll the wall with the page" does nothing** on any page that
-      scrolls.
-- [ ] **The example event server fails after "Ready to make the server"** —
-      `versionInfo.builds is not iterable` while making `paper-latest 26.3`.
-- [ ] **Making a server is not making an instance.** It should offer the
-      plugin server kinds too, not only the mod loaders, and be able to start
-      from a plugin the way an instance starts from a mod.
-- [ ] **Going through the creator to make a server opens the old create-server
-      modal instead of making it**, with the blur still over it.
-- [ ] **Making an instance leaves the blur behind too.**
-- [ ] **Installing a resource pack only offers "compatible" ones.** Resource
-      packs do not work that way — any version's should be installable.
-- [ ] **`genPacks is not defined`** in `createContentCard`, which breaks the
-      instance's content tabs.
-- [ ] **The game sometimes dies with 3221225477** — opening singleplayer,
-      joining a world. The log before it is full of
-      `Suppressed ZIP exception loading PNG …: incorrect data check`.
-- [ ] **Drop the graphics-driver line from the crash report.** It is a guess,
-      and wrong for almost every crash it is printed for.
-- [ ] **"Run again" puts both copies' logs in one window.** A strip above it
-      should pick which process, naming when each was started.
-- [ ] **Tidy the moved files**: `frontend/old/` if nothing uses it, and the
-      icons left loose in `frontend/` now that they live in
-      `frontend/assets/icon/`.
+- [x] **"Scroll the wall with the page" does something now.** — *It could
+      not have: the background is on <html>, whose background is the canvas's,
+      and the canvas never scrolls here. It is painted on the containers that
+      really do scroll, with `local`.*
+- [x] **The example event server failed after "Ready to make the server".** —
+      *PaperMC switched their old API off; it answers every request with
+      `{"ok":false,"error":"sunset"}`, so asking for a version's builds gave
+      an object with no builds in it. Moved to their new service.*
+- [x] **Making a server is not making an instance.** — *A server is asked
+      what KIND of server, and offered Paper, Purpur and Folia alongside the
+      loaders; which loaders have a build for a version no longer takes those
+      away with it. Its search looks for plugins on both sites, and whatever
+      it started from is installed into the server once it exists.*
+- [x] **Going through the creator now makes the server.** — *It reopened the
+      old form filled in, which is not what Create says it does.*
+- [x] **Making an instance left the blur behind too.** — *Same cause as
+      "More settings": closeAll did not take the backdrop.*
+- [x] **Installing a resource pack no longer demands the exact version.** —
+      *They are textures; one built for an older version loads and works.
+      Shaders too. The card says which version it was built for.*
+- [x] **`genPacks is not defined`.** — *It is built inside the tab builder
+      and the card function lives outside that scope, so reaching for it was
+      a ReferenceError that took the whole content tab down. It is passed in.*
+- [x] **The `incorrect data check` flood.** — *Downloads were written
+      straight to their destination, so a dropped connection left a truncated
+      file there looking finished — and a truncated zip gives exactly that,
+      for every texture in it, forever. They go to a .part, are checked
+      against the promised length, and are moved into place only when whole.
+      Neither the response nor the file had an error listener either, so a
+      reset mid-download was an uncaught exception in the main process.*
+      *Whether the 3221225477 crash itself is gone wants a run with the
+      corrupt packs re-downloaded; the hs_err log beside the game will name
+      the library if it is not.*
+- [x] **The graphics-driver line is gone.** — *It was a guess. The hs_err log
+      names the library that actually fell over when there is one.*
+- [x] **"Run again" put both copies' logs in one window.** — *A launch is a
+      run of its own now, with its own lines and start time, and a strip above
+      the log picks between them. Shown only when there is more than one.*
+- [x] **Tidied the moved files.** — *`frontend/old/` was referenced by
+      nothing. The loose icons are gone too, and everything that pointed at
+      them — the build included — points at `frontend/assets/icon/`.*
 
 ---
 
