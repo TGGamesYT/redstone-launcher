@@ -16,6 +16,7 @@ import { Client } from 'minecraft-launcher-core';
 import { Auth } from 'msmc';
 import serverManager from './serverManager.js';
 import eventServers from './event-server.js';
+import appIconParts from './app-icon.js';
 import serverJoin from './server-join.js';
 import upnp from './upnp.js';
 import relayClient from './relayClient.js';
@@ -1067,7 +1068,7 @@ ipcMain.handle("players:reorder", (event, { order }) => {
   } catch (err) { return { success: false, error: err.message }; }
 });
 let mainWindow;
-const iconPath = path.join(process.resourcesPath, 'frontend', 'icon.png');
+const iconPath = path.join(process.resourcesPath, 'frontend', 'assets', 'icon', 'redstone_logo.png');
 const color = settings.get('baseColor', "#FF0000");
 
 function createAdminWindow() {
@@ -1443,6 +1444,11 @@ ipcMain.handle('set-setting', (event, key, value) => {
 ipcMain.on('save-settings', (event, newsettings) => {
   let oldshouldconnect = settings.get('discordPresence', true);
   const wasBase = settings.get('baseColor', "#b30c0c");
+  // The icon's gem follows the SECOND colour and its backing can follow the
+  // background, so both of those have to be watched as well -- watching only
+  // the base colour meant changing either left the icon as it was.
+  const wasSecond = settings.get('secondaryColor', "#ff4d4d");
+  const wasBg = JSON.stringify(settings.get('background', null) || null);
   settings.set(newsettings);
   const color = settings.get('baseColor', "#FF0000");
   if (typeof mainWindow.setAccentColor === "function") {
@@ -1453,10 +1459,13 @@ ipcMain.on('save-settings', (event, newsettings) => {
   // base colour -- by hand, by picking a preset, or by applying a saved
   // theme -- re-tints it there and then, rather than waiting to be asked.
   const icon = settings.get('appIcon', null) || { kind: 'theme' };
-  // The block the icon borrows from is the background's, so changing that
-  // changes the icon too -- when it has been asked to.
-  const blockChanged = icon.mergeBlock && newsettings && newsettings.background;
-  if ((color !== wasBase || blockChanged) && icon.kind !== 'image') retintAppIconSoon();
+  const second = settings.get('secondaryColor', "#ff4d4d");
+  const bgNow = JSON.stringify(settings.get('background', null) || null);
+  // What the backing borrows from is the background, so changing that changes
+  // the icon too -- when it has been asked to, and also when the background
+  // is the gradient the backing follows anyway.
+  const bgChanged = bgNow !== wasBg && (icon.mergeBlock || /"mode":"gradient"/.test(bgNow + wasBg));
+  if ((color !== wasBase || second !== wasSecond || bgChanged) && icon.kind !== 'image') retintAppIconSoon();
 });
 
 // A colour picker reports every step of a drag, and each one used to re-tint
@@ -5781,118 +5790,75 @@ ipcMain.handle("theme:import", async () => {
 //
 // A custom picture can be used instead, and whichever is in use is saved with
 // the theme.
-const ICON_SOURCE = () => path.join(app.getAppPath(), "frontend", "icon.png");
+const ICON_DIR = () => path.join(app.getAppPath(), "frontend", "assets", "icon");
+const ICON_SOURCE = () => path.join(ICON_DIR(), appIconParts.PART_FILES.whole);
 const ICON_OUT = () => path.join(dataDir, "app-icon.png");
-// The hue of the shipped icon's red, which is the theme's own default base.
-const ICON_BASE_HUE = 0;
 
-function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  if (max === min) return [0, 0, l];
-  const d = max - min;
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-  let h;
-  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
-  else if (max === g) h = (b - r) / d + 2;
-  else h = (r - g) / d + 4;
-  return [h * 60, s, l];
+// The icon is drawn from its three layers rather than from the finished logo.
+// See backend/app-icon.js for why, and for what each layer is made of.
+const iconLayers = () => ({
+  background: path.join(ICON_DIR(), appIconParts.PART_FILES.background),
+  gem: path.join(ICON_DIR(), appIconParts.PART_FILES.gem),
+  cog: path.join(ICON_DIR(), appIconParts.PART_FILES.cog),
+});
+
+// What the launcher's own background is, as a fill for the icon's background
+// layer: the same picture, the same block, the same gradient. This is what
+// "show the background through it" means -- the icon takes the background,
+// and the cog stays over the top of it untouched.
+function backgroundAsFill() {
+  const bg = settings.get("background", null) || {};
+  const mode = String(bg.mode || "theme");
+  if (mode === "image" && bg.image && bg.image.file) {
+    try { return { kind: "texture", png: fs.readFileSync(bg.image.file), pixelated: false }; }
+    catch { return null; }
+  }
+  if (mode === "block" && bg.block && bg.block.url) {
+    try { return { kind: "texture", png: fromDataUrl(bg.block.url), pixelated: true }; }
+    catch { return null; }
+  }
+  if (mode === "gradient" && bg.gradient) {
+    return { kind: "gradient", colors: bg.gradient.colors || [], angle: bg.gradient.angle };
+  }
+  if (mode === "color" && bg.color) return { kind: "color", hex: bg.color };
+  return null;                                  // the plain panel: nothing to take
 }
-function hslToRgb(h, s, l) {
-  h = ((h % 360) + 360) % 360 / 360;
-  if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
-  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const p = 2 * l - q;
-  const hue = (t) => {
-    if (t < 0) t += 1;
-    if (t > 1) t -= 1;
-    if (t < 1 / 6) return p + (q - p) * 6 * t;
-    if (t < 1 / 2) return q;
-    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-    return p;
+
+// What each layer is filled with, for the theme as it stands.
+function iconFills({ color, mergeBlock } = {}) {
+  const base = color || settings.get("baseColor", "#b30c0c");
+  const bg = settings.get("background", null) || {};
+  let background = { kind: "color", hex: base };
+  // The base colour, "supporting gradient": when the launcher's background IS
+  // a gradient, the icon's background is that gradient.
+  if (String(bg.mode) === "gradient" && bg.gradient && (bg.gradient.colors || []).length > 1) {
+    background = { kind: "gradient", colors: bg.gradient.colors, angle: bg.gradient.angle };
+  }
+  if (mergeBlock) background = backgroundAsFill() || background;
+  return {
+    background,
+    // The gem is the second colour, and never the cog's business.
+    gem: { kind: "color", hex: settings.get("secondaryColor", "#ff4d4d") },
   };
-  return [hue(h + 1 / 3), hue(h), hue(h - 1 / 3)].map(v => Math.round(v * 255));
 }
-
-// The icon's own red, as the default base colour states it. Everything is
-// measured against this: a pixel 20 degrees round from it stays 20 degrees
-// round from whatever the theme's hue is.
-const ICON_REF = { h: 0, s: 0.874, l: 0.376 };      // #b30c0c in HSL
-const clamp01 = (v) => Math.max(0, Math.min(1, v));
-
-async function retintIcon(hex) {
-  const clean = String(hex || "#b30c0c").replace("#", "");
-  const [tr, tg, tb] = [0, 2, 4].map(i => parseInt(clean.slice(i, i + 2), 16) || 0);
-  const [targetH, targetS, targetL] = rgbToHsl(tr, tg, tb);
-  const src = ICON_SOURCE();
-  const { data, info } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const out = Buffer.from(data);
-  for (let i = 0; i < out.length; i += 4) {
-    if (out[i + 3] < 8) continue;                       // see-through, nothing to tint
-    const [h, s, l] = rgbToHsl(out[i], out[i + 1], out[i + 2]);
-    // Only what is actually red, and actually coloured: a grey has no hue to
-    // turn and turning it would paint the whole icon.
-    const away = Math.min(Math.abs(h - ICON_REF.h), 360 - Math.abs(h - ICON_REF.h));
-    if (s < 0.25 || away > 35) continue;
-    // Saturation is scaled rather than kept, which is what makes a grey,
-    // white or black theme work at all: rotating the hue towards a colour
-    // that HAS no hue did nothing, so the icon stayed red for every theme
-    // without one. A target with no saturation takes the red down to a grey
-    // of the same shade.
-    const sat = clamp01(s * (targetS / ICON_REF.s));
-    // And the lightness leans towards the target, so a white theme lightens
-    // the icon and a black one darkens it -- partway, so the shading that
-    // makes the icon readable survives.
-    const lit = clamp01(l + (targetL - ICON_REF.l) * 0.6);
-    const [r2, g2, b2] = hslToRgb(targetH + (h - ICON_REF.h), sat, lit);
-    out[i] = r2; out[i + 1] = g2; out[i + 2] = b2;
-  }
-  return sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
-}
-
-// The theme's block, through the icon's uncoloured parts.
+// What the icon should be made of right now.
 //
-// retintIcon above turns what is RED in the icon to the theme's colour and
-// deliberately leaves the greys alone, because a grey has no hue to turn.
-// This fills those greys in with whatever block the background is made of,
-// keeping each pixel's own shading so the icon still reads as an icon rather
-// than a flat sticker.
-async function mergeBlockIntoIcon(iconPng, blockDataUrl) {
-  if (!blockDataUrl) return iconPng;
-  const { data, info } = await sharp(iconPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  // The texture stretched over the icon, kept sharp -- it is sixteen pixels
-  // across and the icon is two hundred and fifty-six.
-  const tex = await sharp(fromDataUrl(blockDataUrl))
-    .resize(info.width, info.height, { kernel: "nearest" })
-    .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const out = Buffer.from(data);
-  for (let i = 0; i < out.length; i += 4) {
-    if (out[i + 3] < 8) continue;                      // see-through stays so
-    const [, sat, lit] = rgbToHsl(out[i], out[i + 1], out[i + 2]);
-    if (sat >= 0.25) continue;                         // a coloured part: the theme's
-    if (tex.data[i + 3] < 8) continue;                 // a hole in the texture
-    // The texture's colour, carrying this pixel's own light and shade: the
-    // icon's edges and highlights survive instead of being painted flat.
-    const [th, ts] = rgbToHsl(tex.data[i], tex.data[i + 1], tex.data[i + 2]);
-    const [, , tl] = rgbToHsl(tex.data[i], tex.data[i + 1], tex.data[i + 2]);
-    const [r2, g2, b2] = hslToRgb(th, ts, clamp01(tl * 0.55 + lit * 0.45));
-    out[i] = r2; out[i + 1] = g2; out[i + 2] = b2;
-  }
-  return sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
-}
-
-// What the icon should be made of right now: the launcher's own mark, tinted
-// to the theme, with the background block merged in when that is asked for.
-async function themedIconPng() {
-  let png = await retintIcon(settings.get("baseColor", "#b30c0c"));
+// Always built from the shipped layers, never from the last icon it made:
+// recolouring something already recoloured is how a cog went green and then
+// stayed green through every theme after it.
+async function themedIconPng(opts = {}) {
   const icon = settings.get("appIcon", null) || {};
-  if (icon.mergeBlock) {
-    const bg = settings.get("background", null) || {};
-    const url = bg.block && bg.block.url;
-    if (url) { try { png = await mergeBlockIntoIcon(png, url); } catch { /* the plain one will do */ } }
+  const layers = iconLayers();
+  // "Plain" is the logo as it was drawn, which is also the fallback if a
+  // layer is missing -- an install without them should still have an icon.
+  if (icon.kind === "plain" || !Object.values(layers).every(f => fs.existsSync(f))) {
+    return sharp(ICON_SOURCE()).resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
   }
-  return png;
+  const fills = iconFills({
+    color: opts.color,
+    mergeBlock: opts.mergeBlock == null ? !!icon.mergeBlock : !!opts.mergeBlock,
+  });
+  return appIconParts.buildIcon(layers, fills, 256);
 }
 
 // Put an icon on the windows and remember it. `icon` is either
@@ -5955,7 +5921,9 @@ ipcMain.handle("icon:app", () => ({
   file: fs.existsSync(ICON_OUT()) ? ICON_OUT() : null,
 }));
 ipcMain.handle("icon:setApp", async (event, { icon } = {}) => applyAppIcon(icon));
-// Whether the background's block shows through the icon's uncoloured parts.
+// Whether the launcher's background shows through the icon -- its backing
+// becomes the block, picture or gradient behind the launcher, and the cog
+// still sits over the top of it.
 ipcMain.handle("icon:setMergeBlock", async (event, { on } = {}) => {
   const icon = settings.get("appIcon", null) || { kind: "theme" };
   settings.set("appIcon", { ...icon, mergeBlock: !!on });
@@ -5965,15 +5933,7 @@ ipcMain.handle("icon:setMergeBlock", async (event, { on } = {}) => {
 // What the icon would look like for a colour, without committing to it.
 ipcMain.handle("icon:previewApp", async (event, { color, mergeBlock } = {}) => {
   try {
-    let png = await retintIcon(color || settings.get("baseColor", "#b30c0c"));
-    const want = mergeBlock == null
-      ? !!((settings.get("appIcon", null) || {}).mergeBlock)
-      : !!mergeBlock;
-    if (want) {
-      const bg = settings.get("background", null) || {};
-      const url = bg.block && bg.block.url;
-      if (url) { try { png = await mergeBlockIntoIcon(png, url); } catch { /* plain, then */ } }
-    }
+    const png = await themedIconPng({ color, mergeBlock });
     return { success: true, dataUrl: "data:image/png;base64," + png.toString("base64") };
   } catch (e) { return { success: false, error: String(e && e.message || e) }; }
 });

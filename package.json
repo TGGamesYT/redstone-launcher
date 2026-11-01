@@ -56,7 +56,7 @@
       ],
       "category": "Utility",
       "maintainer": "muaves <muaves@protonmail.com>",
-      "icon": "frontend/icon.png"
+      "icon": "frontend/assets/icon/redstone_logo.png"
     },
     "deb": {
       "priority": "optional",
@@ -68,11 +68,11 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "frontend/icon.ico"
+      "icon": "frontend/assets/icon/redstone_logo.ico"
     },
     "mac": {
       "target": "dmg",
-      "icon": "frontend/icon.icns"
+      "icon": "frontend/assets/icon/redstone_logo.icns"
     }
   },
   "overrides": {

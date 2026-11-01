@@ -659,7 +659,7 @@
     ov.style.zIndex = 9100;
     ov.innerHTML = `
       <div class="imp-card" style="width:460px;text-align:center;">
-        <img src="icon.png" alt="" style="width:72px;height:72px;margin:4px auto 12px;display:block;
+        <img src="assets/icon/redstone_logo.png" alt="" style="width:72px;height:72px;margin:4px auto 12px;display:block;
           image-rendering:pixelated;filter:drop-shadow(0 6px 16px rgba(0,0,0,0.5));">
         <h2 style="margin:0 0 10px;font-size:1.3em;">Welcome to Redstone Launcher</h2>
         <p style="margin:0 0 20px;font-size:13px;opacity:0.86;line-height:1.65;">
