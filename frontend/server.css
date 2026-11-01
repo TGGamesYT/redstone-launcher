@@ -1776,8 +1776,16 @@ body.app-offline [data-needs-net] {
 }
 
 /* No colour change on hover: the only thing a tab's background should
-   ever mean is "this is the one you are on". */
-.tabstrip > button:hover { opacity: 1; }
+   ever mean is "this is the one you are on". Saying only `opacity` here left
+   the page's blanket `button:hover` to paint the background, the border and
+   the shadow underneath -- so a hovered tab still lit up, which is the whole
+   thing this rule exists to stop. Each of them is turned off by name. */
+.tabstrip > button:hover {
+  opacity: 1;
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+}
 .tabstrip > button.active { opacity: 1; font-weight: bold; background: none; }
 
 /* The fallback, for before tabstrip.js has measured anything. */

@@ -9,6 +9,118 @@ started.
 
 ---
 
+## 0. Round 39
+
+The newest batch, in the order it was given.
+
+### The resource pack tools
+- [ ] **A generated pack does not appear as an ordinary resource pack**, which
+      is what it is.
+- [ ] **The totem pack shows no icon** until Generate is clicked, and still
+      none when the tools are reopened.
+- [ ] **The pack it writes does not use the online tool's `pack.mcmeta`.**
+      Exactly these are needed for every version to read it as compatible
+      (the description is free):
+      `{"pack":{"description":"...","pack_format":15,`
+      `"supported_formats":{"min_inclusive":15,"max_inclusive":999},`
+      `"min_format":15,"max_format":999}}`
+- [ ] **The Vanilla Tweaks one has no icon.**
+- [ ] **Picking Vanilla Tweaks packs should look like choosing an instance's
+      version** — toggles with the site's own preview pictures and icons
+      beside them, not a list of names.
+
+### The main page
+- [ ] **Adding or changing a segment still redraws the ones already drawn.**
+- [ ] **Segments treat their own edges differently** — some are cut off at
+      them, some spill over (the player render does).
+- [ ] **The friends segment's tiles setting does nothing.**
+- [ ] **A segment cannot be dropped into empty space**, only onto another one.
+- [ ] **A big segment dropped into a small space should shrink to fit**,
+      rather than ignoring the drop and spilling into the next row.
+- [ ] **Resizing from the left of a right-hand segment pins it to the left.**
+      There should be room for gaps.
+- [ ] **Dropping onto a segment should share that segment's space** — both
+      resized to halve it between them — not drop a line and land beside it.
+- [ ] **There is a gap on the left of the main page** between the panel and
+      where the segments start.
+- [ ] **The player render still has none of the physics a player render can
+      have** — turning with the swing of it and the rest — with a toggle for
+      settling back after a while untouched, and the "doing" offering the
+      idle animations the skins page has.
+- [ ] **Segments can still be dragged right after Done is clicked.**
+- [ ] **The inside size does nothing for the player render or the snapshot
+      news.**
+- [ ] **The time played segment draws its content twice**, and its size does
+      nothing either.
+- [ ] **Changing anything loses the scroll position.**
+- [ ] **Dropping onto the right-hand one of a split row** lands in the next
+      row instead of sharing that one.
+- [ ] **The right edge is not shared between rows** — resizing the smaller one
+      out to the edge starts resizing from the other side instead.
+- [ ] **The inside size jumps**: growing a segment shrinks its contents at
+      some point rather than keeping them the same size relative to it.
+- [ ] **Shrinking a row makes the next one curl up into it.**
+
+### The mod browser
+- [ ] **A Modrinth creator's page calls the server type
+      `MINECRAFT_JAVA_SERVER`**, where the browser itself has it right.
+
+### The tab strips
+- [ ] **Hovering a tab still lights it up.**
+
+### Settings
+- [ ] **"Take the theme from the picture" and "from the block" do not agree**,
+      and switching between a picture and a block does not take the theme
+      across.
+- [ ] **Changing the background does not animate.**
+
+### Making an instance
+- [ ] **NeoForge is missing for the 26.x versions**, stopping at 1.21.11 —
+      most likely how its version numbers are read.
+- [ ] **One modal fades out while the next is already coming up.**
+- [ ] **"More settings" leaves the blur over the modal behind it.**
+
+### The app's icon
+- [ ] **The icon was recoloured wrongly** — the parts that should keep their
+      own colour went green with the theme and have stayed green since, so
+      changing the theme no longer puts them back.
+- [ ] **"Show the background's block through it" does nothing.** It should
+      put the background's block behind the icon and keep the icon's
+      uncoloured parts over it.
+- [ ] **Build the icon from its pieces.** `frontend/assets/icon/` now has the
+      background, the gem and the cog separately: the background takes the
+      theme's base colour (a gradient, a picture or a block as well), the gem
+      the second colour, and the cog is never recoloured. The plain logo is
+      the default.
+
+### Everywhere else
+- [ ] **"Scroll the wall with the page" does nothing** on any page that
+      scrolls.
+- [ ] **The example event server fails after "Ready to make the server"** —
+      `versionInfo.builds is not iterable` while making `paper-latest 26.3`.
+- [ ] **Making a server is not making an instance.** It should offer the
+      plugin server kinds too, not only the mod loaders, and be able to start
+      from a plugin the way an instance starts from a mod.
+- [ ] **Going through the creator to make a server opens the old create-server
+      modal instead of making it**, with the blur still over it.
+- [ ] **Making an instance leaves the blur behind too.**
+- [ ] **Installing a resource pack only offers "compatible" ones.** Resource
+      packs do not work that way — any version's should be installable.
+- [ ] **`genPacks is not defined`** in `createContentCard`, which breaks the
+      instance's content tabs.
+- [ ] **The game sometimes dies with 3221225477** — opening singleplayer,
+      joining a world. The log before it is full of
+      `Suppressed ZIP exception loading PNG …: incorrect data check`.
+- [ ] **Drop the graphics-driver line from the crash report.** It is a guess,
+      and wrong for almost every crash it is printed for.
+- [ ] **"Run again" puts both copies' logs in one window.** A strip above it
+      should pick which process, naming when each was started.
+- [ ] **Tidy the moved files**: `frontend/old/` if nothing uses it, and the
+      icons left loose in `frontend/` now that they live in
+      `frontend/assets/icon/`.
+
+---
+
 ## 0. Round 38
 
 Corrections to Rounds 35–37, in the order given. Worked before Round 37

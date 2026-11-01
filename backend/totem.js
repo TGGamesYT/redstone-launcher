@@ -164,13 +164,27 @@ export function totemPixels(skin, w, h) {
   return out;
 }
 
-// What the pack says about itself. The same as the original tool writes, so a
-// pack made here and one downloaded from the site are the same pack.
+// What the pack says about itself, exactly as the original tool writes it.
+//
+// Three keys say the same thing because three generations of the game read
+// three different ones, and a pack that only answers one way is filed under
+// "Incompatible" by the versions that ask another:
+//
+//   pack_format        the only one before 1.20.2, and a plain number, so it
+//                      has to BE a format the game knows -- the 1 that was
+//                      here is why modern clients refused the pack
+//   supported_formats  1.20.2 onwards
+//   min_format/max_format   the newest clients, which REQUIRE these two as
+//                      soon as a pack claims a format past 64; declaring a
+//                      ceiling without them is the "missing mandatory fields
+//                      min_format and max_format" the game logs.
 export const TOTEM_PACK_MCMETA = {
   pack: {
-    pack_format: 1,
-    supported_formats: { min_inclusive: 1, max_inclusive: 100 },
     description: "§7Custom Java §cTotem of Undying§7 Pack!",
+    pack_format: 15,
+    supported_formats: { min_inclusive: 15, max_inclusive: 999 },
+    min_format: 15,
+    max_format: 999,
   },
 };
 export const TOTEM_TEXTURE_PATH = "assets/minecraft/textures/item/totem_of_undying.png";

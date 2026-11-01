@@ -511,8 +511,12 @@ function extractCrashFromLog(lines) {
 // code 3221225477" is not something anybody can act on. These are the codes
 // that come up, in the form Windows and POSIX actually report them.
 const EXIT_MEANING = new Map([
-  [3221225477, "Access violation (0xC0000005) — the game read or wrote memory it does not own. Almost always a graphics driver or a native library rather than the game itself."],
-  [-1073741819, "Access violation (0xC0000005) — the game read or wrote memory it does not own. Almost always a graphics driver or a native library rather than the game itself."],
+  // No guess at what caused it. The hs_err log beside the game names the
+  // library that actually fell over, and that is printed when there is one;
+  // inventing a culprit for the times there is not was wrong far more often
+  // than it was right.
+  [3221225477, "Access violation (0xC0000005) — the game read or wrote memory it does not own."],
+  [-1073741819, "Access violation (0xC0000005) — the game read or wrote memory it does not own."],
   [3221225781, "A DLL it needs is missing (0xC0000135)."],
   [-1073741515, "A DLL it needs is missing (0xC0000135)."],
   [3221225725, "Stack overflow (0xC00000FD)."],

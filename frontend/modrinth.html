@@ -241,15 +241,32 @@
       name: mrParams.get('name') || ''
     } : null;
 
+    // Content that is not version-locked the way a mod is. A resource pack
+    // is textures and a sound file: one built for an older version loads on a
+    // newer one and almost always works, with at worst a few textures falling
+    // back. Refusing to install those was the launcher inventing a rule the
+    // game does not have.
+    const LOOSE_TYPES = new Set(['resourcepack', 'shader']);
+
     function isHitCompatible(hit) {
       if (!installInstance) return true;
       const supportsVersion = Array.isArray(hit.versions) && hit.versions.includes(installInstance.version);
-      if (!supportsVersion) return false;
+      if (!supportsVersion && !LOOSE_TYPES.has(installType)) return false;
       if (installType === 'mod') {
         // mods must match the instance's loader
         return Array.isArray(hit.categories) && hit.categories.includes(installInstance.loader);
       }
       return true; // resource packs / shaders are loader-agnostic
+    }
+
+    // ...but say so, rather than installing something from another version
+    // with no sign that is what happened.
+    function builtForAnotherVersion(hit) {
+      if (!installInstance || !LOOSE_TYPES.has(installType)) return null;
+      if (!Array.isArray(hit.versions) || !hit.versions.length) return null;
+      if (hit.versions.includes(installInstance.version)) return null;
+      // Their newest, which is the one that would be installed.
+      return hit.versions[hit.versions.length - 1];
     }
 
     // Rough distance between two MC versions (major weighted most) so we can pick
@@ -633,6 +650,14 @@
         if (installMode && api === "modrinth") {
           if (isHitCompatible(proj)) {
             installBtn.textContent = "Install Here";
+            const other = builtForAnotherVersion(proj);
+            if (other) {
+              installBtn.title = `Built for ${other}, not ${installInstance.version} — resource packs usually load anyway`;
+              const note = document.createElement("div");
+              note.className = "project-othervers";
+              note.textContent = `for ${other}`;
+              info.appendChild(note);
+            }
             installBtn.onclick = (e) => {
               e.stopPropagation();
               installToInstance(proj.project_id, installBtn);

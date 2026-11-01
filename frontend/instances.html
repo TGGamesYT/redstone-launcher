@@ -3202,13 +3202,17 @@
 
         // Card for an installed mod/resourcepack/shader with enable/disable +
         // update controls. `refresh` re-renders the tab after a change.
-        function createContentCard(p, tabName, refresh, running, devMods, devOn) {
+        // `genPacks` is handed in rather than reached for: it is built per
+        // tab, inside the tab's own builder, and this function lives outside
+        // that scope -- so reaching for it was a ReferenceError that took the
+        // whole content tab down with it.
+        function createContentCard(p, tabName, refresh, running, devMods, devOn, genPacks) {
           const li = document.createElement("li");
           li.className = "profile-item";
           if (p.disabled) li.style.opacity = "0.45";
           // Is this the hot-swapped jar of a registered dev mod?
           const devMod = (devMods || []).find(m => p.filename === m.modId + "-dev.jar" || p.filename === m.modId + "-dev.jar.disabled");
-          const genPack = genPacks[String(p.filename || "").replace(/\.disabled$/i, "")] || null;
+          const genPack = (genPacks || {})[String(p.filename || "").replace(/\.disabled$/i, "")] || null;
           if (devMod || genPack) li.style.borderColor = "var(--accent)";
 
           // The list is painted twice: once from what's on disk, then again once
@@ -3939,7 +3943,7 @@
                   // Registered dev mods are surfaced ON their real mod card (not as a
                   // separate row): the card whose file is <modId>-dev.jar is tagged
                   // "(devmod)" and gets the change-folder / change-version controls.
-                  for (const p of items) ul.appendChild(createContentCard(p, tabName, renderContentTab, running, devMods, devOn));
+                  for (const p of items) ul.appendChild(createContentCard(p, tabName, renderContentTab, running, devMods, devOn, genPacks));
                   tabContent.appendChild(ul);
                   tabContent.scrollTop = keepScroll;   // a refresh shouldn't jump to the top
                   if (window.fitHeights) window.fitHeights();

@@ -160,10 +160,21 @@
 
     // Modrinth's own words for the project kinds, so the tabs read the way
     // their site does.
+    // What Modrinth calls each kind, in words. A kind with no entry here fell
+    // through to Modrinth's own identifier, which is how a server project
+    // came out as "MINECRAFT_JAVA_SERVER" on a page the browser itself calls
+    // "Servers".
     const KIND_NAMES = {
       mod: 'Mods', modpack: 'Modpacks', resourcepack: 'Resource packs',
       shader: 'Shaders', datapack: 'Data packs', plugin: 'Plugins',
+      minecraft_java_server: 'Servers',
     };
+
+    // The browser's own name for a kind, which is not always Modrinth's: it
+    // has a "server" tab where the API says `minecraft_java_server`. Opening
+    // a project hands the type over for that tab to pick up, so it has to be
+    // handed over in the browser's words.
+    const BROWSER_KIND = { minecraft_java_server: 'server' };
 
     let projects = [];
     let kind = 'all';
@@ -199,7 +210,8 @@
             icon_url: p.icon_url, author: (who && (who.username || who.name)) || null,
             downloads: p.downloads, follows: p.followers,
           }));
-          localStorage.setItem('selectedProjectType', p.project_type || 'mod');
+          localStorage.setItem('selectedProjectType',
+            BROWSER_KIND[p.project_type] || p.project_type || 'mod');
           localStorage.removeItem('installTargetInstance');
           window.location.href = 'modrinth_project.html';
         };

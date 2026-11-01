@@ -57,6 +57,18 @@
 }
 
 /* Incompatible projects in install mode are greyed out. */
+/* A resource pack or shader built for another version. It installs and it
+   almost always works, so this is a note and not a refusal. */
+.project-othervers {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: color-mix(in srgb, #e0a33a 25%, transparent);
+  color: #e0a33a;
+}
+
 .project-card.incompatible {
   opacity: 0.45;
   filter: grayscale(1);

@@ -21,9 +21,18 @@ function download(url, dest) {
   });
 }
 
-function fetchJson(url) {
+// PaperMC's downloads service. Their old api.papermc.io/v2 has been switched
+// off entirely -- it answers every request with {"ok":false,"error":"sunset"},
+// which is why asking it for a version's builds produced an object with no
+// `builds` in it and "versionInfo.builds is not iterable". This is where it
+// moved to, and it asks that requests name the software making them rather
+// than arriving as a bare library default.
+const PAPER_API = "https://fill.papermc.io/v3";
+const PAPER_UA = "RedstoneLauncher (https://github.com/TGGamesYT/redstone-launcher)";
+
+function fetchJson(url, headers) {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
+    https.get(url, headers ? { headers } : undefined, (res) => {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
@@ -86,11 +95,26 @@ async function resolveJarUrl(version, type, loaderVersion) {
     case "velocity":
     case "waterfall": {
       const proj = type.toLowerCase();
-      const versionInfo = await fetchJson(`https://api.papermc.io/v2/projects/${proj}/versions/${version}`);
-      const latestBuild = Math.max(...versionInfo.builds);
-      const buildInfo = await fetchJson(`https://api.papermc.io/v2/projects/${proj}/versions/${version}/builds/${latestBuild}`);
-      const fileName = buildInfo.downloads.application.name;
-      return `https://api.papermc.io/v2/projects/${proj}/versions/${version}/builds/${latestBuild}/downloads/${fileName}`;
+      const builds = await fetchJson(
+        `${PAPER_API}/projects/${proj}/versions/${version}/builds`,
+        { "User-Agent": PAPER_UA });
+      if (!Array.isArray(builds) || !builds.length) {
+        // Their failures come back as an object, so say what it said rather
+        // than letting it fall through as "not iterable".
+        const why = builds && (builds.message || builds.error);
+        throw new Error(`${type} has no builds for ${version}${why ? ` (${why})` : ""}`);
+      }
+      // Newest first, and a stable build in preference to an experimental
+      // one -- a release candidate's server jar is not what somebody asking
+      // for Paper expects to be handed.
+      const build = builds.find(b => b && b.channel === "STABLE") || builds[0];
+      const downloads = (build && build.downloads) || {};
+      // They key the jar by what it is. `server:default` is the one we want;
+      // the fallback is there so a project that names its download something
+      // else still resolves rather than failing on a missing key.
+      const file = downloads["server:default"] || Object.values(downloads)[0];
+      if (!file || !file.url) throw new Error(`${type} build ${build && build.id} has no server download`);
+      return file.url;
     }
     case "purpur": {
       // Purpur exposes a "latest" build alias.
