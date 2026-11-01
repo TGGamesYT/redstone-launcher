@@ -86,8 +86,12 @@ const scrollTo = async (y) => {
   await p.evaluate((v) => { document.getElementById("scroller").scrollTop = v; }, y);
   await p.waitForTimeout(120);
 };
+// A change now fades, so a screenshot taken straight after one catches the
+// fade halfway and nothing can be compared.
+const settled = () => p.waitForTimeout(500);
 
 await apply({ url: TILE, size: 64, scroll: true });
+await settled();
 await scrollTo(0);
 const movingTop = await shot("moving-top");
 await scrollTo(96);                       // not a whole number of tiles
@@ -97,6 +101,7 @@ check("so scrolling the page really does carry the wall with it",
   "the tiles have to land somewhere else than they did");
 
 await apply({ url: TILE, size: 64, scroll: false });
+await settled();
 await scrollTo(0);
 const stillTop = await shot("still-top");
 await scrollTo(96);
@@ -105,6 +110,31 @@ check("and held still it stays exactly where it was",
   Buffer.compare(stillTop, stillDown), 0);
 
 
+
+// ── changing it fades ──
+// A background-image cannot be transitioned, so the one leaving is held on a
+// layer of its own and faded out over the one arriving. Without it a change
+// was a hard cut.
+await apply({ url: TILE, size: 64, scroll: false });
+await p.waitForTimeout(400);
+await p.evaluate(() => {
+  window.LauncherBackground.apply({ background: { mode: "color", color: "#101820" } });
+});
+check("the one leaving is held at full strength for a frame",
+  await p.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement, "::after");
+    return [document.documentElement.classList.contains("bg-changing"), cs.opacity];
+  }), [true, "1"]);
+check("and it is the OLD background on that layer, not the new one",
+  await p.evaluate(() => getComputedStyle(document.documentElement, "::after").backgroundImage.startsWith("url(")), true);
+await p.waitForTimeout(500);
+check("then it fades away, leaving the new one",
+  await p.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement, "::after");
+    return [document.documentElement.classList.contains("bg-changing"), cs.opacity];
+  }), [false, "0"]);
+check("and the layer is never in the way of a click",
+  await p.evaluate(() => getComputedStyle(document.documentElement, "::after").pointerEvents), "none");
 
 // ── the other modes still work ──
 const css = (bg) => p.evaluate((b) => {

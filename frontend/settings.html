@@ -1879,6 +1879,11 @@
         b.addEventListener('click', () => {
           bg.mode = b.dataset.mode;
           showBgPanels(); paintBackground(); saveBackground();
+          // "Take the theme from the background" is about the background,
+          // whichever one it is -- so changing which one it is takes the
+          // theme from the new one. It used to leave the colours of the
+          // background you had just switched away from.
+          if (window.__followBackgroundColours) window.__followBackgroundColours();
         });
       }
 
@@ -1973,14 +1978,13 @@
         if (row) row.style.display = bg.image.file ? '' : 'none';
       };
       showImageName();
-      // The same offer the block panel makes, and the same toggle.
-      bgImageColors.checked = !!bg.image.followColors;
+      // The same offer the block panel makes, and -- now -- the same answer.
+      // They were two separate settings, so ticking it under the picture and
+      // then switching to a block found it unticked, which reads as the
+      // launcher having forgotten.
+      bgImageColors.checked = !!(bg.image.followColors || bg.block.followColors);
       bgImageColors.addEventListener('change', () => {
-        bg.image.followColors = bgImageColors.checked;
-        saveBackground();
-        if (bgImageColors.checked && window.__followBackgroundColours) {
-          window.__followBackgroundColours({ loud: true });
-        }
+        setFollowColours(bgImageColors.checked);
       });
       document.getElementById('bg-pick-image').addEventListener('click', async () => {
         const r = await ipcRenderer.invoke('bg:pickImage');
@@ -2134,14 +2138,16 @@
       // Called whenever the block or the picture changes, and when a toggle
       // is first switched on.
       async function followBackgroundColours({ loud = false } = {}) {
-        if (bg.mode === 'block' && bgBlockColors.checked && bg.block.url) {
+        const on = bgBlockColors.checked || bgImageColors.checked;
+        if (!on) return;
+        if (bg.mode === 'block' && bg.block.url) {
           const r = await ipcRenderer.invoke('model:blockColors', { url: bg.block.url });
           if (!putThemeColours(r, loud ? (bg.block.name || 'the block') : null) && loud && window.notify) {
             notify((r && r.error) || 'No colours could be read', 'error');
           }
           return;
         }
-        if (bg.mode === 'image' && bgImageColors.checked && bg.image.file) {
+        if (bg.mode === 'image' && bg.image.file) {
           const r = await ipcRenderer.invoke('model:blockColors', { file: bg.image.file });
           if (!putThemeColours(r, loud ? 'the picture' : null) && loud && window.notify) {
             notify((r && r.error) || 'No colours could be read', 'error');
@@ -2150,11 +2156,21 @@
       }
       window.__followBackgroundColours = followBackgroundColours;
 
-      bgBlockColors.checked = !!bg.block.followColors;
-      bgBlockColors.addEventListener('change', () => {
-        bg.block.followColors = bgBlockColors.checked;
+      // One preference, shown in both panels. Both fields are still written
+      // so a save made by an older build still reads.
+      function setFollowColours(on) {
+        bg.image.followColors = !!on;
+        bg.block.followColors = !!on;
+        bgImageColors.checked = !!on;
+        bgBlockColors.checked = !!on;
         saveBackground();
-        if (bgBlockColors.checked) followBackgroundColours({ loud: true });
+        if (on) followBackgroundColours({ loud: true });
+      }
+      window.__setFollowColours = setFollowColours;
+
+      bgBlockColors.checked = !!(bg.image.followColors || bg.block.followColors);
+      bgBlockColors.addEventListener('change', () => {
+        setFollowColours(bgBlockColors.checked);
       });
 
       document.getElementById('bg-pick-block').addEventListener('click', async () => {

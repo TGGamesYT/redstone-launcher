@@ -3,8 +3,8 @@
 Run them with node; no framework, no runner to learn:
 
 ```
-node tests/parse-test.mjs
-node tests/servers-test.mjs
+tests/run-all.sh          # every suite, one line each
+node tests/parse-test.mjs # or just the one
 ```
 
 `OFFLINE=1` skips the checks that talk to a real service.

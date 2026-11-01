@@ -170,12 +170,53 @@ function backgroundCss(bg) {
   return null;                       // the app's own panel
 }
 
+// Hold the background that is leaving on its own layer and fade it out over
+// the one arriving. Called with what was on screen a moment ago; the new one
+// is painted underneath it and is revealed as this goes.
+let _bgFadeSoon = null;
+function fadeFromOldBackground(root, was) {
+  if (!was) return;
+  root.style.setProperty('--app-bg-was-image', was.image);
+  root.style.setProperty('--app-bg-was-color', was.color);
+  root.style.setProperty('--app-bg-was-size', was.size);
+  root.style.setProperty('--app-bg-was-repeat', was.repeat);
+  root.style.setProperty('--app-bg-was-render', was.render);
+  root.classList.add('bg-changing');
+  if (_bgFadeSoon) cancelAnimationFrame(_bgFadeSoon);
+  // Two frames: one for the layer to be painted at full strength, and the
+  // next to start it fading. Taking the class off in the same frame it went
+  // on means the browser never sees the opening value and there is no fade.
+  _bgFadeSoon = requestAnimationFrame(() => {
+    _bgFadeSoon = requestAnimationFrame(() => {
+      _bgFadeSoon = null;
+      root.classList.remove('bg-changing');
+    });
+  });
+}
+
+// What is on screen right now, to fade FROM.
+function currentBackground(root) {
+  if (!root.classList.contains('custom-bg')) return null;
+  const v = (n) => root.style.getPropertyValue(n) || getComputedStyle(root).getPropertyValue(n) || '';
+  return {
+    image: v('--app-background').trim() || 'none',
+    color: v('--app-bg-color').trim() || 'transparent',
+    size: v('--app-bg-size').trim() || 'auto',
+    repeat: v('--app-bg-repeat').trim() || 'no-repeat',
+    render: v('--app-bg-render').trim() || 'auto',
+  };
+}
+
 function applyBackground(settings) {
   const css = backgroundCss(settings && settings.background);
   const root = document.documentElement;
+  const was = currentBackground(root);
   if (!css) {
     root.style.setProperty('--app-background', 'none');
     root.style.setProperty('--app-bg-color', 'transparent');
+    // The fading layer belongs to custom-bg, so there is nothing to fade
+    // with once the class is gone: the panel comes back at once.
+    root.classList.remove('bg-changing');
     root.classList.remove('custom-bg');
     root.classList.remove('bg-scrolls');
     if (document.body) document.body.classList.remove('custom-bg');
@@ -188,6 +229,7 @@ function applyBackground(settings) {
   root.style.setProperty('--app-bg-repeat', css.repeat);
   root.style.setProperty('--app-bg-render', css.render);
   root.style.setProperty('--app-bg-attach', css.attach);
+  fadeFromOldBackground(root, was);
   // Travelling with the page is not something <html>'s background can do --
   // see the bg-scrolls rule in server.css for why, and where it goes instead.
   root.classList.toggle('bg-scrolls', css.attach === 'scroll');

@@ -725,6 +725,40 @@ html.custom-bg {
   image-rendering: var(--app-bg-render);
 }
 
+/* Changing the background fades, rather than cutting.
+   A background-image cannot be transitioned -- the browser has nothing to
+   interpolate between two pictures -- so the OLD one is held on a layer of
+   its own and faded out over the new, which is already in place underneath.
+   The layer sits above the canvas and below everything on the page, and is
+   never in the way of a click. */
+html.custom-bg::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--app-bg-was-color, transparent);
+  background-image: var(--app-bg-was-image, none);
+  background-size: var(--app-bg-was-size, auto);
+  background-repeat: var(--app-bg-was-repeat, no-repeat);
+  background-position: center center;
+  background-attachment: fixed;
+  image-rendering: var(--app-bg-was-render, auto);
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+
+/* The moment of the change: the old one is fully there, with no transition
+   to get it there. Taking the class off is what starts the fade. */
+html.custom-bg.bg-changing::after {
+  opacity: 1;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.custom-bg::after { transition: none; }
+}
+
 /* "Scroll the wall with the page."
    <html>'s background is the canvas's, and the canvas never scrolls: <body>
    is overflow:hidden and every page scrolls inside its own container. So
