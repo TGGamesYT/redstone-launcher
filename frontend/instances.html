@@ -2389,13 +2389,14 @@
         menu.style.padding = "5px";
         menu.style.zIndex = 1000;
         menu.innerHTML = `
+    <div class="menu-item" data-action="restart">Restart instance</div>
     <div class="menu-item" data-action="again">Run again</div>
     <div class="menu-item" data-action="open">Open Folder</div>
     <div class="menu-item" data-action="shortcut">Desktop shortcut</div>
     <div class="menu-item" data-action="share" style="display:none;">Share over internet</div>
     <div class="menu-item" data-action="export">Export…</div>
     <div class="menu-item" data-action="delete">Delete</div>
-`;
+`; //ASDASDASD
         document.body.appendChild(menu);
         // The share-over-internet entry is only for relay admins (they can share a
         // not-yet-running instance and type in the port).
@@ -2403,6 +2404,7 @@
 
         let menuVisible = false;
         let ignoreNextClick = false;
+        const restartMenuItem = menu.querySelector('[data-action="restart"]');
 
         function positionMenu(menuBtn) {
           const rect = menuBtn.getBoundingClientRect();
@@ -2419,9 +2421,18 @@
           menu.style.top = top + "px";
         }
 
-        function toggleMenu() {
+        async function toggleMenu() {
           menuVisible = !menuVisible;
           if (menuVisible) {
+            restartMenuItem.style.display = "none";
+            const [running, launching] = await Promise.all([
+              ipcRenderer.invoke("get-running-instances").catch(() => []),
+              ipcRenderer.invoke("get-launching-instances").catch(() => []),
+            ]);
+            const isActive = [...(running || []), ...(launching || [])]
+              .some(instance => String(instance.id) === String(profile.id));
+            restartMenuItem.style.display = isActive ? "" : "none";
+            if (!menuVisible) return;
             menu.style.display = "block"; // show
             positionMenu(menuBtn);
             ignoreNextClick = true;
@@ -2455,11 +2466,34 @@
         menu.querySelectorAll(".menu-item").forEach(item => {
           item.addEventListener("click", async e => {
             e.stopPropagation();
-            // Run again: another copy, whether or not one is already up.
-            // Minecraft is happy to run twice over one game directory -- that
-            // is what a second launcher window does -- so the "already
-            // running" guard is there to catch accidents, and asking for this
-            // deliberately steps past it.
+            //ASDASDASD
+            if (item.dataset.action === "restart") {
+              const originalText = item.textContent;
+              item.textContent = "Restarting…";
+              menu.style.display = "none";
+              menuVisible = false;
+              try {
+                if (!selectedPlayerId) throw new Error("Select a player first.");
+                const [running, launching] = await Promise.all([
+                  ipcRenderer.invoke("get-running-instances"),
+                  ipcRenderer.invoke("get-launching-instances"),
+                ]);
+                const mineRunning = (running || []).filter(instance => String(instance.id) === String(profile.id));
+                const mineLaunching = (launching || []).some(instance => String(instance.id) === String(profile.id));
+                if (mineLaunching) await ipcRenderer.invoke("cancel-launch", { profileId: profile.id });
+                for (const instance of mineRunning) {
+                  await ipcRenderer.invoke("stop-instance-by-pid", instance.pid);
+                }
+                ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId });
+                if (window.notify) window.notify("Restarting " + profile.name, "info");
+              } catch (err) {
+                const message = err.message || "The instance could not be restarted";
+                if (window.notify) window.notify(message, "error");
+                else alert(message);
+              } finally {
+                item.textContent = originalText;
+              }
+            }
             if (item.dataset.action === "again") {
               ipcRenderer.send("launch-profile", { profileId: profile.id, playerId: selectedPlayerId, again: true });
               if (window.notify) window.notify("Starting another copy of " + profile.name, "info");

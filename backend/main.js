@@ -563,9 +563,10 @@ function trimJvmCrash(text) {
 }
 
 function reportInstanceCrash(profileId, cfg, code) {
-  // 0 is a clean quit; 143/130 are SIGTERM/SIGINT, i.e. the user stopping it.
+  // 0 is a clean quit; 1 is Minecraft's intentional stop/restart exit; 143/130
+  // are SIGTERM/SIGINT, i.e. the user stopping it.
   if (code === 0 || code === null || code === undefined) return;
-  if (code === 143 || code === 130) return;
+  if (code === 1 || code === 143 || code === 130) return;
   try {
     const dir = path.join(dataDir, "client", String(profileId));
     // broadcastLog keys by whatever it was handed, which isn't always a string.
