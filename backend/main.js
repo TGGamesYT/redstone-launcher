@@ -4970,12 +4970,35 @@ async function skinForTotem(spec) {
   } catch { return null; }
 }
 
-async function buildTotemPack(profileId, spec) {
+// The totem itself, as a PNG. Drawing it is the whole of the tool, so the
+// preview is not a picture OF the result -- it is the result, built the same
+// way and simply not written anywhere.
+async function totemPng(spec) {
   const skinPng = await skinForTotem(spec);
-  if (!skinPng) return { success: false, error: "No skin could be read for that account" };
+  if (!skinPng) return null;
   const { data, info } = await sharp(skinPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const px = totem.totemPixels(data, info.width, info.height);
-  const png = await sharp(Buffer.from(px), { raw: { width: 16, height: 16, channels: 4 } }).png().toBuffer();
+  return sharp(Buffer.from(px), { raw: { width: 16, height: 16, channels: 4 } }).png().toBuffer();
+}
+
+// What the tools modal shows the moment it opens, and again whenever another
+// skin is picked. It used to show an empty square until Generate was pressed,
+// and an empty square again the next time it was opened -- which is to say it
+// never showed the thing the tool makes.
+ipcMain.handle("pack:totemPreview", async (event, { skin } = {}) => {
+  try {
+    const spec = skin && skin.kind === "fixed"
+      ? { kind: "fixed", base64: String(skin.base64 || "").replace(/^data:image\/[\w+.-]+;base64,/, "") }
+      : { kind: "account" };
+    const png = await totemPng(spec);
+    if (!png) return { success: false, error: "No skin could be read for that account" };
+    return { success: true, png: "data:image/png;base64," + png.toString("base64") };
+  } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+});
+
+async function buildTotemPack(profileId, spec) {
+  const png = await totemPng(spec);
+  if (!png) return { success: false, error: "No skin could be read for that account" };
 
   const zip = new AdmZip();
   zip.addFile("pack.mcmeta", Buffer.from(JSON.stringify(totem.TOTEM_PACK_MCMETA, null, 4)));

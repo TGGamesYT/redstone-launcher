@@ -30,3 +30,4 @@ Current files:
 - `loaders-test.mjs` — which loader builds exist for a Minecraft version.
 - `newinstance-test.mjs` — the new-instance and new-server flows, the blur
   that belongs to them, and one step replacing another.
+- `packtools-test.mjs` — the totem generator and the Vanilla Tweaks picker.
