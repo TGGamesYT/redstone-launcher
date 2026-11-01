@@ -237,7 +237,8 @@
     backdropGoing = setTimeout(() => {
       backdropGoing = null;
       // Something opened again while this was pending.
-      if (document.querySelector('.ni-overlay')) return;
+      // One that is still fading out is on its way, not on screen.
+      if (document.querySelector('.ni-overlay:not([data-rlm-closing])')) return;
       if (backdropEl) { backdropEl.remove(); backdropEl = null; }
     }, 80);
   }
@@ -261,10 +262,19 @@
   const shell = (title, sub, opts = {}) => {
     ensureStyle();
     showBackdrop();
-    // Including one that is still fading out: the page that is arriving
-    // must be the only one on screen, or a click lands on the wrong card and
-    // anything reading the page sees the one that is leaving.
-    document.querySelectorAll('.ni-overlay').forEach(x => x.remove());
+    // The step that is leaving fades out while the one arriving rises in,
+    // rather than being taken away first and leaving a blurred empty screen
+    // for the length of the incoming animation. ModalFX makes a closing
+    // overlay click-through and marks it, so neither a stray click nor
+    // anything reading the page can land on the one that is going.
+    document.querySelectorAll('.ni-overlay').forEach(x => {
+      // One already on its way out is left to finish: asking ModalFX to close
+      // it a second time gets an immediate "already closing" and removes it
+      // on the spot, which is the very snap this is here to avoid.
+      if (x.dataset.rlmClosing) return;
+      if (window.ModalFX) window.ModalFX.close(x, () => x.remove());
+      else x.remove();
+    });
     openShell = null;
     const ov = document.createElement('div');
     ov.className = 'ni-overlay';
@@ -361,7 +371,8 @@
   // Each hit is flattened to the same handful of fields so the list and the
   // click do not care where it came from.
   const CF_WORKER = 'https://curseforge.tgdoescode.workers.dev';
-  const CF_CLASS = { modpack: 4471, mod: 6 };
+  // 5 is their "Bukkit Plugins" class, which is where a server's plugins are.
+  const CF_CLASS = { modpack: 4471, mod: 6, plugin: 5 };
 
   async function searchModrinth(query, type, limit) {
     const url = new URL('https://api.modrinth.com/v2/search');
@@ -429,16 +440,23 @@
   }
 
   async function openSearch(opts) {
+    // Most servers run plugins rather than mods, so a server's search looks
+    // for those as well -- starting a server from a plugin was not possible
+    // at all, which left out the commonest way anybody starts one.
+    const forServer = opts.target === 'server';
     const { ov, card, list, close } = shell(
-      opts.target === 'server' ? 'Find a modpack or mod for the server' : 'Find a modpack or mod',
-      'Modrinth and CurseForge. Modpacks first, then mods, each sorted by downloads. '
-      + 'Picking a mod sets an instance up for it.',
+      forServer ? 'Find a modpack, plugin or mod for the server' : 'Find a modpack or mod',
+      forServer
+        ? 'Modrinth and CurseForge. Modpacks first, then plugins, then mods, each sorted by '
+          + 'downloads. Picking one sets a server up for it.'
+        : 'Modrinth and CurseForge. Modpacks first, then mods, each sorted by downloads. '
+          + 'Picking a mod sets an instance up for it.',
       { onBack: opts.onBack }
     );
     const input = document.createElement('input');
     input.className = 'ni-search';
     input.type = 'text';
-    input.placeholder = 'Search modpacks and mods…';
+    input.placeholder = forServer ? 'Search modpacks, plugins and mods…' : 'Search modpacks and mods…';
     card.querySelector('.ni-sub').after(input);
     setTimeout(() => input.focus(), 0);
 
@@ -447,10 +465,11 @@
       const mine = ++seq;
       const q = input.value.trim();
       list.innerHTML = '<div class="ni-empty">Searching…</div>';
-      let packs = [], mods = [];
+      let packs = [], plugins = [], mods = [];
       try {
-        [packs, mods] = await Promise.all([
+        [packs, plugins, mods] = await Promise.all([
           searchBoth(q, 'modpack', 20),
+          forServer ? searchBoth(q, 'plugin', 20) : Promise.resolve([]),
           searchBoth(q, 'mod', 20),
         ]);
       } catch (err) {
@@ -464,7 +483,7 @@
       }
       if (mine !== seq) return;   // a later keystroke won
       list.innerHTML = '';
-      const all = packs.concat(mods);
+      const all = packs.concat(plugins, mods);
       if (!all.length) {
         const e = document.createElement('div');
         e.className = 'ni-empty';
@@ -475,7 +494,7 @@
       for (const p of all) {
         row(list, {
           img: p.icon || undefined,
-          icon: p.icon ? undefined : (p.type === 'modpack' ? 'inventory_2' : 'extension'),
+          icon: p.icon ? undefined : (p.type === 'modpack' ? 'inventory_2' : p.type === 'plugin' ? 'power' : 'extension'),
           title: p.title,
           desc: `${fmtDownloads(p.downloads)} · ${p.description || ''}`,
           // Which site it is from matters: the same pack is often on both,
@@ -662,7 +681,14 @@
       });
     },
     build: (opts, prefill) => buildFlow(opts, () => window.NewInstance.choose(opts), prefill || null),
-    closeAll() { if (openShell && openShell.isConnected) openShell.remove(); openShell = null; },
+    // Closing the flow has to take the blur with it. It did not, so
+    // creating an instance -- or stepping off to "More settings" -- left the
+    // backdrop over the page with nothing on it and no way to be rid of it.
+    closeAll() {
+      document.querySelectorAll('.ni-overlay').forEach(x => x.remove());
+      openShell = null;
+      hideBackdrop();
+    },
   };
 
   // Version, then loader, then the last page. `prefill` is what a mod or a
@@ -670,6 +696,9 @@
   // are skipped, because the mod decided them.
   function buildFlow(opts, back, prefill) {
     const pre = prefill || {};
+    // A server is a different set of choices from an instance -- see
+    // SERVER_KINDS -- and its last page makes one rather than filling a form.
+    const isServer = opts.target === 'server';
     const onlyVersions = pre.supportedVersions && pre.supportedVersions.length ? pre.supportedVersions : null;
     const onlyLoaders = pre.supportedLoaders && pre.supportedLoaders.length ? pre.supportedLoaders : null;
 
@@ -708,7 +737,7 @@
         onPick: (v) => finish(v, loader, state),
       }),
       onChangeLoader: (state) => pickLoader({
-        version, only: onlyLoaders,
+        version, only: onlyLoaders, server: isServer,
         onBack: () => finish(version, loader, state),
         onPick: (l) => finish(version, l, state),
       }),
@@ -745,10 +774,12 @@
       // make, so the question is not asked: straight on to the last page as
       // vanilla. It used to offer all five and fail at launch.
       const offer = await offeredLoaders(version);
-      if (offer && !offer.some(id => id !== 'vanilla')) return finish(version, 'vanilla');
+      // A server always has something to choose, since the plugin kinds do
+      // not depend on a mod loader having a build.
+      if (!isServer && offer && !offer.some(id => id !== 'vanilla')) return finish(version, 'vanilla');
       if (oneLoader) return finish(version, oneLoader);
       pickLoader({
-        version,
+        version, server: isServer,
         // With the version step skipped there is nothing behind this but
         // whatever opened the flow.
         onBack: () => (oneVersion ? back && back() : versionStep()),
@@ -1220,6 +1251,16 @@
   // The same cards, but a loader has a logo rather than a banner. The card's
   // background is that logo's own edge pixels pulled out across it, so each
   // one is in its own colours without a wide image existing for it.
+  // What a SERVER can be, which is not the same question as what an instance
+  // can be: most servers run plugins, not mods, and those kinds have no
+  // client-side loader at all. Offering an instance's five and nothing else
+  // meant the creator could not make the commonest sort of server there is.
+  const SERVER_KINDS = [
+    { id: 'paper', name: 'Paper', sub: 'Plugins, and much faster', icon: 'assets/icons/Java_Edition_icon.png' },
+    { id: 'purpur', name: 'Purpur', sub: 'Paper, with more to tweak', icon: 'assets/icons/Java_Edition_icon.png' },
+    { id: 'folia', name: 'Folia', sub: 'Paper, spread over threads', icon: 'assets/icons/Java_Edition_icon.png' },
+  ];
+
   const LOADERS = [
     { id: 'vanilla', name: 'Vanilla', sub: 'No mods', icon: 'assets/icons/Java_Edition_icon.png' },
     { id: 'fabric', name: 'Fabric', sub: 'Light and quick to update', icon: 'assets/loaders/fabric.png' },
@@ -1250,8 +1291,10 @@
   function pickLoader(opts) {
     opts = opts || {};
     const { card, list } = shell(
-      'Which mod loader?',
-      opts.version ? `For Minecraft ${opts.version}.` : 'Pick what the instance runs its mods with.',
+      opts.server ? 'What kind of server?' : 'Which mod loader?',
+      opts.server
+        ? (opts.version ? `For Minecraft ${opts.version}. Plugins or mods — not both.` : 'Pick what the server runs.')
+        : (opts.version ? `For Minecraft ${opts.version}.` : 'Pick what the instance runs its mods with.'),
       { onBack: opts.onBack, wide: true }
     );
     list.className = 'ni-cards fill';
@@ -1260,15 +1303,24 @@
 
     // Started from a mod: only the loaders it has builds for.
     const only = opts.only ? new Set(opts.only.map(x => String(x).toLowerCase())) : null;
-    let offered = only ? LOADERS.filter(l => only.has(l.id)) : LOADERS;
-    let shown = offered.length ? offered : LOADERS;
+    // A server's choices are the mod loaders AND the plugin kinds. Vanilla
+    // sits first either way.
+    const all = opts.server
+      ? [LOADERS[0], ...SERVER_KINDS, ...LOADERS.slice(1)]
+      : LOADERS;
+    let offered = only ? all.filter(l => only.has(l.id)) : all;
+    let shown = offered.length ? offered : all;
     // And only the ones with a build for this version. Already answered by
     // the time the flow gets here, so there is nothing to wait for; the
     // request below is for the paths that arrive without having asked.
+    // Which loaders have a build for this version. It is a question about mod
+    // loaders only, so a plugin kind is never dropped by it -- Paper's answer
+    // is Paper's own and comes when the jar is fetched.
+    const serverKind = new Set(SERVER_KINDS.map(k => k.id));
     const byVersion = _loaderOffer.get(opts.version);
     if (byVersion) {
       const keep = new Set(byVersion);
-      const narrowed = shown.filter(l => keep.has(l.id));
+      const narrowed = shown.filter(l => keep.has(l.id) || serverKind.has(l.id));
       if (narrowed.length) shown = narrowed;
     }
     // A column each: this is the whole page, not the first of many rows.
@@ -1277,7 +1329,8 @@
       offeredLoaders(opts.version).then(offer => {
         if (!offer || !list.isConnected) return;
         const keep = new Set(offer);
-        const gone = [...list.children].filter(t => t.dataset.loader && !keep.has(t.dataset.loader));
+        const gone = [...list.children].filter(t => t.dataset.loader
+          && !keep.has(t.dataset.loader) && !serverKind.has(t.dataset.loader));
         if (gone.length >= list.children.length) return;        // never empty the page
         gone.forEach(t => t.remove());
         list.style.setProperty('--cols', String(list.children.length || 1));

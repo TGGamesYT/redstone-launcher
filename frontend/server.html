@@ -1288,28 +1288,65 @@
       if (window.EventServers) window.EventServers.openList(() => loadServers());
     };
 
+    // The project the creator was started from, dropped into the new server.
+    // Returns its name when something was installed, so the notice can say so.
+    async function installCarried(serverName, type, version, carried) {
+      const projectId = carried && (carried.projectId || carried.curseId);
+      if (!projectId || !carried) return null;
+      // Only Modrinth for now: CurseForge needs a download URL minted per
+      // file, which the browser page does through its own worker.
+      if (carried.source !== 'modrinth') return null;
+      try {
+        const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`);
+        if (!res.ok) return null;
+        const versions = await res.json();
+        const wantLoader = String(type).toLowerCase();
+        // Its build for this server's version and kind, newest first. A
+        // plugin built for Paper runs on Purpur and Folia, so those count as
+        // Paper when nothing names them.
+        const alike = { purpur: ['purpur', 'paper', 'spigot', 'bukkit'], folia: ['folia', 'paper'], paper: ['paper', 'spigot', 'bukkit'] };
+        const ok = new Set(alike[wantLoader] || [wantLoader]);
+        const match = (versions || [])
+          .filter(v => (v.game_versions || []).includes(version) && (v.loaders || []).some(l => ok.has(String(l).toLowerCase())))
+          .sort((a, b) => new Date(b.date_published) - new Date(a.date_published))[0];
+        const url = match && (match.files || []).find(f => f.primary) || (match && (match.files || [])[0]);
+        if (!url || !url.url) return null;
+        const kind = ['fabric', 'quilt', 'forge', 'neoforge'].includes(wantLoader) ? 'mod' : 'plugin';
+        const r = await ipcRenderer.invoke('mod-download', { server: true, id: serverName, fileUrl: url.url, projectType: kind });
+        return r && r.success ? (carried.projectTitle || carried.name || 'it') : null;
+      } catch { return null; }
+    }
+
     $('addServerBtn').onclick = () => {
       if (!window.NewInstance) return openServerModal(null);
       window.NewInstance.choose({
         target: 'server',
-        // A server is made through its own form, so the flow's last page
-        // hands what was chosen to that rather than making anything itself.
-        onCreate: (profile) => {
-          openServerModal(null);
-          if (profile.name) $('srvName').value = profile.name;
-          const type = $('srvType');
-          if (profile.loader && [...type.options].some(o => o.value === profile.loader)) {
-            type.value = profile.loader;
-            type.dispatchEvent(new Event('change'));
-          }
-          if (profile.version) {
-            const sel = $('srvVersion');
-            if (![...sel.options].some(o => o.value === profile.version)) {
-              const opt = document.createElement('option');
-              opt.value = opt.textContent = profile.version;
-              sel.appendChild(opt);
-            }
-            sel.value = profile.version;
+        // Pressing Create makes the server. It used to reopen the old form
+        // filled in instead, which is not what the button says it does --
+        // you chose everything it asks for on the way here.
+        onCreate: async (profile, carried) => {
+          const type = profile.loader || 'vanilla';
+          const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);
+          const name = (profile.name || '').trim() || `${typeLabel} ${profile.version}`;
+          try {
+            const r = await ipcRenderer.invoke('make-server', {
+              name, version: profile.version, type,
+              launchArgs: '', loaderVersion: profile.loaderVersion || '',
+              icon: profile.icon || '',
+            });
+            if (r && r.error) throw new Error(r.error);
+            // Started from a plugin or a mod: put it in, which is the whole
+            // reason that project was picked.
+            const put = await installCarried(name, type, profile.version, carried);
+            await loadServers();
+            const made = (await ipcRenderer.invoke('list-servers') || []).find(x => x.name === name);
+            if (made) openDetail(made);
+            if (window.notify) notify(put ? `"${name}" is ready, with ${put}.` : `"${name}" is ready.`, 'success');
+          } catch (e) {
+            // What goes wrong here is a version a server kind has no build
+            // for, which is worth saying rather than dropping the whole flow.
+            const why = e.message || String(e);
+            if (window.notify) notify(why, 'error'); else alert(why);
           }
         },
         onCustom: (prefill) => {

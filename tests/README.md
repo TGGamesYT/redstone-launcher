@@ -28,3 +28,5 @@ Current files:
 - `background-test.mjs` — the launcher's background, including whether the
   wall really travels with the page.
 - `loaders-test.mjs` — which loader builds exist for a Minecraft version.
+- `newinstance-test.mjs` — the new-instance and new-server flows, the blur
+  that belongs to them, and one step replacing another.
