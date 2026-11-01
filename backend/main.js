@@ -6906,6 +6906,21 @@ ipcMain.handle('set-player-skin', async (event, { playerId, skinPath, model }) =
 });
 
 /* ─────────────── Helpers ─────────────── */
+// Fetch a file, and either have the whole of it or none of it.
+//
+// This used to write straight to the destination. A connection that dropped
+// halfway therefore left a TRUNCATED file sitting at the real path, looking
+// for all the world like a finished download -- and a truncated zip is
+// exactly what produces
+//
+//     Suppressed ZIP exception loading PNG ...: incorrect data check
+//
+// for every texture in it, over and over, for the life of the instance. It
+// also had no listener on the response, so a connection reset mid-download
+// was an unhandled 'error' event, which takes the whole launcher with it.
+//
+// So: into a .part file, checked against the length the server promised, and
+// only then moved into place.
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
 
@@ -6916,46 +6931,69 @@ function downloadFile(url, dest) {
         fs.mkdirSync(dir, { recursive: true });
       }
 
+      const part = dest + ".part";
+      let settled = false;
+      const done = (err) => {
+        if (settled) return;
+        settled = true;
+        if (err) {
+          try { fs.unlinkSync(part); } catch { /* never made it */ }
+          reject(err); taskReject(err);
+        } else {
+          resolve(); taskResolve();
+        }
+      };
+
       const client = url.startsWith("https") ? https : http;
       const request = client.get(url, (res) => {
 
         // Handle redirects
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          downloadFile(res.headers.location, dest)
-            .then(resolve)
-            .catch(reject);
-          taskResolve();
+          res.resume();
+          downloadFile(res.headers.location, dest).then(() => done()).catch(done);
           return;
         }
 
         if (res.statusCode !== 200) {
-          taskReject(new Error(`Download failed: ${res.statusCode}`));
+          res.resume();
+          done(new Error(`Download failed: ${res.statusCode}`));
           return;
         }
 
-        const file = fs.createWriteStream(dest);
+        // What the server says it is sending, where it says so. A body that
+        // stops short of it is a broken download however cleanly it ended.
+        const expected = Number(res.headers["content-length"]);
+        let got = 0;
+        res.on("data", (c) => { got += c.length; });
+
+        const file = fs.createWriteStream(part);
+        // There must always be something listening for these two. An error
+        // with no listener is an uncaught exception, and this runs in the
+        // main process.
+        file.on("error", done);
+        res.on("error", done);
+
         res.pipe(file);
 
         file.on("finish", () => {
           file.close(() => {
-            resolve();
-            taskResolve();
+            if (Number.isFinite(expected) && expected > 0 && got !== expected) {
+              done(new Error(`Download cut short: ${got} of ${expected} bytes`));
+              return;
+            }
+            try {
+              fs.renameSync(part, dest);
+            } catch (e) {
+              // Across devices, or over a file something still has open.
+              try { fs.copyFileSync(part, dest); fs.unlinkSync(part); }
+              catch { done(e); return; }
+            }
+            done();
           });
         });
-
-        file.on("error", (err) => {
-          fs.unlink(dest, () => {});
-          taskReject(err);
-          reject(err);
-        });
-
       });
 
-      request.on("error", (err) => {
-        reject(err);
-        taskReject(err);
-      });
-
+      request.on("error", done);
     });
 
     downloadQueue.push(task);

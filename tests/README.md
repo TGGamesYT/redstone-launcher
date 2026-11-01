@@ -32,3 +32,5 @@ Current files:
   that belongs to them, and one step replacing another.
 - `packtools-test.mjs` — the totem generator and the Vanilla Tweaks picker.
 - `runs-test.mjs` — two copies of one instance keeping their own consoles.
+- `download-test.mjs` — a download being all of it or none of it, against a
+  server that drops the connection halfway.

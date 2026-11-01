@@ -9,15 +9,51 @@ const dataDir = path.join(app.getPath('userData'));
 const serversDir = path.join(dataDir, "servers");
 fs.mkdirSync(serversDir, { recursive: true });
 
-// Helper: download file
+// Fetch a file, and either have the whole of it or none of it.
+//
+// Written to a .part and moved into place, so a connection that drops leaves
+// nothing behind rather than a truncated server jar that looks finished and
+// fails on the first run. The length the server promises is checked, because
+// a body that stops short still ends the stream cleanly, and both the
+// response and the file are listened to -- an 'error' with no listener is an
+// uncaught exception.
 function download(url, dest) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    https.get(url, (res) => {
-      if (res.statusCode !== 200) return reject(new Error("Download failed " + res.statusCode));
-      res.pipe(file);
-      file.on("finish", () => file.close(() => resolve(dest)));
-    }).on("error", reject);
+    const part = dest + ".part";
+    let settled = false;
+    const done = (err) => {
+      if (settled) return;
+      settled = true;
+      if (err) { try { fs.unlinkSync(part); } catch { /* never made it */ } reject(err); }
+      else resolve(dest);
+    };
+    const get = (u, hops) => {
+      https.get(u, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          if (hops <= 0) return done(new Error("Too many redirects"));
+          return get(new URL(res.headers.location, u).href, hops - 1);
+        }
+        if (res.statusCode !== 200) { res.resume(); return done(new Error("Download failed " + res.statusCode)); }
+        const expected = Number(res.headers["content-length"]);
+        let got = 0;
+        res.on("data", (c) => { got += c.length; });
+        const file = fs.createWriteStream(part);
+        file.on("error", done);
+        res.on("error", done);
+        res.pipe(file);
+        file.on("finish", () => file.close(() => {
+          if (Number.isFinite(expected) && expected > 0 && got !== expected) {
+            return done(new Error(`Download cut short: ${got} of ${expected} bytes`));
+          }
+          try { fs.renameSync(part, dest); } catch (e) {
+            try { fs.copyFileSync(part, dest); fs.unlinkSync(part); } catch { return done(e); }
+          }
+          done();
+        }));
+      }).on("error", done);
+    };
+    get(url, 5);
   });
 }
 
