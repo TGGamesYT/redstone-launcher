@@ -177,6 +177,7 @@ function applyBackground(settings) {
     root.style.setProperty('--app-background', 'none');
     root.style.setProperty('--app-bg-color', 'transparent');
     root.classList.remove('custom-bg');
+    root.classList.remove('bg-scrolls');
     if (document.body) document.body.classList.remove('custom-bg');
     if (window.LauncherOutline) window.LauncherOutline.refresh();
     return;
@@ -187,6 +188,9 @@ function applyBackground(settings) {
   root.style.setProperty('--app-bg-repeat', css.repeat);
   root.style.setProperty('--app-bg-render', css.render);
   root.style.setProperty('--app-bg-attach', css.attach);
+  // Travelling with the page is not something <html>'s background can do --
+  // see the bg-scrolls rule in server.css for why, and where it goes instead.
+  root.classList.toggle('bg-scrolls', css.attach === 'scroll');
   root.classList.add('custom-bg');
   if (document.body) document.body.classList.add('custom-bg');
   // Which text needs an outline depends on what is behind it, so a change of

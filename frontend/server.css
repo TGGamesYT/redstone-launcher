@@ -725,6 +725,32 @@ html.custom-bg {
   image-rendering: var(--app-bg-render);
 }
 
+/* "Scroll the wall with the page."
+   <html>'s background is the canvas's, and the canvas never scrolls: <body>
+   is overflow:hidden and every page scrolls inside its own container. So
+   background-attachment on <html> had nothing to scroll against, whichever
+   value it was given, and the toggle did nothing on any page.
+   The wall is painted on the containers that really do scroll instead. They
+   all carry data-fit-height, which is how fitheight.js finds them, and the
+   attachment is `local` -- the one value that means "travel with this
+   element's own contents". The colour stays on <html> so the window behind a
+   see-through texture is still covered. */
+html.custom-bg.bg-scrolls {
+  background-image: none;
+}
+
+html.custom-bg.bg-scrolls [data-fit-height],
+html.custom-bg.bg-scrolls .main-scrolly,
+html.custom-bg.bg-scrolls .full-scrolly {
+  background-color: transparent;
+  background-image: var(--app-background);
+  background-size: var(--app-bg-size);
+  background-repeat: var(--app-bg-repeat);
+  background-position: center top;
+  background-attachment: local;
+  image-rendering: var(--app-bg-render);
+}
+
 body {
   margin: 0;
   padding: 0;

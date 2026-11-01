@@ -45,10 +45,26 @@ async function mavenVersions(base) {
 
 // NeoForge numbers its builds after the Minecraft version with the leading "1."
 // dropped: 1.21.1 -> 21.1.x, and 1.21 (no patch) -> 21.0.x.
+// NeoForge numbers its builds after the Minecraft version, with the build
+// number tacked on the end. How much of the Minecraft version it uses depends
+// on which numbering Minecraft itself was on:
+//
+//   1.21.1  ->  21.1.<build>      the leading "1." is dropped
+//   26.3    ->  26.3.0.<build>    the whole of it, padded to three parts
+//   26.1.2  ->  26.1.2.<build>
+//
+// This used to insist the version started with "1.", so every 26.x release
+// resolved to nothing and NeoForge simply stopped being offered after 1.21.11
+// -- which is the last version of the old numbering.
 export function neoPrefix(gameVersion) {
-  const parts = String(gameVersion).split(".");
-  if (parts[0] !== "1" || !parts[1]) return null;
-  return `${parts[1]}.${parts[2] || "0"}.`;
+  const parts = String(gameVersion).trim().split(".");
+  if (!parts[0] || !/^\d+$/.test(parts[0])) return null;
+  if (parts[0] === "1") {
+    if (!parts[1]) return null;
+    return `${parts[1]}.${parts[2] || "0"}.`;
+  }
+  if (!parts[1]) return null;
+  return `${parts[0]}.${parts[1]}.${parts[2] || "0"}.`;
 }
 
 export async function resolveNeoForgeVersion(gameVersion, wanted) {

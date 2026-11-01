@@ -96,6 +96,7 @@
     set('--app-bg-repeat', repeat);
     set('--app-bg-render', render);
     set('--app-bg-attach', attach);
+    if (attach === 'scroll') root.classList.add('bg-scrolls');
     root.classList.add('custom-bg');
   }
 
