@@ -3929,7 +3929,16 @@
               tabContent.classList.add("logs-active");
               logsEl.style.display = "block";
               tabContent.innerHTML = "";
+              // "Run again" starts a second copy of the same instance, and
+              // both used to write into this one console interleaved, with no
+              // way to tell whose line was whose. A strip above it picks which
+              // process to read, named by when it was started.
+              const runStrip = document.createElement("div");
+              runStrip.className = "tabstrip log-runs";
+              runStrip.style.display = "none";
+              tabContent.appendChild(runStrip);
               tabContent.appendChild(logsEl);
+              let shownRun = null;             // null = whatever is newest
 
               // Compare ids as strings: a profile's id can be a number in
               // profiles.json but a string elsewhere (e.g. after an edit), and
@@ -3979,12 +3988,40 @@
                   }
                 } catch { /* ignore */ }
                 if (!ensureStillActive()) return;
-                const history = await ipcRenderer.invoke('get-instance-logs', profile.id);
+                await drawRuns();
+                await showRun(shownRun);
+              })();
+
+              // One button per launch. Only shown when there is more than one
+              // to choose between -- a single run needs no chooser.
+              const when = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              async function drawRuns() {
+                let runs = [];
+                try { runs = await ipcRenderer.invoke('get-instance-runs', profile.id) || []; } catch { /* none */ }
+                if (!ensureStillActive()) return runs;
+                if (runs.length < 2) { runStrip.style.display = "none"; runStrip.innerHTML = ""; return runs; }
+                if (!shownRun || !runs.some(r => r.run === shownRun)) shownRun = runs[runs.length - 1].run;
+                runStrip.style.display = "";
+                runStrip.innerHTML = "";
+                runs.forEach((r, i) => {
+                  const b = document.createElement("button");
+                  b.textContent = `${i + 1} · ${when(r.startedAt)}${r.running ? "" : " (ended)"}`;
+                  b.title = r.pid ? `Process ${r.pid}` : "Still starting";
+                  b.classList.toggle("active", r.run === shownRun);
+                  b.onclick = () => { shownRun = r.run; drawRuns(); showRun(r.run); };
+                  runStrip.appendChild(b);
+                });
+                if (window.TabStrip) window.TabStrip.place(runStrip);
+                return runs;
+              }
+
+              async function showRun(run) {
+                const history = await ipcRenderer.invoke('get-instance-logs', profile.id, run || undefined);
                 if (!ensureStillActive()) return;
                 const lines = (Array.isArray(history) ? history : []).map(deobfLine);
                 logsEl.textContent = lines.length ? lines.join("\n") + "\n" : "";
                 logsEl.scrollTop = logsEl.scrollHeight;
-              })();
+              }
 
               let gotLiveLog = false;
               ipcRenderer.removeAllListeners('launcher-log');
@@ -3993,6 +4030,11 @@
                 // Strictly this instance's logs.
                 if (data && String(data.profileId) === selectedLogId) {
                   gotLiveLog = true;
+                  // A line belongs to the run it came from. When another run
+                  // is being read, it is not appended -- but the strip is
+                  // redrawn, so a launch that has just started turns up in it.
+                  if (data.run && shownRun && data.run !== shownRun) { drawRuns(); return; }
+                  if (data.run && !shownRun) drawRuns();
                   appendLine(data.msg);
                 }
               });

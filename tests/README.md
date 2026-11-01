@@ -31,3 +31,4 @@ Current files:
 - `newinstance-test.mjs` — the new-instance and new-server flows, the blur
   that belongs to them, and one step replacing another.
 - `packtools-test.mjs` — the totem generator and the Vanilla Tweaks picker.
+- `runs-test.mjs` — two copies of one instance keeping their own consoles.

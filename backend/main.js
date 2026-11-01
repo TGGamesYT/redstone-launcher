@@ -180,8 +180,41 @@ const instanceMeta = new Map(); // profileId -> { name, version } (for Discord p
 // Renderer log delivery is throttled/batched: minecraft-launcher-core emits a
 // huge amount of debug/data lines while downloading, and sending one IPC
 // message per line was a big source of UI lag during launch.
-const pendingLogs = new Map(); // profileId -> string[] buffered for the renderer
+const pendingLogs = new Map(); // profileId -> [{ run, text }] buffered for the renderer
 let logFlushTimer = null;
+
+// "Run again" starts a SECOND copy of the same instance, and both wrote into
+// one console, interleaved, with no way to tell which line came from which --
+// so each launch is its own run here, and the console can be asked for one of
+// them. The lines are kept per run; `instanceLogs` stays as it was so the
+// history of a game that outlived the launcher still reads.
+const instanceRuns = new Map();   // profileId -> [{ run, pid, startedAt, endedAt, lines }]
+const RUNS_KEPT = 6;
+let _runSeq = 0;
+
+function beginRun(profileId) {
+  const run = `r${Date.now().toString(36)}${(++_runSeq).toString(36)}`;
+  const list = instanceRuns.get(String(profileId)) || [];
+  list.push({ run, pid: null, startedAt: Date.now(), endedAt: null, lines: [] });
+  // Only so many: a long session is thousands of lines and there is no reason
+  // to hold every launch the launcher has ever made.
+  while (list.length > RUNS_KEPT) list.shift();
+  instanceRuns.set(String(profileId), list);
+  return run;
+}
+
+const runsOf = (profileId) => instanceRuns.get(String(profileId)) || [];
+const findRun = (profileId, run) => runsOf(profileId).find(r => r.run === run) || null;
+
+// Which process a run turned out to be, known only once it has started.
+function runStarted(profileId, run, pid) {
+  const r = findRun(profileId, run);
+  if (r) r.pid = pid;
+}
+function runEnded(profileId, run) {
+  const r = findRun(profileId, run);
+  if (r && !r.endedAt) r.endedAt = Date.now();
+}
 
 function flushLogs() {
   logFlushTimer = null;
@@ -190,8 +223,17 @@ function flushLogs() {
     return;
   }
   for (const [profileId, lines] of pendingLogs.entries()) {
-    if (lines.length) {
-      mainWindow.webContents.send('launcher-log', { profileId, msg: lines.join('\n') });
+    if (!lines.length) continue;
+    // Batched per run as well as per instance, so the console can keep two
+    // copies of the same instance apart.
+    const byRun = new Map();
+    for (const { run, text } of lines) {
+      const key = run || "";
+      if (!byRun.has(key)) byRun.set(key, []);
+      byRun.get(key).push(text);
+    }
+    for (const [run, texts] of byRun) {
+      mainWindow.webContents.send('launcher-log', { profileId, run: run || null, msg: texts.join('\n') });
     }
   }
   pendingLogs.clear();
@@ -232,7 +274,7 @@ function censorSecrets(text) {
   return out;
 }
 
-function broadcastLog(profileId, msg) {
+function broadcastLog(profileId, msg, run = null) {
   if (!instanceLogs.has(profileId)) {
     instanceLogs.set(profileId, []);
   }
@@ -241,8 +283,13 @@ function broadcastLog(profileId, msg) {
   logs.push(text);
   if (logs.length > 2000) logs.shift(); // Keep last 2000 lines
 
+  if (run) {
+    const r = findRun(profileId, run);
+    if (r) { r.lines.push(text); if (r.lines.length > 4000) r.lines.shift(); }
+  }
+
   if (!pendingLogs.has(profileId)) pendingLogs.set(profileId, []);
-  pendingLogs.get(profileId).push(text);
+  pendingLogs.get(profileId).push({ run, text });
   scheduleLogFlush();
 
   detectLanOpen(profileId, text);
@@ -354,10 +401,10 @@ function broadcastProgress(profileId, progress) {
 
 // Wire up all of a launcher's events (logs + progress) before launch() is
 // called, so download progress isn't missed while the game is being prepared.
-function attachLauncherEvents(launcher, profileId) {
-  launcher.on('data', msg => broadcastLog(profileId, msg));
-  launcher.on('debug', msg => broadcastLog(profileId, msg));
-  launcher.on('error', err => broadcastLog(profileId, "ERROR: " + (err?.message || err)));
+function attachLauncherEvents(launcher, profileId, run = null) {
+  launcher.on('data', msg => broadcastLog(profileId, msg, run));
+  launcher.on('debug', msg => broadcastLog(profileId, msg, run));
+  launcher.on('error', err => broadcastLog(profileId, "ERROR: " + (err?.message || err), run));
   launcher.on('progress', (p) => broadcastProgress(profileId, {
     stage: p.type,
     current: p.task,
@@ -720,7 +767,25 @@ function getRunningInstances() {
   return Array.from(runningInstances.values());
 }
 
-ipcMain.handle('get-instance-logs', (event, profileId) => {
+// Which launches of this instance the console can be shown, newest last.
+// Two copies of the same instance are two entries, each with the moment it
+// was started and the process it turned out to be.
+ipcMain.handle('get-instance-runs', (event, profileId) => {
+  const live = new Set(Array.from(runningInstances.values())
+    .filter(i => String(i.id) === String(profileId)).map(i => i.pid));
+  return runsOf(profileId).map(r => ({
+    run: r.run, pid: r.pid, startedAt: r.startedAt, endedAt: r.endedAt,
+    running: r.pid != null && live.has(r.pid),
+    lines: r.lines.length,
+  }));
+});
+
+ipcMain.handle('get-instance-logs', (event, profileId, run) => {
+  // One particular launch, when the console is asking for one.
+  if (run) {
+    const r = findRun(profileId, run);
+    return r ? r.lines.slice() : [];
+  }
   const live = instanceLogs.get(profileId);
   if (live && live.length) return live;
 
@@ -3367,7 +3432,12 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
   if (isRunning && again) broadcastLog(profileId, "[INFO] Starting another copy of this instance.");
 
   launchingProfiles.set(profileId, now);
-  instanceLogs.delete(profileId); // fresh console for this launch (previous session was kept until now)
+  // A run of its own, so a second copy of the same instance keeps its own
+  // console instead of being interleaved with the first.
+  const run = beginRun(profileId);
+  // The old whole-instance log still starts fresh with the newest launch;
+  // the per-run consoles are what keep the earlier ones.
+  instanceLogs.delete(profileId);
   // Pick up any dev-mod builds produced while the launcher wasn't watching.
   try { await syncDevMods("instance", profileId); } catch { /* non-fatal */ }
   // A totem pack set to follow the account is rebuilt here: the skin may have
@@ -3381,11 +3451,11 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
   // otherwise skips without saying why.
   try {
     const { targets } = writeAllowedSymlinks(profileId);
-    if (targets.length) broadcastLog(profileId, `[INFO] Allowing ${targets.length} symlink target${targets.length === 1 ? "" : "s"}: ${targets.join(", ")}`);
+    if (targets.length) broadcastLog(profileId, `[INFO] Allowing ${targets.length} symlink target${targets.length === 1 ? "" : "s"}: ${targets.join(", ")}`, run);
   } catch { /* non-fatal */ }
 
   try {
-    broadcastLog(profileId, "Launching, please wait.");
+    broadcastLog(profileId, "Launching, please wait.", run);
     // Per-instance RAM override falls back to the global setting.
     const profileForRam = (await loadProfiles()).find(p => String(p.id) === String(profileId)) || {};
     const minRam = `${profileForRam.ramMin || settings.get('ramInstancesMin', 1024)}m`;
@@ -3396,7 +3466,7 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) {
       launchingProfiles.delete(profileId);
-      broadcastLog(profileId, "[ERROR] Profile not found");
+      broadcastLog(profileId, "[ERROR] Profile not found", run);
       return;
     }
     profile.lastUsed = Date.now();
@@ -3405,7 +3475,7 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     const player = players.find(p => p.id === playerId);
     if (!player) {
       launchingProfiles.delete(profileId);
-      broadcastLog(profileId, "[ERROR] Player not found");
+      broadcastLog(profileId, "[ERROR] Player not found", run);
       return;
     }
 
@@ -3418,7 +3488,7 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
         auth = player.auth
       } catch (err) {
         auth = player.auth
-        broadcastLog(profileId, "[ERROR] Failed to refresh Microsoft token: " + err.message);
+        broadcastLog(profileId, "[ERROR] Failed to refresh Microsoft token: " + err.message, run);
       }
     }
     // Quick Play: join a server / open a world straight away. Accepts an
@@ -3465,9 +3535,9 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     if (player.type === "cracked") {
       const entry = loadCrackedSkins()[String(player.id)];
       if (entry && entry.base64) {
-        broadcastLog(profileId, "[skin] Applying the offline account skin...");
+        broadcastLog(profileId, "[skin] Applying the offline account skin...", run);
         const r = applyCrackedSkinToInstance(profileId, profile.version, entry.base64);
-        if (!r.success) broadcastLog(profileId, "[WARN] Couldn't apply the offline skin: " + r.error);
+        if (!r.success) broadcastLog(profileId, "[WARN] Couldn't apply the offline skin: " + r.error, run);
       } else {
         removeCrackedSkinFromInstance(profileId);
       }
@@ -3480,13 +3550,14 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
       rootPath: rootDir, auth, memory: { max: maxRam, min: minRam }, javaPath,
       assetRoot: path.join(dataDir, 'assets'), quickPlay: quickplay,
       customArgs, customLaunchArgs, name: profile.name,
-    });
+    }, run);
 
     launchingProfiles.delete(profileId);
-    return { pid };
+    return { pid, run };
   } catch (err) {
     launchingProfiles.delete(profileId);
-    broadcastLog(profileId, "[ERROR] " + err.message);
+    broadcastLog(profileId, "[ERROR] " + err.message, run);
+    runEnded(profileId, run);
     return { error: err.message };
   }
 }
@@ -3626,7 +3697,7 @@ function writeAllowedSymlinks(profileId) {
   return { targets };
 }
 
-function launchViaWorker(profileId, cfg) {
+function launchViaWorker(profileId, cfg, run = null) {
   return new Promise((resolve, reject) => {
     let worker;
     try {
@@ -3654,7 +3725,7 @@ function launchViaWorker(profileId, cfg) {
       switch (m.type) {
         case 'log':
         case 'gamelog':
-          broadcastLog(profileId, m.line); break;
+          broadcastLog(profileId, m.line, run); break;
         case 'progress': {
           const p = m.p || {};
           const many = Number(p.total) > 1;
@@ -3682,15 +3753,17 @@ function launchViaWorker(profileId, cfg) {
           broadcastProgress(profileId, { done: true, label: 'Starting Minecraft' });
           instanceMeta.set(profileId, { name: cfg.name, version: cfg.gameVersion });
           startInstance(profileId, m.pid);
+          runStarted(profileId, run, m.pid);
           updateGamePresence();
-          broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${m.pid})`);
+          broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${m.pid})`, run);
           resolve({ pid: m.pid });
           break;
         case 'exit':
           stopInstance(profileId, m.pid);
+          runEnded(profileId, run);
           onInstanceExited(profileId);
           broadcastProgress(profileId, { done: true });
-          broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${m.code}`);
+          broadcastLog(profileId, `[INFO] Instance "${profileId}" exited with code ${m.code}`, run);
           reportInstanceCrash(profileId, cfg, m.code);
           try { worker.kill(); } catch { /* ignore */ }
           break;

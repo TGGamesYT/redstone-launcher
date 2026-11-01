@@ -290,3 +290,15 @@
 .server-status.offline {
   color: #e05555;
 }
+/* Which launch the console is showing. Only there when there is more than one
+   to choose between -- "Run again" starts a second copy of the same instance,
+   and the two used to be interleaved in one console. */
+.log-runs {
+  margin-bottom: 8px;
+  flex: 0 0 auto;
+}
+
+.log-runs > button {
+  font-size: 12px;
+  padding: 5px 10px;
+}
