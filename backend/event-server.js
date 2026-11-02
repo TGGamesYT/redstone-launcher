@@ -30,6 +30,7 @@
 //         "version": "${mcver}",
 //         "autoEula":  "${doeula} == yes",
 //         "autoStart": "${doeula} == yes",
+//         "autoShare": "${doshare} == yes",
 //         "content": {
 //           "plugins":   ["modrinth:event-plugin-id", "curseforge:123456"],
 //           "datapacks": ["modrinth:some-datapack"]
@@ -241,6 +242,7 @@ export function parseEventServer(input) {
           version: String(sv.version || ""),
           autoEula: sv.autoEula == null ? false : sv.autoEula,
           autoStart: sv.autoStart == null ? false : sv.autoStart,
+          autoShare: sv.autoShare == null ? false : sv.autoShare,
           content,
         };
       }
@@ -332,6 +334,7 @@ export function serverSpecFor(def, vars) {
     version: fill(sv.version, vars).trim(),
     autoEula: typeof sv.autoEula === "boolean" ? sv.autoEula : test(sv.autoEula, vars),
     autoStart: typeof sv.autoStart === "boolean" ? sv.autoStart : test(sv.autoStart, vars),
+    autoShare: typeof sv.autoShare === "boolean" ? sv.autoShare : test(sv.autoShare, vars),
     content,
   };
 }

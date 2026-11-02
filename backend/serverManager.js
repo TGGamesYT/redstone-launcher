@@ -375,21 +375,47 @@ function startServer(name, settings, javaPath) {
   server.process = proc;
   server.status = "running";
 
+  // A watcher is told one LINE at a time.
+  //
+  // stdout arrives in chunks of whatever happened to be written, which is not
+  // the same thing: a chunk may hold several lines, or stop halfway through
+  // one. Handing the chunk straight to the watchers meant a line split across
+  // two of them matched nothing -- which is why an event server's
+  // "when a player joins" fired sometimes and not others -- and that two
+  // players joining close together were one match between them, because a
+  // regex over a chunk finds the first and stops.
+  const feed = (prefix) => {
+    let held = "";
+    return (data) => {
+      const text = prefix + data.toString();
+      server.logs.push(text);
+      held += text;
+      const lines = held.split(/\r?\n/);
+      held = lines.pop();                 // whatever came after the last newline
+      for (const line of lines) if (line.length) tell(name, line);
+      // A line with no newline after it is not finished, EXCEPT when it is the
+      // prompt-like last line of a long pause. Held is flushed when the
+      // process ends, which is the only point it is certainly complete.
+      return held;
+    };
+  };
+  const outFeed = feed("");
+  const errFeed = feed("[ERR] ");
+  let lastHeldOut = "", lastHeldErr = "";
+
   proc.stdout.on("data", (data) => {
-    const msg = data.toString();
-    server.logs.push(msg);
-    tell(name, msg);
-    console.log(`[SERVER ${name}] ${msg}`);
+    lastHeldOut = outFeed(data);
+    console.log(`[SERVER ${name}] ${data.toString()}`);
   });
 
   proc.stderr.on("data", (data) => {
-    const msg = "[ERR] " + data.toString();
-    server.logs.push(msg);
-    tell(name, msg);
-    console.error(`[SERVER ${name}] ${msg}`);
+    lastHeldErr = errFeed(data);
+    console.error(`[SERVER ${name}] ${data.toString()}`);
   });
 
   proc.on("close", () => {
+    // Anything left without a newline after it still happened.
+    for (const rest of [lastHeldOut, lastHeldErr]) if (rest && rest.length) tell(name, rest);
     server.process = null;
     server.status = "stopped";
     tell(name, null);                     // it has gone

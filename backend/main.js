@@ -4112,6 +4112,7 @@ async function evCreate(run) {
   }
 
   evSay(run, "Starting it…");
+  run.share = !!spec.autoShare;
   try { serverManager.startServer(name, settings, java); }
   catch (e) { throw new Error(`It was made, but would not start: ${e.message}`); }
 
@@ -4184,10 +4185,29 @@ function evWatch(run, name) {
       fullyStarted = true;
       run.phase = "onfullystarted";
       evSay(run, "It has finished starting.");
+      // Shared over the internet by itself, when the file asks for it. An
+      // event server is handed to somebody as one file: having to find the
+      // share button afterwards is the one step the file could not describe.
+      if (run.share) {
+        evSay(run, "Sharing it over the internet\u2026");
+        try {
+          const r = await openRelayFor({ name, accountId: run.shareAccount || undefined });
+          if (r && r.success) {
+            run.address = r.address;
+            evSay(run, `Anybody can join at ${r.address}`);
+          } else {
+            evSay(run, `It could not be shared: ${(r && r.error) || "no reason given"}`, "error");
+          }
+        } catch (e) {
+          evSay(run, `It could not be shared: ${e.message}`, "error");
+        }
+      }
       await evCommands(run, "onfullystarted");
     }
-    // '<name> joined the game' -- also 'Steve[/1.2.3.4:5] logged in'
-    const joined = /:\s*(\w{3,16}) joined the game/.exec(line);
+    // '<name> joined the game'. Matched anywhere in the line rather than
+    // straight after a colon: how much of a prefix a server puts in front of
+    // it differs between vanilla, Paper and Purpur, and a plugin can add more.
+    const joined = /([A-Za-z0-9_]{3,16}) joined the game/.exec(line);
     if (joined) {
       const vars = { ...run.vars, player: joined[1] };
       for (const cmd of eventServers.commandsFor(run.def, "onplayerjoin", vars)) {
@@ -6600,7 +6620,11 @@ function subLabel(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9-]+
 
 // Open an ICE relay tunnel. Requires a verified premium account and a subdomain
 // under <username>.redstonemc.net (admins can use anything).
-ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, domain, accountId }) => {
+// Sharing a server over the internet, as a function rather than only as
+// something a window can ask for: an event server's file can say to do it the
+// moment the server has finished starting, and there is nobody at a window to
+// press the button for it.
+async function openRelayFor({ key, name, localPort, subdomain, domain, accountId }) {
   const k = key || name;
   try {
     if (activeRelays.has(k)) {
@@ -6646,7 +6670,9 @@ ipcMain.handle("relay:open", async (event, { key, name, localPort, subdomain, do
     console.error("[Relay] open failed:", err);
     return { success: false, error: err.message };
   }
-});
+}
+
+ipcMain.handle("relay:open", (event, opts = {}) => openRelayFor(opts));
 
 ipcMain.handle("relay:close", async (event, { key, name }) => {
   const k = key || name;
