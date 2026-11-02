@@ -4409,9 +4409,10 @@ const HOME_TYPES = [
       { id: "title", label: "Heading", kind: "text", default: "" },
       { id: "height", label: "Height", kind: "number", default: 320, min: 120, max: 700 },
       {
-        id: "animation", label: "Doing", kind: "choice", default: "idle",
+        id: "animation", label: "Doing", kind: "choice", default: "clips",
         choices: [
           { value: "none", label: "Standing still" },
+          { value: "clips", label: "The skins page's own" },
           { value: "idle", label: "Idling" },
           { value: "walk", label: "Walking" },
           { value: "run", label: "Running" },
@@ -4420,6 +4421,8 @@ const HOME_TYPES = [
       },
       { id: "movable", label: "Let it be turned by dragging", kind: "toggle", default: true },
       { id: "physics", label: "Keep spinning when let go, and swing with it", kind: "toggle", default: true },
+      { id: "settle", label: "Settle back to facing forward when left alone", kind: "toggle", default: true },
+      { id: "settleAfter", label: "After how long (ms)", kind: "number", default: 3500, min: 500, max: 60000 },
       { id: "spin", label: "Turn slowly on its own", kind: "toggle", default: false },
       {
         id: "align", label: "Where in its space", kind: "choice", default: "center",

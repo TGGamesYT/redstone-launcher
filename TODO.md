@@ -60,36 +60,50 @@ The newest batch, in the order it was given.
       it had none, so there was no way to see what was installed.*
 
 ### The main page
-- [ ] **Adding or changing a segment still redraws the ones already drawn.**
-- [ ] **Segments treat their own edges differently** — some are cut off at
-      them, some spill over (the player render does).
-- [ ] **The friends segment's tiles setting does nothing.**
-- [ ] **A segment cannot be dropped into empty space**, only onto another one.
-- [ ] **A big segment dropped into a small space should shrink to fit**,
-      rather than ignoring the drop and spilling into the next row.
-- [ ] **Resizing from the left of a right-hand segment pins it to the left.**
-      There should be room for gaps.
-- [ ] **Dropping onto a segment should share that segment's space** — both
-      resized to halve it between them — not drop a line and land beside it.
-- [ ] **There is a gap on the left of the main page** between the panel and
-      where the segments start.
-- [ ] **The player render still has none of the physics a player render can
-      have** — turning with the swing of it and the rest — with a toggle for
-      settling back after a while untouched, and the "doing" offering the
-      idle animations the skins page has.
-- [ ] **Segments can still be dragged right after Done is clicked.**
-- [ ] **The inside size does nothing for the player render or the snapshot
-      news.**
-- [ ] **The time played segment draws its content twice**, and its size does
-      nothing either.
-- [ ] **Changing anything loses the scroll position.**
-- [ ] **Dropping onto the right-hand one of a split row** lands in the next
-      row instead of sharing that one.
-- [ ] **The right edge is not shared between rows** — resizing the smaller one
-      out to the edge starts resizing from the other side instead.
-- [ ] **The inside size jumps**: growing a segment shrinks its contents at
-      some point rather than keeping them the same size relative to it.
-- [ ] **Shrinking a row makes the next one curl up into it.**
+- [x] **Adding or changing a segment no longer redraws the rest.** — *Saving
+      was also sending the change back to the window that made it, so every
+      resize rebuilt the page twice over. And a rebuild now MOVES the
+      segments that have not changed rather than drawing them again — their
+      clocks keep running and their rows of projects are not fetched afresh.*
+- [x] **Segments treat their own edges the same way now.** — *The contents
+      stay inside, the render included; the handles sit outside the part that
+      clips, which is why they used to disappear.*
+- [x] **The friends segment's tiles setting does something.** — *It drew a
+      list whichever was chosen. Tiles are a face, a name and whether they
+      are on; clicking one opens them, which it also did not do.*
+- [x] **A segment can be dropped into empty space.** — *Rows are real, so
+      empty space in one is somewhere to land.*
+- [x] **A big segment dropped into a small space shrinks to fit.**
+- [x] **Dragging a left edge moves the left edge.** — *An edge stops where
+      its neighbour is and nowhere else: nothing is pushed and nothing is
+      taken, so the space between two segments is simply a space.*
+- [x] **Dropping onto a segment shares that segment's space**, half each,
+      the side you are on deciding which half.
+- [x] **The page has the same margin on both sides.** — *<body> insets it
+      twenty pixels on the left and nothing on the right, and the scroller
+      added twelve more on that side again.*
+- [x] **The player render moves like the skins page's.** — *The same
+      physics out of the same file: let go of mid-turn it keeps going and
+      slows, and the figure leans and its arms swing with it. A toggle for
+      settling back to facing forward when left alone, and how long to wait.
+      "Doing" offers the skins page's own idle animations, which idle and
+      every so often do something.*
+- [x] **Done takes the handles off, listeners and all.**
+- [x] **The inside size reaches the player render and the news.**
+- [x] **The time played segment drew itself twice.** — *Redrawing one
+      emptied its node, and an async segment still waiting on a fetch carried
+      on and appended underneath the new contents. The node is replaced now.
+      Its number follows the inside size too.*
+- [x] **Changing anything keeps the scroll position.**
+- [x] **Dropping onto the right-hand one of a split row shares that row.**
+- [x] **The right edge is shared between rows.** — *Each row is its own
+      hundred columns, so the last segment on one can be pulled out to the
+      page's edge without anything else being dragged along.*
+- [x] **The inside size no longer jumps.** — *A minmax(150px, 1fr) track
+      grew the cards until another column fitted and then snapped them
+      smaller. A fixed track means the size is the setting and nothing else.*
+- [x] **Shrinking a row moves the next one up, not into it.** — *Rows were
+      a consequence of the widths, so changing one re-flowed the wrapping.*
 
 ### The mod browser
 - [x] **A Modrinth creator's page named the server type

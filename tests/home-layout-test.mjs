@@ -322,6 +322,92 @@ check("and a segment cannot still be dragged after it",
   await p.$$eval("#home-segments .hs.dragging, .hs-slot", (e) => e.length), 0,
   "the hold listener was left on every segment, so they all still moved");
 
+// ── what is inside a segment ────────────────────────────────────────────
+// The inside-size setting is a multiplier on the contents and nothing else.
+// It reached some segments and not others, and where it did reach, a wider
+// segment made the contents jump smaller.
+const sizeOf = (sel) => p.evaluate((q) => {
+  const e = document.querySelector(q);
+  return e ? Math.round(e.getBoundingClientRect().width) : null;
+}, sel);
+
+await set([{ id: "a", type: "projects", row: 0, x: 0, w: 50, h: 0, scale: 100 }]);
+await p.evaluate(() => {
+  // Stand-in contents of the shape the real segments build.
+  const n = document.querySelector("#home-segments .hs");
+  const g = document.createElement("div"); g.className = "hs-grid";
+  for (let i = 0; i < 6; i++) { const c = document.createElement("div"); c.className = "hs-card"; g.appendChild(c); }
+  n.appendChild(g);
+});
+const narrow = await sizeOf(".hs-card");
+await p.evaluate(() => {
+  const n = document.querySelector("#home-segments .hs");
+  n.style.setProperty("--w", "100");
+});
+await p.waitForTimeout(80);
+const wide = await sizeOf(".hs-card");
+check("a card is the same size however wide its segment is", [narrow, wide], [narrow, narrow],
+  "they used to grow until another column fitted and then snap smaller -- the contents randomly shrinking");
+
+await p.evaluate(() => { document.querySelector("#home-segments .hs").style.setProperty("--s", "1.5"); });
+await p.waitForTimeout(80);
+const bigger = await sizeOf(".hs-card");
+check("and the inside size is what changes it", bigger > wide * 1.3, true, `${wide}px to ${bigger}px`);
+
+// The pieces the setting had not reached.
+const css = await p.evaluate(() => document.getElementById("home-style").textContent);
+for (const [what, rule] of [
+  ["the news heading", /\.hs-news h4 \{[^}]*font-size:calc\(13px \* var\(--s\)\)/],
+  ["the news picture", /\.hs-news img \{[^}]*height:calc\(120px \* var\(--s\)\)/],
+  ["the small print under a number", /\.hs-sub \{ font-size:calc\(12px \* var\(--s\)\)/],
+]) {
+  check(`the inside size reaches ${what}`, rule.test(css), true);
+}
+const homeSrc = fs.readFileSync(path.join(FE, "home.js"), "utf8");
+check("the player render is scaled by it too",
+  /const scale = \(Number\(seg\.scale\)/.test(homeSrc) && /Number\(seg\.height\) \|\| 320\)\) \* scale/.test(homeSrc),
+  true, "the setting did nothing here: the render was the height option and no more");
+
+// Every segment's contents stay inside it.
+check("nothing hangs over the edge of its segment",
+  /\.hs > \* \{ max-width:100%; min-width:0; \}/.test(css), true,
+  "the player render spilled over where the others were cut off, which looked like two rules because it was");
+
+// ── what a redraw leaves alone ──────────────────────────────────────────
+// Adding one segment used to reload every other one on the page: every
+// clock restarted, every row of projects fetched again, for a change that
+// touched none of them.
+await set([
+  { id: "a", type: "recent", row: 0, x: 0, w: 50, h: 0 },
+  { id: "b", type: "player", row: 0, x: 50, w: 50, h: 0 },
+]);
+await p.evaluate(() => {
+  // A mark on each node, which only survives if the node itself does.
+  document.querySelectorAll("#home-segments .hs").forEach((n, i) => { n.dataset.mark = "m" + i; });
+});
+// Added the way the page adds one: through the layout and a save.
+await p.evaluate(async () => {
+  const L = window.__layout;
+  if (!L.some(x => x.id === "c")) L.push({ id: "c", type: "projects", row: 1, x: 0, w: 100, h: 0 });
+  await window.Home.apply(L);
+});
+await p.waitForTimeout(300);
+check("adding a segment leaves the ones already drawn alone",
+  await p.$$eval("#home-segments .hs", (e) => e.map(n => n.dataset.mark || "new")),
+  ["m0", "m1", "new"],
+  "they were all torn down and drawn again for a change that touched none of them");
+
+// Moving one does not redraw it either -- where it sits is not what it draws.
+await p.evaluate(async () => {
+  const L = window.__layout;
+  L.find(x => x.id === "b").w = 30;
+  await window.Home.apply(L);
+});
+await p.waitForTimeout(250);
+check("and resizing one does not redraw anything",
+  await p.$$eval("#home-segments .hs", (e) => e.map(n => n.dataset.mark || "new")),
+  ["m0", "m1", "new"]);
+
 if (errors.length) { console.log("PAGE ERRORS:", errors.join(" | ")); bad += errors.length; }
 await browser.close();
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

@@ -76,11 +76,20 @@
         display:flex; flex-direction:column;
         /* How big the things inside are drawn, as a multiplier. */
         --s: 1; }
-      /* NOT overflow:hidden on the segment itself -- that clipped the resize
+      /* What happens at a segment's edge, and the same answer for all of
+         them: the contents stay inside it. Some spilled over -- the player
+         render most visibly -- and some were cut off, which looked like two
+         different rules because it was.
+         NOT overflow:hidden on the segment itself: that clipped the resize
          handles, which is why they sometimes seemed not to be there at all.
-         The contents scroll instead. */
+         The part that holds the contents clips, and the handles sit outside
+         it. */
+      .hs > * { max-width:100%; min-width:0; }
       .hs[data-h] > .hs-body, .hs[data-h] > .hs-list, .hs[data-h] > .hs-row,
-      .hs[data-h] > .hs-grid { overflow:auto; min-height:0; }
+      .hs[data-h] > .hs-grid, .hs[data-h] > .hs-player { overflow:auto; min-height:0; }
+      /* A render is a fixed-size canvas; it is scaled down to the room there
+         is rather than hanging over the side of its segment. */
+      .hs-player canvas { max-width:100%; height:auto; }
       .hs > h2, .hs > h3 { margin:0 0 10px; }
       .hs-body { min-height:0; flex:1; overflow:auto; }
       .hs-empty { opacity:0.6; font-size:13px; }
@@ -121,7 +130,7 @@
       .hs-card .go { margin-top:8px; display:flex; gap:6px; }
       .hs-card .go button { flex:1; padding:5px 6px; font-size:11px; }
       .hs-big { font-variant-numeric:tabular-nums; line-height:1.1; font-weight:bold; }
-      .hs-sub { font-size:12px; opacity:0.7; margin-top:4px; }
+      .hs-sub { font-size:calc(12px * var(--s)); opacity:0.7; margin-top:4px; }
       .hs-media { width:100%; border-radius:var(--border-radius); background:var(--very-dark); display:block; }
       .hs-list { display:flex; flex-direction:column; gap:6px; }
       .hs-item { display:flex; align-items:center; gap:calc(10px * var(--s)); background:var(--menu-bg);
@@ -136,14 +145,27 @@
       .hs-item .go button { padding:3px 7px; font-size:12px; line-height:1.2; }
       .hs-dot { width:8px; height:8px; border-radius:50%; background:#777; flex:0 0 auto; }
       .hs-dot.on { background:#5ad65a; }
+      /* Friends as tiles: a face, a name, and whether they are on. Narrower
+         than a project card, since a head and a name is all there is. */
+      .hs-faces { grid-template-columns:repeat(auto-fill, calc(92px * var(--s))); }
+      .hs-face { position:relative; display:flex; flex-direction:column; align-items:center;
+        gap:calc(6px * var(--s)); padding:calc(10px * var(--s)) calc(6px * var(--s));
+        background:var(--menu-bg); border:1px solid var(--border-dark);
+        border-radius:var(--border-radius); cursor:pointer; min-width:0; }
+      .hs-face:hover { border-color:var(--base-color); }
+      .hs-face img { width:calc(48px * var(--s)); height:calc(48px * var(--s));
+        image-rendering:pixelated; border-radius:6px; background:var(--very-dark); }
+      .hs-face .t { font-size:calc(12px * var(--s)); max-width:100%; overflow:hidden;
+        text-overflow:ellipsis; white-space:nowrap; }
+      .hs-face .hs-dot { position:absolute; top:calc(8px * var(--s)); right:calc(8px * var(--s)); }
       .hs-news { background:var(--menu-bg); border:1px solid var(--border-dark);
         border-radius:var(--border-radius); overflow:hidden; }
       .hs-news .bd { padding:10px 12px; }
-      .hs-news img { width:100%; height:120px; object-fit:cover; display:block; background:var(--very-dark); }
-      .hs-news h4 { margin:0 0 4px; font-size:13px; }
-      .hs-news pre { margin:0; font-size:11.5px; line-height:1.5; white-space:pre-wrap;
-        max-height:120px; overflow:hidden; opacity:0.85; font-family:inherit; }
-      .hs-news .tag { font-size:10px; text-transform:uppercase; letter-spacing:0.05em; opacity:0.6; }
+      .hs-news img { width:100%; height:calc(120px * var(--s)); object-fit:cover; display:block; background:var(--very-dark); }
+      .hs-news h4 { margin:0 0 4px; font-size:calc(13px * var(--s)); }
+      .hs-news pre { margin:0; font-size:calc(11.5px * var(--s)); line-height:1.5; white-space:pre-wrap;
+        max-height:calc(120px * var(--s)); overflow:hidden; opacity:0.85; font-family:inherit; }
+      .hs-news .tag { font-size:calc(10px * var(--s)); text-transform:uppercase; letter-spacing:0.05em; opacity:0.6; }
       .hs-player { display:flex; justify-content:center; }
       .hs-player.left { justify-content:flex-start; }
       .hs-player.right { justify-content:flex-end; }
@@ -463,7 +485,11 @@
         box.appendChild(img);
         return;
       }
-      const h = Math.max(120, Math.min(700, Number(seg.height) || 320));
+      // The inside-size setting did nothing here: the render was whatever
+      // the height option said and no more. It is a multiplier on that, the
+      // same as everything else inside a segment.
+      const scale = (Number(seg.scale) || 100) / 100;
+      const h = Math.round(Math.max(120, Math.min(700, Number(seg.height) || 320)) * scale);
       const v = new skinview3d.SkinViewer({ canvas, width: Math.round(h * 0.6), height: h });
       v.zoom = 0.9;
       v.autoRotate = !!seg.spin;
@@ -480,15 +506,56 @@
       canvas.style.cursor = movable ? 'grab' : 'default';
       await v.loadSkin('data:image/png;base64,' + skin.base64, { model: skin.slim ? 'slim' : 'default' });
       if (skin.capeUrl) { try { await v.loadCape(skin.capeUrl); } catch { /* no cape */ } }
-      // What it is doing. skinview3d ships these; an unknown one or an older
-      // bundle simply leaves it standing.
+
+      // ── it moves like the one on the skins page ──
+      //
+      // The same physics, out of the same file: let go of mid-turn it keeps
+      // going and slows down, and the figure leans and its arms swing with
+      // the turn rather than the model simply rotating on the spot. None of
+      // that was here -- the render could be dragged and that was all.
+      const SA = window.SkinAnimations;
+      const physics = seg.physics !== false;
+      let phys = null;
+      if (movable && physics && SA && SA.orbitPhysics) {
+        try {
+          // `settle` is whether it finds its way back to facing forward after
+          // being left alone, and how long it waits before doing so.
+          phys = SA.orbitPhysics(v, {
+            returnAfter: seg.settle === false ? Infinity : (Number(seg.settleAfter) || 3500),
+          });
+          cleanups.push(() => { try { phys.stop(); } catch { /* gone */ } });
+        } catch { /* a drag with no weight behind it, then */ }
+      }
+
+      // What it is doing. "The skins page's own" is the converted clips that
+      // page uses -- it idles, and every so often does something -- and the
+      // rest are skinview3d's. An unknown one, or an older bundle, simply
+      // leaves it standing.
       const ANIM = {
         idle: 'IdleAnimation', walk: 'WalkingAnimation',
         run: 'RunningAnimation', fly: 'FlyingAnimation',
       };
-      const want = ANIM[String(seg.animation || 'idle')];
-      if (want && typeof skinview3d[want] === 'function') {
-        try { v.animation = new skinview3d[want](); } catch { /* standing still it is */ }
+      const doing = String(seg.animation || 'idle');
+      if (doing === 'clips' && SA && SA.conductor) {
+        const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+        let timer = null;
+        const again = () => { clearTimeout(timer); timer = setTimeout(go, rand(20000, 45000)); };
+        const cond = SA.conductor(() => again());
+        try { v.animation = cond.animation; } catch { /* standing still it is */ }
+        const go = () => {
+          // Not over somebody turning it, and not in a tab nobody is looking
+          // at. Both of those are what made a gesture look wrong.
+          const calm = !phys || phys.restingFor() > 6000;
+          if (!calm || document.hidden || cond.busy) { again(); return; }
+          try { cond.play(SA.clips[SA.randomName()]); } catch { again(); }
+        };
+        again();
+        cleanups.push(() => clearTimeout(timer));
+      } else {
+        const want = ANIM[doing];
+        if (want && typeof skinview3d[want] === 'function') {
+          try { v.animation = new skinview3d[want](); } catch { /* standing still it is */ }
+        }
       }
       cleanups.push(() => { try { v.dispose(); } catch { /* gone */ } });
       if (seg.showName !== false) box.appendChild(el('div', 'hs-sub', account.name || ''));
@@ -519,8 +586,27 @@
         node.appendChild(el('div', 'hs-empty', seg.onlineOnly ? 'Nobody is online.' : 'No friends yet.'));
         return;
       }
-      const list = el('div', 'hs-list');
+      // A list or tiles. The setting was there and did nothing: this drew a
+      // list whichever was chosen.
+      const grid = (seg.view || 'list') === 'grid';
+      const box = el('div', grid ? 'hs-grid hs-faces' : 'hs-list');
+      const open = (f) => {
+        // Somebody's own page, the same one the friends list on the players
+        // page opens -- clicking a friend here did nothing at all.
+        window.location.href = 'players.html?friend=' + encodeURIComponent(f.profileId || f.name || '');
+      };
       for (const f of friends.slice(0, Number(seg.count) || 8)) {
+        if (grid) {
+          const card = el('div', 'hs-face');
+          const img = el('img');
+          if (window.PlayerHead) window.PlayerHead.set(img, { uuid: f.profileId, name: f.name, size: 64 });
+          card.appendChild(img);
+          card.appendChild(el('div', 't', f.name || ''));
+          card.appendChild(el('div', 'hs-dot' + (online(f) ? ' on' : '')));
+          card.onclick = () => open(f);
+          box.appendChild(card);
+          continue;
+        }
         const row = el('div', 'hs-item');
         const img = el('img');
         if (window.PlayerHead) window.PlayerHead.set(img, { uuid: f.profileId, name: f.name, size: 32 });
@@ -528,9 +614,11 @@
         row.appendChild(el('div', 't', f.name || ''));
         const dot = el('div', 'hs-dot' + (online(f) ? ' on' : ''));
         row.appendChild(dot);
-        list.appendChild(row);
+        row.style.cursor = 'pointer';
+        row.onclick = () => open(f);
+        box.appendChild(row);
       }
-      node.appendChild(list);
+      node.appendChild(box);
     },
 
     async projects(seg, node) {
@@ -714,7 +802,9 @@
       const r = await ipcRenderer.invoke('playtime:get', one ? { profileId: one } : {});
       if (!r || !r.success) { node.appendChild(el('div', 'hs-error', 'Playtime could not be read.')); return; }
       const big = el('div', 'hs-big', fmtDuration(r.total));
-      big.style.fontSize = '32px';
+      // The one number this segment is for, at the size the segment asks
+      // for. It was a fixed thirty-two pixels whatever the inside size said.
+      big.style.fontSize = `calc(32px * var(--s))`;
       node.appendChild(big);
       const sessions = r.sessions || 0;
       node.appendChild(el('div', 'hs-sub',
@@ -775,13 +865,7 @@
 
   // ── the page ───────────────────────────────────────────────────────────────
 
-  function clearSegments() {
-    for (const node of document.querySelectorAll('#home-segments .hs')) {
-      if (node._cleanup) { try { node._cleanup(); } catch { /* going anyway */ } }
-    }
-    for (const fn of cleanups) { try { fn(); } catch { /* going anyway */ } }
-    cleanups = [];
-  }
+
 
   // One segment's contents. Each type draws itself; an async one that fails
   // must not take the rest of the page down with it.
@@ -843,6 +927,14 @@
     return out.filter(g => g.to - g.from >= 1);
   }
 
+  // What a segment's CONTENTS depend on. Its size and where it sits are not
+  // in here: moving or resizing one does not change what it draws, so it does
+  // not have to be drawn again.
+  const contentKey = (seg) => {
+    const { row, x, w, h, scale, ...rest } = seg;
+    return JSON.stringify(rest);
+  };
+
   function drawAll() {
     const host = document.getElementById('home-segments');
     if (!host) return;
@@ -850,15 +942,42 @@
     // which on a long page is the whole page lost for a change of one size.
     const scroller = host.closest('[data-fit-height]') || host.parentElement;
     const was = scroller ? scroller.scrollTop : 0;
-    clearSegments();
+
+    // Anything already on the page that has not changed is MOVED rather than
+    // drawn again. Adding one segment used to reload every other one on the
+    // page -- every clock restarted, every row of projects fetched afresh --
+    // for a change that touched none of them.
+    const keep = new Map();
+    for (const node of [...host.querySelectorAll('.hs')]) {
+      const seg = LAYOUT.find(x => x.id === node.dataset.id);
+      if (seg && node._key === contentKey(seg)) keep.set(seg.id, node);
+      else if (node._cleanup) { try { node._cleanup(); } catch { /* going anyway */ } }
+    }
+    // Only what is NOT being kept is torn down.
+    for (const fn of cleanups) { try { fn(); } catch { /* going anyway */ } }
+    cleanups = [];
+    for (const node of keep.values()) node.remove();
     host.innerHTML = '';
+
     for (const { row, segs } of rowsOf(LAYOUT)) {
       const box = el('div', 'hs-rowbox');
       box.dataset.row = String(row);
       host.appendChild(box);
       for (const seg of segs) {
+        const had = keep.get(seg.id);
+        if (had) {
+          box.appendChild(had);
+          applyOne(had, seg);
+          // The handles belong to the editing state, not to the contents.
+          if (had._offTools) { try { had._offTools(); } catch { /* fine */ } }
+          had._offTools = null;
+          for (const n of had.querySelectorAll(':scope > .hs-tools, :scope > .hs-grip, :scope > .hs-size')) n.remove();
+          if (editing) addTools(had, seg);
+          continue;
+        }
         const node = el('section', 'hs');
         node.dataset.id = seg.id;
+        node._key = contentKey(seg);
         box.appendChild(node);
         applyOne(node, seg);
         drawInto(node, seg);
@@ -1281,6 +1400,7 @@
     if (old._cleanup) { try { old._cleanup(); } catch { /* going anyway */ } }
     const node = el('section', 'hs');
     node.dataset.id = seg.id;
+    node._key = contentKey(seg);
     old.replaceWith(node);
     applyOne(node, seg);
     drawInto(node, seg);
@@ -1562,5 +1682,10 @@
     });
   }
 
-  window.Home = { mount, setProfiles, draw: drawAll, fmtDuration };
+  window.Home = {
+    mount, setProfiles, draw: drawAll, fmtDuration, setEditing,
+    // Hand it a layout and have it do what a change does: store it, then
+    // put on screen only what actually changed. Used by the tests.
+    apply: async (layout) => { LAYOUT = layout.map(x => ({ ...x })); await save(); },
+  };
 })();
