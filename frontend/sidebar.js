@@ -903,6 +903,10 @@ async function createInstanceInfoBar(container) {
         return out;
     }
 
+    // What makes a row its own row: one per process, and one for a launch that
+    // has no process yet.
+    const rowKey = (e) => `${e.id}#${e.pid == null ? "starting" : e.pid}`;
+
     // Make a row, once. Everything after that is setRow().
     function makeRow(id) {
         const row = document.createElement("div");
@@ -988,15 +992,33 @@ async function createInstanceInfoBar(container) {
         if (fracs.length) progressFill.style.width = (Math.max(...fracs) * 100).toFixed(1) + "%";
 
         // ── the panel ──
-        const live = new Set(entries.map(e => e.id));
-        for (const [id, r] of rows) {
-            if (!live.has(id)) { r.row.remove(); rows.delete(id); }
+        //
+        // A row is a PROCESS, not an instance. Keying these by instance id
+        // alone meant two copies of the same instance shared one row: the
+        // second was invisible, and the row's Stop belonged to whichever of
+        // them was written into it last.
+        const live = new Set(entries.map(rowKey));
+        for (const [key, r] of rows) {
+            if (!live.has(key)) { r.row.remove(); rows.delete(key); }
         }
+        // Two of the same instance need telling apart, so they are numbered in
+        // the order they were started. One on its own is just its name.
+        const seen = new Map();
+        for (const e of entries) seen.set(e.id, (seen.get(e.id) || 0) + 1);
+        const nth = new Map();
+
         let prev = null;
         for (const e of entries) {
-            let r = rows.get(e.id);
-            if (!r) { r = makeRow(e.id); rows.set(e.id, r); }
-            setRow(r, e, await nameOf(e.id));
+            const key = rowKey(e);
+            let r = rows.get(key);
+            if (!r) { r = makeRow(e.id); rows.set(key, r); }
+            let name = await nameOf(e.id);
+            if (seen.get(e.id) > 1) {
+                const n = (nth.get(e.id) || 0) + 1;
+                nth.set(e.id, n);
+                name = `${name} (${n})`;
+            }
+            setRow(r, e, name);
             // Keep the panel in the order the entries are in, without
             // detaching a row that is already where it should be.
             const want = prev ? prev.nextSibling : panel.firstChild;

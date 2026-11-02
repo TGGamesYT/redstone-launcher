@@ -166,11 +166,12 @@ async function fetchServers() {
 ipcRenderer.send('get-profiles');
 ipcRenderer.on('profiles-list', (e, data) => profiles = data);
 async function loadProjectDetails() {
-  const proj = JSON.parse(localStorage.getItem("selectedCurseforgeProject"));
-  if (!proj) {
+  const stub = JSON.parse(localStorage.getItem("selectedCurseforgeProject"));
+  if (!stub) {
     document.body.innerHTML = "<p>Missing project data</p>";
     return;
   }
+  const proj = await fullProject(stub);
 
   document.title = proj.name + " - CurseForge";
 
@@ -554,9 +555,33 @@ async function getModDescription(modId) {
   return data.data;
 }
 function formatNumber(num) {
-  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-  if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
-  return num.toString();
+  const n = Number(num);
+  if (!Number.isFinite(n)) return "?";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
+  return String(n);
+}
+
+// Opening this page from an instance's mod list hands over only what that list
+// knows -- an id, a name and an icon. Everything else (the summary, the author,
+// the download count, the screenshots) has to be asked for, or the page draws
+// an empty header.
+async function fullProject(proj) {
+  if (!proj || !proj.id) return proj;
+  if (proj.summary && proj.authors && proj.downloadCount != null) return proj;
+  try {
+    const res = await fetch("https://curseforge.tgdoescode.workers.dev/mods", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modId: proj.id }),
+    });
+    const body = await res.json();
+    const got = body && (body.data || (body.success === undefined ? body : null));
+    if (got && got.id) return got;
+  } catch (err) {
+    console.warn("Could not fetch the full CurseForge project:", err);
+  }
+  return proj;
 }
 
 loadProjectDetails();

@@ -9,6 +9,100 @@ started.
 
 ---
 
+## 0. Round 40
+
+The newest batch, in the order it was given.
+
+### The resource pack tools
+- [x] **What the totem's `pack.mcmeta` does now, and whether the pack shows up
+      as an ordinary resource pack.** — *Answered rather than changed: it is
+      the online tool's own file (description, `pack_format` 15, and both the
+      `supported_formats` range and the `min_format`/`max_format` pair up to
+      999), and the pack is written into the instance's `resourcepacks` folder,
+      listed in the Resource Packs tab marked "(generated)", and switched on in
+      `options.txt`. It is not hidden behind the tools.*
+- [x] **Vanilla Tweaks refuses a snapshot.** — *The version was matched against
+      `\d+.\d+` and anything else was turned away. A snapshot leads a release,
+      so the line that covers it is worked out from Mojang's own manifest --
+      the newest Vanilla Tweaks line not newer than the release it is heading
+      for -- and the picker says which line it used.*
+- [x] **Pinning a skin shows the sheets, not renders.** — *A 64x64 sheet is a
+      scattered atlas of limbs. They are renders now, through a new
+      `frontend/skinstill.js`: one offscreen viewer for any number of lists,
+      renders queued through it, and skinview3d fetched only when a list of
+      skins is first shown.*
+- [x] **Vanilla Tweaks categories should be dropdowns.** — *A header per
+      category that opens it, carrying how many of its packs are on. Closed
+      categories are not in the layout at all, which is also what stops their
+      previews being fetched.*
+
+### Instances and their logs
+- [x] **Two copies of one instance are one row in the status bar, and Stop
+      stops both.** — *The rows were keyed by instance id, so the second copy
+      had nowhere to go and the row's Stop belonged to whichever was written
+      last. A row is a process now, numbered when there is more than one, and
+      the instance page asks which copy to stop instead of killing the lot.
+      The Logs tab's run strip also stops the copy you are reading.*
+- [x] **Launching again after one ended opens another log view.** — *The
+      console stayed on the run that had ended, so the live game's output went
+      to a tab you had to find. It follows the live run unless an older one was
+      clicked deliberately.*
+- [ ] **It still crashes with 3221225477, across computers.**
+
+### Elsewhere in the launcher
+- [x] **A mod from an instance's list sometimes opens an empty page.** —
+      *`formatNumber(undefined)`. The instance list only knows an id, a name
+      and an icon, and the page was drawing a header out of that; it asks
+      CurseForge for the rest now, and `formatNumber` no longer throws.*
+- [ ] **Updating the desktop icon freezes the launcher.**
+- [ ] **The admin panel is not on theme.**
+- [ ] **The launcher news ignores the corner radius and shows raw Markdown.**
+
+### The main page
+- [ ] **The player render breaks when resized** — loses the render until a
+      reload, doubles its animation speed, and stretches.
+- [ ] **Grabbing the player render to move it rotates it.**
+- [ ] **"Settle back to facing forward" does nothing, and settles when off.**
+- [ ] **The segment settings are an ugly pile of options.**
+- [ ] **Resizing into a neighbour should still shrink it** — just not when
+      resizing away from it.
+- [ ] **Changing a segment's height changes the whole row's, and resizing from
+      the top resizes the bottom.**
+- [ ] **Resizing upwards grows downwards.** Resizing one edge must never move
+      the other.
+- [ ] **The drop shade in an empty row sits under the segment instead of where
+      it would land.**
+- [ ] **Moving within a segment after the hold should slide, not wait again,
+      and a segment should split top/bottom as well as left/right.**
+- [ ] **"for the segments allow adding"** — the sentence stops there; waiting
+      on the rest of it.
+
+### Themes
+- [x] **Exporting a theme fails with `relayClient.themeRelay is not a
+      function`.** — *It was never in `relayClient.js`'s default export, which
+      is how `main.js` reaches all of them.*
+- [ ] **The applied theme is painted onto the Default theme's preview.**
+- [ ] **Export should be able to include the main page layout and the
+      background settings and image, chosen when saving rather than when
+      exporting.**
+- [ ] **Choosing a saved theme jumps back to the first settings tab.**
+- [ ] **A saved theme's Delete is off-centre and there is no Export.**
+
+### The relay
+- [x] **The certificate is reloaded far too often, flooding the log.** — *The
+      minute poll passed `force`, which skipped the fingerprint check as well
+      as the throttle, so it rebuilt the context and logged a line every
+      minute forever. Only the throttle is skipped now, and the directory
+      watch settles before looking.*
+
+### Closed by the owner
+- [x] **A sign renders as a plain cube.** — *"signs dont even get drawn by
+      code, they arent even full blocks they render fine so no need to do
+      anything there". Nothing to do: a sign has no entity layer in the client
+      jar at all, so there is no model to read.*
+
+---
+
 ## 0. Round 39
 
 The newest batch, in the order it was given.

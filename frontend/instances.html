@@ -232,7 +232,7 @@
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
-      max-height: 180px;
+      max-height: 230px;
       overflow-y: auto;
       margin-top: 10px;
     }
@@ -252,12 +252,18 @@
 
     .pt-skin.on { border-color: var(--base-color); }
 
-    .pt-skin img {
-      width: 44px;
-      height: 44px;
-      image-rendering: pixelated;
-      object-fit: none;
-      object-position: -8px -8px;   /* the face out of the skin sheet */
+    /* A render of the player wearing the skin, not the skin sheet: the sheet is
+       a scattered atlas of limbs and nobody can pick a skin out of a row of
+       them. See skinstill.js, which fills these. */
+    .pt-skin .shot {
+      width: 52px;
+      aspect-ratio: 160 / 260;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border-radius: 3px;
+      background: color-mix(in srgb, var(--very-dark) 70%, transparent);
     }
 
     .pt-skin span { max-width: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -277,15 +283,55 @@
        chosen, rather than a column of checkboxes. */
     .vt-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px; }
 
-    .vt-group { margin-bottom: 16px; }
+    .vt-group { margin-bottom: 10px; }
 
+    /* Every category open at once is a wall of a few hundred cards, so a
+       category is a header you open. The cards are not even in the layout
+       until then, which is also what keeps their previews unfetched. */
     .vt-group-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 8px 10px;
+      font-family: inherit;
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      opacity: 0.6;
-      margin-bottom: 6px;
+      color: var(--text-color, #fff);
+      background: var(--very-dark);
+      border: 1px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      text-align: left;
     }
+
+    .vt-group-name:hover { border-color: var(--base-color); }
+
+    .vt-group-name .chev {
+      font-size: 18px;
+      transition: transform 0.15s ease;
+      opacity: 0.7;
+    }
+
+    .vt-group.open .vt-group-name .chev { transform: rotate(90deg); }
+    .vt-group-name .nm { flex: 1; opacity: 0.85; }
+
+    .vt-group-name .num {
+      font-size: 10px;
+      letter-spacing: 0;
+      text-transform: none;
+      opacity: 0.55;
+    }
+
+    .vt-group-name .num.some {
+      opacity: 1;
+      color: var(--base-color);
+      font-weight: 700;
+    }
+
+    .vt-group .vt-body { display: none; padding: 10px 2px 4px; }
+    .vt-group.open .vt-body { display: block; }
 
     .vt-grid {
       display: grid;
@@ -2232,8 +2278,9 @@
             return;
           }
           if (state === "running") {
-            playBtn.innerHTML = `<i class="material-icons">stop</i> Stop`;
-            playBtn.title = "Stop";
+            const many = (pids || []).length > 1;
+            playBtn.innerHTML = `<i class="material-icons">stop</i> Stop${many ? ` (${pids.length})` : ""}`;
+            playBtn.title = many ? "Several copies are running — choose which to stop" : "Stop";
             playBtn.disabled = false; playBtn.style.opacity = "1"; playBtn.style.cursor = "pointer";
             playBtn._pids = pids || [];
           } else if (state === "launching") {
@@ -2267,7 +2314,12 @@
         }
         playBtn.onclick = async () => {
           if (playState === "running") {
-            for (const pid of (playBtn._pids || [])) await ipcRenderer.invoke("stop-instance-by-pid", pid);
+            // One copy: stop it. Several: ask which one, rather than killing
+            // every copy of the instance because one button was pressed.
+            const pids = playBtn._pids || [];
+            const which = pids.length > 1 ? await pickRunToStop(profile.id, pids) : (pids.length ? pids : null);
+            if (!which) return;
+            for (const pid of which) await ipcRenderer.invoke("stop-instance-by-pid", pid);
             setTimeout(refreshPlayState, 500);
             return;
           }
@@ -2862,7 +2914,15 @@
               b.type = 'button';
               b.className = 'pt-skin';
               const src = sk.base64.startsWith('data:') ? sk.base64 : 'data:image/png;base64,' + sk.base64;
-              b.innerHTML = `<img src="${src}" alt=""><span>${sk.name || 'skin'}</span>`;
+              const shot = document.createElement('div');
+              shot.className = 'shot';
+              const lab = document.createElement('span');
+              lab.textContent = sk.name || 'skin';
+              b.append(shot, lab);
+              // Rendered, not the sheet; the flat texture stands in until the
+              // render lands so the row is never a line of empty boxes.
+              if (window.SkinStill) window.SkinStill.into(shot, src, sk.variant === 'slim' ? 'slim' : 'default');
+              else shot.innerHTML = `<img src="${src}" alt="" style="width:60%;image-rendering:pixelated;">`;
               b.onclick = () => {
                 pinned = { base64: src, name: sk.name || 'skin' };
                 for (const other of skinsBox.querySelectorAll('.pt-skin')) other.classList.toggle('on', other === b);
@@ -2896,7 +2956,7 @@
 
           // ── Vanilla Tweaks ──
           ov.querySelector('#ptVtPick').onclick = async () => {
-            const chosen = await openVanillaTweaksPicker(profile.version, vtPicks);
+            const chosen = await openVanillaTweaksPicker(profile.version, vtPicks, (line) => { vtVersion = line; });
             if (!chosen) return;
             vtPicks = chosen;
             const n = Object.values(vtPicks).reduce((a, l) => a + l.length, 0);
@@ -2931,7 +2991,49 @@
         // version is chosen -- and not a column of names with boxes beside
         // them. The pictures are large and often animated, so each one is
         // only fetched once its card is actually on screen.
-        function openVanillaTweaksPicker(version, already) {
+        // Which of several copies of one instance to stop. "Run again" makes a
+        // second process, and Stop used to kill the lot -- so stopping the copy
+        // you had finished with took the one you were playing with it.
+        function pickRunToStop(profileId, pids) {
+          return new Promise(async (resolve) => {
+            let runs = [];
+            try { runs = await ipcRenderer.invoke('get-instance-runs', profileId) || []; } catch { /* names only, then */ }
+            const when = (t) => t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+            const ov = document.createElement('div');
+            ov.className = 'modal-overlay active';
+            ov.style.zIndex = 5600;
+            ov.innerHTML = `<div class="modal-content" style="max-width:420px;">
+              <div class="modal-header"><h2>Which one?</h2><button class="modal-close" id="psX">✕</button></div>
+              <p class="pt-sub" style="margin:0 0 10px;">${pids.length} copies of this instance are running.</p>
+              <div id="psList" style="display:flex;flex-direction:column;gap:6px;"></div>
+              <div class="modal-actions" style="margin-top:12px;">
+                <button type="button" id="psAll">Stop all ${pids.length}</button>
+                <button type="button" id="psCancel">Cancel</button>
+              </div>
+            </div>`;
+            const done = (v) => {
+              if (window.ModalFX) window.ModalFX.close(ov); else ov.remove();
+              resolve(v);
+            };
+            const list = ov.querySelector('#psList');
+            pids.forEach((pid, i) => {
+              const r = runs.find(x => x.pid === pid);
+              const b = document.createElement('button');
+              b.type = 'button';
+              b.style.cssText = 'text-align:left;';
+              b.textContent = `Copy ${i + 1}${r ? ` — started ${when(r.startedAt)}` : ''} (process ${pid})`;
+              b.onclick = () => done([pid]);
+              list.appendChild(b);
+            });
+            ov.querySelector('#psAll').onclick = () => done(pids.slice());
+            ov.querySelector('#psCancel').onclick = () => done(null);
+            ov.querySelector('#psX').onclick = () => done(null);
+            ov.addEventListener('mousedown', (e) => { if (e.target === ov) done(null); });
+            document.body.appendChild(ov);
+          });
+        }
+
+        function openVanillaTweaksPicker(version, already, onLine) {
           return new Promise((resolve) => {
             const ov = document.createElement('div');
             ov.className = 'modal-overlay active'; ov.style.zIndex = 5400;
@@ -2980,6 +3082,7 @@
                   : (tile.dataset.desc || '');
               }
               count.textContent = n ? `${n} pack${n === 1 ? '' : 's'} chosen` : 'nothing chosen';
+              for (const g of list.querySelectorAll('.vt-group')) if (g._count) g._count();
             };
 
             ov.querySelector('#vtOk').onclick = () => {
@@ -3008,6 +3111,17 @@
               if (!r || !r.success) { list.innerHTML = `<div class="pt-sub">${(r && r.error) || 'Vanilla Tweaks could not be reached.'}</div>`; return; }
               list.innerHTML = '';
               const short = r.version || String(version || '').split('.').slice(0, 2).join('.');
+              if (onLine) onLine(short);
+              // Vanilla Tweaks builds per Minecraft line, and has none for a
+              // snapshot. Saying which line was used is honest about it; the
+              // alternative was refusing to open at all.
+              if (r.exact === false) {
+                const note = document.createElement('div');
+                note.className = 'vt-warn';
+                note.textContent = `Vanilla Tweaks has no packs for ${version}, so these are their ${short} ones`
+                  + (r.because ? ` (the line ${r.because} is on)` : '') + '.';
+                list.appendChild(note);
+              }
               // Their shape: a top category, optional sub-categories, and
               // packs at either level. The key a pack is sent under is its
               // TOP category's name, lowercased, which is what their site
@@ -3017,10 +3131,16 @@
                 const key = String(top).toLowerCase();
                 const sec = document.createElement('div');
                 sec.className = 'vt-group';
-                const head = document.createElement('div');
+                const head = document.createElement('button');
+                head.type = 'button';
                 head.className = 'vt-group-name';
-                head.textContent = `${top}${group && group !== top ? ' · ' + group : ''}`;
-                sec.appendChild(head);
+                head.innerHTML = '<i class="material-icons chev">chevron_right</i>'
+                  + '<span class="nm"></span><span class="num"></span>';
+                head.querySelector('.nm').textContent = `${top}${group && group !== top ? ' · ' + group : ''}`;
+                const body = document.createElement('div');
+                body.className = 'vt-body';
+                head.onclick = () => sec.classList.toggle('open');
+                sec.append(head, body);
                 // Their own warnings about a group -- worth keeping, since
                 // some of them are the only explanation of why a category
                 // behaves oddly.
@@ -3028,7 +3148,7 @@
                   const w = document.createElement('div');
                   w.className = 'vt-warn';
                   w.textContent = String(warning.text).replace(/<[^>]*>/g, '');
-                  sec.appendChild(w);
+                  body.appendChild(w);
                 }
                 const grid = document.createElement('div');
                 grid.className = 'vt-grid';
@@ -3072,13 +3192,32 @@
                   lazy.observe(bg);
                   grid.appendChild(tile);
                 }
-                sec.appendChild(grid);
+                body.appendChild(grid);
+                // The header carries how many of its packs are on, so a closed
+                // category still says whether anything inside it is chosen.
+                sec._count = () => {
+                  const set = picks.get(key) || new Set();
+                  const mine = packs.filter(p => set.has(p.name)).length;
+                  const el = head.querySelector('.num');
+                  el.textContent = mine ? `${mine} of ${packs.length} on` : `${packs.length}`;
+                  el.classList.toggle('some', mine > 0);
+                };
+                sec._count();
                 list.appendChild(sec);
               };
               for (const top of r.categories || []) {
                 draw(top.category, null, top.packs, top.warning);
                 for (const sub of top.categories || []) draw(top.category, sub.category, sub.packs, sub.warning);
               }
+              // A category that already has something chosen opens itself, so
+              // what is on is never hidden behind a closed header. Otherwise
+              // only the first one is open, as a hint that they open.
+              const groups = [...list.querySelectorAll('.vt-group')];
+              let opened = false;
+              for (const g of groups) {
+                if (g.querySelector('.vt-group-name .num.some')) { g.classList.add('open'); opened = true; }
+              }
+              if (!opened && groups[0]) groups[0].classList.add('open');
               restyle();
               const search = ov.querySelector('#vtSearch');
               search.addEventListener('input', () => {
@@ -3086,9 +3225,13 @@
                 for (const tile of list.querySelectorAll('.vt-tile')) {
                   tile.style.display = !q || tile.dataset.search.includes(q) ? '' : 'none';
                 }
-                for (const g of list.querySelectorAll('.vt-group')) {
+                for (const g of groups) {
                   const any = [...g.querySelectorAll('.vt-tile')].some(t => t.style.display !== 'none');
                   g.style.display = any ? '' : 'none';
+                  // Searching has to reach inside closed categories, so a
+                  // match opens its own; clearing the box puts them back.
+                  if (q) { if (any) g.classList.add('open'); }
+                  else g.classList.toggle('open', g === groups[0] || !!g.querySelector('.vt-group-name .num.some'));
                 }
               });
             }).catch(() => {
@@ -3974,6 +4117,11 @@
               tabContent.appendChild(runStrip);
               tabContent.appendChild(logsEl);
               let shownRun = null;             // null = whatever is newest
+              // Whether the run on screen was chosen deliberately. Without
+              // this, launching again while looking at a run that had already
+              // ended left the console on the dead one and the live game's
+              // output went to a tab you had to find and click.
+              let pickedRun = false;
 
               // Compare ids as strings: a profile's id can be a number in
               // profiles.json but a string elsewhere (e.g. after an edit), and
@@ -4036,6 +4184,14 @@
                 if (!ensureStillActive()) return runs;
                 if (runs.length < 2) { runStrip.style.display = "none"; runStrip.innerHTML = ""; return runs; }
                 if (!shownRun || !runs.some(r => r.run === shownRun)) shownRun = runs[runs.length - 1].run;
+                // Follow the live game unless an older run was asked for: a
+                // run that has ended is finished, and a new launch is what you
+                // wanted to see.
+                if (!pickedRun) {
+                  const live = runs.filter(r => r.running);
+                  const follow = live.length ? live[live.length - 1] : runs[runs.length - 1];
+                  if (follow && follow.run !== shownRun) { shownRun = follow.run; showRun(shownRun); }
+                }
                 runStrip.style.display = "";
                 runStrip.innerHTML = "";
                 runs.forEach((r, i) => {
@@ -4043,9 +4199,33 @@
                   b.textContent = `${i + 1} · ${when(r.startedAt)}${r.running ? "" : " (ended)"}`;
                   b.title = r.pid ? `Process ${r.pid}` : "Still starting";
                   b.classList.toggle("active", r.run === shownRun);
-                  b.onclick = () => { shownRun = r.run; drawRuns(); showRun(r.run); };
+                  b.onclick = () => {
+                    shownRun = r.run;
+                    // Picking the newest means "keep up"; picking an older one
+                    // means "stay here", so a launch does not steal the view.
+                    pickedRun = i !== runs.length - 1;
+                    drawRuns();
+                    showRun(r.run);
+                  };
                   runStrip.appendChild(b);
                 });
+                // Stopping exactly the copy whose log you are reading. The
+                // button beside Play stops a copy you have to pick out of a
+                // list; here you have already picked one.
+                const cur = runs.find(r => r.run === shownRun);
+                if (cur && cur.running && cur.pid) {
+                  const s = document.createElement("button");
+                  s.className = "run-stop";
+                  s.innerHTML = `<i class="material-icons">stop</i>`;
+                  s.title = `Stop this copy (process ${cur.pid})`;
+                  s.onclick = async (ev) => {
+                    ev.stopPropagation();
+                    s.disabled = true;
+                    await ipcRenderer.invoke("stop-instance-by-pid", cur.pid);
+                    setTimeout(() => { if (ensureStillActive()) drawRuns(); }, 600);
+                  };
+                  runStrip.appendChild(s);
+                }
                 if (window.TabStrip) window.TabStrip.place(runStrip);
                 return runs;
               }
@@ -5065,6 +5245,7 @@
   <script src="onboarding.js"></script>
   <script src="notifications.js"></script>
   <script src="iconpicker.js"></script>
+  <script src="skinstill.js"></script>
 </body>
 
 </html>

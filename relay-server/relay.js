@@ -327,12 +327,17 @@ const certFingerprint = () => {
 };
 certStamp = certFingerprint();
 
-function reloadCertIfChanged(force = false) {
+// `now` only skips the once-a-minute throttle (the watch and the poll have
+// already decided it is worth a look). Whether anything is actually re-read is
+// always down to the fingerprint -- it used to be skipped for a forced check,
+// so the minute poll rebuilt the context and logged a line every single minute
+// for the life of the process, which buried every other log the relay wrote.
+function reloadCertIfChanged(now_ = false) {
   const now = Date.now();
-  if (!force && now - certLoadedAt < CERT_RECHECK_MS) return;
+  if (!now_ && now - certLoadedAt < CERT_RECHECK_MS) return;
   certLoadedAt = now;
   const stamp = certFingerprint();
-  if (!force && stamp === certStamp) return;
+  if (stamp === certStamp) return;
   try {
     const next = { key: fs.readFileSync(TLS_KEY), cert: fs.readFileSync(TLS_CERT) };
     secureContext = tls.createSecureContext(next);
@@ -358,7 +363,14 @@ function certExpiry() {
 
 try {
   // The directory, not the file: a moved symlink shows up as a change here.
-  fs.watch(path.dirname(TLS_CERT), { persistent: false }, () => reloadCertIfChanged(true));
+  // A renewal writes several files, so the watch fires in a burst -- settle
+  // first, then look once.
+  let settle = null;
+  fs.watch(path.dirname(TLS_CERT), { persistent: false }, () => {
+    if (settle) return;
+    settle = setTimeout(() => { settle = null; reloadCertIfChanged(true); }, 1000);
+    settle.unref?.();
+  });
 } catch { /* no watch available: the poll below still covers it */ }
 setInterval(() => reloadCertIfChanged(true), CERT_RECHECK_MS).unref();
 // ── Per-account storage ─────────────────────────────────────────────────────

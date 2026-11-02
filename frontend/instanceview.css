@@ -302,3 +302,14 @@
   font-size: 12px;
   padding: 5px 10px;
 }
+
+/* Stops the copy whose log is on screen, so a particular one can be ended
+   without picking it out of a list first. */
+.log-runs > button.run-stop {
+  padding: 4px 7px;
+  margin-left: 6px;
+  color: #ff8a8a;
+}
+
+.log-runs > button.run-stop i { font-size: 15px; display: block; }
+.log-runs > button.run-stop:disabled { opacity: 0.5; }

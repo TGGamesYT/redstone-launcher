@@ -287,4 +287,8 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
   });
 }
 
-export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, adminRelay };
+// Everything above, by name. `themeRelay` was left out of this list, so
+// exporting a theme died on "relayClient.themeRelay is not a function" even
+// though the function was right there -- main.js reaches these through the
+// default import.
+export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, themeRelay, adminRelay };

@@ -167,9 +167,23 @@ await p.waitForTimeout(220);
 await p.click("#ptVtPick");
 await p.waitForTimeout(350);
 check("their categories are listed as they list them",
-  await p.$$eval(".vt-group-name", els => els.map(e => e.textContent)),
+  await p.$$eval(".vt-group-name .nm", els => els.map(e => e.textContent)),
   ["Aesthetic", "Aesthetic · More Zombies", "Terrain", "Many"],
   "a sub-category is shown under the one it belongs to");
+// Every category open at once is a wall of a few hundred cards.
+check("a category is a header you open, and only the first starts open",
+  await p.$$eval(".vt-group", els => els.map(e => e.classList.contains("open"))),
+  [true, false, false, false]);
+check("a closed category's cards are not on the page at all",
+  await p.$$eval(".vt-group", els => els.slice(1).map(e => e.querySelector(".vt-body").offsetParent !== null)),
+  [false, false, false],
+  "which is also what stops their previews being fetched");
+check("and the header says how many packs are in it",
+  await p.$$eval(".vt-group-name .num", els => els.map(e => e.textContent)),
+  ["1", "1", "2", "60"]);
+// The rest of these are about the cards, so open the lot.
+await p.evaluate(() => { for (const g of document.querySelectorAll(".vt-group")) g.classList.add("open"); });
+await p.waitForTimeout(400);
 check("with a card per pack, by its display name",
   await p.$$eval(".vt-tile .n", els => els.slice(0, 4).map(e => e.textContent)),
   ["Better Bedrock", "Steve Zombies", "Ash & Dust", "Cleaner Glass"]);

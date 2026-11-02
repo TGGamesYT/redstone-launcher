@@ -5262,26 +5262,96 @@ ipcMain.handle("pack:forget", (event, { profileId, kind } = {}) => {
 // packs is the only part that belongs here.
 const VT_BASE = "https://vanillatweaks.net";
 const _vtCategories = new Map();
+const _vtHas = new Map();
+
+// Their packs are per minor line: 1.21.4 is covered by 1.21, and 26.3.2 by
+// 26.3. A line either has a category list or it does not; the answer is worth
+// keeping, since working out which line a snapshot belongs to asks repeatedly.
+async function vtLineExists(line) {
+  if (_vtHas.has(line)) return _vtHas.get(line);
+  let ok = false;
+  try {
+    const res = await fetch(`${VT_BASE}/assets/resources/json/${line}/rpcategories.json`, { method: "HEAD" });
+    ok = res.ok;
+  } catch { ok = false; }
+  _vtHas.set(line, ok);
+  return ok;
+}
+
+function vtLineOf(version) {
+  const parts = String(version || "").trim().split(".");
+  if (parts.length < 2) return null;
+  if (!/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) return null;
+  return `${parts[0]}.${parts[1]}`;
+}
+
+// Which Vanilla Tweaks line to use for a given Minecraft version.
+//
+// A release answers for itself. A snapshot does not: "26w05a" is not a number
+// at all, and "26.4-pre1" names a line that does not exist yet -- which is why
+// asking for a snapshot used to be turned away with "that is not a version
+// Vanilla Tweaks would know". A snapshot leads a release, so the line that
+// covers it is the newest one Vanilla Tweaks has that is not newer than the
+// release the snapshot is heading for. The release list comes from Mojang's own
+// manifest, so no list of versions is kept here to go stale.
+async function vtLineFor(version) {
+  const raw = String(version || "").trim();
+  if (!raw) return { error: "No version" };
+
+  const direct = vtLineOf(raw.replace(/-(pre|rc)\d+$/i, ""));
+  if (direct && await vtLineExists(direct)) return { line: direct, exact: true };
+
+  let versions = [];
+  try {
+    if (!_versionManifestCache) {
+      const r = await fetch("https://launchermeta.mojang.com/mc/game/version_manifest_v2.json");
+      if (r.ok) _versionManifestCache = await r.json();
+    }
+    versions = (_versionManifestCache && _versionManifestCache.versions) || [];
+  } catch { versions = []; }
+
+  // The manifest is newest-first. The releases above our version are the ones
+  // it is older than; the newest release below it is the one it leads.
+  const at = versions.findIndex(v => v.id === raw);
+  const releases = versions.filter(v => v.type === "release");
+  const after = at < 0 ? releases : versions.slice(0, at).filter(v => v.type === "release");
+
+  const tried = [];
+  // Nothing released after it means it is a snapshot of the next version, so
+  // the newest line Vanilla Tweaks has is as close as it gets.
+  for (const rel of (after.length ? after : releases)) {
+    const line = vtLineOf(rel.id);
+    if (!line || tried.includes(line)) continue;
+    tried.push(line);
+    if (await vtLineExists(line)) {
+      return { line, exact: false, because: after.length ? rel.id : null };
+    }
+    if (tried.length >= 8) break;
+  }
+  return { error: `Vanilla Tweaks has nothing for ${raw}` };
+}
 
 ipcMain.handle("pack:vtCategories", async (event, { version } = {}) => {
   try {
-    const v = String(version || "").trim();
-    if (!/^\d+\.\d+(\.\d+)?$/.test(v)) return { success: false, error: "That is not a version Vanilla Tweaks would know" };
-    // Their packs are per minor version: 1.21.4 is covered by 1.21.
-        const short = v.split(".").slice(0, 2).join(".");
-    if (_vtCategories.has(short)) return _vtCategories.get(short);
+    const picked = await vtLineFor(version);
+    if (picked.error) return { success: false, error: picked.error };
+    const short = picked.line;
+    const cached = _vtCategories.get(short);
+    if (cached) return { ...cached, exact: picked.exact, because: picked.because || null };
     const res = await fetch(`${VT_BASE}/assets/resources/json/${short}/rpcategories.json`);
     if (!res.ok) return { success: false, error: `Vanilla Tweaks has nothing for ${short} (HTTP ${res.status})` };
     const json = await res.json();
     const out = { success: true, version: short, categories: json.categories || [] };
     _vtCategories.set(short, out);
-    return out;
+    return { ...out, exact: picked.exact, because: picked.because || null };
   } catch (e) { return { success: false, error: String(e && e.message || e) }; }
 });
 
 ipcMain.handle("pack:vtBuild", async (event, { profileId, version, picks, enable = true } = {}) => {
   try {
-    const short = String(version || "").split(".").slice(0, 2).join(".");
+    const picked = await vtLineFor(version);
+    if (picked.error) return { success: false, error: picked.error };
+    const short = picked.line;
     const chosen = {};
     for (const [cat, list] of Object.entries(picks || {})) {
       const keep = (Array.isArray(list) ? list : []).filter(Boolean);
