@@ -38,3 +38,5 @@ Current files:
   server keeps.
 - `home-layout-test.mjs` — the home page's rows, and moving and resizing
   what is on them.
+- `entity-parts-test.mjs` — which parts of a mob the launcher hides while
+  it stands still, checked against a real client jar.

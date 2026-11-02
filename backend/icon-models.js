@@ -156,6 +156,24 @@ const atLeast = (v, target) => VI.compareVersions(v, target) >= 0;
 
 // ── Entities ────────────────────────────────────────────────────────────────
 const _entities = new Map();
+// What a mob is NOT showing while it stands still, by the part names the
+// game's own model definitions use. Read out of a real client rather than
+// guessed: see tests/entity-parts-test.mjs, which checks these names are
+// still the ones in the jar.
+const IDLE_KEY = '!idle';
+const IDLE_HIDDEN = {
+  // The ball it rolls into, which is a second whole body.
+  armadillo: { label: 'Rolled up', parts: ['cube'] },
+  armadillo_baby: { label: 'Rolled up', parts: ['cube'] },
+  // Every illager carries its arms twice: `arms` crossed, and a right and a
+  // left held out for casting or for holding something. Crossed is the one
+  // they are in when nothing is happening.
+  evoker: { label: 'Arms held out', parts: ['right_arm', 'left_arm'] },
+  illusioner: { label: 'Arms held out', parts: ['right_arm', 'left_arm'] },
+  pillager: { label: 'Arms held out', parts: ['right_arm', 'left_arm'] },
+  vindicator: { label: 'Arms held out', parts: ['right_arm', 'left_arm'] },
+};
+
 async function entityModelsFor(version) {
   if (_entities.has(version)) return _entities.get(version);
   const p = (async () => {
@@ -1144,8 +1162,34 @@ export async function describeEntity({ profileId, version, name, texture, textur
   // which parts the game hides while a mob stands still -- an armadillo has
   // the ball it rolls into, an evoker has both sets of arms -- so rather than
   // guess, everything is drawn and the parts are named.
+  // Parts the game does not draw while the mob is standing still.
+  //
+  // Nothing in the assets says which those are -- the renderer decides it in
+  // Java, per mob -- so the few that matter are named here, checked against
+  // a real client's own model definitions. An armadillo is modelled both
+  // standing and rolled into its ball, and every illager has its arms twice:
+  // crossed, and held out for casting. Drawing both at once is what made an
+  // armadillo appear curled up and standing at the same time, and an
+  // evoker's hands both together and held out.
+  //
+  // They are still drawn and can be switched back on; this only decides what
+  // is on to begin with, and an unknown model is unaffected.
+  const idleHidden = IDLE_HIDDEN[name] || null;
+  if (idleHidden) {
+    for (const el of elements) {
+      if (el.group) continue;                     // belongs to a layer already
+      const part = String(el.part || '');
+      const leaf = part.split('/').pop();
+      if (idleHidden.parts.includes(leaf)) el.group = IDLE_KEY;
+    }
+  }
+
   const own = elements.filter(el => !el.group).length;
   const groups = own ? [{ key: '', label: 'Body', n: own }] : [];
+  if (idleHidden) {
+    const n = elements.filter(el => el.group === IDLE_KEY).length;
+    if (n) groups.push({ key: IDLE_KEY, label: idleHidden.label, n, off: true });
+  }
   for (const key of parts) {
     const n = elements.filter(el => el.group === key).length;
     if (!n) continue;

@@ -1903,12 +1903,19 @@ stuff" — so the list is in two halves and the first half is done first.
 - [x] **Some things cannot be found at all** in the icon picker's search —
       ender dragon, cushions, pigs, cows. Their textures are not named after
       them; every texture under entity/ is scored against the name now.
-- [ ] **An armadillo shows curled up and standing at the same time.**
+- [x] **An armadillo showed curled up and standing at the same time.** — *It
+      is modelled both ways, and nothing in the assets says which the game
+      draws when — the renderer decides it in Java. The rolled-up `cube` is
+      off to begin with now, and still switchable back on. The names are
+      checked against a real client so they cannot quietly stop matching.*
       Guessing which parts are alternatives broke far more than it fixed, so
       every part is drawn and each one is a switch in the adjust dialog.
       Doing it properly means reading `setupAnim` out of the model class.
 - [x] **An elder guardian's side has a hole in it**, the way the ender dragon did.
-- [ ] **An evoker's hands are both together and held out at once.** Same as
+- [x] **An evoker's hands were both together and held out at once.** — *Same
+      cause: every illager carries its arms twice, crossed and held out for
+      casting. The held-out pair is off to begin with. Evoker, illusioner,
+      pillager and vindicator all had it.* Same as
       the armadillo: a switch rather than a guess, for now.
 - [x] **A baby drowned has the same missing layer the drowned had.**
 - [x] **A block with block states cannot be shown in a different state.**
