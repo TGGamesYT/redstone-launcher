@@ -132,6 +132,12 @@
         align-items:stretch; }
       .hs { position:relative; box-sizing:border-box; min-width:0;
         grid-column: calc(var(--x, 0) + 1) / span var(--w, 100);
+        /* One grid row, always. A grid with no explicit rows puts two items
+           whose columns overlap on separate lines, which is why the shaded
+           landing place for a drop into the row a segment is already in
+           appeared BELOW it rather than behind it. Pinned to the same line,
+           they overlap and the z-order decides which is on top. */
+        grid-row:1;
         padding:0 11px 22px;
         display:flex; flex-direction:column;
         /* How big the things inside are drawn, as a multiplier. */
@@ -325,6 +331,7 @@
          on it is the launcher talking about itself, where a shadow where the
          thing will be is just the answer. */
       .hs-slot { grid-column: calc(var(--x, 0) + 1) / span var(--w, 100);
+        grid-row:1;
         margin:0 11px 22px; border-radius:var(--border-radius);
         background:rgba(0,0,0,0.42);
         box-shadow:inset 0 0 0 1px rgba(255,255,255,0.18);
@@ -350,8 +357,12 @@
       body.home-editing .hs-grip { display:block; }
       .hs-grip::before { content:""; position:absolute; inset:3px; border-radius:3px;
         background:#fff; border:2px solid rgba(0,0,0,0.55); }
-      .hs-grip.nw { left:4px; top:-5px; cursor:nwse-resize; }
-      .hs-grip.ne { right:4px; top:-5px; cursor:nesw-resize; }
+      /* The top corners are width only: a row has one top, so there is no
+         upwards for a segment to grow into, and a top handle that changed the
+         height could only ever have moved the BOTTOM edge. The cursor says
+         sideways, because sideways is all it does. */
+      .hs-grip.nw { left:4px; top:-5px; cursor:ew-resize; }
+      .hs-grip.ne { right:4px; top:-5px; cursor:ew-resize; }
       .hs-grip.sw { left:4px; bottom:15px; cursor:nesw-resize; }
       .hs-grip.se { right:4px; bottom:15px; cursor:nwse-resize; }
       .hs-size { position:absolute; left:50%; top:-12px; transform:translateX(-50%); z-index:7;
@@ -382,6 +393,25 @@
       .he-size .he-opt { flex:1 1 150px; margin-bottom:0; }
       .he-media { display:flex; gap:8px; align-items:center; }
       .he-media input { flex:1; }
+      /* A segment's settings used to be one column of every option it has,
+         one after another, with the switches among the boxes. They are in
+         groups now: what it shows, what it does, and how big it is -- and the
+         fields sit two or three across instead of a single stack as long as
+         the window. */
+      .he-body { max-height:min(62vh, 520px); overflow-y:auto; padding:2px 4px 2px 0; }
+      .he-about { margin:0 0 14px; font-size:12px; line-height:1.5; opacity:0.7; }
+      .he-group { margin:0 0 16px; }
+      .he-group > h4 { margin:0 0 8px; font-size:11px; font-weight:bold;
+        text-transform:uppercase; letter-spacing:0.06em; opacity:0.55; }
+      .he-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(165px, 1fr));
+        gap:10px 14px; align-items:end; }
+      .he-grid .he-opt { margin:0; }
+      .he-grid .he-opt.wide { grid-column:1 / -1; }
+      .he-switches { display:flex; flex-direction:column; gap:3px; }
+      .he-switches .he-opt.row { margin:0; padding:7px 9px; cursor:pointer;
+        border-radius:var(--border-radius); background:var(--very-dark); }
+      .he-switches .he-opt.row:hover { background:color-mix(in srgb, var(--base-color) 20%, var(--very-dark)); }
+      .he-switches .he-opt.row label { opacity:1; cursor:pointer; }
     `;
     document.head.appendChild(s);
   }
@@ -1174,13 +1204,21 @@
 
   const PREVIEW_MS = 900;     // how long to hold still before it is acted out
   let previewTimer = null;
+  // Set once a drag has acted one out. From then on it keeps up with the
+  // pointer instead of waiting again for every new place.
+  let previewing = false;
 
   function clearDropMarks() {
     for (const n of document.querySelectorAll('.hs-slot, .hs-rowslot')) n.remove();
+    previewing = false;        // the drag is over; the next one waits again
     clearPreview();
   }
 
   // Put everything back where it really is.
+  // Put the segments back where they really are. NOT a reset of `previewing`:
+  // this runs on the way to drawing the next place, and forgetting that one
+  // has already been acted out would bring the wait back for every one of
+  // them.
   function clearPreview() {
     if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
     for (const node of document.querySelectorAll('#home-segments .hs')) {
@@ -1313,8 +1351,26 @@
       return { row, x, w, newRow: false, what: w < (me.w || COLUMNS) ? `fits ${w}%` : 'here' };
     }
 
-    // Onto another segment: they share that segment's space, half each. The
-    // side of it the pointer is on decides which half is whose.
+    // Onto another segment. Near its top or its bottom means a row of its
+    // own above or below it -- a segment could only ever be put BESIDE
+    // another one, never over or under it, unless the pointer happened to
+    // find the fourteen pixels of the join between two rows. The band is a
+    // share of the segment's height so it scales with it, and capped so a
+    // tall segment is not nearly all band.
+    const ontoNode = host.querySelector(`.hs[data-id="${onto.id}"]`);
+    if (ontoNode) {
+      const or = ontoNode.getBoundingClientRect();
+      const band = Math.min(or.height * 0.3, 46);
+      if (e.clientY < or.top + band) {
+        return { row, x: 0, w: me.w || COLUMNS, newRow: true, what: 'a row above' };
+      }
+      if (e.clientY > or.bottom - band) {
+        return { row: row + 1, x: 0, w: me.w || COLUMNS, newRow: true, what: 'a row below' };
+      }
+    }
+
+    // Otherwise they share that segment's space, half each. The side of it
+    // the pointer is on decides which half is whose.
     const span = onto.w || COLUMNS;
     if (span < MIN_W * 2) {
       // Too narrow to halve. It takes the whole of it and that one is moved
@@ -1337,10 +1393,19 @@
     if (same) return;
     dropAt = at;
     showDrop(at);
-    // Only once you have settled on a place. Acting it out the instant the
-    // pointer crosses something would be the whole page twitching.
+    // The wait is to stop the page twitching as the pointer crosses things on
+    // its way somewhere. Once it HAS been acted out, there is nothing to stop:
+    // the page is already showing what a drop would do, so moving to another
+    // place slides from one answer to the next rather than making you hold
+    // still all over again for each one.
     if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
-    if (at) previewTimer = setTimeout(() => { previewTimer = null; showPreview(at); }, PREVIEW_MS);
+    if (!at) return;
+    if (previewing) { showPreview(at); return; }
+    previewTimer = setTimeout(() => {
+      previewTimer = null;
+      previewing = true;
+      showPreview(at);
+    }, PREVIEW_MS);
   }
 
   function endDrag() {
@@ -1470,46 +1535,91 @@
         const south = corner === 'sw' || corner === 'se';
         node.classList.add('sizing');
 
-        // How far this edge may travel: up to the neighbour on that side,
-        // and no further. Nothing is pushed and nothing is taken from
-        // anybody -- the space between them is simply a space.
+        // Where everyone in this row was when the drag began. Each move is
+        // worked out from HERE rather than from wherever the last move left
+        // things, so dragging an edge back puts the neighbours it squeezed
+        // back exactly where they were.
         const row = rowOf(seg);
         const i = row.indexOf(seg);
-        const leftWall = i > 0 ? (row[i - 1].x || 0) + (row[i - 1].w || COLUMNS) : 0;
-        const rightWall = i >= 0 && i < row.length - 1 ? (row[i + 1].x || 0) : COLUMNS;
-        const others = row.filter(x => x !== seg);
+        const snap = row.map(s => ({ seg: s, x: s.x || 0, w: s.w || COLUMNS }));
+        const before = snap.slice(0, i);
+        const after = snap.slice(i + 1);
+        const nodeFor = (s) => node.parentElement.querySelector(`.hs[data-id="${s.id}"]`);
+        const put = (s) => { const n2 = nodeFor(s); if (n2) applyOne(n2, s); };
+        const restore = () => {
+          for (const s of snap) {
+            if (s.seg === seg) continue;
+            if (s.seg.x === s.x && s.seg.w === s.w) continue;
+            s.seg.x = s.x; s.seg.w = s.w; put(s.seg);
+          }
+        };
+
+        // How far this edge may go: every segment on that side squeezed down
+        // to MIN_W and no further. They DO give way -- an edge that simply
+        // stopped at its neighbour meant a segment could never be made bigger
+        // once there was anything beside it -- but only the ones on the side
+        // being dragged, and only while it is being dragged towards them.
+        let hardRight = COLUMNS;
+        for (let k = 0; k < after.length; k++) {
+          hardRight = Math.min(hardRight, (after[k].x + after[k].w) - (k + 1) * MIN_W);
+        }
+        let hardLeft = 0;
+        for (let k = 0; k < before.length; k++) {
+          const b = before[before.length - 1 - k];
+          hardLeft = Math.max(hardLeft, b.x + (k + 1) * MIN_W);
+        }
 
         const show = (w, h) => { readout.textContent = h ? `${w}% · ${Math.round(h)}px` : `${w}%`; };
         show(startW, seg.h);
 
         const onMove = (ev) => {
           const dx = (ev.clientX - startX) / colW;
+          restore();
           if (east) {
-            const right = Math.round(Math.max(startXc + MIN_W, Math.min(rightWall, startXc + startW + dx)));
+            // The right edge moves; the left one stays exactly where it is.
+            const right = Math.round(Math.max(startXc + MIN_W, Math.min(hardRight, startXc + startW + dx)));
             seg.w = right - startXc;
+            // Each neighbour in the way keeps its right edge and gives up the
+            // room on its left -- it shrinks, rather than being shoved along
+            // into the next one.
+            let at = right;
+            for (const s of after) {
+              if (at <= s.x) break;                      // not reached: it and everything past it stay put
+              const edge = Math.max(at + MIN_W, s.x + s.w);
+              s.seg.x = at; s.seg.w = edge - at;
+              at = edge;
+              put(s.seg);
+            }
           } else {
-            const left = Math.round(Math.max(leftWall, Math.min(startXc + startW - MIN_W, startXc + dx)));
+            // The left edge moves; the right one stays exactly where it is.
+            const left = Math.round(Math.min(startXc + startW - MIN_W, Math.max(hardLeft, startXc + dx)));
             seg.x = left;
             seg.w = (startXc + startW) - left;
+            let at = left;
+            for (let k = before.length - 1; k >= 0; k--) {
+              const s = before[k];
+              if (at >= s.x + s.w) break;
+              const x = Math.min(s.x, at - MIN_W);
+              s.seg.x = x; s.seg.w = at - x;
+              at = x;
+              put(s.seg);
+            }
           }
           applyOne(node, seg);
 
-          let h = seg.h;
-          if (south || corner === 'nw' || corner === 'ne') {
-            const dy = (ev.clientY - startY) * (south ? 1 : -1);
-            h = Math.max(80, Math.min(1200, Math.round(startH + dy)));
-            seg.h = h;
-            // A row of different heights is not a row, so the rest follow --
-            // and only the rest of THIS row, which is why the row below no
-            // longer creeps up into it.
-            for (const o of others) {
-              o.h = h;
-              const n2 = node.parentElement.querySelector(`.hs[data-id="${o.id}"]`);
-              if (n2) applyOne(n2, o);
-            }
+          // Only the BOTTOM edge changes the height. A row has one top: the
+          // segment cannot grow upwards, so a top corner that changed the
+          // height grew it downwards instead -- dragging one way and watching
+          // the other end move. A top corner is width only.
+          //
+          // And the height is this segment's own. It used to be copied onto
+          // every other segment in the row, so sizing one sized them all.
+          if (south) {
+            const dy = ev.clientY - startY;
+            seg.h = Math.max(80, Math.min(1200, Math.round(startH + dy)));
             applyOne(node, seg);
           }
-          show(seg.w, h);
+          show(seg.w, seg.h);
         };
         const onUp = () => {
           document.removeEventListener('mousemove', onMove);
@@ -1691,14 +1801,40 @@
     const spec = typeSpec(seg.type);
     overlay(spec.name || seg.type, (body, box, close) => {
       const values = { ...seg };
+
+      // Three groups rather than one long column: what it shows, the switches
+      // together, and how big it is. A group with nothing in it is not drawn.
+      const scroll = el('div', 'he-body');
+      body.appendChild(scroll);
+      if (spec.about) scroll.appendChild(el('p', 'he-about', spec.about));
+      const group = (title, cls) => {
+        const g = el('div', 'he-group');
+        if (title) g.appendChild(el('h4', '', title));
+        const inner = el('div', cls);
+        g.appendChild(inner);
+        scroll.appendChild(g);
+        return { g, inner, used: false };
+      };
+      const fields = group('What it shows', 'he-grid');
+      const switches = group('And', 'he-switches');
+
       for (const o of spec.options || []) {
-        const wrap = el('div', 'he-opt' + (o.kind === 'toggle' ? ' row' : ''));
-        if (o.kind === 'toggle') {
+        const toggle = o.kind === 'toggle';
+        // A label element, so the words switch it as well as the box.
+        const wrap = el(toggle ? 'label' : 'div', 'he-opt' + (toggle ? ' row' : ''));
+        if (o.kind === 'media' || (o.kind === 'text' && /text|says|heading/i.test(o.label || ''))) {
+          wrap.classList.add('wide');
+        }
+        if (toggle) {
           const cb = el('input');
           cb.type = 'checkbox';
-          cb.checked = !!values[o.id];
+          // An option's default matters: most of these are on unless turned
+          // off, and reading a missing value as false had them all drawn
+          // unticked and then SAVED off by pressing Done.
+          cb.checked = values[o.id] == null ? !!o.default : !!values[o.id];
+          values[o.id] = cb.checked;
           cb.onchange = () => { values[o.id] = cb.checked; };
-          wrap.append(cb, el('label', '', o.label));
+          wrap.append(cb, el('span', '', o.label));
         } else if (o.kind === 'choice') {
           wrap.appendChild(el('label', '', o.label));
           const sel = el('select');
@@ -1743,12 +1879,18 @@
           };
           wrap.appendChild(input);
         }
-        body.appendChild(wrap);
+        const into = toggle ? switches : fields;
+        into.used = true;
+        into.inner.appendChild(wrap);
       }
+      for (const grp of [fields, switches]) if (!grp.used) grp.g.remove();
+
       // How big it is, which belongs to every type rather than to any one of
       // them -- so it is here rather than in each type's option list. The
       // corner handles write the same two numbers.
-      const sizeRow = el('div', 'he-size');
+      const sizeGroup = group('How big', 'he-size');
+      sizeGroup.used = true;
+      const sizeRow = sizeGroup.inner;
       const wWrap = el('div', 'he-opt');
       wWrap.appendChild(el('label', '', 'Width (% of the page)'));
       const wIn = el('input');
@@ -1782,18 +1924,19 @@
       sWrap.appendChild(sIn);
 
       sizeRow.append(wWrap, hWrap, sWrap);
-      body.appendChild(sizeRow);
 
       const actions = el('div', 'modal-actions');
       actions.style.marginTop = '12px';
-      const ok = el('button', '', 'Done');
+      const cancel = el('button', '', 'Cancel');
+      cancel.onclick = () => close();
+      const ok = el('button', 'primary', 'Done');
       ok.onclick = () => {
         Object.assign(seg, values);
         close();
         // Only this segment changed, so only this one is drawn again.
         save({ only: seg.id });
       };
-      actions.appendChild(ok);
+      actions.append(cancel, ok);
       box.appendChild(actions);
     });
   }

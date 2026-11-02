@@ -301,10 +301,38 @@ check("dragging a left edge moves the LEFT edge",
   (await placed()).find(s => s.id === "b"), { id: "b", row: 0, x: 50, w: 50 },
   "it used to pin the segment to the left of the row and grow it the wrong way");
 
-// And it stops at its neighbour rather than pushing it.
+// And the neighbour gives way rather than being a wall. An edge that simply
+// stopped at its neighbour meant a segment could never be made bigger once
+// there was anything beside it.
 await dragGrip("b", "nw", Math.round(-30 * colPx));
-check("and stops where its neighbour is", (await placed()).find(s => s.id === "b").x, 40);
-check("leaving the neighbour alone", (await placed()).find(s => s.id === "a"), { id: "a", row: 0, x: 0, w: 40 });
+check("an edge dragged into its neighbour makes the neighbour give way",
+  (await placed()).find(s => s.id === "b"), { id: "b", row: 0, x: 20, w: 80 });
+check("and the neighbour shrinks rather than being shoved along",
+  (await placed()).find(s => s.id === "a"), { id: "a", row: 0, x: 0, w: 20 },
+  "its left edge stays where it is; the room comes off its right");
+
+// Only up to MIN_W, though: it gives way, it does not disappear.
+await set([
+  { id: "a", type: "recent", row: 0, x: 0, w: 40, h: 0 },
+  { id: "b", type: "player", row: 0, x: 40, w: 60, h: 0 },
+]);
+await edit();
+await dragGrip("b", "nw", Math.round(-90 * colPx));
+check("a neighbour is never squeezed past the narrowest a segment may be",
+  (await placed()).find(s => s.id === "a").w, 12);
+
+// And the side NOT being dragged is left completely alone.
+await set([
+  { id: "a", type: "recent", row: 0, x: 0, w: 30, h: 0 },
+  { id: "b", type: "player", row: 0, x: 30, w: 30, h: 0 },
+  { id: "c", type: "clock", row: 0, x: 60, w: 40, h: 0 },
+]);
+await edit();
+await dragGrip("b", "ne", Math.round(20 * colPx));
+check("dragging the right edge touches only what is to the right",
+  (await placed()).filter(s => s.id !== "b"),
+  [{ id: "a", row: 0, x: 0, w: 30 }, { id: "c", row: 0, x: 80, w: 20 }],
+  "the one on the left must not move because the right edge did");
 
 // The right edge of the last one on a row reaches the edge of the page.
 await set([
