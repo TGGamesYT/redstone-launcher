@@ -20,6 +20,10 @@
     window opens, and held in this window's memory while it is open so that
     acting on something does not mean typing it again.
   -->
+  <!-- The theme, before anything is drawn. This window had none of it: no
+       colours, no radius and no font, so it opened in the stylesheet's
+       fallbacks while every other window was in the user's own. -->
+  <script src="theme-boot.js"></script>
   <link rel="stylesheet" href="common.css">
   <link rel="stylesheet" href="server.css">
   <link rel="stylesheet" href="material-icons.css">
@@ -34,7 +38,13 @@
        uses, so a player looks the same in both. -->
   <script src="skinview3d.bundle.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; font-family: Verdana, sans-serif; font-size: 13px; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: var(--text-font), Verdana, sans-serif;
+      font-size: 13px;
+      color: var(--text-color);
+    }
     #toolbar .drag-region { flex: 1 1 auto; }
     .ap-wrap { position: fixed; inset: 38px 0 0 0; display: flex; }
 
@@ -104,7 +114,7 @@
     .ap-api-title { flex: 1; min-width: 0; }
     .ap-api-title strong { display: block; font-size: 13px; }
     .ap-api-title span { display: block; margin-top: 3px; font-size: 10px; opacity: .65; }
-    .ap-api-action { padding: 7px 11px; margin: 0; border: 1px solid #393b43; border-radius: 8px;
+    .ap-api-action { padding: 7px 11px; margin: 0; border: 1px solid var(--border-dark); border-radius: var(--border-radius);
       background: var(--very-dark); color: var(--text-color); font: inherit; font-size: 11px; cursor: pointer; }
     .ap-api-action:hover { background: var(--base-color); }
     .ap-api-frame { display: block; width: 100%; min-height: 0; flex: 1 1 auto; border: 1px solid var(--border-dark);

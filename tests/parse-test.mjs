@@ -58,6 +58,52 @@ for (const f of backend) {
   });
 }
 
+// ── a stylesheet written as a template literal ──
+//
+// home.js keeps the whole home page's CSS in one template literal. A backtick
+// inside a comment in there ends the literal early, and what follows is read
+// as code -- which has twice parsed perfectly well and then thrown
+// "player is not defined" when the page was opened. The literal is meant to be
+// one unbroken string, so it has no ${} in it at all.
+{
+  const src = fs.readFileSync(path.join(ROOT, "frontend", "home.js"), "utf8");
+  let found = false;
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const n of node) walk(n); return; }
+    if ((node.type === "FunctionDeclaration" || node.type === "FunctionExpression")
+      && node.id && node.id.name === "ensureStyle") {
+      found = true;
+      const literals = [];
+      const find = (n) => {
+        if (!n || typeof n !== "object") return;
+        if (Array.isArray(n)) { for (const x of n) find(x); return; }
+        if (n.type === "TemplateLiteral") literals.push(n);
+        for (const k of Object.keys(n)) if (k !== "type") find(n[k]);
+      };
+      find(node.body);
+      // Exactly one, with nothing interpolated into it. A stray backtick ends
+      // the first string and starts a second, which is how this parses
+      // cleanly and still throws when the page is opened.
+      if (literals.length !== 1) {
+        fail("frontend/home.js keeps its stylesheet in one piece",
+          `ensureStyle holds ${literals.length} template literals, not 1`
+          + " — a backtick inside a comment in the CSS ends the string early");
+      }
+      for (const lit of literals) {
+        if (lit.expressions.length) {
+          fail("frontend/home.js keeps its stylesheet in one piece",
+            `the style template has ${lit.expressions.length} \${} in it`);
+        }
+      }
+    }
+    for (const k of Object.keys(node)) if (k !== "type") walk(node[k]);
+  };
+  try { walk(acorn.parse(src, { ecmaVersion: "latest", sourceType: "script" })); }
+  catch { /* the parse check above already reported it */ }
+  if (!found) fail("frontend/home.js keeps its stylesheet in one piece", "ensureStyle was not found");
+}
+
 // ── a module reached through its default export ──
 //
 // `relayClient.themeRelay is not a function` -- the function was exported by

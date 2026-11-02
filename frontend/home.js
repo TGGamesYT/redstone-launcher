@@ -19,10 +19,27 @@
   const MIN_W = 12;        // the narrowest a segment may be made
   let editing = false;
   let profilesCache = [];
-  // Every timer and 3D viewer a drawn segment owns, so redrawing the page
-  // does not leave a clock ticking into a removed element or a render holding
-  // a frame loop on a canvas that has gone.
-  let cleanups = [];
+
+  // Every timer and 3D viewer a drawn segment owns, so redrawing the page does
+  // not leave a clock ticking into a removed element or a render holding a
+  // frame loop on a canvas that has gone.
+  //
+  // Collected on the NODE. It used to be a module-level list that drawInto
+  // swapped in and out around the call that draws a segment -- which works for
+  // a segment drawn in one go, and not at all for one that awaits. Every
+  // `await` in `player` hands control back, drawInto's `finally` puts the
+  // page's list back, and the viewer and its timers were then collected
+  // against the PAGE rather than against the segment. Two things followed from
+  // that, both reported:
+  //
+  //   - Redrawing the page tore down every cleanup in the list, including
+  //     those of segments it was keeping, so a player segment that was never
+  //     redrawn had its viewer disposed underneath it. The canvas stayed
+  //     exactly as it was -- a still image until the page was reloaded.
+  //   - Redrawing ONE segment ran only that node's list, which was empty, so
+  //     the old viewer kept its frame loop and its animation next to the new
+  //     one's. Two animations on one figure reads as double speed.
+  const onGone = (node, fn) => { (node._own || (node._own = [])).push(fn); };
 
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
@@ -31,6 +48,49 @@
     return n;
   };
   const typeSpec = (type) => TYPES.find(t => t.type === type) || { options: [] };
+
+  // ── Markdown, for the release notes ──────────────────────────────────────
+  //
+  // A GitHub release's body is Markdown, and it was being put on the page as
+  // preformatted text: headings showed as "## What's new", links as the raw
+  // brackets-and-parentheses, and a bulleted list as asterisks. It is the same
+  // renderer the mod pages use, at a smaller size so it fits in a segment.
+  let _marked = null;
+  function ensureMarked() {
+    if (window.marked) return Promise.resolve(true);
+    if (_marked) return _marked;
+    _marked = new Promise((done) => {
+      const s = document.createElement('script');
+      s.src = 'marked.min.js';
+      s.onload = () => done(!!window.marked);
+      s.onerror = () => done(false);
+      document.head.appendChild(s);
+    });
+    return _marked;
+  }
+
+  // Rendered into `box`, with the plain text standing in until it is. Nothing
+  // from a release note gets to run or to navigate this window: scripts and
+  // frames are dropped, and a link opens in the browser.
+  async function markdownInto(box, text) {
+    box.textContent = text;
+    if (!await ensureMarked() || !box.isConnected) return;
+    try {
+      box.innerHTML = window.marked.parse(String(text));
+    } catch { return; }
+    for (const bad of box.querySelectorAll('script, iframe, object, embed, style, link')) bad.remove();
+    for (const a of box.querySelectorAll('a')) {
+      const href = a.getAttribute('href') || '';
+      a.removeAttribute('href');
+      if (!/^https?:/i.test(href)) continue;
+      a.style.cursor = 'pointer';
+      a.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();          // not the card's "open the release" click
+        try { shell.openExternal(href); } catch { /* no browser */ }
+      };
+    }
+  }
 
   function ensureStyle() {
     if (document.getElementById('home-style')) return;
@@ -89,7 +149,16 @@
       .hs[data-h] > .hs-grid, .hs[data-h] > .hs-player { overflow:auto; min-height:0; }
       /* A render is a fixed-size canvas; it is scaled down to the room there
          is rather than hanging over the side of its segment. */
-      .hs-player canvas { max-width:100%; height:auto; }
+      /* Scaled DOWN to fit, never squashed. The player box is a flex column, so
+         a canvas taller than the segment was shrunk along the main axis -- its
+         height compressed with its width left alone, which is exactly what a
+         stretched render looks like. It does not flex, and both limits are
+         maxima, so a canvas too big for its space keeps its proportions. */
+      .hs-player canvas {
+        flex: 0 0 auto;
+        width: auto; height: auto;
+        max-width: 100%; max-height: 100%;
+      }
       .hs > h2, .hs > h3 { margin:0 0 10px; }
       .hs-body { min-height:0; flex:1; overflow:auto; }
       .hs-empty { opacity:0.6; font-size:13px; }
@@ -173,6 +242,38 @@
       .hs-news pre { margin:0; font-size:calc(11.5px * var(--s)); line-height:1.5; white-space:pre-wrap;
         max-height:calc(120px * var(--s)); overflow:hidden; opacity:0.85; font-family:inherit; }
       .hs-news .tag { font-size:calc(10px * var(--s)); text-transform:uppercase; letter-spacing:0.05em; opacity:0.6; }
+      /* A release note is Markdown. The mod pages render it full size; here it
+         has a segment to fit into, so everything is a size down and the whole
+         block is capped and faded out at the bottom rather than cut mid-line.
+         The card is a link to the release, so there is more to read either
+         way. */
+      .hs-news .md { font-size:calc(11.5px * var(--s)); line-height:1.5; opacity:0.85;
+        max-height:calc(150px * var(--s)); overflow:hidden; position:relative;
+        -webkit-mask-image:linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+        mask-image:linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+      .hs-news .md > :first-child { margin-top:0; }
+      .hs-news .md > :last-child { margin-bottom:0; }
+      .hs-news .md h1, .hs-news .md h2, .hs-news .md h3,
+      .hs-news .md h4, .hs-news .md h5, .hs-news .md h6 {
+        margin:calc(8px * var(--s)) 0 calc(3px * var(--s)); font-size:calc(12px * var(--s));
+        text-transform:uppercase; letter-spacing:0.04em; opacity:0.75; }
+      .hs-news .md p { margin:0 0 calc(5px * var(--s)); }
+      .hs-news .md ul, .hs-news .md ol { margin:0 0 calc(5px * var(--s)); padding-left:1.3em; }
+      .hs-news .md li { margin:0 0 calc(2px * var(--s)); }
+      .hs-news .md a { color:var(--secondary-color); text-decoration:underline; }
+      .hs-news .md code { font-family:monospace; font-size:0.92em;
+        background:rgba(0,0,0,0.3); padding:0 3px; border-radius:3px; }
+      .hs-news .md pre { max-height:none; margin:0 0 calc(5px * var(--s)); padding:calc(5px * var(--s));
+        background:rgba(0,0,0,0.3); border-radius:4px; overflow-x:auto; font-size:0.92em; }
+      .hs-news .md pre code { background:none; padding:0; }
+      /* Not the card's own cover picture: that one fills the width at a fixed
+         height, and a badge inside a release note must not. */
+      .hs-news .md img { width:auto; height:auto; max-width:100%; display:inline-block; }
+      .hs-news .md hr { border:none; border-top:1px solid var(--border-dark); margin:calc(6px * var(--s)) 0; }
+      .hs-news .md blockquote { margin:0 0 calc(5px * var(--s)); padding-left:calc(7px * var(--s));
+        border-left:2px solid var(--border-dark); opacity:0.85; }
+      .hs-news .md table { border-collapse:collapse; font-size:0.95em; }
+      .hs-news .md th, .hs-news .md td { border:1px solid var(--border-dark); padding:1px 4px; }
       .hs-player { display:flex; justify-content:center; }
       .hs-player.left { justify-content:flex-start; }
       .hs-player.right { justify-content:flex-end; }
@@ -195,7 +296,13 @@
         left:5px; right:5px; top:-4px; bottom:16px;
         outline:2px dashed rgba(255,255,255,0.85);
         background:rgba(0,0,0,0.18); pointer-events:none; z-index:2; }
-      body.home-editing .hs-card, body.home-editing .hs-item, body.home-editing .hs-news { pointer-events:none; }
+      /* Nothing inside a segment answers the pointer while the page is being
+         edited: a grab is a grab on the SEGMENT. The player render was not on
+         this list, so picking a segment up by the figure turned the figure --
+         the segment moved and the render span at the same time. */
+      body.home-editing .hs-card, body.home-editing .hs-item,
+      body.home-editing .hs-news, body.home-editing .hs-player,
+      body.home-editing .hs-player canvas, body.home-editing .hs-faces { pointer-events:none; }
       /* Inside the segment, not above it: at -10px the first row's buttons
          were clipped by the top of the scroller. */
       /* Settings and remove only -- moving is done by holding the segment
@@ -523,15 +630,21 @@
       // that was here -- the render could be dragged and that was all.
       const SA = window.SkinAnimations;
       const physics = seg.physics !== false;
+      const settles = seg.settle !== false;
       let phys = null;
-      if (movable && physics && SA && SA.orbitPhysics) {
+      // Settling back is not part of the momentum. They were one switch here:
+      // with "keep spinning when let go" off there was no physics at all, so
+      // "settle back to facing forward" had nothing to act through and did
+      // nothing -- and with it on, settling happened whether or not it was
+      // asked for, because Infinity is not a finite number of milliseconds and
+      // fell through to the default wait.
+      if (movable && (physics || settles) && SA && SA.orbitPhysics) {
         try {
-          // `settle` is whether it finds its way back to facing forward after
-          // being left alone, and how long it waits before doing so.
           phys = SA.orbitPhysics(v, {
-            returnAfter: seg.settle === false ? Infinity : (Number(seg.settleAfter) || 3500),
+            momentum: physics,
+            returnAfter: settles ? (Number(seg.settleAfter) || 3500) : null,
           });
-          cleanups.push(() => { try { phys.stop(); } catch { /* gone */ } });
+          onGone(node, () => { try { phys.stop(); } catch { /* gone */ } });
         } catch { /* a drag with no weight behind it, then */ }
       }
 
@@ -558,14 +671,24 @@
           try { cond.play(SA.clips[SA.randomName()]); } catch { again(); }
         };
         again();
-        cleanups.push(() => clearTimeout(timer));
+        onGone(node, () => clearTimeout(timer));
       } else {
         const want = ANIM[doing];
         if (want && typeof skinview3d[want] === 'function') {
           try { v.animation = new skinview3d[want](); } catch { /* standing still it is */ }
         }
       }
-      cleanups.push(() => { try { v.dispose(); } catch { /* gone */ } });
+      onGone(node, () => {
+        try { v.dispose(); } catch { /* gone */ }
+        // And hand the context back. A browser keeps only so many WebGL
+        // contexts (a couple of dozen) and kills the oldest to make room, so a
+        // segment resized enough times took out a render elsewhere on the page.
+        try {
+          const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+          const lose = gl && gl.getExtension('WEBGL_lose_context');
+          if (lose) lose.loseContext();
+        } catch { /* nothing to hand back */ }
+      });
       if (seg.showName !== false) box.appendChild(el('div', 'hs-sub', account.name || ''));
     },
 
@@ -683,10 +806,19 @@
       const list = el('div', 'hs-list');
       for (const n of r.items) {
         const box = el('div', 'hs-news');
+        // Inside a `.bd`, like Mojang's cards: that is what holds the padding
+        // that follows the corner radius, and without it a large radius cut
+        // the corner off the heading.
+        const bd = el('div', 'bd');
         const head = el('h4', '', `${n.title}${n.prerelease ? ' (pre-release)' : ''}`);
-        box.appendChild(head);
-        if (n.at) box.appendChild(el('div', 'hs-sub', new Date(n.at).toLocaleDateString()));
-        if (n.body) box.appendChild(el('pre', '', n.body));
+        bd.appendChild(head);
+        if (n.at) bd.appendChild(el('div', 'hs-sub', new Date(n.at).toLocaleDateString()));
+        if (n.body) {
+          const body = el('div', 'md');
+          bd.appendChild(body);
+          markdownInto(body, n.body);
+        }
+        box.appendChild(bd);
         if (n.url) {
           box.style.cursor = 'pointer';
           box.onclick = () => { try { shell.openExternal(n.url); } catch { /* no browser */ } };
@@ -774,7 +906,7 @@
       };
       tick();
       const t = setInterval(tick, seg.seconds ? 1000 : 15000);
-      cleanups.push(() => clearInterval(t));
+      onGone(node, () => clearInterval(t));
     },
 
     countdown(seg, node) {
@@ -801,7 +933,7 @@
       };
       tick();
       const t = setInterval(tick, 1000);
-      cleanups.push(() => clearInterval(t));
+      onGone(node, () => clearInterval(t));
     },
 
     async playtime(seg, node) {
@@ -883,9 +1015,15 @@
   // whole page, so a single segment can be thrown away and redrawn without
   // stopping everything else.
   function drawInto(node, seg) {
-    const mine = [];
-    const was = cleanups;
-    cleanups = mine;
+    node._own = [];
+    // Run once, and emptied as it runs: a node can be torn down from more than
+    // one direction (a redraw of the page and a redraw of the segment), and
+    // disposing a viewer twice is not free.
+    node._cleanup = () => {
+      const list = node._own || [];
+      node._own = [];
+      for (const fn of list) { try { fn(); } catch { /* going anyway */ } }
+    };
     try {
       const r = (DRAW[seg.type] || (() => { }))(seg, node);
       if (r && typeof r.catch === 'function') {
@@ -895,10 +1033,7 @@
       }
     } catch (e) {
       node.appendChild(el('div', 'hs-error', 'This segment could not be drawn: ' + (e && e.message || e)));
-    } finally {
-      cleanups = was;
     }
-    node._cleanup = () => { for (const fn of mine) { try { fn(); } catch { /* going anyway */ } } };
   }
 
   // ── where everything is ─────────────────────────────────────────────────
@@ -961,9 +1096,9 @@
       if (seg && node._key === contentKey(seg)) keep.set(seg.id, node);
       else if (node._cleanup) { try { node._cleanup(); } catch { /* going anyway */ } }
     }
-    // Only what is NOT being kept is torn down.
-    for (const fn of cleanups) { try { fn(); } catch { /* going anyway */ } }
-    cleanups = [];
+    // Only what is NOT being kept is torn down -- which is why each node owns
+    // what it leaves running. The one list for the whole page was emptied here
+    // whatever was being kept, so a kept player segment lost its viewer.
     for (const node of keep.values()) node.remove();
     host.innerHTML = '';
 

@@ -518,7 +518,15 @@
     opts = opts || {};
     if (!v || !v.canvas || !v.controls) return { dragging: false, stop() { }, home() { } };
     const canvas = v.canvas;
-    const RETURN_AFTER = Number.isFinite(opts.returnAfter) ? opts.returnAfter : 3500;
+    // A returnAfter that is not a number means NEVER come back. It used to
+    // fall through to the 3500ms default, so Infinity -- which is how "do not
+    // settle back" was asked for -- settled back after three and a half
+    // seconds like everything else.
+    const RETURN_AFTER = Number.isFinite(opts.returnAfter) ? opts.returnAfter : null;
+    // Whether a flick carries after the pointer goes. Off, a release simply
+    // stops where it was left -- which is what somebody who wants it to settle
+    // back without it spinning around first is asking for.
+    const MOMENTUM = opts.momentum !== false;
     // The pitch stops the controls already enforce, so a flick carrying on
     // after the pointer has gone cannot sail past one.
     const minPolar = Number.isFinite(v.controls.minPolarAngle) ? v.controls.minPolarAngle : 0;
@@ -646,8 +654,10 @@
           if (offT < 0.01 && !hovering) restingSince = nowMs();
           // Never stop off-centre with nothing left to bring it back. If the
           // figure is turned and no return is pending, schedule one -- the loop
-          // may pause, but the render may not be stranded.
-          if (offT > 0.01 && !idleTimer) armReturn();
+          // may pause, but the render may not be stranded. Unless coming back
+          // is exactly what it was told not to do, in which case where it was
+          // left IS where it belongs.
+          if (offT > 0.01 && !idleTimer && RETURN_AFTER !== null) armReturn();
           return;
         }
       } catch { return; }
@@ -661,6 +671,7 @@
       // Let the flick play out first; the wait is before it decides to come
       // back, not before it is allowed to move.
       startLoop();
+      if (RETURN_AFTER === null) return;         // asked never to come back
       // Nulled when it fires, so "is a return pending?" is answerable.
       idleTimer = setTimeout(() => { idleTimer = null; homing = true; startLoop(); }, RETURN_AFTER);
     }
@@ -686,7 +697,13 @@
       velTheta = velPhi = 0; lastTheta = lastPhi = null;
     };
     const onChange = () => { if (dragging) sampleDrag(); };
-    const onEnd = () => { dragging = false; armReturn(); };
+    const onEnd = () => {
+      dragging = false;
+      // No momentum means a release stops it dead rather than letting the
+      // flick carry; it may still find its way back to the front afterwards.
+      if (!MOMENTUM) { velTheta = 0; velPhi = 0; }
+      armReturn();
+    };
 
     canvas.addEventListener('pointerenter', onEnter);
     canvas.addEventListener('pointerleave', onLeave);
