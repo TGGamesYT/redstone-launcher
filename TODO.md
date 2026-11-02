@@ -37,6 +37,28 @@ The newest batch, in the order it was given.
       packs they call incompatible are marked once both are on — marked, not
       refused.*
 
+### Added mid-round
+- [x] **A server can run a jar you choose.** — *"A jar of my own" in the Type
+      list: the file is copied in as the server jar and nothing else about
+      running it changes. Editing a server and handing over another jar
+      replaces it.*
+- [x] **The loader tiles wrap now.** — *Four across at most; anything past
+      that goes onto another line, still filling the page. Six slivers is what
+      happened as soon as a server's plugin kinds were offered.*
+- [x] **The Vanilla Tweaks wording no longer implies they endorse it.** —
+      *It says the packs come from their site, built by it, and that the
+      launcher is not affiliated with them.*
+- [x] **Install from a file, for every kind of content.** — *In every
+      instance content tab and on a server, filtered to .jar for mods and
+      plugins and .zip for the packs. Never written over something already
+      there — a jar of the same name is usually a different build. A pack
+      added to a server joins its merge order, and a data pack goes under the
+      world where the game looks.*
+- [x] **Dev mods for servers, including dev plugins.** — *A Paper-like
+      server's dev jars go to its plugins folder, and a `plugin.yml` is enough
+      to know what one is. A plugin server also has a content tab at all now:
+      it had none, so there was no way to see what was installed.*
+
 ### The main page
 - [ ] **Adding or changing a segment still redraws the ones already drawn.**
 - [ ] **Segments treat their own edges differently** — some are cut off at

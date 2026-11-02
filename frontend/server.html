@@ -284,8 +284,9 @@
 
       <div class="srv-panel" data-panel="mods">
         <div class="tab-action-bar" style="display:flex; gap:8px; margin-bottom:10px;">
-          <button id="srvInstallMods"><i class="material-icons" style="font-size:16px;vertical-align:middle;">add</i> Install Mods</button>
-          <button id="srvOpenModsFolder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder</i> Open mods folder</button>
+          <button id="srvInstallMods"><i class="material-icons" style="font-size:16px;vertical-align:middle;">add</i> Install</button>
+          <button id="srvModsFromFile" title="Copy .jar files you already have into this server"><i class="material-icons" style="font-size:16px;vertical-align:middle;">upload_file</i> From file</button>
+          <button id="srvOpenModsFolder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder</i> Open folder</button>
           <!-- Only shown when something can actually be updated. -->
           <button id="srvModsUpdateAll" style="display:none;"></button>
           <label id="srvDevModsWrap" style="display:none; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="srvDevModsEnable"> Dev mods</label>
@@ -323,7 +324,17 @@
           <option value="quilt">Quilt</option>
           <option value="forge">Forge</option>
           <option value="neoforge">NeoForge</option>
+          <option value="custom">A jar of my own…</option>
         </select>
+      </div>
+      <!-- Only for "A jar of my own": the file to run, copied in as the
+           server jar. Everything else about running it is unchanged. -->
+      <div class="modal-section" id="srvJarSection" style="display:none;">
+        <label>Server jar</label>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button type="button" id="srvPickJar">Choose a jar…</button>
+          <span id="srvJarName" style="font-size:12px; opacity:0.8; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">nothing chosen</span>
+        </div>
       </div>
       <div class="form-row">
         <div class="modal-section" style="flex:1;"><label>Version</label><select id="srvVersion"></select></div>
@@ -393,6 +404,21 @@
 
     let servers = [];
     let selectedServer = null;
+
+    // Which folder of jars this kind of server keeps, or null for one that
+    // keeps neither (plain vanilla).
+    const SRV_MODDED = ['fabric', 'forge', 'quilt', 'neoforge'];
+    // A jar of your own is almost always a Paper-like fork, so it is treated
+    // as one; a modded one still has the Files tab.
+    const SRV_PLUGINS = ['paper', 'purpur', 'folia', 'spigot', 'bukkit', 'custom'];
+    function srvContentDir(server) {
+      const t = String((server || {}).type || '').toLowerCase();
+      if (SRV_MODDED.includes(t)) return 'mods';
+      if (SRV_PLUGINS.includes(t)) return 'plugins';
+      return null;
+    }
+    const srvDir = () => srvContentDir(selectedServer) || 'mods';
+    const srvWord = () => (srvDir() === 'plugins' ? 'plugin' : 'mod');
     let consoleTimer = null;
 
     // ---------- List ----------
@@ -546,9 +572,12 @@
       $('srvDetailIcon').src = instanceIcon(server.icon);
       $('srvDetailName').textContent = server.name;
       $('srvDetailInfo').textContent = `${server.type} ${server.version} • port ${server.port || 25565}`;
-      // Modded server types (Fabric/Forge/Quilt) get a Mods tab automatically.
-      const modded = ['fabric', 'forge', 'quilt', 'neoforge'].includes((server.type || '').toLowerCase());
-      $('srvModsTab').style.display = modded ? '' : 'none';
+      // A modded server has mods; a Paper-like one has plugins. Both are a
+      // folder of jars with the same things to do to them, so it is one tab
+      // that calls itself whichever it is -- a plugin server used to have no
+      // tab at all, and no way to see what was installed.
+      $('srvModsTab').style.display = srvContentDir(server) ? '' : 'none';
+      $('srvModsTab').textContent = srvContentDir(server) === 'plugins' ? 'Plugins' : 'Mods';
       // Always land on the Console tab when (re)opening a server, unless the
       // way in asked for a particular one.
       selectTab(tab || 'console');
@@ -1050,6 +1079,11 @@
       if (wrap && enableCb && manageBtn) {
         const dev = devOn;
         wrap.style.display = dev ? 'flex' : 'none';
+        // A plugin being worked on is the same arrangement as a mod being
+        // worked on -- a folder that builds a jar, hot-swapped in -- so it
+        // is the same tool, called what it is on this server.
+        wrap.lastChild.textContent = ` Dev ${srvWord()}s`;
+        manageBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Manage dev ${srvWord()}s`;
         const dm = await ipcRenderer.invoke('devmod:get', { type: 'server', id: selectedServer.name });
         enableCb.checked = !!(dm && dm.enabled);
         manageBtn.style.display = (dev && enableCb.checked) ? '' : 'none';
@@ -1061,19 +1095,19 @@
       // until the new ones replace them, instead of the list emptying to
       // "Loading…" and filling back in every time you come back to it.
       if (!ul.children.length) ul.innerHTML = '<li style="opacity:0.6;padding:10px;">Loading…</li>';
-      const res = await ipcRenderer.invoke('server-fs:list', { name: selectedServer.name, path: 'mods' });
+      const res = await ipcRenderer.invoke('server-fs:list', { name: selectedServer.name, path: srvDir() });
       ul.innerHTML = '';
       const jars = (res.entries || []).filter(e => !e.isDir && /\.jar(\.disabled)?$/i.test(e.name));
       if (!jars.length) {
-        ul.innerHTML = '<li style="opacity:0.6;padding:10px;">No mods installed yet — use “Open mods folder” to drop .jar files in.</li>';
+        ul.innerHTML = `<li style="opacity:0.6;padding:10px;">No ${srvWord()}s installed yet — install one, or add a .jar you already have.</li>`;
         return;
       }
       // Real names and the mod's own icon, read out of the jars.
       let modInfo = {};
-      try { modInfo = await ipcRenderer.invoke('server-mods:info', { name: selectedServer.name, dir: 'mods' }) || {}; } catch { }
+      try { modInfo = await ipcRenderer.invoke('server-mods:info', { name: selectedServer.name, dir: srvDir() }) || {}; } catch { }
       // Which of them have a newer build (one bulk Modrinth lookup).
       let updates = {};
-      try { updates = await ipcRenderer.invoke('server-mods:updates', { name: selectedServer.name, dir: 'mods' }) || {}; } catch { }
+      try { updates = await ipcRenderer.invoke('server-mods:updates', { name: selectedServer.name, dir: srvDir() }) || {}; } catch { }
       const updatable = jars.filter(e => updates[e.name] && updates[e.name].url);
       const bar = document.getElementById('srvModsUpdateAll');
       if (bar) {
@@ -1090,7 +1124,7 @@
               version: meta.version, latestVersion: u.latestNumber, versionId: u.versionId,
               ref: e,
             };
-          }), 'mods');
+          }), srvDir());
           if (!picked.length) return;
           const chosen = picked.map(x => x.ref);
           bar.disabled = true;
@@ -1099,13 +1133,13 @@
             bar.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">hourglass_top</i> Updating ${done + 1}/${chosen.length}`;
             const u = updates[e.name];
             try {
-              const r = await ipcRenderer.invoke('server-mods:update', { name: selectedServer.name, dir: 'mods', filename: e.name, url: u.url });
+              const r = await ipcRenderer.invoke('server-mods:update', { name: selectedServer.name, dir: srvDir(), filename: e.name, url: u.url });
               if (!r || !r.success) failed++;
             } catch { failed++; }
             done++;
           }
           bar.disabled = false;
-          if (window.notify) window.notify(failed ? `${failed} of ${chosen.length} could not be updated` : `Updated ${done} mods`, failed ? 'error' : 'success');
+          if (window.notify) window.notify(failed ? `${failed} of ${chosen.length} could not be updated` : `Updated ${done} ${srvWord()}s`, failed ? 'error' : 'success');
           loadServerMods();
         };
       }
@@ -1137,7 +1171,7 @@
           upBtn.onclick = async (ev) => {
             ev.stopPropagation();
             upBtn.disabled = true;
-            const r = await ipcRenderer.invoke('server-mods:update', { name: selectedServer.name, dir: 'mods', filename: e.name, url: up.url });
+            const r = await ipcRenderer.invoke('server-mods:update', { name: selectedServer.name, dir: srvDir(), filename: e.name, url: up.url });
             if ((!r || !r.success) && window.notify) window.notify('Update failed: ' + ((r && r.error) || 'unknown'), 'error');
             loadServerMods();
           };
@@ -1152,7 +1186,7 @@
           ed.onclick = (ev) => {
             ev.stopPropagation();
             window.Remod.open({
-              type: 'server', id: selectedServer.name, tab: 'mods', filename: e.name,
+              type: 'server', id: selectedServer.name, tab: srvDir(), filename: e.name,
               onSaved: () => loadServerMods(),
             });
           };
@@ -1163,21 +1197,32 @@
         del.title = 'Delete';
         del.onclick = async (ev) => {
           ev.stopPropagation();
-          if (!await uiConfirm(`Delete mod "${e.name}"?`, { title: 'Delete mod', ok: 'Delete', danger: true })) return;
-          await ipcRenderer.invoke('server-fs:delete', { name: selectedServer.name, path: 'mods/' + e.name });
+          if (!await uiConfirm(`Delete ${srvWord()} "${e.name}"?`, { title: `Delete ${srvWord()}`, ok: 'Delete', danger: true })) return;
+          await ipcRenderer.invoke('server-fs:delete', { name: selectedServer.name, path: srvDir() + '/' + e.name });
           loadServerMods();
         };
         li.appendChild(del);
         ul.appendChild(li);
       });
     }
-    $('srvOpenModsFolder').onclick = () => ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false, sub: 'mods' });
+    $('srvOpenModsFolder').onclick = () => ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false, sub: srvDir() });
     $('srvInstallMods').onclick = () => {
       const params = new URLSearchParams({
-        install: '1', type: 'mod', serverId: selectedServer.name,
+        install: '1', type: srvWord(), serverId: selectedServer.name,
         loader: (selectedServer.type || 'fabric'), version: selectedServer.version || '', name: selectedServer.name || ''
       });
       window.location.href = `modrinth.html?${params.toString()}`;
+    };
+    // A jar you already have: one built by hand, or off a forum.
+    $('srvModsFromFile').onclick = async () => {
+      const btn = $('srvModsFromFile');
+      btn.disabled = true;
+      const r = await ipcRenderer.invoke('content:addFiles', { type: 'server', id: selectedServer.name, tab: srvDir() });
+      btn.disabled = false;
+      if (!r || r.canceled) return;
+      if (!r.success) { if (window.notify) notify(r.error || 'They could not be copied', 'error'); return; }
+      if (window.notify && r.added.length) notify(`${r.added.length} ${srvWord()}${r.added.length === 1 ? '' : 's'} added`, 'success');
+      loadServerMods();
     };
 
     // ---------- Resource packs (ordered, merged, hosted through the relay) ----------
@@ -1249,6 +1294,12 @@
         $('srvVersion').value = server.version;
       }
       updateLoaderVersionSection(server && server.loaderVersion);
+      // A jar of your own is not re-chosen every time the form opens: an edit
+      // keeps the one the server already runs unless another is picked.
+      pickedJar = null;
+      $('srvJarName').textContent = (server && server.customJar)
+        ? `${server.customJar} (already in)` : 'nothing chosen';
+      updateJarSection();
       $('dMenu').classList.remove('open');
       $('createServerModal').classList.add('active');
       setTimeout(() => $('srvName').focus(), 60);
@@ -1274,7 +1325,18 @@
         if (preselect && versions.includes(preselect)) sel.value = preselect;
       } catch { sel.innerHTML = '<option value="">latest</option>'; }
     }
-    $('srvType').addEventListener('change', () => updateLoaderVersionSection());
+    // ── a jar of your own ──
+    let pickedJar = null;
+    function updateJarSection() {
+      $('srvJarSection').style.display = $('srvType').value === 'custom' ? '' : 'none';
+    }
+    $('srvPickJar').onclick = async () => {
+      const r = await ipcRenderer.invoke('server:pickJar');
+      if (!r || r.canceled) return;
+      pickedJar = r.file;
+      $('srvJarName').textContent = `${r.name} (${(r.size / 1048576).toFixed(1)} MB)`;
+    };
+    $('srvType').addEventListener('change', () => { updateLoaderVersionSection(); updateJarSection(); });
     $('srvSelectIcon').onclick = () => window.IconPicker.open({
       serverName: editingServer ? editingServer.name : undefined,
       version: ($('srvVersion').value || '').trim() || undefined,
@@ -1387,17 +1449,21 @@
       const name = ($('srvName').value.trim()) || `${typeLabel} ${version}`;
       const launchArgs = $('srvLaunchArgs').value.trim();
       const loaderVersion = ($('srvLoaderVerSection').style.display !== 'none') ? $('srvLoaderVersion').value : '';
+      if (type === 'custom' && !pickedJar && !(editingServer && editingServer.customJar)) {
+        if (window.notify) notify('Choose the jar to run first', 'error'); else alert('Choose the jar to run first');
+        return;
+      }
       const btn = $('createServerBtn'); const wasEdit = !!editingServer;
       btn.disabled = true; btn.textContent = wasEdit ? 'Saving…' : 'Creating…';
       try {
         if (wasEdit) {
-          const res = await ipcRenderer.invoke('edit-server', { name: editingServer.name, newName: name, version, type, launchArgs, loaderVersion, icon: newSrvIconData || '' });
+          const res = await ipcRenderer.invoke('edit-server', { name: editingServer.name, newName: name, version, type, launchArgs, loaderVersion, icon: newSrvIconData || '', jarPath: pickedJar || undefined });
           if (res && res.error) throw new Error(res.error);
           $('createServerModal').classList.remove('active');
           selectedServer = null;
           closeDetail();
         } else {
-          await ipcRenderer.invoke('make-server', { name, version, type, launchArgs, loaderVersion, icon: newSrvIconData || '' });
+          await ipcRenderer.invoke('make-server', { name, version, type, launchArgs, loaderVersion, icon: newSrvIconData || '', jarPath: pickedJar || undefined });
           $('createServerModal').classList.remove('active');
           await loadServers();
           // Open the newly created server's detail straight away.

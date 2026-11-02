@@ -3790,6 +3790,21 @@ ipcMain.on('launch-profile', (event, args) => { launchProfileCore(args); });
 
 //shi
 
+// The jar a server of your own runs: a fork, a build you made, something
+// with no download service behind it. Picked here, copied in by the manager.
+ipcMain.handle("server:pickJar", async () => {
+  const r = await dialog.showOpenDialog({
+    title: "Choose the server jar to run",
+    filters: [{ name: "Server jars", extensions: ["jar"] }, { name: "All files", extensions: ["*"] }],
+    properties: ["openFile"],
+  });
+  if (r.canceled || !r.filePaths.length) return { canceled: true };
+  const file = r.filePaths[0];
+  let size = 0;
+  try { size = fs.statSync(file).size; } catch { /* reported as 0 */ }
+  return { success: true, file, name: path.basename(file), size };
+});
+
 ipcMain.handle("make-server", async (event, params) => {
   // Forge/NeoForge run an installer with Java, so resolve the right JDK first.
   let java = "java";
@@ -5224,6 +5239,64 @@ ipcMain.handle("pack:vtBuild", async (event, { profileId, version, picks, enable
       if (!packs.includes(entry)) writeEnabledResourcePacks(profileId, [...packs, entry]);
     }
     return { success: true, file: VT_PACK_FILE, count, version: short };
+  } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+});
+
+// ── Putting a file you already have into an instance or a server ──────────
+//
+// Everything else here is fetched from somewhere. A jar built by hand, a pack
+// sent by a friend, a plugin off a forum -- there was nowhere to put any of
+// them but the folder itself, through "Open folder". This is the same thing
+// the Install buttons do, with the file coming off your own disk.
+const CONTENT_FILES = {
+  mods: { name: "Mods", extensions: ["jar"] },
+  plugins: { name: "Plugins", extensions: ["jar"] },
+  resourcepacks: { name: "Resource packs", extensions: ["zip"] },
+  shaderpacks: { name: "Shader packs", extensions: ["zip"] },
+  datapacks: { name: "Data packs", extensions: ["zip"] },
+};
+
+ipcMain.handle("content:addFiles", async (event, { type, id, tab } = {}) => {
+  try {
+    const kind = CONTENT_FILES[tab];
+    if (!kind) return { success: false, error: `There is nowhere to put a ${tab}` };
+    const r = await dialog.showOpenDialog({
+      title: `Add ${kind.name.toLowerCase()}`,
+      filters: [kind, { name: "All files", extensions: ["*"] }],
+      properties: ["openFile", "multiSelections"],
+    });
+    if (r.canceled || !r.filePaths.length) return { success: false, canceled: true };
+
+    const base = type === "server"
+      ? path.join(dataDir, "servers", String(id), tab === "datapacks" ? path.join("world", "datapacks") : tab)
+      : path.join(dataDir, "client", String(id), tab);
+    fs.mkdirSync(base, { recursive: true });
+
+    const added = [], failed = [];
+    for (const src of r.filePaths) {
+      const name = path.basename(src);
+      const ext = path.extname(name);
+      const stem = name.slice(0, name.length - ext.length);
+      // Never over something already there: a jar of the same name is
+      // usually a different build, and silently replacing one is how an
+      // instance stops working with no sign of why.
+      let dest = path.join(base, name), n = 1;
+      while (fs.existsSync(dest) && path.resolve(dest) !== path.resolve(src)) {
+        dest = path.join(base, `${stem}-${n++}${ext}`);
+      }
+      try { fs.copyFileSync(src, dest); added.push(path.basename(dest)); }
+      catch (e) { failed.push({ name, why: String(e && e.message || e) }); }
+    }
+    // A server's resource packs are an ordered, merged list rather than a
+    // folder, so anything added has to join that order too.
+    if (type === "server" && tab === "resourcepacks") {
+      try {
+        const cfg = loadPackCfg(id);
+        for (const f of added) if (!cfg.order.includes(f)) cfg.order.push(f);
+        savePackCfg(id, cfg);
+      } catch { /* the files are in either way */ }
+    }
+    return { success: true, added, failed };
   } catch (e) { return { success: false, error: String(e && e.message || e) }; }
 });
 
@@ -12038,10 +12111,17 @@ function loadDevModsStore() { try { return JSON.parse(fs.readFileSync(devModsPat
 function saveDevModsStore(o) { try { fs.writeFileSync(devModsPath, JSON.stringify(o, null, 2)); } catch { /* ignore */ } }
 const devModKey = (type, id) => `${type}:${id}`;
 
+// A Paper-like server keeps plugins, not mods, and a plugin being worked on
+// is the same thing as a mod being worked on: a folder that builds a jar,
+// hot-swapped in. It just belongs somewhere else.
+const PLUGIN_SERVER_TYPES = ["paper", "purpur", "folia", "spigot", "bukkit"];
+
 function devModTarget(type, id) {
   if (type === "server") {
     let info = null; try { info = serverManager.getServerInfo(id); } catch { /* ignore */ }
-    return { modsDir: path.join(dataDir, "servers", String(id), "mods"), loader: String((info && info.type) || "").toLowerCase() };
+    const loader = String((info && info.type) || "").toLowerCase();
+    const sub = PLUGIN_SERVER_TYPES.includes(loader) ? "plugins" : "mods";
+    return { modsDir: path.join(dataDir, "servers", String(id), sub), loader };
   }
   // Read the profiles file directly (synchronously) — loadProfiles() is async
   // (returns a Promise), so .find on it would throw. Order doesn't matter here.
@@ -12066,6 +12146,14 @@ function readJarModInfo(jarPath) {
     if (toml) { const m = toml.match(/modId\s*=\s*["']([^"']+)["']/); if (m) return { id: m[1], loaders: neo ? ["neoforge"] : ["forge", "neoforge"] }; }
     const mci = get("mcmod.info");
     if (mci) { try { const a = JSON.parse(mci); const m = Array.isArray(a) ? a[0] : (a.modList && a.modList[0]); if (m && m.modid) return { id: m.modid, loaders: ["forge"] }; } catch { /* ignore */ } }
+    // A plugin says what it is in plugin.yml, and its name IS its id. The
+    // same folder-that-builds-a-jar arrangement works for one, so a plugin
+    // being worked on can be hot-swapped exactly like a mod.
+    const yml = get("plugin.yml") || get("paper-plugin.yml");
+    if (yml) {
+      const m = yml.match(/^name:\s*["']?([^"'\r\n]+)["']?\s*$/m);
+      if (m) return { id: m[1].trim(), loaders: ["paper", "purpur", "folia", "spigot", "bukkit"] };
+    }
   } catch { /* ignore */ }
   return null;
 }

@@ -2650,6 +2650,41 @@
           return true;
         }
 
+        // "From file" for whichever kind of content a tab holds. The same
+        // button for an instance and for a server; only where it copies to
+        // differs, which the main process works out.
+        const FROM_FILE_WORDS = {
+          mods: "Add mod files", plugins: "Add plugin files",
+          resourcepacks: "Add pack files", shaderpacks: "Add shader files",
+          datapacks: "Add data packs",
+        };
+        function fromFileBtn(type, id, tabName, after) {
+          const label = FROM_FILE_WORDS[tabName];
+          if (!label) return null;
+          const b = document.createElement("button");
+          b.className = "tab-install-btn secondary";
+          b.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">upload_file</i> ${label}`;
+          b.title = tabName === "mods" || tabName === "plugins"
+            ? "Copy .jar files you already have into this folder"
+            : "Copy .zip files you already have into this folder";
+          b.onclick = async () => {
+            b.disabled = true;
+            const r = await ipcRenderer.invoke("content:addFiles", { type, id, tab: tabName });
+            b.disabled = false;
+            if (!r || r.canceled) return;
+            if (!r.success) { if (window.notify) notify(r.error || "They could not be copied", "error"); return; }
+            if (window.notify && r.added.length) {
+              notify(`${r.added.length} file${r.added.length === 1 ? "" : "s"} added`, "success");
+            }
+            if (r.failed && r.failed.length && window.notify) {
+              notify(`${r.failed.length} could not be copied: ${r.failed.map(f => f.name).join(", ")}`, "error");
+            }
+            if (after) after();
+          };
+          return b;
+        }
+        window.__fromFileBtn = fromFileBtn;
+
         const installBtnFor = (tabName) => {
           const installType = installTypeForTab[tabName];
           if (!installType) return null;
@@ -2719,7 +2754,7 @@
                 <img id="ptVtShot" alt="" src="${VT_LOGO}" style="image-rendering:auto;object-fit:contain;">
                 <div style="flex:1;min-width:0;">
                   <div class="pt-name">Vanilla Tweaks</div>
-                  <div class="pt-sub">Built by Vanilla Tweaks themselves, for this instance's version.</div>
+                  <div class="pt-sub">Packs from vanillatweaks.net, built by their own site for this instance's version. Not affiliated with them.</div>
                   <div class="pt-state" id="ptVtState"></div>
                   <div class="pt-icons" id="ptVtIcons"></div>
                 </div>
@@ -4106,6 +4141,11 @@
                   bar.className = "tab-action-bar";
                   const ib = installBtnFor(tabName);
                   if (ib) bar.appendChild(ib);
+                  // A jar built by hand, a pack sent by a friend. Everything
+                  // else here comes from somewhere online, and there was
+                  // nowhere to put one of your own but the folder itself.
+                  const fileBtn = fromFileBtn("instance", profile.id, tabName, renderContentTab);
+                  if (fileBtn) bar.appendChild(fileBtn);
                   const openBtn = document.createElement("button");
                   openBtn.className = "tab-install-btn secondary";
                   openBtn.textContent = `Open ${tabName.charAt(0).toUpperCase() + tabName.slice(1)} Folder`;

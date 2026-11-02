@@ -222,8 +222,17 @@ function findArgFileDir(root) {
 }
 
 // Provision a server's files. Returns extra serverInfo fields (launch metadata).
-async function provisionServer(serverDir, version, type, javaPath, loaderVersion) {
+async function provisionServer(serverDir, version, type, javaPath, loaderVersion, jarPath) {
   const t = (type || "").toLowerCase();
+  // A jar of your own: a fork, a build you made, something with no download
+  // service behind it at all. Copied in rather than fetched, and nothing else
+  // about running it changes.
+  if (t === "custom") {
+    if (!jarPath) throw new Error("No server jar was chosen");
+    if (!fs.existsSync(jarPath)) throw new Error(`There is no file at ${jarPath}`);
+    fs.copyFileSync(jarPath, path.join(serverDir, "server.jar"));
+    return { launchType: "jar", customJar: path.basename(jarPath) };
+  }
   if (t === "forge" || t === "neoforge") {
     const isNeo = t === "neoforge";
     const build = isNeo ? await resolveNeoForgeVersion(version) : await resolveForgeVersion(version);
@@ -241,15 +250,15 @@ async function provisionServer(serverDir, version, type, javaPath, loaderVersion
   // Everything else is a single runnable jar.
   const jarUrl = await resolveJarUrl(version, type, loaderVersion);
   await download(jarUrl, path.join(serverDir, "server.jar"));
-  return { launchType: "jar" };
+  return { launchType: "jar", customJar: null };
 }
 
 // --- Create a server ---
-async function makeServer({ name, version, type, launchArgs, loaderVersion, icon }, javaPath) {
+async function makeServer({ name, version, type, launchArgs, loaderVersion, icon, jarPath }, javaPath) {
   const serverDir = path.join(serversDir, name);
   fs.mkdirSync(serverDir, { recursive: true });
 
-  const launchMeta = await provisionServer(serverDir, version, type, javaPath, loaderVersion);
+  const launchMeta = await provisionServer(serverDir, version, type, javaPath, loaderVersion, jarPath);
 
   // Leave the EULA UNaccepted — the launcher prompts the user on first launch.
   fs.writeFileSync(path.join(serverDir, "eula.txt"), "eula=false\n");
@@ -267,14 +276,19 @@ async function makeServer({ name, version, type, launchArgs, loaderVersion, icon
 }
 
 // --- Edit a server (rename, change version/type, launch args) ---
-async function editServer(name, { newName, version, type, launchArgs, loaderVersion, icon }, javaPath) {
+async function editServer(name, { newName, version, type, launchArgs, loaderVersion, icon, jarPath }, javaPath) {
   const dir = path.join(serversDir, name);
   const infoPath = path.join(dir, "serverinfo.json");
   if (!fs.existsSync(infoPath)) throw new Error("Server not found");
   const info = JSON.parse(fs.readFileSync(infoPath, "utf-8"));
   if (servers.get(name)?.process) throw new Error("Stop the server before editing it");
 
-  const changedJar = (version && version !== info.version) || (type && type.toLowerCase() !== (info.type || "").toLowerCase()) || (loaderVersion !== undefined && loaderVersion !== info.loaderVersion);
+  // A jar handed over is always a reason to re-provision: it is a different
+  // file even when every other field is the same.
+  const changedJar = !!jarPath
+    || (version && version !== info.version)
+    || (type && type.toLowerCase() !== (info.type || "").toLowerCase())
+    || (loaderVersion !== undefined && loaderVersion !== info.loaderVersion);
   if (version) info.version = version;
   if (type) info.type = type;
   if (launchArgs !== undefined) info.launchArgs = launchArgs;
@@ -282,7 +296,7 @@ async function editServer(name, { newName, version, type, launchArgs, loaderVers
   if (icon !== undefined) info.icon = icon;
 
   if (changedJar) {
-    const meta = await provisionServer(dir, info.version, info.type, javaPath, info.loaderVersion);
+    const meta = await provisionServer(dir, info.version, info.type, javaPath, info.loaderVersion, jarPath);
     Object.assign(info, { launchType: undefined, argFileDir: undefined, buildVersion: undefined }, meta);
   }
   fs.writeFileSync(infoPath, JSON.stringify(info, null, 2));

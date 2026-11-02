@@ -34,3 +34,5 @@ Current files:
 - `runs-test.mjs` — two copies of one instance keeping their own consoles.
 - `download-test.mjs` — a download being all of it or none of it, against a
   server that drops the connection halfway.
+- `content-test.mjs` — installing from a file, and which folder of jars a
+  server keeps.

@@ -100,10 +100,15 @@
          them huddled in the top-left corner of a window-sized page. These
          share the page out instead: one row, a column each, full height.
          --cols is the number of them, set when the page is built. */
-      .ni-cards.fill { grid-template-columns:repeat(var(--cols, 3), 1fr); grid-auto-rows:1fr;
-        align-content:stretch; overflow:hidden; }
+      /* A column each, up to a point. Four tiles across a wide page look
+         right; eight are slivers, which is what happened as soon as a
+         server's plugin kinds were offered alongside the mod loaders. So the
+         columns are capped and anything past that wraps onto another line --
+         still filling the page, just over two rows instead of one. */
+      .ni-cards.fill { grid-template-columns:repeat(min(var(--cols, 3), 4), 1fr);
+        grid-auto-rows:1fr; align-content:stretch; overflow-y:auto; }
       .ni-cards.fill .ni-tile { height:auto; min-height:132px; }
-      /* Below this a column each is too thin to read, so they wrap. */
+      /* Below this a column each is too thin to read, so they wrap sooner. */
       @media (max-width: 1000px) {
         .ni-cards.fill { grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); grid-auto-rows:minmax(132px, 1fr); }
       }
