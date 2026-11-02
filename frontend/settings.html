@@ -649,6 +649,7 @@
       <div style="margin-bottom: 12px;">
         <label class="setting-toggle" data-tip="One copy of your keybinds and video settings for every instance, so a change in one is there in all of them. Any instance can opt out in its own settings."><input type="checkbox" id="sync-options"> Sync game options</label>
         <label class="setting-toggle" data-tip="One saved server list for every instance. An instance with servers of its own — a Modrinth server, a modpack that ships a list — keeps those and gets the shared ones alongside."><input type="checkbox" id="sync-servers"> Sync multiplayer servers</label>
+        <label class="setting-toggle" data-tip="A server started from here keeps running when you close the launcher, and is picked up again when you open it. Its console then comes from the log the server writes itself, and commands go over the game's own remote console — which the launcher switches on for each server with a password of that server's own, reachable only from this computer."><input type="checkbox" id="servers-outlive"> Leave servers running when the launcher closes</label>
       </div>
 
       <div style="margin-bottom: 50px;">
@@ -2335,6 +2336,13 @@
       {
         const syncOptions = document.getElementById('sync-options');
         const syncServers = document.getElementById('sync-servers');
+        const serversOutlive = document.getElementById('servers-outlive');
+        if (serversOutlive) {
+          serversOutlive.checked = !!getSetting('serversOutliveLauncher');
+          serversOutlive.addEventListener('change', () => {
+            ipcRenderer.send('save-settings', { serversOutliveLauncher: serversOutlive.checked });
+          });
+        }
         const modal = document.getElementById('syncSeedModal');
         const list = document.getElementById('syncSeedList');
         const title = document.getElementById('syncSeedTitle');

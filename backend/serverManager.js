@@ -3,6 +3,7 @@ import path from "path";
 import https from "https";
 import { spawn } from "child_process";
 import { app } from 'electron';
+import rcon from "./rcon.js";
 
 const servers = new Map(); // name → { proc, config, logs }
 const dataDir = path.join(app.getPath('userData'));
@@ -340,6 +341,143 @@ async function editServer(name, { newName, version, type, launchArgs, loaderVers
   return { success: true, name: finalName };
 }
 
+// ── Outliving the launcher ──────────────────────────────────────────────────
+//
+// A server started as an ordinary child of the launcher dies with it, and its
+// console only exists while the launcher holds its pipes. Keeping one running
+// across a restart therefore needs two things the pipes were doing:
+//
+//   its output   the server writes logs/latest.log itself, so that is read
+//                instead -- and read the same way whether the launcher
+//                started it or found it, so there is one path, not two.
+//   its input    RCON, which is the game's own remote console: a port, a
+//                password the launcher generates, and a command.
+//
+// The process itself is spawned detached and unref'd, so quitting the
+// launcher leaves it alone, and its pid is written where the launcher can
+// find it again.
+
+// Switch RCON on with a password of this server's own, and say which port.
+// Returns { port, password } so they can be kept with the server.
+function ensureRcon(dir, info) {
+  const propsPath = path.join(dir, "server.properties");
+  let text = "";
+  try { text = fs.readFileSync(propsPath, "utf-8"); } catch { text = "" ; }
+
+  // The text work is in backend/rcon.js, where it can be checked without a
+  // server: keeping a port and a password that are already there is the part
+  // that matters, because a new password out from under a launcher that
+  // remembers the old one locks it out of its own server.
+  const r = rcon.rconProps(text, { port: info.rconPort, password: info.rconPassword });
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    if (r.text !== text) fs.writeFileSync(propsPath, r.text);
+  } catch { /* it will be asked for again next start */ }
+  return { port: r.port, password: r.password };
+}
+
+const alive = (pid) => {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e.code === "EPERM"; }     // running, just not ours to signal
+};
+
+// The server's own log, read as it is appended. This is the console for a
+// server the launcher did not start, and for one it did but let go of.
+const tails = new Map();            // name -> { timer, at, held }
+
+function startTail(name) {
+  stopTail(name);
+  const server = servers.get(name);
+  if (!server) return;
+  const file = path.join(server.dir, "logs", "latest.log");
+  // From the end: what is already in the file is history, and the console
+  // already has whatever of it the launcher saw.
+  let at = 0;
+  try { at = fs.statSync(file).size; } catch { at = 0; }
+  const state = { at, held: "", timer: null };
+  const read = () => {
+    let size = 0;
+    try { size = fs.statSync(file).size; } catch { return; }
+    // A restart truncates it, or the server rolls it over.
+    if (size < state.at) { state.at = 0; state.held = ""; }
+    if (size === state.at) return;
+    let fd = null;
+    try {
+      fd = fs.openSync(file, "r");
+      const buf = Buffer.alloc(size - state.at);
+      fs.readSync(fd, buf, 0, buf.length, state.at);
+      state.at = size;
+      state.held += buf.toString("utf8");
+      const lines = state.held.split(/\r?\n/);
+      state.held = lines.pop();
+      for (const line of lines) {
+        if (!line.length) continue;
+        server.logs.push(line + "\n");
+        tell(name, line);
+      }
+    } catch { /* it will be read again in a moment */ }
+    finally { if (fd != null) { try { fs.closeSync(fd); } catch { /* fine */ } } }
+  };
+  state.timer = setInterval(read, 700);
+  if (state.timer.unref) state.timer.unref();
+  tails.set(name, state);
+}
+
+function stopTail(name) {
+  const t = tails.get(name);
+  if (!t) return;
+  clearInterval(t.timer);
+  tails.delete(name);
+}
+
+// Watch a detached server's pid, so the launcher notices when it stops.
+const pidWatchers = new Map();
+
+function watchPid(name, pid) {
+  const had = pidWatchers.get(name);
+  if (had) clearInterval(had);
+  const timer = setInterval(() => {
+    if (alive(pid)) return;
+    clearInterval(timer);
+    pidWatchers.delete(name);
+    const server = servers.get(name);
+    if (server) { server.status = "stopped"; server.detachedPid = null; }
+    stopTail(name);
+    tell(name, null);
+  }, 2000);
+  if (timer.unref) timer.unref();
+  pidWatchers.set(name, timer);
+}
+
+/**
+ * Pick up a server that is still running from a previous launcher session.
+ * `saved` is what `runningState()` handed over last time. Returns true when
+ * the server was found alive and adopted.
+ */
+function adoptServer({ name, pid, rconPort, rconPassword } = {}) {
+  const server = servers.get(name);
+  if (!server || !pid || !alive(pid)) return false;
+  server.status = "running";
+  server.detachedPid = pid;
+  if (rconPort) server.rconPort = rconPort;
+  if (rconPassword) server.rconPassword = rconPassword;
+  startTail(name);
+  watchPid(name, pid);
+  return true;
+}
+
+/** Every server the launcher is holding onto, for writing down. */
+function runningState() {
+  const out = [];
+  for (const [name, s] of servers) {
+    const pid = s.detachedPid || (s.process ? s.process.pid : null);
+    if (!pid || s.status !== "running") continue;
+    out.push({ name, pid, rconPort: s.rconPort || null, rconPassword: s.rconPassword || null });
+  }
+  return out;
+}
+
 // --- Server Lifecycle ---
 function startServer(name, settings, javaPath) {
   // Accept a number or a "1024m"/"1024" string; emit a clean "-Xms1024m".
@@ -353,6 +491,25 @@ function startServer(name, settings, javaPath) {
   const server = servers.get(name);
   if (!server) throw new Error("Server not found");
   if (server.process) return; // already running
+  // Or running without us holding it, from a previous launcher session.
+  if (server.detachedPid && alive(server.detachedPid)) return;
+
+  // Whether this server should outlive the launcher. RCON is set up either
+  // way, so a server started attached can still be talked to after a restart
+  // -- the setting only decides whether the process is left alone on quit.
+  const detach = !!(settings && settings.get("serversOutliveLauncher", false));
+  const creds = ensureRcon(server.dir, server);
+  server.rconPort = creds.port;
+  server.rconPassword = creds.password;
+  try {
+    const infoPath = path.join(server.dir, "serverinfo.json");
+    const info = JSON.parse(fs.readFileSync(infoPath, "utf-8"));
+    if (info.rconPort !== creds.port || info.rconPassword !== creds.password) {
+      info.rconPort = creds.port;
+      info.rconPassword = creds.password;
+      fs.writeFileSync(infoPath, JSON.stringify(info, null, 2));
+    }
+  } catch { /* the properties file is the one that matters */ }
 
   // Use the launcher-resolved Java (correct major version for this MC version);
   // fall back to system "java" only if none was provided.
@@ -370,10 +527,24 @@ function startServer(name, settings, javaPath) {
     if (!fs.existsSync(jarPath)) throw new Error("Server jar missing");
     jvmArgs = ["-Xms" + minRam, "-Xmx" + maxRam, ...extraArgs, "-jar", jarPath, "nogui"];
   }
-  const proc = spawn(java, jvmArgs, { cwd: server.dir });
+  // Detached: its own process group, nothing of ours attached to its pipes,
+  // and unref'd so the launcher is free to quit. Its console comes from the
+  // log it writes itself, which it would be writing anyway.
+  const proc = detach
+    ? spawn(java, jvmArgs, { cwd: server.dir, detached: true, stdio: "ignore" })
+    : spawn(java, jvmArgs, { cwd: server.dir });
 
-  server.process = proc;
   server.status = "running";
+  if (detach) {
+    try { proc.unref(); } catch { /* fine */ }
+    server.process = null;
+    server.detachedPid = proc.pid;
+    startTail(name);
+    watchPid(name, proc.pid);
+    return;
+  }
+  server.process = proc;
+  server.detachedPid = null;
 
   // A watcher is told one LINE at a time.
   //
@@ -452,8 +623,19 @@ function watchServer(name, fn) {
 
 function stopServer(name) {
   const server = servers.get(name);
-  if (!server?.process) throw new Error("Server not running");
-  server.process.stdin.write("stop\n");
+  if (!server) throw new Error("Server not running");
+  if (server.process) { server.process.stdin.write("stop\n"); return; }
+  // Nothing of ours is attached to it, so it is asked over RCON the same way
+  // any other command is.
+  if (server.detachedPid && alive(server.detachedPid)) {
+    return rcon.once({ port: server.rconPort, password: server.rconPassword }, "stop")
+      .catch(() => {
+        // RCON refused or is not up yet. Asking the process to stop is the
+        // next best thing; the game treats SIGTERM as a clean shutdown.
+        try { process.kill(server.detachedPid, "SIGTERM"); } catch { /* already gone */ }
+      });
+  }
+  throw new Error("Server not running");
 }
 
 function restartServer(name, settings, javaPath) {
@@ -464,6 +646,20 @@ function restartServer(name, settings, javaPath) {
 
 function sendServerCommand(name, cmd) {
   const server = servers.get(name);
+  if (server && !server.process && server.detachedPid && alive(server.detachedPid)) {
+    // Over RCON, and the reply goes into the console so it is not lost: a
+    // command sent this way does not appear in the server's own log unless
+    // the server chooses to log it.
+    return rcon.once({ port: server.rconPort, password: server.rconPassword }, cmd)
+      .then((reply) => {
+        if (reply && reply.trim()) {
+          server.logs.push(reply.trimEnd() + "\n");
+          for (const line of reply.split(/\r?\n/)) if (line.length) tell(name, line);
+        }
+        return { success: true, reply: reply || "" };
+      })
+      .catch((e) => ({ success: false, error: e.message }));
+  }
   if (!server?.process) throw new Error("Server not running");
   server.process.stdin.write(cmd + "\n");
 }
@@ -509,6 +705,14 @@ function getConsole(name) {
 function deleteServer(name) {
   const server = servers.get(name);
   try { if (server?.process) server.process.kill(); } catch { /* ignore */ }
+  // One of ours from a previous session has to be stopped too, or the folder
+  // is deleted from underneath a running server.
+  if (server?.detachedPid && alive(server.detachedPid)) {
+    try { process.kill(server.detachedPid, "SIGTERM"); } catch { /* already gone */ }
+  }
+  stopTail(name);
+  const watching = pidWatchers.get(name);
+  if (watching) { clearInterval(watching); pidWatchers.delete(name); }
   servers.delete(name);
   const dir = path.join(serversDir, name);
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
@@ -603,6 +807,9 @@ export default {
   editServer,
   startServer,
   stopServer,
+  adoptServer,
+  runningState,
+  ensureRcon,
   restartServer,
   sendServerCommand,
   getServers,

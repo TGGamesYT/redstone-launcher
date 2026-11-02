@@ -875,6 +875,12 @@ const DEFAULT_SETTINGS = {
   homeLayout: null,
   syncOptions: false,
   syncServers: false,
+  // A server started with this on is detached from the launcher: closing the
+  // launcher leaves it running, and opening it again picks it up. Its console
+  // then comes from the log the server writes itself, and commands go over
+  // RCON -- which the launcher switches on per server with a password of that
+  // server's own, bound to the loopback.
+  serversOutliveLauncher: false,
 };
 for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
   if (!settings.has(k)) settings.set(k, v);
@@ -1398,6 +1404,10 @@ if (!gotTheLock) {
     // Re-detect games still running from a previous launcher session.
     restoreRunningInstances();
 
+    // And servers. One left running on purpose has to be found again, or it is
+    // a process nobody can see, stop or read the console of.
+    try { adoptRunningServers(); } catch (e) { devtoolsLog("[Server] adopt failed:", e.message); }
+
     // Keep "latest release/snapshot" instances on the newest version while the
     // launcher is open, instead of only when their page is opened.
     setTimeout(() => { autoUpdateTrackedInstances().catch(() => {}); }, 8000);
@@ -1431,6 +1441,10 @@ if (!gotTheLock) {
   });
 
   app.on('window-all-closed', () => {
+    // Servers left running on purpose are written down before the launcher
+    // goes, so the next one picks them up. They are detached, so quitting does
+    // not touch them.
+    try { rememberRunningServers(); } catch { /* nothing to be done about it now */ }
     // Keep the (lightweight) main process alive while games are running so the
     // Discord presence stays active and we keep tracking them. Once nothing is
     // running, quit so the launcher isn't sitting in the background for nothing.
@@ -3905,17 +3919,48 @@ async function resolveServerJava(id) {
   return "java";
 }
 
+// Which servers are up, written down so a launcher that is started again can
+// find the ones it left running. See the detaching in serverManager.
+function rememberRunningServers() {
+  try { storage.set("runningServers", serverManager.runningState()); }
+  catch { /* nothing worth failing a start over */ }
+}
+
+// The ones that are still there. A pid that has gone is simply dropped.
+function adoptRunningServers() {
+  let saved = [];
+  try { saved = storage.get("runningServers", []) || []; } catch { saved = []; }
+  if (!saved.length) return;
+  // getServers() is what fills the manager's own map from disk, so the
+  // entries exist to be adopted into.
+  try { serverManager.getServers(); } catch { /* none */ }
+  const kept = [];
+  for (const entry of saved) {
+    try { if (serverManager.adoptServer(entry)) kept.push(entry.name); }
+    catch { /* it is simply not there any more */ }
+  }
+  if (kept.length) devtoolsLog(`[Server] Picked up still-running: ${kept.join(", ")}`);
+  rememberRunningServers();
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("servers-changed"); } catch { /* gone */ }
+  }
+}
+
 ipcMain.handle("start-server", async (event, id) => {
   const java = await resolveServerJava(id);
   // Before launch, (re)merge + host this server's resource packs so
   // server.properties reflects the current pack list. Uses the relay tunnel if
   // the server is already shared, else the LAN IP. Best-effort.
   try { await ensureServerPack(id); } catch (e) { console.warn("[Server] pack setup failed:", e.message); }
-  return serverManager.startServer(id, settings, java);
+  const r = await serverManager.startServer(id, settings, java);
+  rememberRunningServers();
+  return r;
 });
 
-ipcMain.handle("stop-server", (event, id) => {
-  return serverManager.stopServer(id);
+ipcMain.handle("stop-server", async (event, id) => {
+  const r = await serverManager.stopServer(id);
+  rememberRunningServers();
+  return r;
 });
 
 ipcMain.handle("restart-server", async (event, id) => {
