@@ -13,29 +13,56 @@ started.
 
 The newest batch, in the order it was given.
 
-- [ ] **The main page's player render has no limb physics.** The swinging the
-      skins page's render does when it is turned.
-- [ ] **Opening a server's Join tab lags the whole launcher.**
-- [ ] **A server's icon cannot be edited while it is running**, and a server
-      does not take its version's icon by default.
-- [ ] **An event server's JSON script needs a real editor**, not a plain text
-      box over the raw JSON.
-- [ ] **An event server should be able to open "share over the internet" by
-      itself once started**, and the player-join hook does not work.
-- [ ] **`server.properties` needs a proper editor** — the name on the left and
-      the value on the right.
-- [ ] **No text editor has Ctrl+F.**
-- [ ] **Browsing resource packs from a server is wrong** — about ten results
-      and no more, a "Server" tab offered while installing to a server, and
-      the server's version forced as a filter. A resource pack is not a mod: a
-      1.8 pack works in the newest version. Any version by default, and no
-      warning about it either.
-- [ ] **It still crashes with 3221225477**, after
-      `Existing file ... not found or had mismatched hash` and a flood of
-      `Exception loading blockstate definition` from a `server/00000000/<uuid>`
-      pack.
-- [ ] **Servers should keep running when the launcher is closed**, and be
-      picked up again when it reopens.
+- [x] **The main page's player render has no limb physics.** — *The reactions
+      live in the conductor, which only the skins page's clips go through.
+      skinview3d's own animations went on the viewer raw, and standing still
+      had no animation at all, so neither had them. Any of them carries them
+      now.*
+- [x] **Opening a server's Join tab lags the whole launcher.** — *It opened
+      every mod jar of every instance -- thousands of central directories read
+      and metadata parsed, in the process that answers every window. The
+      verdict only compares mods when the loader fits, so the rest are not
+      read; what is read is kept against the file's size and modified time.*
+- [x] **A server's icon cannot be edited while it is running**, and a server
+      does not take its version's icon by default. — *Editing was refused
+      whatever was being changed; only swapping the jar out underneath it and
+      renaming the folder it has open are refused now. And a server with no
+      icon of its own gets its version's render, like an instance.*
+- [x] **An event server's JSON script needs a real editor.** — *A panel per
+      stage, questions and commands as cards that can be added, reordered and
+      removed, the software and each piece of content as lists. The JSON is
+      the other view of the same document. Built from the schema the main
+      process already declares.*
+- [x] **An event server should open "share over the internet" by itself**, and
+      the player-join hook does not work. — *`autoShare`, beside `autoEula`
+      and `autoStart`. The join hook was being handed stdout in CHUNKS rather
+      than lines: a join split across two matched nothing, and two players
+      joining together were one match between them.*
+- [x] **`server.properties` needs a proper editor.** — *Name on the left,
+      value on the right as the control it actually is. Comments, blank lines,
+      order and separators all come back out as they went in.*
+- [x] **No text editor has Ctrl+F.** — *One bar, every editor. The browser's
+      own find does not look inside form fields, which is why there was none.*
+- [x] **Browsing resource packs from a server is wrong.** — *The target's
+      version was forced as a filter, which left only the packs whose authors
+      had tagged that exact version. It is a filter for a mod and not for a
+      pack or a shader, nothing is said about the version it was built for,
+      and the "Server" tab stays hidden -- the provider toggle was re-showing
+      it every time it ran.*
+- [~] **It still crashes with 3221225477.** — *The crash itself is inside
+      native code during a resource reload and names nothing, so no culprit is
+      invented for it. What the log DID say is now acted on: the game caches a
+      server's resource pack under its own SHA-1 and never checks it again, so
+      a pack that arrived short is kept and loaded for ever -- which is the
+      "mismatched hash" line and the blockstate flood. Those are checked
+      against their own hashes before each launch and thrown away when they
+      disagree, and the crash report says so rather than only showing a
+      number.*
+- [x] **Servers should keep running when the launcher is closed.** — *Spawned
+      detached, pid written down, picked up on the next start. Its console
+      comes from the log it writes itself and its commands over RCON, which
+      the launcher switches on per server with a password of that server's own
+      bound to the loopback. Off unless asked for.*
 
 ---
 
