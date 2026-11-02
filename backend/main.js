@@ -4608,6 +4608,71 @@ const clampH = (v) => {
 // size the stylesheet said -- which after the grid rework was far smaller
 // than the home page used to show. It is a percentage, like the width.
 const clampScale = (v) => Math.max(50, Math.min(220, Math.round(Number(v) || 100)));
+// Which row a segment is on, and where along it it starts.
+//
+// Rows used to be a consequence of the widths: segments were laid out one
+// after another and wrapped when they ran out of room. That is why a row
+// could not have a gap in it, why shrinking one row pulled the next one up
+// into it, and why there was nowhere to drop a segment except onto another
+// one. A row is a row now, and a segment says where in it it sits.
+const clampRow = (v) => Math.max(0, Math.min(200, Math.round(Number(v) || 0)));
+const clampX = (v) => Math.max(0, Math.min(HOME_COLUMNS - HOME_W_MIN, Math.round(Number(v) || 0)));
+
+// Give rows and positions to a layout that has none -- which is every layout
+// saved before this. Walked the way the old wrapping walked it, so a page
+// comes forward looking exactly as it did.
+function placeRows(layout) {
+  let row = 0, x = 0;
+  return layout.map(seg => {
+    const w = clampW(seg.w);
+    const hasPlace = Number.isFinite(Number(seg.row)) && Number.isFinite(Number(seg.x));
+    if (hasPlace) {
+      row = clampRow(seg.row);
+      x = Math.min(clampX(seg.x) + w, HOME_COLUMNS);
+      return { ...seg, w, row: clampRow(seg.row), x: clampX(seg.x) };
+    }
+    if (x + w > HOME_COLUMNS) { row++; x = 0; }
+    const out = { ...seg, w, row, x };
+    x += w;
+    return out;
+  });
+}
+
+// Rows numbered 0,1,2... with nothing missing, and every segment inside its
+// row in order and not overlapping the one before it. Anything that would
+// overlap is pushed along; anything that then runs off the end starts a row
+// of its own, which is the only way a layout can be made to fit.
+function tidyRows(layout) {
+  const byRow = new Map();
+  for (const seg of layout) {
+    const r = clampRow(seg.row);
+    if (!byRow.has(r)) byRow.set(r, []);
+    byRow.get(r).push(seg);
+  }
+  const out = [];
+  let n = 0;
+  for (const r of [...byRow.keys()].sort((a, b) => a - b)) {
+    const row = byRow.get(r).sort((a, b) => clampX(a.x) - clampX(b.x));
+    let at = 0;
+    for (const seg of row) {
+      let x = Math.max(at, clampX(seg.x));
+      let w = clampW(seg.w);
+      if (x + w > HOME_COLUMNS) {
+        // No room left on this row: it gets one of its own rather than
+        // being squeezed below the width anything can be read at.
+        if (at > 0) { out.push({ ...seg, row: ++n, x: 0, w: Math.min(w, HOME_COLUMNS) }); at = HOME_COLUMNS; continue; }
+        w = HOME_COLUMNS - x;
+      }
+      out.push({ ...seg, row: n, x, w });
+      at = x + w;
+    }
+    n++;
+  }
+  // Rows renumbered from nothing, so a row emptied by a move leaves no hole.
+  const seen = new Map();
+  for (const seg of out) if (!seen.has(seg.row)) seen.set(seg.row, seen.size);
+  return out.map(seg => ({ ...seg, row: seen.get(seg.row) }));
+}
 
 const homeDefaults = (type) => {
   const spec = HOME_TYPES.find(t => t.type === type);
@@ -4625,7 +4690,9 @@ ipcMain.handle("home:layout", () => {
     types: HOME_TYPES,
     columns: HOME_COLUMNS,
     custom: Array.isArray(saved) && saved.length > 0,
-    layout: layout.map(seg => {
+    // Widths first, then where each one sits: the rows a layout without them
+    // gets are worked out from the widths, so those have to be the real ones.
+    layout: placeRows(layout.map(seg => {
       const full = { ...homeDefaults(seg.type), ...seg };
       // Widths were twelfths before they were percentages. Anything that
       // small is a layout from then, so it is brought forward rather than
@@ -4635,7 +4702,7 @@ ipcMain.handle("home:layout", () => {
       full.h = clampH(full.h);
       full.scale = clampScale(full.scale);
       return full;
-    }),
+    })),
   };
 });
 
@@ -4647,6 +4714,7 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
     .slice(0, 40)
     .map((seg, i) => {
       const allowed = new Set(["id", "type", "w", "h", "scale",
+        "row", "x",
         ...(HOME_TYPES.find(t => t.type === seg.type).options || []).map(o => o.id)]);
       const out = {};
       // Only the options this type declares, so an edited layout cannot
@@ -4657,13 +4725,24 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
       out.w = clampW(seg.w);
       out.h = clampH(seg.h);
       out.scale = clampScale(seg.scale);
+      out.row = clampRow(seg.row);
+      out.x = clampX(seg.x);
       return out;
     });
-  settings.set("homeLayout", clean);
+  const tidied = tidyRows(clean);
+  settings.set("homeLayout", tidied);
+  // NOT back to the window that asked. It already has the answer -- it is
+  // the return value -- and sending it the change as well made it rebuild
+  // the whole page a second time for every resize, which threw away the
+  // scroll position and restarted every clock and every fetch on it.
   for (const w of BrowserWindow.getAllWindows()) {
-    try { if (!w.isDestroyed()) w.webContents.send("home-layout-changed", clean); } catch { /* gone */ }
+    try {
+      if (w.isDestroyed()) continue;
+      if (event && event.sender && w.webContents.id === event.sender.id) continue;
+      w.webContents.send("home-layout-changed", tidied);
+    } catch { /* gone */ }
   }
-  return { success: true, layout: clean };
+  return { success: true, layout: tidied };
 });
 
 ipcMain.handle("home:resetLayout", () => {

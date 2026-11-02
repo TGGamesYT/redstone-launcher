@@ -36,3 +36,5 @@ Current files:
   server that drops the connection halfway.
 - `content-test.mjs` — installing from a file, and which folder of jars a
   server keeps.
+- `home-layout-test.mjs` — the home page's rows, and moving and resizing
+  what is on them.
