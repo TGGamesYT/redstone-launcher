@@ -25,9 +25,21 @@ const shot = async (p, name) => { try { await p.screenshot({ path: path.join(OUT
 // Segment types kept plain: what is under test is where they go, not what
 // they draw. Each one simply writes its own name.
 const TYPES = [
-  { type: "greeting", name: "Greeting", options: [] },
-  { type: "recent", name: "Instances", options: [] },
-  { type: "player", name: "Player", options: [] },
+  { type: "greeting", name: "Greeting", options: [
+    { id: "text", label: "What it says", kind: "text", default: "" },
+    { id: "size", label: "Size", kind: "number", default: 32, min: 10, max: 90 },
+    { id: "align", label: "Where", kind: "choice", default: "left",
+      choices: [{ value: "left", label: "Left" }, { value: "center", label: "Middle" }] },
+  ] },
+  { type: "recent", name: "Instances", options: [
+    { id: "title", label: "Heading", kind: "text", default: "Continue playing" },
+    { id: "count", label: "How many", kind: "number", default: 6, min: 1, max: 24 },
+    { id: "view", label: "Shown as", kind: "choice", default: "list",
+      choices: [{ value: "list", label: "A list" }, { value: "grid", label: "Tiles" }] },
+  ] },
+  { type: "player", name: "Player", options: [
+    { id: "movable", label: "Let it be turned", kind: "toggle", default: true },
+  ] },
   { type: "projects", name: "Projects", options: [] },
 ];
 
@@ -373,6 +385,115 @@ check("nothing hangs over the edge of its segment",
   /\.hs > \* \{ max-width:100%; min-width:0; \}/.test(css), true,
   "the player render spilled over where the others were cut off, which looked like two rules because it was");
 
+// ── what the drop preview shows ─────────────────────────────────────────
+await set([
+  { id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 },
+  { id: "b", type: "player", row: 1, x: 0, w: 100, h: 0 },
+]);
+await edit();
+await dragTo("b", await at(0, 20));
+check("the landing place is a darkened area, not a coloured one",
+  await p.evaluate(() => {
+    const s = document.querySelector(".hs-slot");
+    if (!s) return null;
+    const cs = getComputedStyle(s);
+    return [cs.backgroundColor, cs.outlineStyle, (s.dataset.what || "") === ""];
+  }), ["rgba(0, 0, 0, 0.42)", "none", true],
+  "a green box with a word on it is the launcher talking about itself");
+
+// Nothing is acted out until you have settled on a place.
+check("nothing moves the instant the pointer crosses something",
+  await p.$$eval("#home-segments .hs.hs-would, #home-segments .hs.hs-would-dim", (e) => e.length), 0);
+await p.waitForTimeout(1100);
+check("but holding still acts out what would happen",
+  await p.$$eval("#home-segments .hs.hs-would", (e) => e.map(n => [n.dataset.id,
+    Number(n.style.getPropertyValue("--x")), Number(n.style.getPropertyValue("--w"))])),
+  [["a", 50, 50]],
+  "the segment being dropped onto slides to the half it would end up in");
+check("at half strength, so it reads as a suggestion",
+  await p.$eval("#home-segments .hs.hs-would", (e) => getComputedStyle(e).opacity), "0.5");
+
+// Move on, and it goes back to where it really is.
+await p.mouse.move(5, 5, { steps: 4 });
+await p.waitForTimeout(200);
+check("moving on puts everything back",
+  await p.$$eval("#home-segments .hs", (e) => e.map(n => [n.classList.contains("hs-would"), n.style.getPropertyValue("--x")])),
+  [["a", false, "0"], ["b", false, "0"]].map(x => [x[1], x[2]]));
+await p.mouse.up();
+await p.waitForTimeout(300);
+
+// And what it acted out is what happens.
+await set([
+  { id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 },
+  { id: "b", type: "player", row: 1, x: 0, w: 100, h: 0 },
+]);
+await edit();
+await dragTo("b", await at(0, 20));
+await p.waitForTimeout(1100);
+const previewed = await p.$$eval("#home-segments .hs.hs-would", (e) => e.map(n => [n.dataset.id,
+  Number(n.style.getPropertyValue("--x")), Number(n.style.getPropertyValue("--w"))]));
+await p.mouse.up();
+await p.waitForTimeout(350);
+const landed = (await placed()).filter(s => s.id !== "b").map(s => [s.id, s.x, s.w]);
+check("and dropping does what was acted out", landed, previewed);
+
+// No green anywhere in the page's own styles.
+check("none of the moving markers are coloured",
+  await p.evaluate(() => (document.getElementById("home-style").textContent.match(/5ad65a/g) || []).length), 1,
+  "the one left is the dot on a friend who is online, which is not about moving anything");
+
+// ── the settings of one segment ─────────────────────────────────────────
+await set([
+  { id: "g", type: "greeting", row: 0, x: 0, w: 100, h: 0, size: 32, align: "left", text: "" },
+  { id: "r", type: "recent", row: 1, x: 0, w: 100, h: 0, title: "Continue playing", count: 6, view: "list", scale: 100 },
+]);
+await edit();
+await p.evaluate(() => {
+  document.querySelector('#home-segments .hs[data-id="r"] .hs-tools button').click();
+});
+await p.waitForTimeout(250);
+check("a segment's settings open with what it is set to",
+  await p.$$eval(".he-opt input, .he-opt select", (els) => els.map(e => e.type === "checkbox" ? e.checked : e.value)),
+  ["Continue playing", "6", "list", "100", "0", "100"],
+  "its own options, then the width, height and inside size every type has");
+
+await p.evaluate(() => {
+  const all = [...document.querySelectorAll(".he-opt input, .he-opt select")];
+  const set = (el, v) => { el.value = v; el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input")); };
+  set(all[0], "Jump back in");      // heading
+  set(all[1], "3");                 // how many
+  set(all[2], "grid");              // shown as
+  set(all[3], "60");                // width
+  set(all[5], "140");               // inside size
+  [...document.querySelectorAll(".modal-overlay button")].find(b => b.textContent === "Done").click();
+});
+await p.waitForTimeout(400);
+check("changing them changes the segment",
+  await p.evaluate(() => {
+    const s = window.__saved.find(x => x.id === "r");
+    return [s.title, s.count, s.view, s.w, s.scale];
+  }), ["Jump back in", 3, "grid", 60, 140],
+  "and is stored, not only shown");
+check("and the page shows it",
+  await p.evaluate(() => {
+    const n = document.querySelector('#home-segments .hs[data-id="r"]');
+    return [Number(n.style.getPropertyValue("--w")), n.style.getPropertyValue("--s")];
+  }), [60, "1.4"]);
+check("a toggle reads and writes too", await (async () => {
+  await p.evaluate(() => document.querySelector('#home-segments .hs[data-id="g"] .hs-tools button').click());
+  await p.waitForTimeout(200);
+  const before = await p.$$eval(".he-opt input, .he-opt select", (e) => e.length);
+  await p.evaluate(() => {
+    const all = [...document.querySelectorAll(".he-opt input, .he-opt select")];
+    all[1].value = "48"; all[1].dispatchEvent(new Event("input"));
+    all[2].value = "center"; all[2].dispatchEvent(new Event("change"));
+    [...document.querySelectorAll(".modal-overlay button")].find(b => b.textContent === "Done").click();
+  });
+  await p.waitForTimeout(300);
+  const g = await p.evaluate(() => window.__saved.find(x => x.id === "g"));
+  return [before > 0, g.size, g.align];
+})(), [true, 48, "center"]);
+
 // ── what a redraw leaves alone ──────────────────────────────────────────
 // Adding one segment used to reload every other one on the page: every
 // clock restarted, every row of projects fetched again, for a change that
@@ -407,6 +528,26 @@ await p.waitForTimeout(250);
 check("and resizing one does not redraw anything",
   await p.$$eval("#home-segments .hs", (e) => e.map(n => n.dataset.mark || "new")),
   ["m0", "m1", "new"]);
+
+// ── text and rounded corners ────────────────────────────────────────────
+// The corner radius is a setting and can be large. With a fixed inset the
+// curve reached the first letter of a heading and clipped it.
+await set([{ id: "n", type: "projects", row: 0, x: 0, w: 60, h: 0 }]);
+const insetAt = (radius) => p.evaluate((r) => {
+  document.documentElement.style.setProperty("--border-radius", r + "px");
+  const n = document.querySelector("#home-segments .hs");
+  n.innerHTML = '<div class="hs-news"><div class="bd"><h4>Wednesday</h4></div></div>';
+  const bd = n.querySelector(".bd");
+  const cs = getComputedStyle(bd);
+  return [parseFloat(cs.paddingLeft), parseFloat(cs.paddingTop)];
+}, radius);
+const small = await insetAt(0);
+const large = await insetAt(40);
+check("a small corner leaves the usual inset", small, [12, 10]);
+check("and a large one pushes the text clear of the curve",
+  [large[0] >= 30, large[1] >= 30], [true, true],
+  `${large[0]}px across and ${large[1]}px down at a 40px radius — the curve cannot reach the text`);
+await p.evaluate(() => document.documentElement.style.removeProperty("--border-radius"));
 
 if (errors.length) { console.log("PAGE ERRORS:", errors.join(" | ")); bad += errors.length; }
 await browser.close();

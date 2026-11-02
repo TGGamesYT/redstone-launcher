@@ -114,8 +114,9 @@
         justify-content:space-between; gap:calc(12px * var(--s)); }
       .hs-grid .hs-card, .hs-grid .hs-tile { flex:none; }
       .hs-card { flex:0 0 calc(170px * var(--s)); width:100%; background:var(--menu-bg); border:1px solid var(--border-dark);
-        border-radius:var(--border-radius); padding:calc(10px * var(--s)); cursor:pointer; display:flex;
-        flex-direction:column; min-width:0; }
+        border-radius:var(--border-radius);
+        padding:max(calc(10px * var(--s)), calc(var(--border-radius, 0px) * 0.6));
+        cursor:pointer; display:flex; flex-direction:column; min-width:0; }
       .hs-card:hover { border-color:var(--base-color); }
       /* Every icon the same size, whatever shape the file is. cover cropped
          non-square art to different-looking sizes; a fixed square box with
@@ -135,7 +136,8 @@
       .hs-list { display:flex; flex-direction:column; gap:6px; }
       .hs-item { display:flex; align-items:center; gap:calc(10px * var(--s)); background:var(--menu-bg);
         border:1px solid var(--border-dark); border-radius:var(--border-radius);
-        padding:calc(8px * var(--s)) calc(10px * var(--s)); min-width:0; }
+        padding:calc(8px * var(--s)) max(calc(10px * var(--s)), calc(var(--border-radius, 0px) * 0.6));
+        min-width:0; }
       .hs-item img { width:calc(32px * var(--s)); height:calc(32px * var(--s)); border-radius:4px;
         image-rendering:pixelated; background:var(--very-dark); object-fit:contain; flex:0 0 auto; }
       .hs-item .t { font-size:calc(13px * var(--s)); flex:1; min-width:0; overflow:hidden;
@@ -160,7 +162,12 @@
       .hs-face .hs-dot { position:absolute; top:calc(8px * var(--s)); right:calc(8px * var(--s)); }
       .hs-news { background:var(--menu-bg); border:1px solid var(--border-dark);
         border-radius:var(--border-radius); overflow:hidden; }
-      .hs-news .bd { padding:10px 12px; }
+      /* Far enough in that the rounded corner cannot reach the text. The
+         corner radius is a setting and can be large; a fixed twelve pixels
+         of padding meant the curve cut the first letter of a heading off at
+         anything past about that. The inset follows the radius. */
+      .hs-news .bd { padding:max(10px, calc(var(--border-radius, 0px) * 0.75))
+        max(12px, calc(var(--border-radius, 0px) * 0.75)); }
       .hs-news img { width:100%; height:calc(120px * var(--s)); object-fit:cover; display:block; background:var(--very-dark); }
       .hs-news h4 { margin:0 0 4px; font-size:calc(13px * var(--s)); }
       .hs-news pre { margin:0; font-size:calc(11.5px * var(--s)); line-height:1.5; white-space:pre-wrap;
@@ -206,21 +213,26 @@
       .hs.dragging { opacity:0.4; }
       /* Where it will land if you let go now. A line down the side it will go
          to, or a wash over the whole segment when it will share the row. */
-      /* Where it will land, drawn where it will land: a rectangle the size
-         and shape of the space it is going into, in the row it is going into.
-         A line down somebody's side said "next to this one" and then put it
-         on a row of its own, which is not the same thing at all. */
+      /* Where it would land: a darkened area the size and shape of the space
+         it is going into. No colour and no label -- a green box with a word
+         on it is the launcher talking about itself, where a shadow where the
+         thing will be is just the answer. */
       .hs-slot { grid-column: calc(var(--x, 0) + 1) / span var(--w, 100);
         margin:0 11px 22px; border-radius:var(--border-radius);
-        outline:3px dashed #5ad65a; outline-offset:-3px;
-        background:rgba(90,214,90,0.12); pointer-events:none; min-height:54px;
-        position:relative; z-index:6; }
-      .hs-slot::after { content:attr(data-what); position:absolute; top:6px; left:8px;
-        font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
-        background:#5ad65a; color:#06290b; padding:2px 7px; border-radius:4px; white-space:nowrap; }
+        background:rgba(0,0,0,0.42);
+        box-shadow:inset 0 0 0 1px rgba(255,255,255,0.18);
+        pointer-events:none; min-height:54px; position:relative; z-index:6; }
       /* A row of its own, between two that are already there. */
       .hs-rowslot { height:0; margin:0; }
       .hs-rowslot .hs-slot { min-height:46px; }
+
+      /* Hold still over a spot and the page shows you what it would do:
+         whatever has to move to make room slides to where it would go, at
+         half strength, and slides back when you move on. A line and a word
+         described it; this performs it. */
+      .hs.hs-would { opacity:0.5; transition:opacity 0.18s ease, grid-column 0.28s ease; }
+      .hs.hs-would-dim { opacity:0.35; transition:opacity 0.18s ease; }
+      .hs-rowbox { transition:grid-template-columns 0.2s ease; }
 
       /* A handle in each corner. The two bottom ones change the height as
          well, the top ones only the width. */
@@ -1025,20 +1037,85 @@
   let drag = null;            // { id, node, ghost }
   let dropAt = null;          // { row, x, w, newRow, what }
 
+  const PREVIEW_MS = 900;     // how long to hold still before it is acted out
+  let previewTimer = null;
+
   function clearDropMarks() {
     for (const n of document.querySelectorAll('.hs-slot, .hs-rowslot')) n.remove();
+    clearPreview();
+  }
+
+  // Put everything back where it really is.
+  function clearPreview() {
+    if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
+    for (const node of document.querySelectorAll('#home-segments .hs')) {
+      node.classList.remove('hs-would', 'hs-would-dim');
+      const seg = LAYOUT.find(x => x.id === node.dataset.id);
+      if (seg) { node.style.setProperty('--x', String(seg.x || 0)); node.style.setProperty('--w', String(seg.w || COLUMNS)); }
+    }
+  }
+
+  // What the layout WOULD be, without changing the one in use. The same
+  // rules the drop itself follows, so what is acted out is what happens.
+  function layoutAfterDrop(fromId, at) {
+    const next = LAYOUT.map(x => ({ ...x }));
+    const moved = next.find(s => s.id === fromId);
+    if (!moved || !at) return next;
+    if (at.newRow) {
+      for (const s of next) if (s !== moved && (Number(s.row) || 0) >= at.row) s.row = (Number(s.row) || 0) + 1;
+      moved.row = at.row; moved.x = 0;
+      return next;
+    }
+    if (at.what === 'share' && at.onto) {
+      const onto = next.find(s => s.id === at.onto);
+      if (onto) {
+        const span = onto.w || COLUMNS, from = onto.x || 0, mine = Math.floor(span / 2);
+        moved.row = at.row; moved.h = onto.h || 0;
+        if (at.left) { moved.x = from; moved.w = mine; onto.x = from + mine; onto.w = span - mine; }
+        else { onto.w = span - mine; moved.x = from + (span - mine); moved.w = mine; }
+        return next;
+      }
+    }
+    moved.row = at.row; moved.x = at.x; moved.w = at.w;
+    return next;
+  }
+
+  // Act it out: every segment that would have to move slides to where it
+  // would go, at half strength. One that would end up on another row cannot
+  // be slid there -- a row is its own grid -- so it is dimmed instead, which
+  // still says "this one is affected".
+  function showPreview(at) {
+    const host = document.getElementById('home-segments');
+    if (!host || !at) return;
+    const next = layoutAfterDrop(drag.id, at);
+    for (const seg of next) {
+      if (seg.id === drag.id) continue;
+      const now = LAYOUT.find(x => x.id === seg.id);
+      if (!now) continue;
+      const node = host.querySelector(`.hs[data-id="${seg.id}"]`);
+      if (!node) continue;
+      const sameRow = (Number(now.row) || 0) === (Number(seg.row) || 0);
+      const moves = (now.x || 0) !== (seg.x || 0) || (now.w || COLUMNS) !== (seg.w || COLUMNS);
+      if (sameRow && moves) {
+        node.classList.add('hs-would');
+        node.style.setProperty('--x', String(seg.x || 0));
+        node.style.setProperty('--w', String(seg.w || COLUMNS));
+      } else if (!sameRow) {
+        node.classList.add('hs-would-dim');
+      }
+    }
   }
 
   // Draw the landing place.
   function showDrop(at) {
-    clearDropMarks();
+    for (const n of document.querySelectorAll('.hs-slot, .hs-rowslot')) n.remove();
+    clearPreview();
     if (!at) return;
     const host = document.getElementById('home-segments');
     if (!host) return;
     const slot = el('div', 'hs-slot');
     slot.style.setProperty('--x', String(at.x));
     slot.style.setProperty('--w', String(at.w));
-    slot.dataset.what = at.what;
     if (at.newRow) {
       // Its own row, shown between the two it would go between.
       const box = el('div', 'hs-rowbox hs-rowslot');
@@ -1125,6 +1202,10 @@
     if (same) return;
     dropAt = at;
     showDrop(at);
+    // Only once you have settled on a place. Acting it out the instant the
+    // pointer crosses something would be the whole page twitching.
+    if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
+    if (at) previewTimer = setTimeout(() => { previewTimer = null; showPreview(at); }, PREVIEW_MS);
   }
 
   function endDrag() {
@@ -1147,7 +1228,7 @@
     const ghost = el('div');
     ghost.style.cssText = `position:fixed;z-index:9500;pointer-events:none;opacity:0.85;
       width:${r.width}px;height:${Math.min(r.height, 220)}px;overflow:hidden;
-      border:2px solid #5ad65a;border-radius:var(--border-radius);background:var(--menu-bg);
+      border:2px solid rgba(255,255,255,0.45);border-radius:var(--border-radius);background:var(--menu-bg);
       box-shadow:0 10px 30px rgba(0,0,0,0.5);`;
     ghost.appendChild(el('div', '', typeSpec(seg.type).name || seg.type));
     ghost.firstChild.style.cssText = 'padding:10px 12px;font-weight:bold;';
@@ -1203,42 +1284,17 @@
     addGrips(node, seg);
   }
 
-  // Where the dragged segment ends up.
+  // Where the dragged segment ends up. The same answer the preview acted
+  // out, out of the same function, so the two cannot drift apart.
   function placeSegment(fromId, at) {
-    const moved = LAYOUT.find(s => s.id === fromId);
-    if (!moved || !at) return;
-
-    if (at.newRow) {
-      // Everything from that row down moves along to make space.
-      for (const s of LAYOUT) if (s !== moved && (Number(s.row) || 0) >= at.row) s.row = (Number(s.row) || 0) + 1;
-      moved.row = at.row;
-      moved.x = 0;
-      moved.w = Math.min(moved.w || COLUMNS, COLUMNS);
-      save();
-      return;
+    if (!at || !LAYOUT.some(s => s.id === fromId)) return;
+    const next = layoutAfterDrop(fromId, at);
+    // Merged into the objects already in LAYOUT: the handles and the
+    // settings dialog hold references to them.
+    for (const want of next) {
+      const had = LAYOUT.find(s => s.id === want.id);
+      if (had) Object.assign(had, want);
     }
-
-    if (at.what === 'share' && at.onto) {
-      // Half of that segment's space each, in the order the pointer asked
-      // for. This is what "drop it next to this one" has to mean: they both
-      // end up in the space that one had, not one of them on a new row.
-      const onto = LAYOUT.find(s => s.id === at.onto);
-      if (onto) {
-        const span = onto.w || COLUMNS;
-        const from = onto.x || 0;
-        const mine = Math.floor(span / 2);
-        moved.row = at.row;
-        moved.h = onto.h || 0;
-        if (at.left) { moved.x = from; moved.w = mine; onto.x = from + mine; onto.w = span - mine; }
-        else { onto.w = span - mine; moved.x = from + (span - mine); moved.w = mine; }
-        save();
-        return;
-      }
-    }
-
-    moved.row = at.row;
-    moved.x = at.x;
-    moved.w = at.w;
     save();
   }
 
