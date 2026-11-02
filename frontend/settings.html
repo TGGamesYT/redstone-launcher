@@ -329,17 +329,45 @@
 
     .theme-author.unverified { opacity: 0.55; font-style: italic; }
 
-    .theme-del {
-      margin-left: 6px;
-      padding: 0 4px;
+    /* Under the swatches and centred with them, rather than one button pushed
+       off to one side by a margin. */
+    .theme-tools {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .theme-tools button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      padding: 0;
       background: transparent;
       border: none;
+      border-radius: 4px;
       color: var(--text-color);
       opacity: 0.6;
       cursor: pointer;
     }
 
-    .theme-del:hover { opacity: 1; }
+    .theme-tools button:hover { opacity: 1; background: rgba(0, 0, 0, 0.25); }
+    .theme-tools button i { font-size: 16px; }
+
+    /* What a theme takes with it, ticked before it is saved. */
+    .theme-includes {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      font-size: 12px;
+      opacity: 0.85;
+    }
+
+    .theme-includes > span { opacity: 0.7; }
 
     .appicon-row {
       display: flex;
@@ -684,6 +712,17 @@
         <button type="button" id="theme-export">Export…</button>
         <button type="button" id="theme-import">Import…</button>
       </div>
+      <!-- What a theme takes with it is decided when it is SAVED, so the same
+           decision holds whether it is applied, exported or sent on. -->
+      <div class="theme-includes">
+        <span>A saved theme also carries:</span>
+        <label class="setting-toggle"
+          data-tip="The background section as a whole — the mode, the colours, the gradient, the block and how it is tiled."><input type="checkbox" id="theme-inc-background" checked> the background</label>
+        <label class="setting-toggle"
+          data-tip="The picture itself, copied into the theme file so it still works on another computer. Up to 12 MB."><input type="checkbox" id="theme-inc-wallpaper"> its picture</label>
+        <label class="setting-toggle"
+          data-tip="Which segments the main page is made of, where they sit and how big they are."><input type="checkbox" id="theme-inc-layout"> the main page layout</label>
+      </div>
 
       <h4 style="margin-top: 30px;">App icon</h4>
       <div class="appicon-row">
@@ -1013,31 +1052,47 @@
       const markSwitcher = (btn) => {
         for (const b of switcherBtns) b.classList.toggle('active', b === btn);
       };
-      switcherBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-          markSwitcher(btn);
-          document.querySelectorAll('.section').forEach(sec => {
-            sec.style.display = 'none';
-            sec.classList.remove('just-shown');
-          });
-          const target = btn.dataset.section;
-          const section = document.getElementById(target);
-          if (section) {
-            section.style.display = 'block';
-            // A CSS animation does not run again just because the element
-            // was shown again, so it is re-armed: taken off, the layout read
-            // once to make the removal stick, then put back.
-            void section.offsetHeight;
-            section.classList.add('just-shown');
-          }
-          if (target === 'suggest') loadMySuggestions();
+      // Which panel is open survives a reload of this page. Applying a theme
+      // reloads it -- every control on it is showing the old theme -- and that
+      // used to dump you back on the first panel, several clicks away from the
+      // theme list you were working in.
+      const showSection = (btn) => {
+        if (!btn) return;
+        markSwitcher(btn);
+        document.querySelectorAll('.section').forEach(sec => {
+          sec.style.display = 'none';
+          sec.classList.remove('just-shown');
         });
-      });
-      // Whichever panel the page opens on.
-      markSwitcher(switcherBtns.find(b => {
-        const sec = document.getElementById(b.dataset.section);
-        return sec && sec.classList.contains('active');
-      }) || switcherBtns[0]);
+        const target = btn.dataset.section;
+        try { sessionStorage.setItem('settingsSection', target); } catch { /* private window */ }
+        const section = document.getElementById(target);
+        if (section) {
+          section.style.display = 'block';
+          // A CSS animation does not run again just because the element
+          // was shown again, so it is re-armed: taken off, the layout read
+          // once to make the removal stick, then put back.
+          void section.offsetHeight;
+          section.classList.add('just-shown');
+        }
+        if (target === 'suggest') loadMySuggestions();
+      };
+
+      switcherBtns.forEach(btn => btn.addEventListener('click', () => showSection(btn)));
+
+      // Whichever panel the page opens on: the one it was left on, or the one
+      // the markup starts with.
+      let openOn = null;
+      try {
+        const was = sessionStorage.getItem('settingsSection');
+        if (was) openOn = switcherBtns.find(b => b.dataset.section === was) || null;
+      } catch { /* private window */ }
+      if (openOn) showSection(openOn);
+      else {
+        markSwitcher(switcherBtns.find(b => {
+          const sec = document.getElementById(b.dataset.section);
+          return sec && sec.classList.contains('active');
+        }) || switcherBtns[0]);
+      }
 
       // ── Suggestions ──────────────────────────────────────────────────────
       // Submitting needs a premium account, because the relay will not take a
@@ -1613,21 +1668,43 @@
           const who = t.author
             ? `<span class="theme-author">by ${t.author.name}</span>`
             : (t.imported ? '<span class="theme-author unverified">author unverified</span>' : '');
+          // What it brings with it, so a theme says so before you apply it.
+          const inc = t.include || {};
+          const carries = [
+            inc.background !== false && ('background' in (t.theme || {})) ? 'background' : null,
+            t.wallpaper ? 'picture' : null,
+            'homeLayout' in (t.theme || {}) ? 'main page' : null,
+          ].filter(Boolean);
           btn.innerHTML = `<span>${t.name}</span>${who}
             <div class="theme-colors">
               ${sw(t.theme && t.theme.baseColor)}${sw(t.theme && t.theme.secondaryColor)}${sw(t.theme && t.theme.textColor)}
-            </div>`;
+            </div>
+            ${carries.length ? `<span class="theme-author">with the ${carries.join(', ')}</span>` : ''}`;
+
+          const tools = document.createElement('div');
+          tools.className = 'theme-tools';
+
+          const exp = document.createElement('button');
+          exp.type = 'button';
+          exp.innerHTML = '<i class="material-icons">ios_share</i>';
+          exp.title = 'Export this theme to a file';
+          exp.onclick = async (e) => {
+            e.stopPropagation();
+            await exportTheme({ id: t.id });
+          };
+
           const del = document.createElement('button');
           del.type = 'button';
-          del.className = 'theme-del';
-          del.innerHTML = '<i class="material-icons" style="font-size:16px;vertical-align:middle;">delete</i>';
+          del.innerHTML = '<i class="material-icons">delete</i>';
           del.title = 'Forget this theme';
           del.onclick = async (e) => {
             e.stopPropagation();
             const r = await ipcRenderer.invoke('theme:delete', { id: t.id });
             drawSavedThemes(r && r.themes);
           };
-          btn.appendChild(del);
+
+          tools.append(exp, del);
+          btn.appendChild(tools);
           btn.addEventListener('click', async () => {
             const r = await ipcRenderer.invoke('theme:apply', { id: t.id });
             if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'That theme could not be applied', 'error'); return; }
@@ -1641,26 +1718,50 @@
 
       ipcRenderer.invoke('theme:list').then(r => drawSavedThemes(r && r.themes)).catch(() => { });
 
-      document.getElementById('theme-save').addEventListener('click', async () => {
-        const nameEl = document.getElementById('theme-save-name');
-        const name = nameEl.value.trim();
-        if (!name) { if (window.notify) notify('Give the theme a name first', 'error'); return; }
-        const r = await ipcRenderer.invoke('theme:save', { name });
-        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'It could not be saved', 'error'); return; }
-        nameEl.value = '';
-        drawSavedThemes(r.themes);
-        if (window.notify) notify(`Saved "${name}"`, 'success');
+      // What a theme takes with it. Read when it is SAVED, which is the point
+      // at which the theme becomes a thing -- exporting then only writes out
+      // what the theme already is, so the same theme cannot mean two
+      // different things depending on how it leaves the launcher.
+      const themeIncludes = () => ({
+        background: document.getElementById('theme-inc-background').checked,
+        wallpaper: document.getElementById('theme-inc-wallpaper').checked,
+        layout: document.getElementById('theme-inc-layout').checked,
       });
+      // A picture is only worth carrying if the background is.
+      const incBg = document.getElementById('theme-inc-background');
+      const incWall = document.getElementById('theme-inc-wallpaper');
+      const syncIncludes = () => {
+        incWall.disabled = !incBg.checked;
+        if (!incBg.checked) incWall.checked = false;
+      };
+      incBg.addEventListener('change', syncIncludes);
+      syncIncludes();
 
-      document.getElementById('theme-export').addEventListener('click', async () => {
-        const name = document.getElementById('theme-save-name').value.trim();
-        const r = await ipcRenderer.invoke('theme:export', { name });
+      async function exportTheme(what) {
+        const r = await ipcRenderer.invoke('theme:export', what);
         if (!r || r.canceled) return;
         if (!r.success) { if (window.notify) notify(r.error || 'It could not be exported', 'error'); return; }
         // Saying whether it is signed matters: an unsigned theme is still a
         // theme, it just cannot say who made it.
         if (!r.signed && window.uiAlert) await uiAlert(r.note || 'It was exported without an author.', { title: 'Exported, unsigned' });
         else if (window.notify) notify('Exported', 'success');
+      }
+
+      document.getElementById('theme-save').addEventListener('click', async () => {
+        const nameEl = document.getElementById('theme-save-name');
+        const name = nameEl.value.trim();
+        if (!name) { if (window.notify) notify('Give the theme a name first', 'error'); return; }
+        const r = await ipcRenderer.invoke('theme:save', { name, include: themeIncludes() });
+        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'It could not be saved', 'error'); return; }
+        nameEl.value = '';
+        drawSavedThemes(r.themes);
+        if (r.note && window.notify) notify(r.note, 'error');
+        if (window.notify) notify(`Saved "${name}"`, 'success');
+      });
+
+      document.getElementById('theme-export').addEventListener('click', async () => {
+        const name = document.getElementById('theme-save-name').value.trim();
+        await exportTheme({ name, include: themeIncludes() });
       });
 
       document.getElementById('theme-import').addEventListener('click', async () => {

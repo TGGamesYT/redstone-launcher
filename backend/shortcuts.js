@@ -8,7 +8,15 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { app } from "electron";
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+// Everything this module runs outside the process is slow -- starting
+// PowerShell alone is the better part of a second -- and the main process is
+// the one that answers every window. Run it, wait for it, but never BLOCK on
+// it: execFileSync froze the whole launcher while the desktop icon was being
+// rewritten, for as long as a shortcut took each, and there could be three.
+const run = promisify(execFile);
 
 // --- PNG → .ico (single image; ICO may embed a PNG payload directly) ---
 function pngDimensions(png) {
@@ -180,22 +188,18 @@ function sweepOldIcons(dir, ext, keep) {
 // because the launcher re-tinted its own icon is not a fair trade.
 //
 // SHCNE_UPDATEITEM names one file, so only that shortcut is redrawn.
-function nudgeWindowsShell(links) {
+function nudgeScript(links) {
   const paths = (links || []).filter(Boolean);
-  if (!paths.length) return;
+  if (!paths.length) return "";
   const q = (v) => String(v).replace(/'/g, "''");
-  const ps = "$sig='[DllImport(\"shell32.dll\",CharSet=CharSet.Unicode)]public static extern void SHChangeNotify("
+  return "$sig='[DllImport(\"shell32.dll\",CharSet=CharSet.Unicode)]public static extern void SHChangeNotify("
     + "int wEventId,uint uFlags,string dwItem1,IntPtr dwItem2);';"
     + "$t=Add-Type -MemberDefinition $sig -Name Sh -Namespace W -PassThru;"
     // 0x00002000 = SHCNE_UPDATEITEM, 0x0005 = SHCNF_PATHW
     + paths.map(p2 => `$t::SHChangeNotify(0x00002000,0x0005,'${q(p2)}',[IntPtr]::Zero);`).join("");
-  try {
-    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps],
-      { windowsHide: true, timeout: 15000 });
-  } catch { /* the icon is written either way; this only makes it immediate */ }
 }
 
-export function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", exec } = {}) {
+export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", exec } = {}) {
   if (!pngBuffer) return { updated: [], skipped: ["no icon given"] };
   const updated = [], skipped = [];
   const dir = iconsDir();
@@ -224,20 +228,32 @@ export function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", e
         }
       }
       if (!links.length) skipped.push("no shortcut found to change");
-      for (const lnk of links) {
-        // One quoted script, so a path with spaces or an apostrophe in the
-        // user's name survives. Doubling a single quote is how PowerShell
-        // escapes one inside a single-quoted string.
+      if (links.length) {
+        // Every shortcut and the shell notification in ONE invocation. It used
+        // to be one PowerShell per shortcut plus another to nudge the shell --
+        // four process starts to re-tint one icon, each of them blocking.
+        //
+        // Quoted so that a path with spaces or an apostrophe in the user's
+        // name survives; doubling a single quote is how PowerShell escapes one
+        // inside a single-quoted string.
         const q = (v) => String(v).replace(/'/g, "''");
-        const ps = `$s=(New-Object -ComObject WScript.Shell).CreateShortcut('${q(lnk)}');`
-          + `$s.IconLocation='${q(ico)},0';$s.Save()`;
+        const ps = "$sh=New-Object -ComObject WScript.Shell;"
+          + links.map(lnk => `try{$s=$sh.CreateShortcut('${q(lnk)}');$s.IconLocation='${q(ico)},0';$s.Save()}catch{Write-Output ('FAIL ' + '${q(lnk)}' + ': ' + $_.Exception.Message)};`).join("")
+          + nudgeScript(links);
         try {
-          execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps],
-            { windowsHide: true, timeout: 15000 });
-          updated.push(lnk);
-        } catch (e) { skipped.push(`${path.basename(lnk)}: ${e.message}`); }
+          const { stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps],
+            { windowsHide: true, timeout: 30000 });
+          const failed = new Set();
+          for (const line of String(stdout || "").split(/\r?\n/)) {
+            const m = /^FAIL (.*?): (.*)$/.exec(line.trim());
+            if (m) { failed.add(m[1]); skipped.push(`${path.basename(m[1])}: ${m[2]}`); }
+          }
+          for (const lnk of links) if (!failed.has(lnk)) updated.push(lnk);
+        } catch (e) {
+          skipped.push(String(e && e.message || e));
+        }
       }
-      if (updated.length) { nudgeWindowsShell(updated); sweepOldIcons(dir, ".ico", ico); }
+      if (updated.length) sweepOldIcons(dir, ".ico", ico);
       return { updated, skipped, icon: ico };
     }
 

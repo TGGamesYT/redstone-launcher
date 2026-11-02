@@ -5915,10 +5915,19 @@ ipcMain.handle("suggest:mine", async () => suggestCall({ op: "mine" }));
 // relay can produce a new signature. The relay's public key is fetched over
 // the same verified TLS as everything else and then remembered, so a theme
 // can be checked again later without being online.
+// What a theme is, always: how the launcher is coloured and lettered.
 const THEME_FIELDS = [
   "baseColor", "secondaryColor", "thirdColor", "autoThird",
-  "textColor", "font", "fontSmoothing", "borderRadius", "background",
+  "textColor", "font", "fontSmoothing", "borderRadius",
 ];
+// What a theme MAY also carry, each one ticked when it is saved. These are
+// bigger decisions than a colour -- the background and the shape of the home
+// page -- so a theme should only bring them with it if that is what was meant.
+// They are still read when a theme that has them is applied, which is what
+// keeps themes saved before this working: `background` always travelled.
+const THEME_OPTIONAL = { background: "background", layout: "homeLayout" };
+const THEME_ALL_FIELDS = [...THEME_FIELDS, ...Object.values(THEME_OPTIONAL)];
+const DEFAULT_INCLUDE = { background: true, layout: false, wallpaper: false };
 const themesPath = path.join(dataDir, "themes.json");
 const loadThemes = () => { try { return JSON.parse(fs.readFileSync(themesPath, "utf8")) || []; } catch { return []; } };
 const saveThemes = (list) => {
@@ -5928,10 +5937,47 @@ const saveThemes = (list) => {
 
 // The theme as it is now, and nothing else — a theme file that carried
 // unrelated settings would change them on whoever imported it.
-function currentThemeData() {
+function currentThemeData(include) {
+  const inc = { ...DEFAULT_INCLUDE, ...(include || {}) };
   const out = {};
   for (const k of THEME_FIELDS) out[k] = settings.get(k);
+  for (const [flag, key] of Object.entries(THEME_OPTIONAL)) {
+    if (inc[flag]) out[key] = settings.get(key, null);
+  }
   return out;
+}
+
+// The background picture itself, as bytes, for a theme that is meant to carry
+// it. The setting only holds a path on this computer, which means nothing to
+// whoever the theme is sent to -- and a picture is the one part of a theme too
+// large to keep in the colours.
+const WALLPAPER_MAX = 12 * 1024 * 1024;
+function currentWallpaper() {
+  try {
+    const bg = settings.get("background", null) || {};
+    const file = bg.image && bg.image.file;
+    if (!file || !fs.existsSync(file)) return null;
+    const st = fs.statSync(file);
+    if (st.size > WALLPAPER_MAX) return { tooBig: Math.round(st.size / 1048576) };
+    return {
+      ext: (path.extname(file) || ".png").toLowerCase(),
+      name: path.basename(file),
+      data: fs.readFileSync(file).toString("base64"),
+    };
+  } catch { return null; }
+}
+
+// Put a theme's own picture on this computer and point the background at it.
+function placeWallpaper(wallpaper) {
+  if (!wallpaper || !wallpaper.data) return null;
+  try {
+    const ext = /^\.[a-z0-9]{2,5}$/.test(String(wallpaper.ext || "")) ? wallpaper.ext : ".png";
+    const dir = path.join(dataDir, "background");
+    fs.mkdirSync(dir, { recursive: true });
+    const dest = path.join(dir, `wallpaper-${Date.now().toString(36)}${ext}`);
+    fs.writeFileSync(dest, Buffer.from(wallpaper.data, "base64"));
+    return dest;
+  } catch { return null; }
 }
 
 // The bytes a signature is over. Keys in a fixed order at every level, so the
@@ -5992,21 +6038,33 @@ function verifyThemeAuthor(file, publicKey) {
 
 ipcMain.handle("theme:list", () => ({ success: true, themes: loadThemes() }));
 
-ipcMain.handle("theme:save", async (event, { name, icon } = {}) => {
+ipcMain.handle("theme:save", async (event, { name, icon, include } = {}) => {
   const clean = String(name || "").trim().slice(0, 60);
   if (!clean) return { success: false, error: "Give the theme a name" };
   const list = loadThemes();
-  const theme = currentThemeData();
+  const inc = { ...DEFAULT_INCLUDE, ...(include || {}) };
+  const theme = currentThemeData(inc);
+  // What a theme takes with it is decided HERE, when it is saved -- not when
+  // it is exported. A theme is a thing in its own right: the same decision
+  // has to hold whether it is applied, exported or sent to somebody.
+  let wallpaper = null, wallpaperNote = null;
+  if (inc.wallpaper) {
+    const w = currentWallpaper();
+    if (w && w.tooBig) wallpaperNote = `The background picture is ${w.tooBig} MB, which is too big to keep in a theme.`;
+    else if (w) wallpaper = w;
+    else wallpaperNote = "There is no background picture to include.";
+  }
   // The icon is saved with it, so a theme carries the look of the app's own
   // icon as well as the window's colours.
   const entry = {
     id: crypto.randomUUID(), name: clean, at: Date.now(),
     theme, icon: icon || settings.get("appIcon", null) || null,
+    include: inc, wallpaper,
   };
   const at = list.findIndex(t => t.name.toLowerCase() === clean.toLowerCase());
   if (at >= 0) { entry.id = list[at].id; list[at] = entry; } else list.push(entry);
   if (!saveThemes(list)) return { success: false, error: "The theme could not be saved" };
-  return { success: true, themes: list, theme: entry };
+  return { success: true, themes: list, theme: entry, note: wallpaperNote };
 });
 
 ipcMain.handle("theme:delete", (event, { id } = {}) => {
@@ -6018,26 +6076,62 @@ ipcMain.handle("theme:delete", (event, { id } = {}) => {
 ipcMain.handle("theme:apply", async (event, { id } = {}) => {
   const t = loadThemes().find(x => x.id === id);
   if (!t) return { success: false, error: "That theme is gone" };
-  for (const k of THEME_FIELDS) if (k in t.theme) settings.set(k, t.theme[k]);
-  if (t.icon) await applyAppIcon(t.icon);
+  const applied = {};
+  for (const k of THEME_ALL_FIELDS) if (k in t.theme) applied[k] = t.theme[k];
+
+  // A theme that carries its own picture brings the picture too, written in
+  // here and pointed at -- the path in the setting is this computer's and
+  // means nothing on anybody else's.
+  if (t.wallpaper && applied.background) {
+    const at = placeWallpaper(t.wallpaper);
+    if (at) {
+      applied.background = {
+        ...applied.background,
+        image: { ...(applied.background.image || {}), file: at },
+      };
+    }
+  }
+  for (const [k, v] of Object.entries(applied)) settings.set(k, v);
+
+  // A theme that saved no icon of its own means the launcher's own icon, not
+  // "leave whatever the last theme put there" -- which is how a picture from
+  // a theme you had moved off kept turning up under every other theme.
+  await applyAppIcon(t.icon || { kind: "theme" });
   // Every open window re-reads the settings and repaints itself, the same way
   // it does when a colour is changed in the settings page.
   for (const w of BrowserWindow.getAllWindows()) {
-    try { if (!w.isDestroyed()) w.webContents.send("settings-updated", t.theme); } catch { /* gone */ }
+    try { if (!w.isDestroyed()) w.webContents.send("settings-updated", applied); } catch { /* gone */ }
   }
-  return { success: true, theme: t.theme, icon: t.icon || null };
+  // A theme that carries the home page's shape has just changed it, and the
+  // home page listens for that rather than for a settings change.
+  if ("homeLayout" in applied) {
+    const layout = applied.homeLayout || HOME_DEFAULT;
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.webContents.send("home-layout-changed", layout); } catch { /* gone */ }
+    }
+  }
+  return { success: true, theme: applied, icon: t.icon || null };
 });
 
 // Export: sign it if we can, write it either way. A theme that cannot be
 // signed is still a perfectly good theme -- it just arrives saying it does
 // not know who made it, rather than claiming someone.
-ipcMain.handle("theme:export", async (event, { id, name } = {}) => {
+ipcMain.handle("theme:export", async (event, { id, name, include } = {}) => {
   const saved = id ? loadThemes().find(t => t.id === id) : null;
-  const theme = saved ? saved.theme : currentThemeData();
+  const theme = saved ? saved.theme : currentThemeData(include);
   const icon = saved ? saved.icon : (settings.get("appIcon", null) || null);
+  // What travels with it was decided when it was saved, so exporting a saved
+  // theme is only writing out what the theme already is. Exporting what is
+  // simply applied right now has no saved decision behind it, so the ticks in
+  // the settings page stand in for one.
+  const inc = { ...DEFAULT_INCLUDE, ...(include || {}) };
+  const wallpaper = saved ? (saved.wallpaper || null) : (inc.wallpaper ? currentWallpaper() : null);
   const title = String((saved && saved.name) || name || "My theme").trim().slice(0, 60);
 
-  const file = { format: "redstone-theme", version: 1, name: title, theme, icon, author: null };
+  const file = {
+    format: "redstone-theme", version: 1, name: title, theme, icon, author: null,
+    wallpaper: wallpaper && !wallpaper.tooBig ? wallpaper : null,
+  };
   const signed = await themeRelayCall({ op: "sign", hash: themeHash(theme) });
   let note = null;
   if (signed && signed.ok && signed.signature) {
@@ -6079,7 +6173,7 @@ ipcMain.handle("theme:import", async () => {
   // Only the fields a theme is allowed to carry, so an edited file cannot
   // reach any other setting.
   const theme = {};
-  for (const k of THEME_FIELDS) if (k in file.theme) theme[k] = file.theme[k];
+  for (const k of THEME_ALL_FIELDS) if (k in file.theme) theme[k] = file.theme[k];
 
   const key = await themeVerifyKey();
   const check = verifyThemeAuthor({ ...file, theme: file.theme }, key);
@@ -6090,6 +6184,17 @@ ipcMain.handle("theme:import", async () => {
     at: Date.now(), theme, icon: file.icon || null,
     author: check.verified ? { uuid: file.author.uuid, name: file.author.name } : null,
     imported: true,
+    // Only what the file actually carries -- a picture is checked for being a
+    // picture when it is written out, not trusted for being in the file.
+    wallpaper: file.wallpaper && typeof file.wallpaper.data === "string"
+      && file.wallpaper.data.length < WALLPAPER_MAX * 2
+      ? { ext: String(file.wallpaper.ext || ".png"), name: String(file.wallpaper.name || "wallpaper"), data: file.wallpaper.data }
+      : null,
+    include: {
+      background: "background" in theme,
+      layout: "homeLayout" in theme,
+      wallpaper: !!file.wallpaper,
+    },
   };
   const at = list.findIndex(t => t.name.toLowerCase() === entry.name.toLowerCase());
   if (at >= 0) { entry.id = list[at].id; list[at] = entry; } else list.push(entry);
@@ -6197,8 +6302,10 @@ function updateDesktopIconSoon(png) {
   if (_desktopIconSoon) clearTimeout(_desktopIconSoon);
   _desktopIconSoon = setTimeout(() => {
     _desktopIconSoon = null;
-    try { shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher" }); }
-    catch { /* the window icon is already right; this is the one outside */ }
+    // Not awaited and never blocking: rewriting a shortcut means starting a
+    // shell, and the main process is the one that answers every window.
+    Promise.resolve(shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher" }))
+      .catch(() => { /* the window icon is already right; this is the one outside */ });
   }, DESKTOP_ICON_SETTLE);
 }
 

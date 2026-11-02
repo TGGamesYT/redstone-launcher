@@ -58,6 +58,28 @@ for (const f of backend) {
   });
 }
 
+// ── a module reached through its default export ──
+//
+// `relayClient.themeRelay is not a function` -- the function was exported by
+// name and simply left out of the object at the bottom, which is how main.js
+// reaches all of them. Nothing before this noticed: the module parses, the
+// call sites look right, and only pressing the button finds out.
+for (const [modFile, holder] of [["relayClient.js", "relayClient"]]) {
+  const src = fs.readFileSync(path.join(ROOT, "backend", modFile), "utf8");
+  const def = /export\s+default\s*\{([^}]*)\}/.exec(src);
+  if (!def) { fail(`backend/${modFile} has a default export`, "none found"); continue; }
+  const inDefault = new Set(def[1].split(",").map(s => s.split(":")[0].trim()).filter(Boolean));
+  const main = fs.readFileSync(path.join(ROOT, "backend", "main.js"), "utf8");
+  const wanted = new Set();
+  for (const m of main.matchAll(new RegExp(`\\b${holder}\\.([A-Za-z_$][\\w$]*)\\s*\\(`, "g"))) wanted.add(m[1]);
+  for (const name of wanted) {
+    if (!inDefault.has(name)) {
+      fail(`backend/${modFile} exports everything main.js calls`,
+        `main.js calls ${holder}.${name}() but it is not in the default export`);
+    }
+  }
+}
+
 // ── the pages' own scripts ──
 const pages = fs.readdirSync(path.join(ROOT, "frontend")).filter(f => f.endsWith(".html"));
 for (const f of pages) {
