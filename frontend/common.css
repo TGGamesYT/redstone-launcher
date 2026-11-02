@@ -76,3 +76,95 @@
 }
 .sc-action-btn:hover { border-color: var(--base-color); }
 .sc-action-btn.active { background: var(--base-color); border-color: var(--base-color); }
+
+/* ── Find, in a textarea ───────────────────────────────────────────────────
+   A textarea has no find of its own: the browser's Ctrl+F does not search
+   inside form fields, so a log or a config file of a few hundred lines could
+   only be read by scrolling. See findbar.js. */
+.findbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 4px 6px;
+  background: var(--very-dark);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  font-size: 12px;
+}
+
+.findbar > i { font-size: 16px; opacity: 0.6; }
+.findbar .fnd-q { flex: 1; min-width: 0; margin: 0; }
+.findbar.empty .fnd-q { border-color: #c2504a; }
+
+.findbar .fnd-case {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0.75;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.findbar .fnd-case input { margin: 0; }
+
+.findbar .fnd-count {
+  min-width: 68px;
+  text-align: right;
+  opacity: 0.65;
+  white-space: nowrap;
+}
+
+.findbar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-color);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.findbar button:hover { opacity: 1; border-color: var(--base-color); }
+.findbar button i { font-size: 16px; }
+
+/* ── A .properties file, as names and values ───────────────────────────────
+   server.properties is a list of settings, and editing it as a wall of
+   key=value meant knowing the exact spelling of every name and never making a
+   typo. See propsedit.js. */
+.pe-wrap { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.pe-rows { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+
+.pe-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 38%) 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 6px;
+  border-radius: var(--border-radius);
+}
+
+.pe-row:nth-child(odd) { background: rgba(0, 0, 0, 0.18); }
+
+.pe-row > .k {
+  font-family: monospace;
+  font-size: 12px;
+  word-break: break-all;
+  opacity: 0.9;
+}
+
+.pe-row > .k small { display: block; font-family: var(--text-font), sans-serif; opacity: 0.55; }
+.pe-row > .v { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pe-row > .v input[type="text"], .pe-row > .v input[type="number"], .pe-row > .v select { width: 100%; margin: 0; }
+.pe-row > .v input[type="checkbox"] { margin: 0; }
+.pe-row.gone { display: none; }
+.pe-note { padding: 6px; font-size: 12px; opacity: 0.6; }
+
+.pe-tools { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.pe-tools input[type="search"] { flex: 1; margin: 0; }

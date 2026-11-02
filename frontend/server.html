@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <title>Redstone Launcher — Server Manager</title>
   <script src="theme-boot.js"></script>
+  <script src="findbar.js"></script>
+  <script src="propsedit.js"></script>
   <script src="outline.js" defer></script>
   <script src="tabstrip.js" defer></script>
   <link rel="stylesheet" href="common.css" />
@@ -276,6 +278,7 @@
               <button id="fileViewToggle" style="padding:4px 10px; display:none;">Raw JSON</button>
             </div>
             <div id="fileTree" style="flex:1; min-height:0; display:none;"></div>
+            <div id="fileProps" style="flex:1; min-height:0; display:none;"></div>
             <textarea id="fileEditorArea" spellcheck="false" style="flex:1; width:100%; font-family:monospace; resize:none; margin:0; border:1px solid var(--secondary-color); border-radius:var(--border-radius);"></textarea>
             <div id="fileSaveState" style="font-size:12px; opacity:0.7; margin-top:6px; height:16px;"></div>
           </div>
@@ -903,7 +906,11 @@
           const text = sfView === 'raw' ? $('fileEditorArea').value : JSON.stringify(sfData, null, 2);
           res = await ipcRenderer.invoke('server-fs:write', { name: selectedServer.name, path: target, text });
         } else {
-          res = await ipcRenderer.invoke('server-fs:write', { name: selectedServer.name, path: target, text: $('fileEditorArea').value });
+          res = await ipcRenderer.invoke('server-fs:write', {
+            name: selectedServer.name, path: target,
+            text: (sfKind === 'properties' && sfView !== 'raw' && sfProps)
+              ? sfProps.text() : $('fileEditorArea').value,
+          });
         }
         state.textContent = (res && res.error) ? ('Save failed: ' + res.error) : 'Saved ✓';
       }, 500);
@@ -913,13 +920,40 @@
       const mode = sfKind === 'nbt' ? 'nbt' : 'json';
       window.FileTree.render($('fileTree'), sfData, { mode, onChange: scheduleSave });
     }
-    function showTree() { sfView = 'tree'; $('fileTree').style.display = ''; $('fileEditorArea').style.display = 'none'; $('fileViewToggle').textContent = 'Raw JSON'; renderTreeView(); }
+    // server.properties, as names and values. It is the one file on a server
+    // anybody actually edits, and it was a wall of key=value -- which means
+    // knowing the exact spelling of every setting and never making a typo.
+    let sfProps = null;
+    function showProps(text) {
+      sfView = 'tree';
+      $('fileEditorArea').style.display = 'none';
+      $('fileTree').style.display = 'none';
+      $('fileProps').style.display = '';
+      $('fileViewToggle').textContent = 'Raw text';
+      sfProps = window.PropsEditor.render($('fileProps'), text, scheduleSave);
+    }
+    function showPropsRaw() {
+      sfView = 'raw';
+      $('fileEditorArea').value = sfProps ? sfProps.text() : $('fileEditorArea').value;
+      $('fileEditorArea').style.display = '';
+      $('fileProps').style.display = 'none';
+      $('fileTree').style.display = 'none';
+      $('fileViewToggle').textContent = 'Settings';
+    }
+
+    function showTree() { sfView = 'tree'; $('fileTree').style.display = ''; $('fileProps').style.display = 'none'; $('fileEditorArea').style.display = 'none'; $('fileViewToggle').textContent = 'Raw JSON'; renderTreeView(); }
     function showRaw() {
       sfView = 'raw';
       $('fileEditorArea').value = sfKind === 'nbt' ? JSON.stringify(sfData, null, 2) : JSON.stringify(sfData, null, 2);
-      $('fileEditorArea').style.display = ''; $('fileTree').style.display = 'none'; $('fileViewToggle').textContent = 'Tree';
+      $('fileEditorArea').style.display = ''; $('fileProps').style.display = 'none';
+      $('fileTree').style.display = 'none'; $('fileViewToggle').textContent = 'Tree';
     }
     $('fileViewToggle').onclick = () => {
+      if (sfKind === 'properties') {
+        if (sfView === 'tree') showPropsRaw();
+        else showProps($('fileEditorArea').value);
+        return;
+      }
       if (sfView === 'tree') { showRaw(); }
       else {
         try { sfData = JSON.parse($('fileEditorArea').value); showTree(); scheduleSave(); }
@@ -937,8 +971,11 @@
       state.textContent = '';
       sfCurrentFile = rel; sfData = null; sfNbtMeta = null; sfReadOnly = false;
       sfKind = 'text'; sfView = 'tree';
+      sfProps = null;
       $('fileViewToggle').style.display = 'none';
-      $('fileTree').style.display = 'none'; area.style.display = ''; area.disabled = false;
+      $('fileTree').style.display = 'none';
+      $('fileProps').style.display = 'none'; $('fileProps').innerHTML = '';
+      area.style.display = ''; area.disabled = false;
 
       // .dat / level.dat → NBT tree editor (saved back as real NBT).
       if (/\.(dat|dat_old)$/i.test(name)) {
@@ -970,6 +1007,14 @@
         } catch { /* not valid JSON — plain text */ }
       }
 
+      if (/\.properties$/i.test(name) && !sfReadOnly && window.PropsEditor) {
+        sfKind = 'properties';
+        $('fileViewToggle').style.display = '';
+        showProps(res.text || '');
+        state.textContent = 'Only the values you change are written; the rest of the file is left alone.';
+        return;
+      }
+
       sfKind = 'text';
       area.disabled = sfReadOnly;
       area.value = res.text || '';
@@ -978,6 +1023,9 @@
 
     // Plain-text + raw-view auto-save.
     $('fileEditorArea').addEventListener('input', scheduleSave);
+    // Ctrl+F. A textarea has no find of its own, and the browser's does not
+    // look inside form fields.
+    if (window.FindBar) window.FindBar.attach($('fileEditorArea'), { host: $('fileEditorInner') });
 
     // Promise-based text prompt (Electron's window.prompt is unsupported).
     function askText(title, placeholder) {

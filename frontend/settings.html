@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <title>Redstone Launcher — Settings</title>
   <script src="theme-boot.js"></script>
+  <script src="findbar.js"></script>
   <script src="outline.js" defer></script>
   <script src="tabstrip.js" defer></script>
   <link href="nouislider.min.css" rel="stylesheet">
@@ -1622,6 +1623,8 @@
       // reach. Kept in the settings so every window picks it up.
       const cssWrap = document.getElementById('custom-css-wrap');
       const cssBox = document.getElementById('custom-css');
+      // Ctrl+F, same as every other editor in the launcher.
+      if (window.FindBar) window.FindBar.attach(cssBox, { host: cssWrap });
       const cssState = document.getElementById('custom-css-state');
       cssBox.value = getSetting('customCss', '') || '';
       // 'block', not '': the stylesheet hides this panel by default, so

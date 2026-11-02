@@ -41,6 +41,7 @@
                 <button class="fb-toggle" style="padding:4px 10px; display:none;">Raw JSON</button>
               </div>
               <div class="fb-tree" style="flex:1; min-height:0; display:none;"></div>
+              <div class="fb-props" style="flex:1; min-height:0; display:none;"></div>
               <textarea class="fb-area" spellcheck="false" style="flex:1; width:100%; font-family:monospace; resize:none; margin:0; border:1px solid var(--secondary-color); border-radius:var(--border-radius);"></textarea>
               <div class="fb-state" style="font-size:12px; opacity:0.7; margin-top:6px; height:16px;"></div>
             </div>
@@ -50,9 +51,16 @@
       const $ = (sel) => container.querySelector(sel);
       const bc = $('.fb-breadcrumb'), list = $('.fb-list'), editor = $('.fb-editor');
       const nameEl = $('.fb-name'), toggleBtn = $('.fb-toggle'), tree = $('.fb-tree'), area = $('.fb-area'), state = $('.fb-state');
+      const propsBox = $('.fb-props');
 
       let curDir = '', curFile = null, saveTimer = null;
       let kind = 'text', view = 'tree', data = null, nbtMeta = null, readOnly = false;
+      let props = null;          // the names-and-values editor, when one is open
+
+      // Ctrl+F. A textarea has no find of its own and the browser's does not
+      // look inside form fields, so a long config or log could only be read by
+      // scrolling.
+      if (window.FindBar) window.FindBar.attach(area, { host: area.parentElement });
 
       function crumb(label, target) {
         const a = document.createElement('a');
@@ -131,6 +139,12 @@
           } else if (kind === 'json') {
             const text = view === 'raw' ? area.value : JSON.stringify(data, null, 2);
             res = await ipcRenderer.invoke(chan + ':write', arg({ path: target, text }));
+          } else if (kind === 'properties') {
+            // Only the values that were edited: everything else in the file --
+            // the comments, the blank lines, the order -- comes back out
+            // exactly as it went in.
+            const text = view === 'raw' ? area.value : (props ? props.text() : area.value);
+            res = await ipcRenderer.invoke(chan + ':write', arg({ path: target, text }));
           } else {
             res = await ipcRenderer.invoke(chan + ':write', arg({ path: target, text: area.value }));
           }
@@ -138,9 +152,35 @@
         }, 500);
       }
 
-      function showTree() { view = 'tree'; tree.style.display = ''; area.style.display = 'none'; toggleBtn.textContent = 'Raw JSON'; window.FileTree.render(tree, data, { mode: kind === 'nbt' ? 'nbt' : 'json', onChange: scheduleSave }); }
-      function showRaw() { view = 'raw'; area.value = JSON.stringify(data, null, 2); area.style.display = ''; tree.style.display = 'none'; toggleBtn.textContent = 'Tree'; }
+      function showTree() { view = 'tree'; tree.style.display = ''; propsBox.style.display = 'none'; area.style.display = 'none'; toggleBtn.textContent = 'Raw JSON'; window.FileTree.render(tree, data, { mode: kind === 'nbt' ? 'nbt' : 'json', onChange: scheduleSave }); }
+      function showRaw() { view = 'raw'; area.value = JSON.stringify(data, null, 2); area.style.display = ''; tree.style.display = 'none'; propsBox.style.display = 'none'; toggleBtn.textContent = 'Tree'; }
+
+      // A .properties file as names and values: the name on the left, the value
+      // on the right as whatever kind of value it is. It used to be a wall of
+      // key=value, which meant knowing the exact spelling of every setting.
+      function showProps(text) {
+        view = 'tree';
+        area.style.display = 'none';
+        tree.style.display = 'none';
+        propsBox.style.display = '';
+        toggleBtn.textContent = 'Raw text';
+        props = window.PropsEditor.render(propsBox, text, scheduleSave);
+      }
+      function showPropsRaw() {
+        view = 'raw';
+        area.value = props ? props.text() : area.value;
+        area.style.display = '';
+        propsBox.style.display = 'none';
+        tree.style.display = 'none';
+        toggleBtn.textContent = 'Settings';
+      }
+
       toggleBtn.onclick = () => {
+        if (kind === 'properties') {
+          if (view === 'tree') showPropsRaw();
+          else showProps(area.value);
+          return;
+        }
         if (view === 'tree') showRaw();
         else { try { data = JSON.parse(area.value); showTree(); scheduleSave(); } catch (e) { alert('Invalid JSON: ' + e.message); } }
       };
@@ -150,7 +190,10 @@
         list.style.display = 'none'; editor.style.display = 'flex';
         nameEl.textContent = name; state.textContent = '';
         curFile = rel; data = null; nbtMeta = null; readOnly = false; kind = 'text'; view = 'tree';
-        toggleBtn.style.display = 'none'; tree.style.display = 'none'; area.style.display = ''; area.disabled = false;
+        props = null;
+        toggleBtn.style.display = 'none'; tree.style.display = 'none'; propsBox.style.display = 'none';
+        propsBox.innerHTML = '';
+        area.style.display = ''; area.disabled = false;
 
         if (/\.(dat|dat_old|nbt|schem|schematic|litematic|mcstructure)$/i.test(name)) {
           const n = await ipcRenderer.invoke(chan + ':read-nbt', arg({ path: rel }));
@@ -169,6 +212,14 @@
 
         if (/\.json$/i.test(name) && !readOnly) {
           try { data = JSON.parse(res.text || 'null'); kind = 'json'; toggleBtn.style.display = ''; showTree(); return; } catch { /* text */ }
+        }
+
+        if (/\.properties$/i.test(name) && !readOnly && window.PropsEditor) {
+          kind = 'properties';
+          toggleBtn.style.display = '';
+          showProps(res.text || '');
+          state.textContent = 'Only the values you change are written; the rest of the file is left alone.';
+          return;
         }
         kind = 'text'; area.disabled = readOnly; area.value = res.text || '';
         state.textContent = readOnly ? '(read-only — inside archive / compressed)' : '';
