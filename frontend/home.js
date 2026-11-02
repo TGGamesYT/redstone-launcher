@@ -206,10 +206,6 @@
       .hs.dragging { opacity:0.4; }
       /* Where it will land if you let go now. A line down the side it will go
          to, or a wash over the whole segment when it will share the row. */
-      .hs-drop { outline:3px solid #5ad65a !important; outline-offset:-3px; }
-      .hs-drop::after { content:attr(data-drop); position:absolute; top:6px; left:6px; z-index:8;
-        font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
-        background:#5ad65a; color:#06290b; padding:2px 7px; border-radius:4px; white-space:nowrap; }
       /* Where it will land, drawn where it will land: a rectangle the size
          and shape of the space it is going into, in the row it is going into.
          A line down somebody's side said "next to this one" and then put it
@@ -1469,7 +1465,14 @@
         b.addEventListener('focus', say);
         b.onclick = () => {
           close();
-          const seg = { id: `${t.type}-${Date.now().toString(36)}`, type: t.type, w: COLUMNS, h: 0, scale: 100 };
+          // A row of its own at the bottom, which is somewhere definite --
+          // without a row of its own a new segment landed wherever the
+          // wrapping happened to put it.
+          const lastRow = LAYOUT.reduce((n, x) => Math.max(n, Number(x.row) || 0), -1);
+          const seg = {
+            id: `${t.type}-${Date.now().toString(36)}`, type: t.type,
+            row: lastRow + 1, x: 0, w: COLUMNS, h: 0, scale: 100,
+          };
           for (const o of t.options || []) seg[o.id] = o.default;
           LAYOUT.push(seg);
           save().then(() => editSegment(seg.id));
