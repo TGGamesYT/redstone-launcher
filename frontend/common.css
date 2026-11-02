@@ -134,6 +134,53 @@
 .findbar button:hover { opacity: 1; border-color: var(--base-color); }
 .findbar button i { font-size: 16px; }
 
+/* Where the matches are.
+   A textarea cannot be marked up and only draws its selection while it is
+   focused, which it must not be while you are typing in the find box. So a
+   copy of the text sits behind the field with the matches wrapped in <mark>,
+   the field goes see-through over the top of it, and the two are kept in
+   step. Only while the bar is open. */
+.fnd-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.fnd-layer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  overflow: hidden;
+  color: transparent;
+  box-sizing: border-box;
+  pointer-events: none;
+  border-radius: var(--border-radius);
+}
+
+/* Above the layer, and see-through so it shows. A positioned element paints
+   over a non-positioned one whatever the order, so the field has to be
+   positioned too. */
+textarea.fnd-over {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.fnd-layer .fnd-hit {
+  color: transparent;
+  background: rgba(255, 214, 0, 0.32);
+  border-radius: 2px;
+}
+
+/* The one you are on, told apart from the rest of them. */
+.fnd-layer .fnd-hit.on {
+  background: rgba(255, 145, 0, 0.72);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+
 /* ── A .properties file, as names and values ───────────────────────────────
    server.properties is a list of settings, and editing it as a wall of
    key=value meant knowing the exact spelling of every name and never making a

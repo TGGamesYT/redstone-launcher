@@ -9,6 +9,34 @@ started.
 
 ---
 
+## 0. Round 42
+
+- [x] **Find marks nothing.** — *Selecting the match was not enough: a textarea
+      only draws its selection while it is FOCUSED, and focus stays in the
+      query box so Enter steps through the matches instead of being typed into
+      the file. So nothing appeared at all. A copy of the text now sits behind
+      the field with every match wrapped in a mark and the current one marked
+      differently, the field goes see-through over it, and the two are kept in
+      step -- same font, padding, wrapping and scroll position. Only while the
+      bar is open.*
+- [x] **The player render still stretches.** — *skinview3d writes the size onto
+      the canvas as INLINE styles, so the stylesheet's `width:auto` never had a
+      say: an inline height beats a rule, so capping the width squashed the
+      width and left the height. The segment measures the room and tells the
+      viewer instead -- which keeps it sharp as well, rather than scaling a
+      canvas down in CSS -- and the canvas letterboxes what it draws so even
+      mid-resize nothing is stretched.*
+- [x] **The limbs go wild when the figure is flung.** — *The reactions are
+      ADDED to the pose already on the model, which is only this frame's pose
+      if something has put the rig back to a known one first. The conductor
+      does; skinview3d's own animations do not, and neither does its update
+      loop -- an idle writes the two parts it animates and leaves the head, the
+      cape and the legs where last frame left them. So the spin was added to
+      its own output over and over and a flick wound them up without bound.
+      One reset per frame, and they behave exactly like the skins page's.*
+
+---
+
 ## 0. Round 41
 
 The newest batch, in the order it was given.

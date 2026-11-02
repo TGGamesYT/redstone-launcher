@@ -174,8 +174,51 @@ check("and says so when there are none",
    await p.$eval("#hold .findbar", e => e.classList.contains("empty"))],
   ["none", true]);
 
+// ── and that the matches are actually SHOWN ──
+// Selecting them was not enough: a textarea only draws its selection while it
+// is focused, and focus stays in the find box, so nothing appeared at all.
+// Case matching is still ticked from above; these are about the marks.
+await p.uncheck("#hold .fnd-case input");
+await p.fill("#hold .fnd-q", "two");
+check("every match is marked",
+  await p.$$eval("#hold .fnd-layer .fnd-hit", els => els.map(e => e.textContent)),
+  ["two", "two", "TWO"]);
+check("and exactly one of them is marked as the one you are on",
+  await p.$$eval("#hold .fnd-layer .fnd-hit", els => els.map(e => e.classList.contains("on"))),
+  [true, false, false]);
+await p.keyboard.press("Enter");
+check("stepping moves which one that is",
+  await p.$$eval("#hold .fnd-layer .fnd-hit", els => els.map(e => e.classList.contains("on"))),
+  [false, true, false]);
+check("the layer holds the same text as the field",
+  await p.evaluate(() => document.querySelector("#hold .fnd-layer").textContent.trim()
+    === document.getElementById("area").value.trim()),
+  true,
+  "a character out of step and the highlight sits beside the word");
+check("the marks line up with the words they are under",
+  await p.evaluate(() => {
+    const a = document.getElementById("area");
+    const mark = document.querySelectorAll("#hold .fnd-layer .fnd-hit")[0];
+    const m = mark.getBoundingClientRect();
+    // The first match is on the second line of the field. Its box has to be
+    // inside the field's, and a sensible size for three characters.
+    const r = a.getBoundingClientRect();
+    return [m.width > 4, m.height > 4, m.left >= r.left - 1, m.top >= r.top - 1, m.bottom <= r.bottom + 1];
+  }),
+  [true, true, true, true, true]);
+check("the field is see-through while they are showing, so they can be seen",
+  await p.$eval("#area", e => getComputedStyle(e).backgroundColor),
+  "rgba(0, 0, 0, 0)");
+
 await p.keyboard.press("Escape");
 check("Escape closes it", await p.$eval("#hold .findbar", e => e.style.display), "none");
+check("and the layer goes with it, along with the field's own background",
+  [await p.$$eval("#hold .fnd-layer", els => els.length),
+   await p.$eval("#area", e => getComputedStyle(e).backgroundColor !== "rgba(0, 0, 0, 0)")],
+  [0, true],
+  "a page with a closed find bar pays nothing for it");
+check("and the field is back where it started in the layout",
+  await p.evaluate(() => document.getElementById("area").parentElement.id), "hold");
 
 await browser.close();
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

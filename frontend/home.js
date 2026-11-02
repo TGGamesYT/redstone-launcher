@@ -162,8 +162,13 @@
          maxima, so a canvas too big for its space keeps its proportions. */
       .hs-player canvas {
         flex: 0 0 auto;
-        width: auto; height: auto;
-        max-width: 100%; max-height: 100%;
+        max-width: 100%;
+        /* skinview3d sets the canvas size inline, so these cannot set it --
+           they only stop it being squashed. The segment's own measurement
+           does the sizing (see the player segment); object-fit means that
+           even mid-resize, before that measurement has been taken, what is
+           drawn is letterboxed rather than stretched. */
+        object-fit: contain;
       }
       .hs > h2, .hs > h3 { margin:0 0 10px; }
       .hs-body { min-height:0; flex:1; overflow:auto; }
@@ -635,7 +640,34 @@
       // same as everything else inside a segment.
       const scale = (Number(seg.scale) || 100) / 100;
       const h = Math.round(Math.max(120, Math.min(700, Number(seg.height) || 320)) * scale);
-      const v = new skinview3d.SkinViewer({ canvas, width: Math.round(h * 0.6), height: h });
+      const ASPECT = 0.6;              // a player is this much wider than tall
+
+      // How big the render can be in the room there is.
+      //
+      // skinview3d writes width and height onto the canvas as INLINE styles,
+      // which is why the stylesheet could not keep it in proportion: an inline
+      // height beats a rule, so capping the width with max-width squashed the
+      // width and left the height exactly as it was. That IS the stretching.
+      // So the room is measured and the viewer is told, which keeps the render
+      // sharp as well -- scaling a canvas down in CSS is a blurry way to do
+      // the same thing.
+      const wanted = () => {
+        let hh = h;
+        let ww = Math.round(hh * ASPECT);
+        const availW = box.clientWidth || node.clientWidth || 0;
+        if (availW > 24 && ww > availW) { ww = Math.floor(availW); hh = Math.round(ww / ASPECT); }
+        // Only when the segment has a height of its own: otherwise the box is
+        // as tall as its contents, and fitting to it would chase itself.
+        if (seg.h) {
+          const availH = box.clientHeight || 0;
+          if (availH > 40 && hh > availH) { hh = Math.floor(availH); ww = Math.round(hh * ASPECT); }
+        }
+        return { w: Math.max(40, ww), h: Math.max(60, hh) };
+      };
+
+      const first = wanted();
+      const v = new skinview3d.SkinViewer({ canvas, width: first.w, height: first.h });
+      let atW = first.w, atH = first.h;
       v.zoom = 0.9;
       v.autoRotate = !!seg.spin;
       // Whether it can be turned by hand. Some people want a picture, not a
@@ -649,6 +681,23 @@
         v.controls.enableZoom = false;
       } catch { /* an older bundle */ }
       canvas.style.cursor = movable ? 'grab' : 'default';
+
+      // Resized, not redrawn. Making a new viewer for a new size is what used
+      // to leave the page with a dead canvas and a doubled animation; the
+      // existing one is simply told, which also updates the camera's aspect
+      // so nothing is squeezed. Only on a real change of size, or the observer
+      // would answer its own writes for ever.
+      if (typeof ResizeObserver === 'function') {
+        const ro = new ResizeObserver(() => {
+          const want = wanted();
+          if (want.w === atW && want.h === atH) return;
+          atW = want.w; atH = want.h;
+          try { v.setSize(want.w, want.h); } catch { /* an older bundle */ }
+        });
+        ro.observe(node);
+        onGone(node, () => { try { ro.disconnect(); } catch { /* gone */ } });
+      }
+
       await v.loadSkin('data:image/png;base64,' + skin.base64, { model: skin.slim ? 'slim' : 'default' });
       if (skin.capeUrl) { try { await v.loadCape(skin.capeUrl); } catch { /* no cape */ } }
 

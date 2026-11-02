@@ -577,6 +577,49 @@ check("and a large one pushes the text clear of the curve",
   `${large[0]}px across and ${large[1]}px down at a 40px radius — the curve cannot reach the text`);
 await p.evaluate(() => document.documentElement.style.removeProperty("--border-radius"));
 
+// ── the player render, in a segment too narrow for it ──
+//
+// skinview3d writes the render's size onto the canvas as INLINE styles, so the
+// stylesheet cannot set it: an inline height beats a rule, which is why
+// capping the width with max-width squashed the width and left the height
+// where it was. That is the stretching. Two things stop it -- the canvas does
+// not flex, and what is drawn is letterboxed rather than scaled to the box --
+// and the segment measures the room and tells the viewer, which is what keeps
+// it sharp.
+await set([{ id: "a", type: "player", row: 0, x: 0, w: 18, h: 0 }]);
+const squash = await p.evaluate(() => {
+  const n = document.querySelector('#home-segments .hs[data-id="a"]');
+  n.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "hs-player";
+  box.style.flexDirection = "column";
+  box.style.alignItems = "center";
+  const c = document.createElement("canvas");
+  // Exactly what skinview3d does: the bitmap, and the size, written inline.
+  c.width = 192; c.height = 320;
+  c.style.width = "192px";
+  c.style.height = "320px";
+  box.appendChild(c);
+  n.appendChild(box);
+  const cs = getComputedStyle(c);
+  const r = c.getBoundingClientRect();
+  return {
+    shrink: cs.flexShrink,
+    fit: cs.objectFit,
+    width: Math.round(r.width),
+    height: Math.round(r.height),
+    room: Math.round(n.getBoundingClientRect().width),
+  };
+});
+check("the canvas is not squashed along the column it sits in",
+  squash.shrink, "0",
+  "a flex column shrinks a too-tall item's HEIGHT and leaves its width, which is a stretch");
+check("and what is drawn keeps its proportions when the box is capped",
+  squash.fit, "contain",
+  `the box came out ${squash.width}x${squash.height} in ${squash.room}px of room`);
+check("the box is held inside the segment rather than spilling out of it",
+  squash.width <= squash.room, true);
+
 if (errors.length) { console.log("PAGE ERRORS:", errors.join(" | ")); bad += errors.length; }
 await browser.close();
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

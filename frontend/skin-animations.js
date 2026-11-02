@@ -453,13 +453,26 @@
     anim.animate = function (player, delta) {
       const dt = Number.isFinite(delta) && delta > 0 ? Math.min(delta, 0.1) : 1 / 60;
       const rest = restPose(player);
+
+      // Back to rest FIRST, every frame.
+      //
+      // The reactions are added to the pose already on the model -- `+=` on a
+      // rotation -- which is only relative to this frame if something has put
+      // the rig back to a known pose first. The conductor does: it writes a
+      // complete pose with `.set()` before adding anything. skinview3d's own
+      // animations do not, and neither does its update loop: an idle writes
+      // the two parts it animates and leaves the head, the cape and the legs
+      // exactly as they were left last frame. So the spin was added to its own
+      // output over and over, and a flick wound the limbs up without bound --
+      // which is what "ultra crazy" is. One reset and they behave like the
+      // skins page's, because now they are doing the same thing.
+      resetToRest(player);
+
       if (inner && typeof inner.animate === 'function') {
         // Its own progress, its own speed: skinview3d advances `progress` on
         // the animation object it was given, and this is that object now.
         try { inner.progress = anim.progress; } catch { /* a plain object */ }
         try { inner.animate(player, delta); } catch { /* leave it standing */ }
-      } else {
-        resetToRest(player);
       }
       applySpin(state, rest, currentSpin(), dt);
     };
