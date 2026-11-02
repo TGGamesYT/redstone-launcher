@@ -9,6 +9,35 @@ started.
 
 ---
 
+## 0. Round 43
+
+- [x] **"Where in its space" has no up and down.** — *It offered left, middle
+      and right and nothing else, so a render could not be put at the bottom
+      of a tall row. Every segment now has a place DOWN its row as well --
+      fill it, top, middle or bottom -- beside the width and the height, since
+      it is true of every type rather than of any one of them.*
+- [x] **A segment's top edge cannot be resized.** — *The two are the same
+      thing: until a segment could sit anywhere but the top of its row, there
+      was no space above one for the top edge to move into, and I had made the
+      top handles width-only for exactly that reason. Both edges change the
+      height now, and the edge you are NOT dragging stays put -- which is the
+      whole of what dragging an edge means. The pinning is the segment's place
+      down its row, so the gesture sets it and the readout says which.*
+- [x] **The player render came out tiny.** — *The height was being clamped to
+      the box's measured height, and the box at that moment held one canvas
+      that had not been sized yet, so it was a few pixels tall. The room is
+      measured from the segment, less whatever else is in it, and a
+      measurement of zero is read as "not laid out yet" rather than as "no
+      room".*
+- [x] **Resizing a segment taller makes the page scrollable with nothing to
+      see.** — *Fifty-four pixels of it: the room above the first row and
+      below the last was padding on the content, and padding inside a scroll
+      container is part of what scrolls. It is a transparent border on the
+      scroller now, which is outside the padding box and never scrolls, so a
+      segment that fills the page fits it.*
+
+---
+
 ## 0. Round 42
 
 - [x] **Find marks nothing.** — *Selecting the match was not enough: a textarea

@@ -482,8 +482,8 @@ await p.evaluate(() => {
 await p.waitForTimeout(250);
 check("a segment's settings open with what it is set to",
   await p.$$eval(".he-opt input, .he-opt select", (els) => els.map(e => e.type === "checkbox" ? e.checked : e.value)),
-  ["Continue playing", "6", "list", "100", "0", "100"],
-  "its own options, then the width, height and inside size every type has");
+  ["Continue playing", "6", "list", "100", "0", "100", "stretch"],
+  "its own options, then the width, height, inside size and place down the row every type has");
 
 await p.evaluate(() => {
   const all = [...document.querySelectorAll(".he-opt input, .he-opt select")];
@@ -576,6 +576,77 @@ check("and a large one pushes the text clear of the curve",
   [large[0] >= 30, large[1] >= 30], [true, true],
   `${large[0]}px across and ${large[1]}px down at a 40px radius — the curve cannot reach the text`);
 await p.evaluate(() => document.documentElement.style.removeProperty("--border-radius"));
+
+// ── a segment that fills the page does not make it scroll ──
+//
+// The room above the first row and below the last used to be padding on the
+// content. Padding inside a scroll container is part of what scrolls, so a
+// segment sized to exactly fill the visible area came out fifty-four pixels
+// too tall: the page became scrollable and scrolling it showed nothing but
+// that blank. The room is a transparent border on the scroller now, which is
+// outside the padding box and never scrolls.
+await set([{ id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 }]);
+const fills = await p.evaluate(() => {
+  const sc = document.querySelector("[data-fit-height]");
+  const node = document.querySelector('#home-segments .hs[data-id="a"]');
+  node.style.height = sc.clientHeight + "px";
+  const cs = getComputedStyle(sc);
+  return {
+    overflow: sc.scrollHeight - sc.clientHeight,
+    room: parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth),
+  };
+});
+check("filling the visible area exactly leaves nothing to scroll", fills.overflow, 0,
+  "padding on the content is part of what scrolls; a border is not");
+check("and the breathing room is still there", fills.room > 0, true,
+  `${fills.room}px of it, above and below`);
+await set([{ id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 }]);
+
+// ── the top edge ──
+//
+// A row is as tall as its tallest segment, so a shorter one has space either
+// above or below it depending on where it sits -- and until there was a
+// setting for that, every segment filled its row and the top edge had nowhere
+// to go. Dragging it did nothing but change the width.
+await set([
+  { id: "a", type: "recent", row: 0, x: 0, w: 50, h: 300 },
+  { id: "b", type: "clock", row: 0, x: 50, w: 50, h: 160 },
+]);
+await edit();
+await dragGrip("b", "ne", 0, -60);
+check("dragging a top edge upwards makes the segment TALLER",
+  (await saved()).find(x => x.id === "b").h, 220,
+  "it used to be the one thing a top handle could not do");
+check("and pins it to the bottom, so the bottom edge is what stayed",
+  await p.evaluate(() => {
+    const seg = window.__saved.find(s => s.id === "b");
+    const node = document.querySelector('#home-segments .hs[data-id="b"]');
+    return [seg.valign, getComputedStyle(node).alignSelf];
+  }),
+  ["bottom", "end"],
+  "dragging one edge may never move the other, so the gesture says which is pinned");
+
+await dragGrip("b", "ne", 0, 40);
+check("and dragging it back down makes it shorter again",
+  (await saved()).find(x => x.id === "b").h, 180);
+
+await dragGrip("b", "se", 0, 50);
+check("the bottom edge pins the top instead",
+  await p.evaluate(() => window.__saved.find(s => s.id === "b").valign), "top");
+
+// ── where it sits down its row ──
+await set([
+  { id: "a", type: "recent", row: 0, x: 0, w: 50, h: 300 },
+  { id: "b", type: "clock", row: 0, x: 50, w: 50, h: 120, valign: "bottom" },
+]);
+const down = await p.evaluate(() => {
+  const a = document.querySelector('#home-segments .hs[data-id="a"]').getBoundingClientRect();
+  const b = document.querySelector('#home-segments .hs[data-id="b"]').getBoundingClientRect();
+  return { gapAbove: Math.round(b.top - a.top), bottomsLevel: Math.abs(b.bottom - a.bottom) < 2 };
+});
+check("a segment set to the bottom of its row has space above it",
+  [down.gapAbove > 100, down.bottomsLevel], [true, true],
+  `${down.gapAbove}px of room above it, and its bottom level with the tall one's`);
 
 // ── the player render, in a segment too narrow for it ──
 //

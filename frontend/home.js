@@ -127,7 +127,17 @@
          and where the content started. The scroller's padding is cancelled
          and the right is given the same twenty <body> gives the left. */
       #home-segments { display:flex; flex-direction:column; align-items:stretch;
-        margin-left:-12px; padding:14px 20px 40px 0; }
+        margin-left:-12px; padding:0 20px 0 0; }
+      /* The breathing room above the first row and below the last is a
+         transparent BORDER on the scroller, not padding on the content.
+         Padding inside a scroll container is part of what scrolls: with
+         fourteen pixels above and forty below, a segment sized to exactly
+         fill the page came out fifty-four pixels too tall, so the page became
+         scrollable and scrolling it showed nothing but that blank. A border is
+         outside the padding box and never scrolls, and because fitheight sizes
+         these border-box the room comes off the visible area instead -- so the
+         page looks the same and a segment that fills it fits it. */
+      .home-scroller { border-top:14px solid transparent; border-bottom:40px solid transparent; }
       .hs-rowbox { display:grid; grid-template-columns:repeat(100, 1fr);
         align-items:stretch; }
       .hs { position:relative; box-sizing:border-box; min-width:0;
@@ -362,12 +372,8 @@
       body.home-editing .hs-grip { display:block; }
       .hs-grip::before { content:""; position:absolute; inset:3px; border-radius:3px;
         background:#fff; border:2px solid rgba(0,0,0,0.55); }
-      /* The top corners are width only: a row has one top, so there is no
-         upwards for a segment to grow into, and a top handle that changed the
-         height could only ever have moved the BOTTOM edge. The cursor says
-         sideways, because sideways is all it does. */
-      .hs-grip.nw { left:4px; top:-5px; cursor:ew-resize; }
-      .hs-grip.ne { right:4px; top:-5px; cursor:ew-resize; }
+      .hs-grip.nw { left:4px; top:-5px; cursor:nwse-resize; }
+      .hs-grip.ne { right:4px; top:-5px; cursor:nesw-resize; }
       .hs-grip.sw { left:4px; bottom:15px; cursor:nesw-resize; }
       .hs-grip.se { right:4px; bottom:15px; cursor:nwse-resize; }
       .hs-size { position:absolute; left:50%; top:-12px; transform:translateX(-50%); z-index:7;
@@ -654,15 +660,33 @@
       const wanted = () => {
         let hh = h;
         let ww = Math.round(hh * ASPECT);
+
+        // Across: the room inside the segment. A measurement of zero means
+        // the page has not laid this out yet, which is not the same as "no
+        // room" -- clamping to it is how the render came out tiny.
         const availW = box.clientWidth || node.clientWidth || 0;
-        if (availW > 24 && ww > availW) { ww = Math.floor(availW); hh = Math.round(ww / ASPECT); }
-        // Only when the segment has a height of its own: otherwise the box is
-        // as tall as its contents, and fitting to it would chase itself.
+        if (availW > 40 && ww > availW) { ww = Math.floor(availW); hh = Math.round(ww / ASPECT); }
+
+        // Down: only when the segment has a height of its own, because
+        // otherwise the segment is as tall as its contents and fitting to it
+        // would chase itself. And measured from the SEGMENT, less whatever
+        // else is in it -- the heading, the account name -- rather than from
+        // the box, which at this point holds one canvas that has not been
+        // sized yet and is therefore a few pixels tall.
         if (seg.h) {
-          const availH = box.clientHeight || 0;
-          if (availH > 40 && hh > availH) { hh = Math.floor(availH); ww = Math.round(hh * ASPECT); }
+          let availH = node.clientHeight || 0;
+          for (const kid of node.children) {
+            if (kid === box || kid.classList.contains('hs-tools')
+              || kid.classList.contains('hs-grip') || kid.classList.contains('hs-size')) continue;
+            availH -= kid.offsetHeight || 0;
+          }
+          for (const kid of box.children) {
+            if (kid === canvas) continue;
+            availH -= kid.offsetHeight || 0;
+          }
+          if (availH > 80 && hh > availH) { hh = Math.floor(availH); ww = Math.round(hh * ASPECT); }
         }
-        return { w: Math.max(40, ww), h: Math.max(60, hh) };
+        return { w: Math.max(60, ww), h: Math.max(100, hh) };
       };
 
       const first = wanted();
@@ -1163,8 +1187,12 @@
   // What a segment's CONTENTS depend on. Its size and where it sits are not
   // in here: moving or resizing one does not change what it draws, so it does
   // not have to be drawn again.
+  // What a segment DRAWS, as opposed to where it is and how big. A change to
+  // the second kind moves a node; a change to the first kind redraws it. Where
+  // it sits down its row is the second kind -- redrawing a player segment over
+  // it would throw its viewer away and build another.
   const contentKey = (seg) => {
-    const { row, x, w, h, scale, ...rest } = seg;
+    const { row, x, w, h, scale, valign, ...rest } = seg;
     return JSON.stringify(rest);
   };
 
@@ -1174,6 +1202,10 @@
     // Where the page was. Rebuilding it used to drop you back at the top,
     // which on a long page is the whole page lost for a change of one size.
     const scroller = host.closest('[data-fit-height]') || host.parentElement;
+    // The home page's own scroller carries the room above and below the rows
+    // (see .home-scroller). Marked here rather than in the markup, so the
+    // rule only ever applies to a scroller this page is actually drawn into.
+    if (scroller) scroller.classList.add('home-scroller');
     const was = scroller ? scroller.scrollTop : 0;
 
     // Anything already on the page that has not changed is MOVED rather than
@@ -1223,10 +1255,18 @@
   // One segment's width, position, height and content scale. A segment with
   // no height is as tall as its contents, which is how the page has always
   // been.
+  // Where a segment sits down its row. Nothing by default, which leaves the
+  // grid's own stretch: as tall as the row, which is what every layout did
+  // before this existed. The named three are what makes space ABOVE a segment
+  // possible, and therefore what makes dragging its top edge mean anything.
+  const VALIGN = { top: 'start', middle: 'center', bottom: 'end' };
+
   function applyOne(node, seg) {
     node.style.setProperty('--x', String(seg.x || 0));
     node.style.setProperty('--w', String(seg.w || COLUMNS));
     node.style.setProperty('--s', String((seg.scale || 100) / 100));
+    const va = VALIGN[seg.valign];
+    if (va) node.style.alignSelf = va; else node.style.removeProperty('align-self');
     if (seg.h) { node.style.height = seg.h + 'px'; node.dataset.h = String(seg.h); }
     else { node.style.removeProperty('height'); delete node.dataset.h; }
   }
@@ -1629,7 +1669,11 @@
           hardLeft = Math.max(hardLeft, b.x + (k + 1) * MIN_W);
         }
 
-        const show = (w, h) => { readout.textContent = h ? `${w}% · ${Math.round(h)}px` : `${w}%`; };
+        // The anchor is said out loud, because the drag sets it: a segment
+        // that filled its row is pinned to whichever edge was not dragged.
+        const show = (w, h, from) => {
+          readout.textContent = (h ? `${w}% · ${Math.round(h)}px` : `${w}%`) + (from ? ` · ${from}` : '');
+        };
         show(startW, seg.h);
 
         const onMove = (ev) => {
@@ -1667,19 +1711,20 @@
           }
           applyOne(node, seg);
 
-          // Only the BOTTOM edge changes the height. A row has one top: the
-          // segment cannot grow upwards, so a top corner that changed the
-          // height grew it downwards instead -- dragging one way and watching
-          // the other end move. A top corner is width only.
-          //
-          // And the height is this segment's own. It used to be copied onto
-          // every other segment in the row, so sizing one sized them all.
-          if (south) {
-            const dy = ev.clientY - startY;
-            seg.h = Math.max(80, Math.min(1200, Math.round(startH + dy)));
-            applyOne(node, seg);
-          }
-          show(seg.w, seg.h);
+          // Both edges change the height, and the one you are NOT dragging
+          // stays where it is -- which is the whole of what dragging an edge
+          // means. Pinning is what the segment's place down its row says, so
+          // the gesture sets it: drag the bottom and the top is pinned, drag
+          // the top and the bottom is. Without that, a top edge dragged
+          // upwards could only make the segment taller downwards, because a
+          // segment with nothing said about it fills its row from the top --
+          // which is why the top could not be resized at all.
+          const dy = ev.clientY - startY;
+          seg.h = Math.max(80, Math.min(1200, Math.round(startH + (south ? dy : -dy))));
+          if (south) { if (seg.valign === 'bottom') seg.valign = 'top'; }
+          else if (!seg.valign || seg.valign === 'stretch' || seg.valign === 'top') seg.valign = 'bottom';
+          applyOne(node, seg);
+          show(seg.w, seg.h, south ? 'from the top' : 'from the bottom');
         };
         const onUp = () => {
           document.removeEventListener('mousemove', onMove);
@@ -1983,7 +2028,29 @@
       };
       sWrap.appendChild(sIn);
 
-      sizeRow.append(wWrap, hWrap, sWrap);
+      // Where it sits DOWN its row, which had no setting at all -- "where in
+      // its space" offered left, middle and right and nothing else, so a
+      // render could not be put at the bottom of a tall row. It is here
+      // rather than in each type's options because it is true of every
+      // segment, like the width and the height.
+      const vWrap = el('div', 'he-opt');
+      vWrap.appendChild(el('label', '', 'Down its row'));
+      const vIn = el('select');
+      for (const [value, label] of [
+        ['stretch', 'Fill the row'],
+        ['top', 'At the top'],
+        ['middle', 'In the middle'],
+        ['bottom', 'At the bottom'],
+      ]) {
+        const op = el('option', '', label);
+        op.value = value;
+        if ((values.valign || 'stretch') === value) op.selected = true;
+        vIn.appendChild(op);
+      }
+      vIn.onchange = () => { values.valign = vIn.value; };
+      vWrap.appendChild(vIn);
+
+      sizeRow.append(wWrap, hWrap, sWrap, vWrap);
 
       const actions = el('div', 'modal-actions');
       actions.style.marginTop = '12px';

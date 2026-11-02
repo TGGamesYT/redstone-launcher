@@ -4770,6 +4770,14 @@ const clampScale = (v) => Math.max(50, Math.min(220, Math.round(Number(v) || 100
 // one. A row is a row now, and a segment says where in it it sits.
 const clampRow = (v) => Math.max(0, Math.min(200, Math.round(Number(v) || 0)));
 const clampX = (v) => Math.max(0, Math.min(HOME_COLUMNS - HOME_W_MIN, Math.round(Number(v) || 0)));
+// Where a segment sits DOWN its row, when the row is taller than it is --
+// which happens as soon as two segments beside each other have different
+// heights. "stretch" is the default and what every layout did before this
+// existed: as tall as the row. The named three are what makes room above a
+// segment a thing that exists, and therefore what makes dragging its top edge
+// mean anything.
+const HOME_VALIGNS = ["stretch", "top", "middle", "bottom"];
+const clampValign = (v) => (HOME_VALIGNS.includes(String(v)) ? String(v) : "stretch");
 
 // Give rows and positions to a layout that has none -- which is every layout
 // saved before this. Walked the way the old wrapping walked it, so a page
@@ -4867,7 +4875,7 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
     .slice(0, 40)
     .map((seg, i) => {
       const allowed = new Set(["id", "type", "w", "h", "scale",
-        "row", "x",
+        "row", "x", "valign",
         ...(HOME_TYPES.find(t => t.type === seg.type).options || []).map(o => o.id)]);
       const out = {};
       // Only the options this type declares, so an edited layout cannot
@@ -4880,6 +4888,7 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
       out.scale = clampScale(seg.scale);
       out.row = clampRow(seg.row);
       out.x = clampX(seg.x);
+      out.valign = clampValign(seg.valign);
       return out;
     });
   const tidied = tidyRows(clean);
