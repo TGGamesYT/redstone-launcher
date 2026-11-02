@@ -436,6 +436,36 @@
     return anim;
   }
 
+  // One of skinview3d's own animations -- idling, walking, running, flying --
+  // with the spin reactions on top of it.
+  //
+  // The reactions are added to whatever pose is already on the model, so they
+  // layer over anything. The converted clips go through the conductor, which
+  // does this itself; skinview3d's own animations went on the viewer raw, so
+  // a render set to walk or idle was a rigid statue when it was turned while
+  // the same render set to the clips threw its arms out. Standing still was
+  // the same: no animation at all meant no reactions either.
+  //
+  // `inner` may be null, which is "standing still, but it still reacts".
+  function withSpin(inner) {
+    const anim = new skinview3d.PlayerAnimation();
+    const state = newSpinState();
+    anim.animate = function (player, delta) {
+      const dt = Number.isFinite(delta) && delta > 0 ? Math.min(delta, 0.1) : 1 / 60;
+      const rest = restPose(player);
+      if (inner && typeof inner.animate === 'function') {
+        // Its own progress, its own speed: skinview3d advances `progress` on
+        // the animation object it was given, and this is that object now.
+        try { inner.progress = anim.progress; } catch { /* a plain object */ }
+        try { inner.animate(player, delta); } catch { /* leave it standing */ }
+      } else {
+        resetToRest(player);
+      }
+      applySpin(state, rest, currentSpin(), dt);
+    };
+    return anim;
+  }
+
   // ── Being turned, and finding the way back ───────────────────────────────
   /**
    * Wire a viewer's camera so dragging it has weight, the limbs react to being
@@ -913,6 +943,9 @@
     // Rest pose plus the spin reactions, for the card previews -- they spin the
     // model itself, so this reads the rate off the model.
     spinOnly: spinOnlyAnimation,
+    // Any animation, with the spin reactions layered over it. Pass null for
+    // standing still, which still reacts.
+    withSpin,
     // Weight on the camera, and a way back to facing forward.
     orbitPhysics,
     // The springs orbitPhysics is built from, for a render that drives its own

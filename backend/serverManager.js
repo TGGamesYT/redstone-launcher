@@ -281,7 +281,8 @@ async function editServer(name, { newName, version, type, launchArgs, loaderVers
   const infoPath = path.join(dir, "serverinfo.json");
   if (!fs.existsSync(infoPath)) throw new Error("Server not found");
   const info = JSON.parse(fs.readFileSync(infoPath, "utf-8"));
-  if (servers.get(name)?.process) throw new Error("Stop the server before editing it");
+  const live = servers.get(name);
+  const running = !!(live && live.process);
 
   // A jar handed over is always a reason to re-provision: it is a different
   // file even when every other field is the same.
@@ -289,6 +290,20 @@ async function editServer(name, { newName, version, type, launchArgs, loaderVers
     || (version && version !== info.version)
     || (type && type.toLowerCase() !== (info.type || "").toLowerCase())
     || (loaderVersion !== undefined && loaderVersion !== info.loaderVersion);
+  const renaming = !!(newName && newName !== name);
+
+  // Editing a running server used to be refused outright, whatever was being
+  // changed -- so a server had to be stopped to give it a different icon.
+  // Only the changes that actually reach the running process are refused:
+  // swapping its jar out underneath it, and renaming the folder it has open.
+  // An icon is a field in a file, and the launch arguments are read at the
+  // next start.
+  if (running && (changedJar || renaming)) {
+    throw new Error(renaming && !changedJar
+      ? "Stop the server before renaming it"
+      : "Stop the server before changing its version, type or jar");
+  }
+
   if (version) info.version = version;
   if (type) info.type = type;
   if (launchArgs !== undefined) info.launchArgs = launchArgs;
@@ -302,7 +317,7 @@ async function editServer(name, { newName, version, type, launchArgs, loaderVers
   fs.writeFileSync(infoPath, JSON.stringify(info, null, 2));
 
   let finalDir = dir, finalName = name;
-  if (newName && newName !== name) {
+  if (renaming) {
     const target = path.join(serversDir, newName);
     if (fs.existsSync(target)) throw new Error("A server with that name already exists");
     fs.renameSync(dir, target);
@@ -311,7 +326,16 @@ async function editServer(name, { newName, version, type, launchArgs, loaderVers
     servers.delete(name);
     finalDir = target; finalName = newName;
   }
-  const serverObj = { ...info, name: finalName, dir: finalDir, status: "stopped", process: null, logs: [] };
+  // The process, its status and its console belong to the RUN, not to the
+  // description. Replacing the whole entry with a stopped one was fine while
+  // editing meant the server was stopped, and would have thrown a running
+  // server's process away the moment it did not.
+  const serverObj = {
+    ...info, name: finalName, dir: finalDir,
+    status: live ? live.status : "stopped",
+    process: live ? live.process : null,
+    logs: live ? live.logs : [],
+  };
   servers.set(finalName, serverObj);
   return { success: true, name: finalName };
 }

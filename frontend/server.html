@@ -508,7 +508,11 @@
         const iconWrap = document.createElement('span');
         iconWrap.className = 'icon-with-dot';
         const img = document.createElement('img');
-        img.src = instanceIcon(s.icon);
+        // A server with no icon of its own gets its version's render, the same
+        // way an instance does. It used to be the same block of redstone ore
+        // for every server on the page.
+        if (window.instanceIconInto) window.instanceIconInto(img, s);
+        else img.src = instanceIcon(s.icon);
         const dot = document.createElement('span');
         dot.className = 'status-dot ' + (running ? 'online' : 'offline');
         dot.title = running ? 'Online' : 'Offline';
@@ -569,7 +573,8 @@
         location.pathname + '?srv=' + encodeURIComponent(server.name) + (tab ? '&tab=' + encodeURIComponent(tab) : ''));
       $('serverListView').style.display = 'none';
       $('serverDetail').style.display = 'flex';
-      $('srvDetailIcon').src = instanceIcon(server.icon);
+      if (window.instanceIconInto) window.instanceIconInto($('srvDetailIcon'), server);
+      else $('srvDetailIcon').src = instanceIcon(server.icon);
       $('srvDetailName').textContent = server.name;
       $('srvDetailInfo').textContent = `${server.type} ${server.version} • port ${server.port || 25565}`;
       // A modded server has mods; a Paper-like one has plugins. Both are a
@@ -1285,6 +1290,10 @@
       $('srvLaunchArgs').value = (server && server.launchArgs) || '';
       newSrvIconData = (server && server.icon) || null;
       $('srvIconPreview').src = newSrvIconData || DEFAULT_SRV_ICON;
+      // With none of its own, the preview shows what the server will actually
+      // be drawn as -- its version's render -- rather than the fallback ore,
+      // and follows the version while it is being chosen.
+      showVersionIconPreview();
       // Ensure the requested version is selectable, then select it.
       if (server && server.version) {
         if (![...$('srvVersion').options].some(o => o.value === server.version)) {
@@ -1337,6 +1346,24 @@
       $('srvJarName').textContent = `${r.name} (${(r.size / 1048576).toFixed(1)} MB)`;
     };
     $('srvType').addEventListener('change', () => { updateLoaderVersionSection(); updateJarSection(); });
+
+    // The icon a server with none of its own will be drawn as: its version's
+    // render. Shown in the form so the fallback ore is not what a new server
+    // looks like it is going to be, and followed while the version is chosen.
+    let _srvIconSeq = 0;
+    function showVersionIconPreview() {
+      if (newSrvIconData) return;
+      const mine = ++_srvIconSeq;
+      const version = ($('srvVersion').value || '').trim();
+      $('srvIconPreview').src = DEFAULT_SRV_ICON;
+      if (!version || !window.VersionIcon) return;
+      window.VersionIcon.get(version).then((url) => {
+        if (!url || mine !== _srvIconSeq || newSrvIconData) return;
+        $('srvIconPreview').src = url;
+      }).catch(() => { /* the ore will do */ });
+    }
+    $('srvVersion').addEventListener('change', showVersionIconPreview);
+
     $('srvSelectIcon').onclick = () => window.IconPicker.open({
       serverName: editingServer ? editingServer.name : undefined,
       version: ($('srvVersion').value || '').trim() || undefined,

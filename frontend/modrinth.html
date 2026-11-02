@@ -248,6 +248,12 @@
     // game does not have.
     const LOOSE_TYPES = new Set(['resourcepack', 'shader']);
 
+    // Whether the target's game version and loader are filters at all. For a
+    // mod they are the whole point; for the loose types they are a rule the
+    // game does not have, and `anyVersion=1` says so outright.
+    const lockedToTarget = () =>
+      !!installInstance && !LOOSE_TYPES.has(installType) && mrParams.get('anyVersion') !== '1';
+
     function isHitCompatible(hit) {
       if (!installInstance) return true;
       const supportsVersion = Array.isArray(hit.versions) && hit.versions.includes(installInstance.version);
@@ -261,12 +267,12 @@
 
     // ...but say so, rather than installing something from another version
     // with no sign that is what happened.
-    function builtForAnotherVersion(hit) {
-      if (!installInstance || !LOOSE_TYPES.has(installType)) return null;
-      if (!Array.isArray(hit.versions) || !hit.versions.length) return null;
-      if (hit.versions.includes(installInstance.version)) return null;
-      // Their newest, which is the one that would be installed.
-      return hit.versions[hit.versions.length - 1];
+    // Nothing to say. A resource pack built for another version is not a
+    // warning -- it is how resource packs work, and the game says so itself if
+    // it has anything to say about it. Kept as a function because the list
+    // still asks; it simply always answers "no note".
+    function builtForAnotherVersion() {
+      return null;
     }
 
     // Rough distance between two MC versions (major weighted most) so we can pick
@@ -398,14 +404,24 @@
       // Keep the provider toggle available even on the instance install page.
       refreshApiToggle();
 
+      // Only the kind being installed. Marked as well as hidden: the provider
+      // toggle re-shows the Modrinth-only tabs whenever it runs, which is how
+      // "Server" kept reappearing while a resource pack was being installed.
       const tabs = document.querySelectorAll('#typeTabs .tab');
       tabs.forEach(t => {
-        if (t.dataset.type === installType) t.classList.add('active');
-        else { t.classList.remove('active'); t.style.display = 'none'; }
+        if (t.dataset.type === installType) { t.classList.add('active'); t.classList.remove('install-hidden'); }
+        else { t.classList.remove('active'); t.classList.add('install-hidden'); t.style.display = 'none'; }
       });
 
       const title = document.querySelector('h1');
-      if (title) title.textContent = `Install into ${installInstance.name || 'instance'} (${installInstance.loader} ${installInstance.version})`;
+      // The loader and version only belong in the heading when they are what
+      // is being matched. Saying "(vanilla 26.3)" over a list of resource
+      // packs that work on any version is just wrong.
+      if (title) {
+        title.textContent = lockedToTarget()
+          ? `Install into ${installInstance.name || 'instance'} (${installInstance.loader} ${installInstance.version})`
+          : `Install into ${installInstance.name || 'instance'}`;
+      }
     }
     setupInstallModeUI();
 
@@ -862,7 +878,10 @@
     // The "Server" type is Modrinth-only; hide it (and switch away) on CurseForge.
     function updateProviderTabs() {
       const isCurse = apiSelector.value === "curseforge";
-      document.querySelectorAll('#typeTabs .modrinth-only').forEach(t => { t.style.display = isCurse ? "none" : ""; });
+      document.querySelectorAll('#typeTabs .modrinth-only').forEach(t => {
+        // A tab install mode has put away stays away.
+        t.style.display = (isCurse || t.classList.contains('install-hidden')) ? "none" : "";
+      });
       const active = document.querySelector('#typeTabs .tab.active');
       if (isCurse && active && active.classList.contains("modrinth-only")) {
         document.querySelectorAll('#typeTabs .tab').forEach(t => t.classList.remove("active"));
@@ -1086,6 +1105,13 @@
         // Installing into an instance/server → pre-apply its version + loader so
         // the listed mods are already the compatible ones.
         if (installMode && installInstance) {
+          // A mod has to match the instance, so the instance's version and
+          // loader are the filters to start from. A resource pack or a shader
+          // does not: one built for 1.8 loads in the newest version. Forcing
+          // the target's version on them left about ten packs to choose from
+          // -- only the ones whose authors had tagged that exact version --
+          // out of the thousands that would work.
+          if (!lockedToTarget()) { currentPage = 1; loadProjects(); return; }
           const vf = document.getElementById('versionFilter');
           const lf = document.getElementById('loaderFilter');
           if (vf && installInstance.version) {

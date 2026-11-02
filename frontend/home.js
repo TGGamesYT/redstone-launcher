@@ -703,9 +703,20 @@
         again();
         onGone(node, () => clearTimeout(timer));
       } else {
+        // Whatever it is doing, it still reacts to being turned: the arms
+        // trail the turn, the head comes round last, the cape streams. Those
+        // live in the conductor, so the clips had them and skinview3d's own
+        // animations -- which went on the viewer raw -- did not. Standing
+        // still had no animation at all, and therefore no reactions either.
         const want = ANIM[doing];
+        let inner = null;
         if (want && typeof skinview3d[want] === 'function') {
-          try { v.animation = new skinview3d[want](); } catch { /* standing still it is */ }
+          try { inner = new skinview3d[want](); } catch { inner = null; }
+        }
+        if (SA && SA.withSpin) {
+          try { v.animation = SA.withSpin(inner); } catch { if (inner) v.animation = inner; }
+        } else if (inner) {
+          v.animation = inner;
         }
       }
       onGone(node, () => {

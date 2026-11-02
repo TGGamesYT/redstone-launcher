@@ -11019,6 +11019,22 @@ ipcMain.handle("server-mods:info", async (event, { name, dir }) => {
 // The jars actually in a folder, each with whatever its own metadata says it
 // is. Disabled jars are left out of both sides: a mod that is not loaded is
 // not one the server requires, and not one the client has.
+// What is inside a jar does not change while it is sitting on disk, and this
+// is asked again every time the tab is opened. Keyed by the file's size and
+// modified time, so a jar replaced by a different build is read afresh.
+const _jarMeta = new Map();
+const JAR_META_KEPT = 4000;
+
+function jarMetaCached(full, st) {
+  const key = `${full}|${st.size}|${st.mtimeMs}`;
+  const had = _jarMeta.get(key);
+  if (had) return had;
+  const meta = readJarMeta(full) || {};
+  if (_jarMeta.size >= JAR_META_KEPT) _jarMeta.clear();
+  _jarMeta.set(key, meta);
+  return meta;
+}
+
 async function jarsIn(dir) {
   const out = [];
   let files = [];
@@ -11026,9 +11042,16 @@ async function jarsIn(dir) {
   let since = 0;
   for (const d of files) {
     if (d.isDirectory() || !/\.jar$/i.test(d.name)) continue;
-    // Opening jars is synchronous, and a big modpack has hundreds of them.
-    if (++since >= 4) { since = 0; await new Promise(r => setImmediate(r)); }
-    const meta = readJarMeta(path.join(dir, d.name)) || {};
+    const full = path.join(dir, d.name);
+    let st = null;
+    try { st = fs.statSync(full); } catch { continue; }
+    // Opening jars is synchronous, and a big modpack has hundreds of them, so
+    // the main process is handed back often enough to keep answering. Only
+    // when one actually has to be opened: a cached answer costs nothing, and
+    // yielding for it would make a cached folder slower than an uncached one.
+    const key = `${full}|${st.size}|${st.mtimeMs}`;
+    if (!_jarMeta.has(key) && ++since >= 2) { since = 0; await new Promise(r => setImmediate(r)); }
+    const meta = jarMetaCached(full, st);
     out.push({
       filename: d.name, id: meta.id || null, name: meta.name || null,
       version: meta.version || null, environment: meta.environment || null,
@@ -11052,11 +11075,27 @@ ipcMain.handle("join:options", async (event, { name } = {}) => {
     };
     const profiles = await loadProfiles();
     const instances = [];
+    // Whose mods are worth reading at all. Opening a jar means reading its
+    // central directory and parsing the metadata inside, and this tab used to
+    // do that for EVERY mod in EVERY instance -- thousands of jars, in the
+    // process that answers every window, which is why opening the tab stopped
+    // the launcher. The verdict only ever compares mods when the instance's
+    // loader can load the server's, so an instance whose loader does not fit
+    // (and every instance of a server with no mods of its own) needs none of
+    // them read.
+    const kind = serverJoin.serverKind(server.type);
+    const fits = (loader) => {
+      if (kind !== "mods" || !server.mods.length) return false;
+      const sType = String(server.type || "").toLowerCase();
+      const allowed = serverJoin.CLIENT_LOADERS[sType] || [sType];
+      return allowed.includes(String(loader || "vanilla").toLowerCase());
+    };
     for (const p of profiles) {
       if (!p || !p.id) continue;
+      const loader = p.loader || "vanilla";
       const inst = {
-        loader: p.loader || "vanilla", version: p.version || "",
-        mods: await jarsIn(path.join(clientRoot(p.id), "mods")),
+        loader, version: p.version || "",
+        mods: fits(loader) ? await jarsIn(path.join(clientRoot(p.id), "mods")) : [],
       };
       const v = serverJoin.judge(server, inst);
       instances.push({

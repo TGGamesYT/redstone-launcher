@@ -9,6 +9,36 @@ started.
 
 ---
 
+## 0. Round 41
+
+The newest batch, in the order it was given.
+
+- [ ] **The main page's player render has no limb physics.** The swinging the
+      skins page's render does when it is turned.
+- [ ] **Opening a server's Join tab lags the whole launcher.**
+- [ ] **A server's icon cannot be edited while it is running**, and a server
+      does not take its version's icon by default.
+- [ ] **An event server's JSON script needs a real editor**, not a plain text
+      box over the raw JSON.
+- [ ] **An event server should be able to open "share over the internet" by
+      itself once started**, and the player-join hook does not work.
+- [ ] **`server.properties` needs a proper editor** — the name on the left and
+      the value on the right.
+- [ ] **No text editor has Ctrl+F.**
+- [ ] **Browsing resource packs from a server is wrong** — about ten results
+      and no more, a "Server" tab offered while installing to a server, and
+      the server's version forced as a filter. A resource pack is not a mod: a
+      1.8 pack works in the newest version. Any version by default, and no
+      warning about it either.
+- [ ] **It still crashes with 3221225477**, after
+      `Existing file ... not found or had mismatched hash` and a flood of
+      `Exception loading blockstate definition` from a `server/00000000/<uuid>`
+      pack.
+- [ ] **Servers should keep running when the launcher is closed**, and be
+      picked up again when it reopens.
+
+---
+
 ## 0. Round 40
 
 The newest batch, in the order it was given.
