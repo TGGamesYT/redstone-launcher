@@ -601,13 +601,31 @@ function startServer(name, settings, javaPath) {
 // asking. A watcher is given each line as it arrives, and null when the
 // server stops.
 const watchers = new Map();               // name -> Set<fn>
+const allWatchers = new Set();            // fn(name, line), for every server
 
 function tell(name, line) {
+  for (const fn of [...allWatchers]) {
+    try { fn(name, line); } catch { /* a watcher's problem is its own */ }
+  }
   const set = watchers.get(name);
   if (!set) return;
   for (const fn of [...set]) {
     try { fn(line); } catch { /* a watcher's problem is its own */ }
   }
+}
+
+/**
+ * Every server's console, as it happens.
+ *
+ * watchServer is for something that cares about one server it already knows
+ * the name of. The window wants whichever one is open, and which one that is
+ * changes while the launcher is running -- so it takes the lot and ignores
+ * what it is not showing. Without this the console was PULLED, once a second,
+ * which is exactly how far behind the launcher's console ran.
+ */
+function watchAllServers(fn) {
+  allWatchers.add(fn);
+  return () => allWatchers.delete(fn);
 }
 
 function watchServer(name, fn) {
@@ -825,4 +843,5 @@ export default {
   deleteFile,
   safeServerPath,
   watchServer,
+  watchAllServers,
 };

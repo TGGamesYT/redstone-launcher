@@ -229,6 +229,15 @@
               <div class="menu-item" id="dShare">Share over internet</div>
               <div class="menu-item" id="dShortcut">Desktop shortcut</div>
               <div class="menu-item" id="dFolder">Open folder</div>
+              <!-- The same thing an instance asks in its Advanced settings,
+                   asked in the server's own menu: whether THIS server
+                   hot-swaps something you are building. Only there with
+                   developer mode on. -->
+              <div class="menu-item" id="dDevMods" style="display:none;">
+                <label class="inline-check" style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer;">
+                  <input type="checkbox" id="srvDevModsEnable"> <span id="dDevModsLabel">Enable dev mods</span>
+                </label>
+              </div>
               <div class="menu-item" id="dDelete">Delete server</div>
             </div>
           </div>
@@ -237,7 +246,13 @@
       <!-- Relay sharing banner (shown while the server is shared over the internet). -->
       <div id="relayBanner" style="display:none; align-items:center; gap:10px; margin:0 0 10px 0; padding:8px 12px; border-radius:var(--border-radius); background:color-mix(in srgb, var(--base-color) 45%, black); border:1px solid var(--secondary-color);">
         <i class="material-icons" style="font-size:18px;">public</i>
-        <span style="flex:1;">Friends can join at <b><span id="relayAddr"></span></b></span>
+        <span style="flex:1;">Friends can join at <b><span id="relayAddr"></span></b><!--
+          Why the address is not the one that was asked for. Sharing can
+          succeed while the NAME fails -- the relay may not be able to edit
+          DNS -- and when that happens the address handed out is the one the
+          tunnel itself gave, which is worth saying rather than leaving as a
+          surprise in the log.
+       --><span id="relayNote" style="display:block;font-size:12px;opacity:0.75;"></span></span>
         <button id="relayCopy" style="padding:4px 10px;">Copy</button>
         <button id="relayStop" style="padding:4px 10px;">Stop</button>
       </div>
@@ -292,7 +307,6 @@
           <button id="srvOpenModsFolder"><i class="material-icons" style="font-size:16px;vertical-align:middle;">folder</i> Open folder</button>
           <!-- Only shown when something can actually be updated. -->
           <button id="srvModsUpdateAll" style="display:none;"></button>
-          <label id="srvDevModsWrap" style="display:none; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" id="srvDevModsEnable"> Dev mods</label>
           <button id="srvDevMods" style="display:none;"><i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Manage dev mods</button>
         </div>
         <ul id="srvModsList" style="list-style:none; margin:0; padding:0; flex:1; min-height:0; overflow-y:auto;"></ul>
@@ -374,6 +388,19 @@
             <span id="shareDomainSuffix" style="opacity:0.8;white-space:nowrap;">.redstonemc.net</span>
           </div>
           <div style="font-size:12px;opacity:0.7;margin-top:4px;">Friends join at <b><span id="sharePreview"></span></b></div>
+        </div>
+        <!-- Which relay carries it. Admin only: for everybody else the
+             launcher picks whichever works, because choosing the wrong one
+             means a world nobody can join. The same setting as the one in
+             Settings, asked where it is actually being used. -->
+        <div class="modal-section" id="shareRelaySection" style="display:none;">
+          <label>Relay</label>
+          <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;">
+            <label class="inline-check"><input type="radio" name="share-relay" value="auto"> Whichever works</label>
+            <label class="inline-check"><input type="radio" name="share-relay" value="e4mc"> e4mc's relays</label>
+            <label class="inline-check"><input type="radio" name="share-relay" value="own"> Our own relay</label>
+          </div>
+          <div id="shareRelayState" style="font-size:12px;opacity:0.7;margin-top:4px;"></div>
         </div>
       </div>
       <div class="modal-actions">
@@ -594,6 +621,10 @@
       // tab at all, and no way to see what was installed.
       $('srvModsTab').style.display = srvContentDir(server) ? '' : 'none';
       $('srvModsTab').textContent = srvContentDir(server) === 'plugins' ? 'Plugins' : 'Mods';
+      // The dev-mods switch is in this server's menu, so it has to be right
+      // whichever tab you are on rather than only once the mods tab has been
+      // opened.
+      refreshDevMods();
       // Always land on the Console tab when (re)opening a server, unless the
       // way in asked for a particular one.
       selectTab(tab || 'console');
@@ -653,19 +684,47 @@
       return false;
     };
 
+    // The console, live.
+    //
+    // It used to be asked for once a second and redrawn whole, so a line was
+    // in Electron's own terminal at once and here up to a second later. The
+    // main process sends each line as it reads it now. The poll stays, as the
+    // first draw and as a safety net for a console nothing is streaming -- a
+    // server of ours left running by a previous launch has no stdout to read
+    // -- and stops itself the moment a line arrives live, so it can never
+    // redraw over something it has not caught up with yet.
     function startConsolePolling() {
       clearTimeout(consoleTimer);
       const box = $('console');
       async function poll() {
         if (!selectedServer) return;
         const content = await ipcRenderer.invoke('server-console', selectedServer.name);
-        const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-        box.textContent = Array.isArray(content) ? content.join('') : (content || '');
-        if (atBottom) box.scrollTop = box.scrollHeight;
+        if (!selectedServer) return;
+        const text = Array.isArray(content) ? content.join('') : (content || '');
+        // This snapshot may be BEHIND what is on screen -- a line that
+        // arrived live after it was taken -- so it is only ever used to catch
+        // up, never to go back. If what is shown is not a continuation of it,
+        // it is wrong, and the snapshot wins.
+        const shown = box.textContent;
+        if (text !== shown && !shown.startsWith(text)) {
+          const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+          box.textContent = text;
+          if (atBottom) box.scrollTop = box.scrollHeight;
+        }
         consoleTimer = setTimeout(poll, 1000);
       }
       poll();
     }
+
+    ipcRenderer.removeAllListeners('server-log');
+    ipcRenderer.on('server-log', (_e, d) => {
+      if (!d || !selectedServer || d.name !== selectedServer.name) return;
+      const box = $('console');
+      if (!box) return;
+      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+      box.textContent += d.line + '\n';
+      if (atBottom) box.scrollTop = box.scrollHeight;
+    });
 
     // Detail tab switching. `push` records the tab in history so the Back button
     // returns to the previously-viewed tab before leaving the detail view.
@@ -711,8 +770,10 @@
     $('dMenuBtn').onclick = (e) => { e.stopPropagation(); $('dMenu').classList.toggle('open'); };
 
     // ---------- Relay sharing (join over the internet, no port-forwarding) ----------
-    function showRelayBanner(address, directAddress) {
+    function showRelayBanner(address, directAddress, note) {
       $('relayAddr').textContent = address + (directAddress ? `  (or directly: ${directAddress})` : '');
+      const noteEl = $('relayNote');
+      if (noteEl) { noteEl.textContent = note || ''; noteEl.style.display = note ? 'block' : 'none'; }
       $('relayBanner').style.display = 'flex';
       $('dShare').textContent = 'Stop sharing';
     }
@@ -723,7 +784,7 @@
     async function refreshRelayStatus() {
       if (!selectedServer) return;
       const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
-      if (st && st.active) showRelayBanner(st.address, st.directAddress); else hideRelayBanner();
+      if (st && st.active) showRelayBanner(st.address, st.directAddress, st.note); else hideRelayBanner();
     }
     const subLabel = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
     const subPath = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/\.+/g, '.').replace(/(^[.-]+|[.-]+$)/g, '');
@@ -762,6 +823,34 @@
       const a = shareAccount();
       try { shareAdmin = await ipcRenderer.invoke('relay:adminInfo', { accountId: a.id }); } catch { /* stays non-admin */ }
       applyShareMode();
+      refreshShareRelay();
+    }
+
+    // Which relay a shared world goes over.
+    //
+    // It was only in Settings, which is not where anybody is standing when
+    // they share something, so an admin sharing a server was never offered it
+    // at all. Same setting, same IPC -- asked here as well, where it applies.
+    async function refreshShareRelay() {
+      const section = $('shareRelaySection');
+      if (!section) return;
+      if (!shareAdmin.isAdmin) { section.style.display = 'none'; return; }
+      let now = { setting: 'auto', inUse: 'own', e4mcAvailable: false };
+      try { now = await ipcRenderer.invoke('relay:backend'); } catch { /* defaults */ }
+      section.style.display = '';
+      for (const el of section.querySelectorAll('input[name="share-relay"]')) {
+        el.checked = el.value === (now.setting || 'auto');
+      }
+      $('shareRelayState').textContent = now.e4mcAvailable
+        ? `Right now this would go over ${now.inUse === 'e4mc' ? "e4mc's relays" : 'our own relay'}.`
+        : "This copy has no e4mc helper built, so our own relay is used whatever is picked here.";
+    }
+    for (const el of document.querySelectorAll('#shareRelaySection input[name="share-relay"]')) {
+      el.addEventListener('change', async () => {
+        if (!el.checked) return;
+        await ipcRenderer.invoke('relay:setBackend', { backend: el.value });
+        refreshShareRelay();
+      });
     }
     async function openShareModal() {
       $('dMenu').classList.remove('open');
@@ -793,7 +882,7 @@
         const payload = { name: selectedServer.name, subdomain: fullSubdomain(), domain: selectedDomain(), accountId: $('shareAccount').value };
         if (cfgPort) payload.localPort = cfgPort;
         const res = await ipcRenderer.invoke('relay:open', payload);
-        if (res && res.success) { showRelayBanner(res.address, res.directAddress); $('shareModal').classList.remove('active'); }
+        if (res && res.success) { showRelayBanner(res.address, res.directAddress, res.note); $('shareModal').classList.remove('active'); }
         else alert("Couldn't share: " + (res?.error || 'unknown error'));
       } finally { $('shareGo').disabled = false; $('shareGo').textContent = 'Share'; }
     };
@@ -1131,27 +1220,50 @@
       ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
     }
 
+    // Dev mods, asked the way an instance asks.
+    //
+    // The switch used to sit on the mods tab, shown whenever global Developer
+    // mode was on -- so every server had "Dev plugins" on that tab whether or
+    // not that server had anything to do with it. An instance asks PER
+    // INSTANCE, in its own settings, and nothing appears on its Mods tab
+    // until that instance has said yes. A server asks in its own menu now,
+    // and the tab shows the Manage button only once THIS server has.
+    //
+    // In the menu rather than on the tab for the second reason too: a server
+    // of a kind that has neither mods nor plugins has no such tab at all, and
+    // the question still has somewhere to live.
+    async function refreshDevMods() {
+      if (!selectedServer) return;
+      const devOn = !!(await ipcRenderer.invoke('get-setting', 'devMode'));
+      const row = $('dDevMods'), enableCb = $('srvDevModsEnable'), manageBtn = $('srvDevMods');
+      if (!row || !enableCb || !manageBtn) return;
+      // A server with nowhere to put a jar cannot hot-swap one into it.
+      row.style.display = (devOn && srvContentDir(selectedServer)) ? '' : 'none';
+      // A plugin being worked on is the same arrangement as a mod being
+      // worked on -- a folder that builds a jar, hot-swapped in -- so it is
+      // the same tool, called what it is on this server.
+      $('dDevModsLabel').textContent = `Enable dev ${srvWord()}s`;
+      manageBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Manage dev ${srvWord()}s`;
+      const dm = await ipcRenderer.invoke('devmod:get', { type: 'server', id: selectedServer.name });
+      if (!selectedServer) return;
+      enableCb.checked = !!(dm && dm.enabled);
+      manageBtn.style.display = (devOn && enableCb.checked) ? '' : 'none';
+      manageBtn.onclick = () => openDevModsModal('server', selectedServer.name, () => loadServerMods());
+    }
+    // Clicking in the row must not close the menu out from under the switch,
+    // and must not count as a click on the row AND on the box.
+    $('dDevMods').onclick = (e) => e.stopPropagation();
+    $('srvDevModsEnable').onchange = async () => {
+      if (!selectedServer) return;
+      await ipcRenderer.invoke('devmod:setEnabled',
+        { type: 'server', id: selectedServer.name, enabled: $('srvDevModsEnable').checked });
+      await refreshDevMods();
+      loadServerMods();
+    };
+
     async function loadServerMods() {
       if (!selectedServer) return;
-      // Dev mods: the enable toggle shows only with global Developer mode on; the
-      // Manage button shows only when THIS server has dev mods enabled.
-      // Developer mode also puts a Remod (edit) button on every jar below.
-      const devOn = !!(await ipcRenderer.invoke('get-setting', 'devMode'));
-      const wrap = $('srvDevModsWrap'), enableCb = $('srvDevModsEnable'), manageBtn = $('srvDevMods');
-      if (wrap && enableCb && manageBtn) {
-        const dev = devOn;
-        wrap.style.display = dev ? 'flex' : 'none';
-        // A plugin being worked on is the same arrangement as a mod being
-        // worked on -- a folder that builds a jar, hot-swapped in -- so it
-        // is the same tool, called what it is on this server.
-        wrap.lastChild.textContent = ` Dev ${srvWord()}s`;
-        manageBtn.innerHTML = `<i class="material-icons" style="font-size:16px;vertical-align:middle;">construction</i> Manage dev ${srvWord()}s`;
-        const dm = await ipcRenderer.invoke('devmod:get', { type: 'server', id: selectedServer.name });
-        enableCb.checked = !!(dm && dm.enabled);
-        manageBtn.style.display = (dev && enableCb.checked) ? '' : 'none';
-        enableCb.onchange = async () => { await ipcRenderer.invoke('devmod:setEnabled', { type: 'server', id: selectedServer.name, enabled: enableCb.checked }); loadServerMods(); };
-        manageBtn.onclick = () => openDevModsModal('server', selectedServer.name, () => loadServerMods());
-      }
+      await refreshDevMods();
       const ul = $('srvModsList');
       // Only on a FIRST load. On a refresh the rows already on screen stay
       // until the new ones replace them, instead of the list emptying to

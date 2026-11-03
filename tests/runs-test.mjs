@@ -62,6 +62,25 @@ const was = runs.findRun("Main", a).endedAt;
 runs.runEnded("Main", a);
 check("ending it twice does not move the time", runs.findRun("Main", a).endedAt, was);
 
+// ── starting one that has already stopped is the same console ──
+//
+// A run is its own console so that two copies running AT THE SAME TIME can be
+// told apart. One after the other is not that, and it left a row of tabs, one
+// per launch, all but the last of them dead.
+const again = runs.beginRun("Main");
+check("a launch takes over a run that has finished", again === a, true,
+  "one console per copy that is running, not one per launch ever made");
+check("and never one that is still going", again === b, false);
+check("the run it took over is live again",
+  [runs.findRun("Main", a).endedAt, runs.runsOf("Main").length], [null, 2]);
+check("and what that console said before is kept, with the new session under it",
+  runs.findRun("Main", a).lines,
+  ["first copy says hello", "first copy again", "", "[Started again]"]);
+
+const third = runs.beginRun("Main");
+check("with nothing finished, a launch is a console of its own",
+  [third === a, third === b, runs.runsOf("Main").length], [false, false, 3]);
+
 // ── not forever ──
 for (let i = 0; i < 20; i++) runs.beginRun("Main");
 check("only the last few launches are kept", runs.runsOf("Main").length, runs.RUNS_KEPT,

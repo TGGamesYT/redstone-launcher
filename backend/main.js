@@ -22,6 +22,8 @@ import upnp from './upnp.js';
 import relayClient from './relayClient.js';
 import e4mc from './e4mc.js';
 import fileManager from './fileManager.js';
+import serverpack from './serverpack.js';
+import { deliverToEveryFrame } from './ipcframes.js';
 import remod from './remod.js';
 import { convertSkinPixels, slimFromPixels } from './skin-model.js';
 import shortcuts from './shortcuts.js';
@@ -42,6 +44,14 @@ import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { screenSkinPixels } from './skinFilter.js';
 import * as iconModels from './icon-models.js';
+
+// Everything the main process says reaches the page, not just the shell.
+//
+// `webContents.send` reaches a window's main frame only, and since the
+// launcher became a shell with the page in a frame, that meant the page
+// heard none of it -- see backend/ipcframes.js, where this lives so that it
+// can be tested against a real window with a real frame in it.
+deliverToEveryFrame(app);
 
 const totalRAMMB = Math.floor(os.totalmem() / (1024 * 1024));
 const WORKER_URL = "https://curseforge.tgdoescode.workers.dev"
@@ -194,8 +204,33 @@ const RUNS_KEPT = 6;
 let _runSeq = 0;
 
 function beginRun(profileId) {
-  const run = `r${Date.now().toString(36)}${(++_runSeq).toString(36)}`;
   const list = instanceRuns.get(String(profileId)) || [];
+
+  // Starting one that has already run and stopped is the same console again,
+  // not a second one.
+  //
+  // A run is its own console so that two copies of an instance running AT THE
+  // SAME TIME can be told apart. One after the other is not that: it left a
+  // row of tabs, one per launch, all but the last of them dead -- so playing
+  // the same instance three times in an evening meant three tabs to pick
+  // between. A launch takes over the oldest finished run instead, and only
+  // ever adds a console when one is needed because something else is still
+  // using the one there is.
+  //
+  // What the old run said is kept and the new session is written under it,
+  // the way a terminal reads. The lines are capped, so this cannot grow
+  // without end.
+  const finished = list.find(r => r.endedAt);
+  if (finished) {
+    finished.pid = null;
+    finished.startedAt = Date.now();
+    finished.endedAt = null;
+    if (finished.lines.length) finished.lines.push("", "[Started again]");
+    instanceRuns.set(String(profileId), list);
+    return finished.run;
+  }
+
+  const run = `r${Date.now().toString(36)}${(++_runSeq).toString(36)}`;
   list.push({ run, pid: null, startedAt: Date.now(), endedAt: null, lines: [] });
   // Only so many: a long session is thousands of lines and there is no reason
   // to hold every launch the launcher has ever made.
@@ -684,6 +719,17 @@ function reportInstanceCrash(profileId, cfg, code) {
     if (/not found or had mismatched hash/.test(sawAll)) {
       notes.push("A file the game had cached did not match its own hash. Those are thrown away"
         + " before the next launch rather than being used again.");
+    }
+    // A pack that names models it does not carry. Said separately from the
+    // blockstates above because it has a different cause: not half a pack,
+    // but a whole one built for a different version of the game.
+    const missingModels = (sawAll.match(/Missing block model:/g) || []).length;
+    if (missingModels > 4 || /Attempted to load a non-existent post effect/.test(sawAll)) {
+      notes.push("The resource pack in this run names things this version of the game does not"
+        + " have" + (missingModels ? ` (${missingModels} block models were missing)` : "")
+        + ", which is what a pack built for a different version looks like."
+        + " A server's packs are checked for that when the launcher merges them, and it says so"
+        + " in that server's log.");
     }
 
     const payload = {
@@ -4399,6 +4445,20 @@ ipcMain.handle("server-console", (event, id) => {
   return serverManager.getConsole(id);
 });
 
+// And the same console as it happens, rather than a second later.
+//
+// The page asked for the whole console once a second and drew whatever had
+// piled up, so a line was in Electron's own terminal at once and in the
+// launcher up to a second afterwards. Each line is sent as it is read now;
+// the poll stays as a safety net for a console nothing is streaming (a server
+// of ours from a previous run, which has no stdout to read).
+serverManager.watchAllServers((name, line) => {
+  if (line == null) return;                 // the server stopping; the page polls that
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("server-log", { name, line }); } catch { /* gone */ }
+  }
+});
+
 ipcMain.handle("send-server-command", (event, id, cmd) => {
   return serverManager.sendServerCommand(id, cmd);
 });
@@ -5802,21 +5862,34 @@ function packList(name) {
   return ordered.map(f => ({ filename: f, enabled: !(cfg.disabled || []).includes(f) }));
 }
 // Merge the enabled packs (top of the list = highest priority) into one zip.
+//
+// The merging itself is in backend/serverpack.js, where it can be tested: a
+// pack zipped from its folder, something in the zip that is not part of the
+// pack, and the same packs having to merge to the same bytes every time are
+// all things that have to be right and none of them can be checked by
+// looking at this.
+//
+// What is said about a merge -- a pack left out, a wrapper folder taken off,
+// packs built for different versions -- goes to the server's console, once
+// per distinct set of notes, because this runs again on every rebuild.
+const _packNotes = new Map();
 function buildMergedPack(name) {
   const dir = packDir(name);
   const enabled = packList(name).filter(p => p.enabled).map(p => p.filename);
   if (!enabled.length) return null;
-  const merged = new AdmZip();
-  const seen = new Map();
-  // Iterate lowest→highest priority so the top pack's files overwrite the rest.
-  for (let i = enabled.length - 1; i >= 0; i--) {
-    try { const z = new AdmZip(path.join(dir, enabled[i])); for (const e of z.getEntries()) { if (!e.isDirectory) seen.set(e.entryName, e.getData()); } } catch { /* skip bad zip */ }
+  const packs = [];
+  for (const filename of enabled) {
+    try { packs.push({ name: filename, buf: fs.readFileSync(path.join(dir, filename)) }); }
+    catch { /* it was deleted between the listing and here */ }
   }
-  if (!seen.size) return null;
-  for (const [entryName, data] of seen) merged.addFile(entryName, data);
-  const buf = merged.toBuffer();
-  const sha1 = crypto.createHash("sha1").update(buf).digest("hex");
-  return { buf, sha1 };
+  const merged = serverpack.mergePacks(packs);
+  if (!merged) return null;
+  const said = merged.notes.join("\n");
+  if (said && _packNotes.get(name) !== said) {
+    _packNotes.set(name, said);
+    for (const line of merged.notes) devtoolsLog(`[packs] ${name}: ${line}`);
+  }
+  return { buf: merged.buf, sha1: merged.sha1, notes: merged.notes };
 }
 // name -> { server, port, token, player, packName, sha1 }
 const packHttp = new Map();
@@ -5868,11 +5941,15 @@ function setServerRpProps(name, url, sha1, required) {
 // Uses the relay's HTTP tunnel when the server is shared, else the LAN IP.
 async function ensureServerPack(name, player) {
   const cfg = loadPackCfg(name);
-  const merged = buildMergedPack(name);
-  if (!merged) { stopPackHttp(name); setServerRpProps(name, null); return null; }
+  // Merged once, by startPackHttp, which is the copy that is actually
+  // served. It used to be built here as well and thrown away.
+  if (!packList(name).some(p => p.enabled)) { stopPackHttp(name); setServerRpProps(name, null); return null; }
   const relay = activeRelays.get(name);
   const info = await startPackHttp(name, player || (relay && relay.packPlayer));
-  if (!info) return null;
+  // Packs are listed but none of them merged into anything -- every one of
+  // them unreadable, or not a pack. The server must stop telling players to
+  // download one.
+  if (!info) { stopPackHttp(name); setServerRpProps(name, null); return null; }
   let base;
   if (relay && typeof relay.openHttp === "function") {
     // Register this build's token with the relay; it returns the one shared
@@ -6815,7 +6892,14 @@ function subLabel(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9-]+
 // to it is actually there, and the launcher's own when it is not.
 function relayBackendInUse(asked) {
   const want = String(asked || settings.get("relayBackend", "auto") || "auto");
-  if (want === "e4mc" || want === "own") return want;
+  if (want === "own") return "own";
+  // Nothing to talk to e4mc WITH is not a choice anybody meant to make.
+  //
+  // The helper that speaks QUIC is built separately (see sidecar/README.md),
+  // and a copy without it cannot reach e4mc at all. Asking for e4mc in that
+  // copy used to fail the share outright, which is a world nobody can join
+  // over a setting -- so it falls back to our own relay, which is what the
+  // setting means when it cannot be honoured.
   return e4mc.available() ? "e4mc" : "own";
 }
 
@@ -6890,7 +6974,7 @@ async function openViaE4mc({ k, name, localPort, accountId, subdomain }) {
   activeRelays.set(k, {
     shownAddr, directAddress: null, localPort, upnpMapped: false,
     port: target.port, backend: "e4mc", e4mcDomain: session.domain,
-    ourName: ours, aliasAccount: ours ? account : null,
+    ourName: ours, aliasAccount: ours ? account : null, note: aliasNote,
     close: () => { try { session.close(); } catch { /* already gone */ } },
   });
   return {
@@ -6988,6 +7072,8 @@ ipcMain.handle("relay:status", async (event, { key, name }) => {
       active: true, address: s.shownAddr || s.address, port: s.port,
       directAddress: s.directAddress || null,
       backend: s.backend || "own", e4mcDomain: s.e4mcDomain || null,
+      // Why the address is not the name that was asked for, when it is not.
+      note: s.note || null,
     }
     : { active: false };
 });

@@ -65,28 +65,76 @@ started.
       running-instances pill already kept its rows across a refresh, and the
       player icon already skipped the work when the account had not changed,
       so those two were not rebuilding -- the list beside them was.)*
-- [ ] **Logs arrive late.** — A line is in Electron's own terminal
-      immediately and in the launcher a fraction of a second later.
-- [ ] **A server shows developer plugins without developer mode being on for
-      that server.** — An instance asks per instance; a server should too.
-- [ ] **An instance can still crash with 3221225477.** — With a flood of
-      `Exception loading blockstate definition:
-      'minecraft:<block>/server/00000000/<uuid>'` and missing block models
-      first.
-- [ ] **Relaunching an instance opens a second log tab.** — Starting one that
-      has already run and exited should reuse its tab.
+- [x] **Logs arrive late.** — *`webContents.send` reaches a window's MAIN
+      frame and no other. That was the whole window until the launcher became
+      a shell with the page in a frame beneath it, and from then on every
+      broadcast the main process made stopped at the shell: a running game's
+      log lines, a launch's progress, an instance crashing, a list changing --
+      the page heard none of it. The log only kept moving because the page
+      falls back to asking for it every two seconds when no line arrives, and
+      that is the delay. Measured rather than guessed, and still measured:
+      tests/ipcframes-test.mjs stands up a real window with a real frame and
+      checks that a broadcast reaches the shell alone without the fix and both
+      with it. A server's console was worse -- it was ASKED for, whole, once a
+      second. Each line is sent as it is read now, with the poll kept as the
+      first draw and as the way a server we did not start ourselves is read.*
+- [x] **A server shows developer plugins without developer mode being on for
+      that server.** — *The switch sat on the plugins tab and appeared
+      whenever GLOBAL developer mode was on, so every server had "Dev plugins"
+      on it whether or not that server had anything to do with the feature. An
+      instance asks per instance, in its own settings, and nothing appears on
+      its Mods tab until that instance has said yes. A server asks in its own
+      menu now -- which is also where it can be asked of a server that has
+      neither mods nor plugins, and so no tab to put it on -- and the tab
+      carries nothing but the Manage button, once that server has said yes.*
+- [~] **An instance can still crash with 3221225477.** — *The crash is
+      inside native code during a resource reload and names nothing, so no
+      culprit is invented for it. What the log names is the pack it was
+      reading: `server/00000000/<uuid>` is the game's own name for the
+      resource pack a server sent -- and that pack is one the launcher builds,
+      by merging the server's list of packs into one zip. That merge had three
+      ways of producing something the game cannot read, and all three show up
+      as exactly this: a pack somebody zipped from its FOLDER went in one
+      level down, so none of its files were where the game looks while the
+      packs under it still pointed at them; anything else in the zip went in
+      too; and the zip was built with the current time on every entry, so the
+      same packs merged twice were two different files with two different
+      SHA-1s -- and the game files what it downloads UNDER the hash the server
+      gave and never checks it again. It is in backend/serverpack.js now,
+      where tests/serverpack-test.mjs builds real zips for each of those and
+      checks the result, including that the merge is byte-for-byte the same on
+      another day. A pack built for another version of the game is flagged in
+      the server's log, and the crash report says when the run was reading one.
+      Whether the crash itself is gone wants a run on the owner's machine.*
+- [x] **Relaunching an instance opens a second log tab.** — *A run is its own
+      console so that two copies running AT THE SAME TIME can be told apart.
+      One after the other is not that, and it left a row of tabs, one per
+      launch, all but the last of them dead. A launch takes over the oldest
+      finished console now and only ever opens a new one when something else
+      is still using the one there is. What that console said before is kept,
+      with the new session written under it.*
 - [x] **Changing tab on the servers page is instant.** — *Going from the list
       into a server and back is a page change as far as anyone looking at it
       is concerned, and it happened with no sign that anything had happened:
       the whole middle of the window was simply something else. The instances
       page says so when it does the same thing -- the servers page was never
       given it. Same words, same loading screen.*
-- [ ] **Sharing from a server offers no relay choice and sets up no DNS.** —
-      An admin gets neither the e4mc nor the own-relay option, and the log says
-      `[e4mc] This relay has no DNS credentials, so it cannot point a name
-      anywhere.`
-- [ ] **No sidecar must mean the launcher's own relay.** — Sharing has to keep
-      working for anybody who has not built the Rust helper.
+- [~] **Sharing from a server offers no relay choice and sets up no DNS.** —
+      *The choice existed, in Settings, which is not where anybody is standing
+      when they share something -- so an admin sharing a server was never
+      offered it. It is in the share dialog now as well, same setting and same
+      answer, shown to an admin and nobody else. The DNS half is not the
+      launcher: it asks the relay to point the name, and the relay answers
+      that it has no credentials to do it with, which is what that line is.
+      The relay needs `CF_API_TOKEN` set (relay-server/README.md). Until it
+      has one, sharing still works and hands out e4mc's own address -- which
+      the banner now SAYS, instead of quietly handing over a different address
+      than the one that was asked for and leaving the reason in a log.*
+- [x] **No sidecar must mean the launcher's own relay.** — *"Whichever
+      works" already did. Asking for e4mc outright in a copy with no helper
+      built did not: it failed the share, which is a world nobody can join
+      over a setting. Any setting falls back to our own relay when there is
+      nothing to talk to e4mc with.*
 
 ---
 
