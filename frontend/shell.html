@@ -58,6 +58,42 @@
       background: transparent;
       color-scheme: normal;
     }
+
+    /* The shell's loading screen.
+       A page change used to show the frame itself: whatever the old page had
+       drawn vanished, the new document was a blank one for a tick -- which
+       reads as a black flash, since a fresh frame has no background until the
+       page's own styles have been parsed -- and only then did the page's own
+       loading screen appear. So the loading screen is the shell's now. It
+       goes up the moment a change starts and comes down when the page says
+       it is ready, which is exactly when the page would have taken its own
+       down (see hideLoadingOverlay in sidebar.js). One loading screen for the
+       whole change, and never a frame of nothing.
+
+       The look is .loading-overlay in server.css, so there is one description
+       of it. This decides when it is there and how it arrives. */
+    #shell-loading {
+      display: none;
+      /* Over the frame and over the notch, under the bars -- same as a
+         page's own, which stops at the two bars rather than covering them. */
+      z-index: 9000;
+      opacity: 0;
+      transition: opacity 0.18s ease;
+    }
+
+    #shell-loading.on {
+      display: flex;
+      opacity: 1;
+    }
+
+    /* Leaving is slower than arriving: a page change should feel like it
+       settles, not like it blinks. */
+    #shell-loading.going {
+      display: flex;
+      opacity: 0;
+      transition: opacity 0.32s ease;
+      pointer-events: none;
+    }
   </style>
 </head>
 
@@ -106,6 +142,19 @@
 
   <iframe id="view" src="index.html" name="view"
     allow="fullscreen" referrerpolicy="no-referrer"></iframe>
+
+  <!-- The wedge that joins the two bars. The bars are the shell's, so this is
+       too: drawn by the page it blinked out and back on every page change.
+       Its look is in server.css beside the rule it replaces. -->
+  <div id="shell-notch"></div>
+
+  <div id="shell-loading" class="loading-overlay">
+    <div class="loading-container">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Redstone Launcher</div>
+      <div class="loading-subtext">Loading...</div>
+    </div>
+  </div>
 
   <!-- What every page's own inline script declared before sidebar.js ran.
        sidebar.js has always relied on its host page for these rather than

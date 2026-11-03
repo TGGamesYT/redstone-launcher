@@ -261,6 +261,149 @@ const persisted = await page.evaluate(async () => {
 check("and the bars themselves are never rebuilt", persisted.same, true,
   "a mark put on the title bar survives navigating, because it is the same element");
 
+// ── the loading screen, the notch, and the buttons ────────────────────────
+//
+// All three used to belong to the page, and all three were visibly wrong for
+// it: the notch between the bars blinked out and back on every page change,
+// the frame went blank before the new page had painted, and the loading
+// screen only appeared once the page it belonged to had parsed -- so a page
+// change was a flash of nothing followed by a loading screen that had
+// nothing left to wait for.
+await frameTo("index.html");
+
+const loading = await page.evaluate(async () => {
+  const ov = document.getElementById("shell-loading");
+  const frame = document.getElementById("view");
+  // Settled first: the page just framed raised it, like any other change.
+  for (let i = 0; i < 80; i++) {
+    if (!ov.classList.contains("on") && !ov.classList.contains("going")) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  const seen = { before: getComputedStyle(ov).display };
+  document.querySelector('.sidebar a[href="players.html"]').click();
+  await new Promise(r => requestAnimationFrame(r));
+  const b = ov.getBoundingClientRect();
+  seen.up = ov.classList.contains("on");
+  seen.says = (ov.querySelector(".loading-subtext") || {}).textContent || "";
+  seen.at = [Math.round(b.x), Math.round(b.y)];
+  seen.overFrame = (Number(getComputedStyle(ov).zIndex) || 0) > (Number(getComputedStyle(frame).zIndex) || 0);
+  // And down again once the page says it is ready, rather than on a timer.
+  for (let i = 0; i < 80 && ov.classList.contains("on"); i++) await new Promise(r => setTimeout(r, 100));
+  seen.down = !ov.classList.contains("on");
+  return seen;
+});
+check("a page change shows the SHELL's loading screen",
+  [loading.before, loading.up, loading.overFrame], ["none", true, true],
+  "up the moment the change starts, so the frame is never seen empty");
+check("and it covers the area between the bars", loading.at, [70, 38]);
+check("and it says what it is opening", /^Opening /.test(loading.says), true, loading.says);
+check("and the page itself takes it down when it is ready", loading.down, true,
+  "the page's own loading screen is what hands over, so there is one of them, not two");
+
+// The wedge joining the two bars. Only drawn over a background of the user's
+// own -- the app's own panel makes it for free -- so the class that means
+// that is set by hand here rather than by faking a whole settings object.
+const notch = await page.evaluate(() => {
+  document.documentElement.classList.add("custom-bg");
+  const n = document.getElementById("shell-notch");
+  const s = getComputedStyle(n);
+  const b = n.getBoundingClientRect();
+  return {
+    display: s.display,
+    at: [Math.round(b.x), Math.round(b.y)],
+    overFrame: (Number(s.zIndex) || 0) > (Number(getComputedStyle(document.getElementById("view")).zIndex) || 0),
+  };
+});
+const inFrame = await frameTo("players.html");
+const pageNotch = await inFrame.evaluate(() => {
+  document.documentElement.classList.add("custom-bg");
+  return getComputedStyle(document.documentElement, "::before").display;
+});
+check("the notch between the bars is the shell's",
+  [notch.display, notch.at, notch.overFrame], ["block", [70, 38], true],
+  "drawn by the page it was thrown away and built again on every page change");
+check("and a framed page does not draw its own", pageNotch, "none",
+  "two of them, one of which blinked");
+
+// The whole button, not the 24 pixels of icon in it.
+await frameTo("index.html");
+const spot = await page.evaluate(() => {
+  const li = [...document.querySelectorAll(".sidebar li")]
+    .find(l => l.querySelector('a[href="settings.html"]'));
+  const b = li.getBoundingClientRect();
+  const a = li.querySelector("a").getBoundingClientRect();
+  const pt = [Math.round(b.x + 5), Math.round(b.y + 5)];
+  return {
+    pt,
+    // The point really is outside the link, or this proves nothing.
+    insideTheLink: pt[0] >= a.x && pt[0] <= a.right && pt[1] >= a.y && pt[1] <= a.bottom,
+  };
+});
+check("the point clicked is in the button but NOT on its icon", spot.insideTheLink, false);
+await page.mouse.click(spot.pt[0], spot.pt[1]);
+await page.waitForTimeout(600);
+check("clicking a sidebar button anywhere in it works",
+  await page.evaluate(() => document.getElementById("view").getAttribute("src")), "settings.html",
+  "Skins, Settings and the instance shortcuts have the link around the icon alone");
+
+// Hovering the page you are already on has to do SOMETHING.
+//
+// The pointer is on that very button -- it was just clicked -- so it is moved
+// off before the un-hovered look is read, or both reads are the hovered one.
+await page.mouse.move(640, 500);
+await page.waitForTimeout(400);
+const hover = await page.evaluate(() => {
+  const li = document.querySelector(".sidebar li.current");
+  const s = getComputedStyle(li);
+  return { bg: s.backgroundColor, shadow: s.boxShadow, bar: getComputedStyle(li, "::after").height };
+});
+await page.hover(".sidebar li.current");
+await page.waitForTimeout(400);
+const hovered = await page.evaluate(() => {
+  const li = document.querySelector(".sidebar li.current");
+  const s = getComputedStyle(li);
+  return { bg: s.backgroundColor, shadow: s.boxShadow, bar: getComputedStyle(li, "::after").height };
+});
+check("the current page's button answers a hover",
+  [hovered.bg !== hover.bg, hovered.shadow !== hover.shadow, hovered.bar !== hover.bar],
+  [true, true, true],
+  "it brightens, takes a ring, and its edge bar stretches -- it used to do none of it");
+
+// The lit/unlit marker is on every button, so becoming the current one is
+// something that can be watched rather than something the next page arrives
+// already having done.
+const litness = await page.evaluate(() => {
+  const li = [...document.querySelectorAll(".sidebar li")].find(l => !l.classList.contains("current"));
+  const s = getComputedStyle(li, "::after");
+  const cur = getComputedStyle(document.querySelector(".sidebar li.current"), "::after");
+  return { unlit: [s.content !== "none", s.opacity, /opacity|transform/.test(s.transitionProperty)], lit: cur.opacity };
+});
+check("an unlit sidebar button has the marker, invisible, with a transition on it",
+  litness.unlit, [true, "0", true]);
+check("and the current one's is visible", litness.lit, "1");
+
+// The instance shortcuts are not rebuilt when told the same thing twice.
+//
+// `profiles-updated` is broadcast for all sorts of reasons a page load sets
+// off, and the list is built from scratch each time it arrives -- every icon
+// a new <img>, so every icon blinks. That was invisible while the sidebar
+// went away on a page change anyway. It does not any more.
+const shortcuts = await page.evaluate(() => {
+  const list = [{ id: "a", name: "One" }, { id: "b", name: "Two" }];
+  renderInstances(list);
+  const first = document.querySelector("#instances li");
+  if (!first) return { built: false };
+  first.dataset.mark = "yes";
+  renderInstances(list.map(p => ({ ...p })));           // same thing, said again
+  const kept = (document.querySelector("#instances li") || {}).dataset;
+  renderInstances([{ id: "c", name: "Three" }]);        // actually different
+  const after = (document.querySelector("#instances li") || {}).dataset;
+  return { built: true, kept: kept && kept.mark === "yes", rebuilt: !(after && after.mark === "yes") };
+});
+check("the instance shortcuts are left alone when nothing about them changed",
+  [shortcuts.built, shortcuts.kept, shortcuts.rebuilt], [true, true, true],
+  "and still rebuilt when something does");
+
 // A page that throws under these stubs throws standing on its own too -- the
 // stubs are not the real main process. What matters is that framing one does
 // not make it throw anything NEW, so the errors are checked against the ones

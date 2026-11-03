@@ -91,7 +91,12 @@ async function settled(target, { tries = 25, gap = 220 } = {}) {
   // hoping the wait was long enough. (This is what made the server and skins
   // pages look as though they had changed when all that differed was whether
   // the shutter caught the overlay.)
-  for (let i = 0; i < 40; i++) {
+  // The cap is generous because the cost of it being too short is a test that
+  // fails for no reason the code did -- a page whose data arrives late holds
+  // the overlay up, and all the suites running at once is exactly when that
+  // happens. Waiting longer costs nothing when it is already down, since this
+  // stops the moment it is.
+  for (let i = 0; i < 90; i++) {
     const gone = await target.evaluate(() => {
       const el = document.getElementById("loading-overlay");
       if (!el) return true;

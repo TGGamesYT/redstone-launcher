@@ -819,7 +819,8 @@ html:not(.custom-bg) body {
    shows everywhere <body> is see-through. The circle is centred on the inside
    of the corner: transparent within the radius, where the panel's own curve
    is, and the toolbar's colour outside it. */
-html.custom-bg::before {
+html.custom-bg::before,
+html.custom-bg #shell-notch {
   content: "";
   position: fixed;
   left: 70px;
@@ -832,6 +833,26 @@ html.custom-bg::before {
       var(--toolbar-bg) var(--border-radius));
   pointer-events: none;
   z-index: 0;
+}
+
+/* The notch belongs to the two bars, and the bars belong to the shell.
+   Drawn by the page it is thrown away and built again on every page change,
+   which is visible: the corner blinks each time. The shell draws it instead
+   -- over the frame, since the frame covers the whole window -- and a framed
+   page does not draw its own. The look is the rule above, so there is one
+   description of it and the two cannot drift. */
+html.in-shell.custom-bg::before {
+  display: none;
+}
+
+#shell-notch {
+  display: none;
+}
+
+html.custom-bg #shell-notch {
+  display: block;
+  /* Above the frame (0), below everything the shell draws over it. */
+  z-index: 1;
 }
 
 h1,
@@ -1085,23 +1106,51 @@ textarea::placeholder {
   box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.35);
 }
 
-.sidebar .menu li.current::after {
+/* The bar down the leading edge. On EVERY button, not only the current one,
+   so that becoming the current one is something that can be watched happening:
+   it grows out of the edge, and the one you have just left shrinks back into
+   it. Built only when the sidebar changes which button is lit -- which, now
+   that the sidebar survives a page change, is a thing that happens in front
+   of you rather than being how the next page happens to arrive. */
+.sidebar .menu li::after {
   content: "";
   position: absolute;
   left: -8px;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translateY(-50%) scaleY(0.2);
   width: 4px;
   height: 26px;
   border-radius: 0 3px 3px 0;
   background: var(--text-color);
+  opacity: 0;
+  transition: transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1), opacity 0.18s ease, height 0.2s ease;
   /* Behind the tooltip label, which is also absolutely placed in here. */
   pointer-events: none;
 }
 
+.sidebar .menu li.current::after {
+  transform: translateY(-50%) scaleY(1);
+  opacity: 1;
+}
+
+/* Hovering the page you are already on used to do nothing you could see: the
+   fill moved by a few per cent of one colour and the lift is deliberately
+   off, so the button looked inert -- as though it had stopped being a button.
+   It answers now, in its own way rather than the plain hover's way: it
+   brightens, takes a ring in the text colour, and its edge bar stretches.
+   Still unmistakably "you are here" and not "this is where clicking goes". */
 .sidebar .menu li.current:hover {
-  background: color-mix(in srgb, var(--base-color) 75%, var(--third-color));
+  background: color-mix(in srgb, var(--base-color) 55%, var(--third-color));
+  border-color: var(--menu-hover-border);
+  box-shadow:
+    inset 0 0 12px rgba(0, 0, 0, 0.35),
+    0 0 0 2px color-mix(in srgb, var(--text-color) 40%, transparent),
+    0 4px 12px rgba(0, 0, 0, 0.3);
   transform: none;
+}
+
+.sidebar .menu li.current:hover::after {
+  height: 34px;
 }
 
 .sidebar .menu li i,

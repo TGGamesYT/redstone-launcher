@@ -9,6 +9,87 @@ started.
 
 ---
 
+## 0. Round 44
+
+- [x] **Resizing a segment's top edge into something grows the bottom
+      instead.** — *The top edge had no limit at all. It is pinned by sitting
+      the segment at the BOTTOM of its row, so a segment already as tall as
+      its row has nothing above it to grow into -- and every pixel asked for
+      past that made the ROW taller, which moved the bottom edge down while
+      the top stayed exactly where it was. Dragging up grew the thing
+      downwards. The edge now stops at the top of the row: the room there is
+      is whatever the tallest OTHER segment in the row has and this one does
+      not, and with nothing beside it there is none, so the edge does not
+      move. The readout says so.*
+- [x] **The notch between the bars belongs to the shell, and the page flashes
+      black.** — *Both of them were the page's. The notch is drawn by
+      `<html>`, and in the shell that is the framed page's `<html>`, so it
+      went with the page: thrown away and built again every time, which is the
+      blink. The shell draws it now and a framed page does not. The flash was
+      the gap between the old page going and the new one painting -- a frame
+      with no document in it yet has no background -- and the page's own
+      loading screen could not cover it, since it does not exist until the
+      page it is part of has parsed. The shell has a loading screen now: up
+      the moment a change starts, down when the page says it is ready, which
+      is the moment the page would have taken its own down. The two hand over
+      and there is nothing to see between them.*
+- [x] **A page change has no animation.** — *The loading screen fades in over
+      the frame rather than appearing, stays up for at least a quarter of a
+      second so a quick page does not make it blink, and says what it is
+      opening -- in the sidebar's own words for that page, so there is not a
+      second list of names to disagree with it. The lit marker down a button's
+      leading edge is on every button now, not only the current one, so it can
+      grow out of the edge as a page becomes current and shrink back as one
+      stops being: with the sidebar surviving a page change, that is something
+      that happens in front of you.*
+- [x] **The current page's button does nothing on hover.** — *It moved the
+      fill by a few per cent of one colour, and the lift every other button
+      has is deliberately off for it, so it looked inert -- as though it had
+      stopped being a button. It brightens, takes a ring in the text colour
+      and stretches its edge bar now. Still unmistakably "you are here" rather
+      than "this is where clicking goes", which is why it is not simply given
+      the ordinary hover.*
+- [x] **Only the icon in a sidebar button registers a click.** — *Three of
+      them have the link INSIDE the `<li>` and around the icon alone, so 24
+      pixels of a 50-pixel button did anything at all. A click anywhere in a
+      sidebar button that holds a link now goes to that link -- in the shell,
+      which is where the sidebar you can see lives, and in the instance
+      shortcuts themselves for a page standing on its own.*
+- [x] **The running instances, the instance list and the player icon still
+      refresh on a page change.** — *The instance shortcuts. They are built
+      from scratch whenever `profiles-updated` arrives -- every icon a new
+      `<img>`, so every icon reloads -- and that is broadcast for all sorts of
+      reasons a page load sets off, the auto-update check among them. It was
+      invisible while the sidebar went away on a page change anyway. The list
+      is left alone now unless something about it actually changed. (The
+      running-instances pill already kept its rows across a refresh, and the
+      player icon already skipped the work when the account had not changed,
+      so those two were not rebuilding -- the list beside them was.)*
+- [ ] **Logs arrive late.** — A line is in Electron's own terminal
+      immediately and in the launcher a fraction of a second later.
+- [ ] **A server shows developer plugins without developer mode being on for
+      that server.** — An instance asks per instance; a server should too.
+- [ ] **An instance can still crash with 3221225477.** — With a flood of
+      `Exception loading blockstate definition:
+      'minecraft:<block>/server/00000000/<uuid>'` and missing block models
+      first.
+- [ ] **Relaunching an instance opens a second log tab.** — Starting one that
+      has already run and exited should reuse its tab.
+- [x] **Changing tab on the servers page is instant.** — *Going from the list
+      into a server and back is a page change as far as anyone looking at it
+      is concerned, and it happened with no sign that anything had happened:
+      the whole middle of the window was simply something else. The instances
+      page says so when it does the same thing -- the servers page was never
+      given it. Same words, same loading screen.*
+- [ ] **Sharing from a server offers no relay choice and sets up no DNS.** —
+      An admin gets neither the e4mc nor the own-relay option, and the log says
+      `[e4mc] This relay has no DNS credentials, so it cannot point a name
+      anywhere.`
+- [ ] **No sidecar must mean the launcher's own relay.** — Sharing has to keep
+      working for anybody who has not built the Rust helper.
+
+---
+
 ## 0. Round 43
 
 - [x] **"Where in its space" has no up and down.** — *It offered left, middle

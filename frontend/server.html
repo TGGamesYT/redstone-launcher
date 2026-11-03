@@ -570,6 +570,14 @@
     // button in the list goes straight to the Join tab.
     async function openDetail(server, fromHistory, tab) {
       const already = !!selectedServer;
+      // Going from the list into a server and back is a page change as far as
+      // anyone looking at it is concerned, and it happened with no sign that
+      // anything had happened at all: the whole middle of the window was
+      // simply something else in the same frame. The instances page already
+      // says so when it does the same thing; this is the same words.
+      if (!already && !fromHistory && window.pageLoading) {
+        window.pageLoading.show(`Opening ${server.name}…`);
+      }
       selectedServer = server;
       // Push a history entry so the toolbar Back button returns to the list.
       if (!fromHistory) history.pushState({ srvDetail: server.name, tab: tab || undefined }, '',
@@ -615,6 +623,7 @@
     }
 
     function closeDetail() {
+      if (selectedServer && window.pageLoading) window.pageLoading.show('Your servers…');
       selectedServer = null;
       clearTimeout(consoleTimer);
       clearInterval(detailStatusTimer);

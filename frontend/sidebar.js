@@ -374,6 +374,20 @@ async function updateLoginIcon() {
 
 function renderInstances(instances) {
   const ul = document.getElementById("instances");
+
+  // Nothing to do if it already says this.
+  //
+  // The list is rebuilt from scratch, which means every icon is a new <img>
+  // and reloads -- a visible blink. That was fine while the sidebar went away
+  // on every page change anyway, but it does not any more: the shell keeps
+  // it, and `profiles-updated` is broadcast for all sorts of reasons a page
+  // load can set off (the auto-update check, for one), so the list blinked
+  // every time you changed page even though nothing about it had changed.
+  const want = JSON.stringify((instances || []).slice(0, 3)
+    .map(p => [p.id, p.name, p.icon || null, p.version || null, p.loader || null]));
+  if (ul.dataset.renderedFor === want) return;
+  ul.dataset.renderedFor = want;
+
   ul.innerHTML = ""; // clear placeholder items
   num = 0;
 
@@ -392,6 +406,15 @@ function renderInstances(instances) {
           e.preventDefault();
           window.openInstanceInPage(instance.id);
         }
+      });
+      // The link is around the ICON, which is 24px inside a 50px button, so
+      // more than half of the button did nothing at all when clicked. The
+      // whole button is the link's target now. (The shell does the same for
+      // every sidebar button, since Skins and Settings are built the same way
+      // in the markup -- see shell.js.)
+      li.addEventListener("click", (e) => {
+        if (e.target === a || a.contains(e.target)) return;   // already its own
+        a.click();
       });
       const img = document.createElement("img");
       window.instanceIconInto(img, instance);
@@ -503,12 +526,28 @@ applyModProviderIcon();
 // `#loading-overlay` element gets the same fade-out once the window finishes
 // loading, so every page shows the launcher splash without duplicating logic.
 function hideLoadingOverlay() {
+  if (_loadHolds.size) return;        // something is still loading; it says so
+  // The shell puts its own loading screen up the moment a page change starts,
+  // and takes it down when the page that was asked for says it is ready --
+  // which is this, the point at which the page would have taken its own down.
+  // So the two hand over to each other and what you see is one loading
+  // screen for the whole change, rather than the frame going blank and the
+  // page's own appearing once it has parsed.
+  tellShell('ready');
   const overlay = document.getElementById('loading-overlay');
   if (!overlay) return;
-  if (_loadHolds.size) return;        // something is still loading; it says so
   overlay.classList.add('fade-out');
   setTimeout(() => { if (!_loadHolds.size) overlay.style.display = 'none'; }, 500);
 }
+
+/** Say something to the shell, if there is one. */
+function tellShell(what, extra) {
+  try {
+    if (window.parent === window) return;
+    window.parent.postMessage({ rsShell: what, ...(extra || {}) }, '*');
+  } catch { /* no shell to tell */ }
+}
+window.tellShell = tellShell;
 
 // A page can keep the launcher's own loading screen up while it finishes
 // getting what it needs, instead of putting a second spinner of its own in

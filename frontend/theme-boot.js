@@ -61,6 +61,18 @@
     window.addEventListener('load', announce);
     let left = 12;
     const again = setInterval(() => { announce(); if (--left <= 0) clearInterval(again); }, 400);
+
+    // And when it is about to go.
+    //
+    // The shell raises its loading screen itself when IT starts a page change,
+    // but a page can also change page on its own -- `location.href = ...`,
+    // which several do -- and the shell has no way of seeing that coming. The
+    // page leaving is the one thing that can be seen from inside, and it
+    // happens before the frame goes blank, which is the gap that showed as a
+    // black flash.
+    window.addEventListener('beforeunload', () => {
+      try { window.parent.postMessage({ rsShell: 'leaving' }, '*'); } catch { /* going anyway */ }
+    });
   }
 
   let cached = {};

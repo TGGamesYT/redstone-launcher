@@ -1669,6 +1669,30 @@
           hardLeft = Math.max(hardLeft, b.x + (k + 1) * MIN_W);
         }
 
+        // How far the TOP edge may rise: to the top of the row and no
+        // further.
+        //
+        // It used to have no limit, and the result was the opposite of what
+        // dragging an edge means. The top edge is pinned by making the
+        // segment sit at the BOTTOM of its row, so a segment already as tall
+        // as the row has nothing above it to grow into -- and every pixel
+        // asked for past that made the ROW taller, which moved the bottom
+        // edge down while the top stayed exactly where it was. Dragging up
+        // grew the thing downwards.
+        //
+        // The room above is whatever the row has that this segment is not
+        // already using, which is the tallest OTHER segment in it. Measured
+        // from the segments rather than from the row box, which also counts
+        // the gap below the row. Nothing beside it means no room, and the
+        // edge simply does not move.
+        let tallestOther = 0;
+        for (const s of snap) {
+          if (s.seg === seg) continue;
+          const n2 = nodeFor(s.seg);
+          if (n2) tallestOther = Math.max(tallestOther, n2.offsetHeight);
+        }
+        const capNorth = Math.max(startH, tallestOther);
+
         // The anchor is said out loud, because the drag sets it: a segment
         // that filled its row is pinned to whichever edge was not dragged.
         const show = (w, h, from) => {
@@ -1720,11 +1744,15 @@
           // segment with nothing said about it fills its row from the top --
           // which is why the top could not be resized at all.
           const dy = ev.clientY - startY;
-          seg.h = Math.max(80, Math.min(1200, Math.round(startH + (south ? dy : -dy))));
+          // Downwards there is always somewhere to go -- the row grows. Up
+          // there is only the room the row already has.
+          const ceiling = south ? 1200 : Math.min(1200, capNorth);
+          seg.h = Math.max(80, Math.min(ceiling, Math.round(startH + (south ? dy : -dy))));
           if (south) { if (seg.valign === 'bottom') seg.valign = 'top'; }
           else if (!seg.valign || seg.valign === 'stretch' || seg.valign === 'top') seg.valign = 'bottom';
           applyOne(node, seg);
-          show(seg.w, seg.h, south ? 'from the top' : 'from the bottom');
+          const stuck = !south && seg.h >= ceiling && startH - dy > ceiling;
+          show(seg.w, seg.h, stuck ? 'the top of the row' : (south ? 'from the top' : 'from the bottom'));
         };
         const onUp = () => {
           document.removeEventListener('mousemove', onMove);

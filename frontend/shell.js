@@ -38,17 +38,73 @@
     return /^[\w.-]+\.html(\?[^#]*)?(#.*)?$/.test(name) ? name : null;
   };
 
+  // ── the loading screen ────────────────────────────────────────────────────
+  //
+  // The shell's, not the page's. Up when a change starts, down when the page
+  // asked for says it is ready. See the #shell-loading comment in shell.html
+  // for why, and hideLoadingOverlay in sidebar.js for the other half.
+  const overlay = document.getElementById("shell-loading");
+  let settleTimer = 0, capTimer = 0, upAt = 0;
+
+  // Long enough that a slow page is covered, short enough that a stuck one
+  // does not hide the launcher. The page's own loading screen takes over if
+  // it really is still loading.
+  const LOADING_CAP = 6000;
+  // Up for at least this long once it is up, so a page that arrives in a
+  // frame or two does not flash it.
+  const LOADING_MIN = 260;
+
+  function loadingUp(what) {
+    if (!overlay) return;
+    const sub = overlay.querySelector(".loading-subtext");
+    if (sub) sub.textContent = what || "Loading...";
+    clearTimeout(settleTimer); clearTimeout(capTimer);
+    upAt = Date.now();
+    overlay.classList.remove("going");
+    overlay.classList.add("on");
+    capTimer = setTimeout(() => loadingDown(true), LOADING_CAP);
+  }
+
+  function loadingDown(now) {
+    if (!overlay || !overlay.classList.contains("on")) return;
+    const left = now ? 0 : Math.max(0, LOADING_MIN - (Date.now() - upAt));
+    clearTimeout(settleTimer); clearTimeout(capTimer);
+    settleTimer = setTimeout(() => {
+      overlay.classList.remove("on");
+      overlay.classList.add("going");
+      // Off the paint path once it has faded, so it cannot sit over the page
+      // eating clicks.
+      settleTimer = setTimeout(() => overlay.classList.remove("going"), 340);
+    }, left);
+  }
+
   /** Show a page in the frame. */
   function navigate(href) {
     const page = ourPage(href);
     if (!page) return false;
     // Same page, different query: still a navigation, because that is how
     // these pages are told which instance or server to open.
+    loadingUp(label(page));
     frame.setAttribute("src", page);
     // Marked now rather than waiting to be told, so the sidebar answers the
     // click immediately instead of a beat later.
     markCurrent(page.split(/[?#]/)[0]);
     return true;
+  }
+
+  // What the loading screen says it is doing. The sidebar already has a name
+  // for every page it links to -- its tooltip -- so the words come from there
+  // rather than from a second list that could disagree with it.
+  function label(page) {
+    const file = String(page).split(/[?#]/)[0].toLowerCase();
+    for (const a of document.querySelectorAll(".sidebar a[href]")) {
+      if ((a.getAttribute("href") || "").split("/").pop().toLowerCase() !== file) continue;
+      const li = a.querySelector("li") || a.closest("li");
+      const span = (li || a).querySelector("span:not(.provider-icon)");
+      const name = span && span.textContent && span.textContent.trim();
+      if (name) return "Opening " + name + "…";
+    }
+    return "Loading...";
   }
   window.shellNavigate = navigate;
 
@@ -60,7 +116,20 @@
   // Captured, so this runs before the handler sidebar.js puts on the link for
   // the in-page case.
   document.addEventListener("click", (e) => {
-    const a = e.target && e.target.closest && e.target.closest("a[href]");
+    if (!e.target || !e.target.closest) return;
+    // The button, not just the icon in it.
+    //
+    // Three of the sidebar's buttons have the link INSIDE the <li> and around
+    // the icon alone -- the instance shortcuts, Skins and Settings -- so a
+    // 24-pixel icon was the only part of a 50-pixel button that did anything,
+    // and clicking the button next to its icon did nothing at all. Where a
+    // click lands in a sidebar button that holds a link, the link is what was
+    // meant.
+    const a = e.target.closest("a[href]")
+      || (() => {
+        const li = e.target.closest(".sidebar li");
+        return li ? li.querySelector("a[href]") : null;
+      })();
     if (!a) return;
     const href = a.getAttribute("href");
     if (!ourPage(href)) return;                 // let the browser deal with it
@@ -93,9 +162,19 @@
   // The page tells us what it is and what it is called, for the same reason.
   window.addEventListener("message", (e) => {
     const m = e.data;
-    if (!m || m.rsShell !== "page") return;
-    if (m.page) markCurrent(m.page);
-    if (m.title) document.title = m.title;
+    if (!m) return;
+    if (m.rsShell === "page") {
+      if (m.page) markCurrent(m.page);
+      if (m.title) document.title = m.title;
+      return;
+    }
+    // "I have finished loading" -- the moment the page would have taken its
+    // own loading screen down, so it is the moment to take ours down.
+    if (m.rsShell === "ready") loadingDown();
+    // A page changing page on its own, which the shell cannot see coming.
+    // Only if the loading screen is not already up, so this does not restart
+    // one the shell itself raised a moment ago and lose what it says.
+    if (m.rsShell === "leaving" && overlay && !overlay.classList.contains("on")) loadingUp();
   });
 
   markCurrent();
