@@ -169,6 +169,53 @@ for (const file of VIEWS) {
   }
 }
 
+// ── modals, and where they centre ──
+//
+// An overlay is fixed at top:38px left:70px with its contents centred, so a
+// modal is centred in the area BETWEEN the bars rather than in the window.
+// That is a thing worth checking rather than assuming: it is the most visible
+// way this refactor could have gone subtly wrong, and it would have gone
+// wrong if the frame had been given the space left over instead of the whole
+// window -- the page would then have centred inside a box that was already
+// inset, and every modal would sit low and to the right.
+const measureModal = `(() => {
+  const ov = document.querySelector(".modal-overlay, .modal-base");
+  if (!ov) return null;
+  const had = ov.className;
+  ov.classList.add("active");
+  // No animation, or the box is measured mid-fade.
+  ov.style.animation = "none";
+  const box = (el) => { const b = el.getBoundingClientRect(); return [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)]; };
+  const inner = ov.querySelector(".modal-content, .modal-inner");
+  const out = {
+    overlay: box(ov),
+    content: inner ? box(inner) : null,
+    justify: getComputedStyle(ov).justifyContent,
+    align: getComputedStyle(ov).alignItems,
+  };
+  ov.className = had;
+  ov.style.animation = "";
+  return out;
+})()`;
+
+for (const file of ["server.html", "settings.html", "instances.html", "players.html"]) {
+  await alone.goto("file://" + path.join(FE, file), { waitUntil: "load" });
+  await settled(alone);
+  const standalone = await alone.evaluate(measureModal);
+  if (!standalone) { ok(`${file} has no modal in its markup to check`); continue; }
+
+  const fr = await frameTo(file);
+  await settled(fr);
+  const framed = await fr.evaluate(measureModal);
+
+  check(`a modal on ${file} is in exactly the same place framed`,
+    framed, standalone,
+    `centred at [${standalone.content || standalone.overlay}] in the area between the bars`);
+  // And that it really is the content area, not the window.
+  check(`and that area starts below the title bar and right of the sidebar`,
+    [framed.overlay[0], framed.overlay[1]], [70, 38]);
+}
+
 // ── navigating ──
 await frameTo("index.html");
 const nav = await page.evaluate(async () => {
