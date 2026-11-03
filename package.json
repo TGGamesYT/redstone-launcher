@@ -45,7 +45,20 @@
       "output": "dist"
     },
     "files": [
-      "**/*"
+      "**/*",
+      "!sidecar/quiclime/target/**",
+      "!sidecar/quiclime/src/**",
+      "!sidecar/quiclime/tests/**",
+      "!sidecar/dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "sidecar/dist/${platform}-${arch}",
+        "to": "sidecar",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "asar": true,
     "linux": {

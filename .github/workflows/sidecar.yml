@@ -1,0 +1,89 @@
+name: Build quiclime sidecar
+
+# The small program that talks to e4mc's relays, built for every platform the
+# launcher ships on.
+#
+# It has to be a separate binary because Electron cannot speak QUIC at all:
+# Node ships QUIC as a build-time option that is off in every release build, so
+# there is no node:quic to switch on, and Chromium's WebTransport only offers
+# HTTP/3's ALPN, which the relay will not accept. See sidecar/quiclime.
+#
+# Only runs when the sidecar itself changes, since nothing else affects it.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'sidecar/quiclime/**'
+      - '.github/workflows/sidecar.yml'
+  pull_request:
+    paths:
+      - 'sidecar/quiclime/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: sidecar/quiclime
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: quiclime.exe
+          - name: macOS arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: quiclime
+          - name: macOS x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: quiclime
+          - name: Linux x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: quiclime
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Keyed on the lockfile, so a build that changes no dependency reuses
+      # everything it compiled last time.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sidecar/quiclime/target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('sidecar/quiclime/Cargo.lock') }}
+          restore-keys: ${{ matrix.target }}-cargo-
+
+      # The tests stand up an actual quiclime relay and run the binary against
+      # it, so they prove the transport on each platform rather than only that
+      # it compiled there. Worth the minute it takes.
+      - name: Test
+        run: cargo test --release --target ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: quiclime-${{ matrix.target }}
+          path: sidecar/quiclime/target/${{ matrix.target }}/release/${{ matrix.artifact }}
+          if-no-files-found: error

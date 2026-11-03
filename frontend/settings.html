@@ -309,6 +309,10 @@
 
     #custom-css-state { font-size: 12px; opacity: 0.75; }
 
+    .relay-backend-about { font-size: 12px; line-height: 1.6; opacity: 0.75; margin: 0 0 10px; max-width: 60ch; }
+    .relay-backend-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+    #relay-backend-state { opacity: 0.6; }
+
     /* ── Saving and sharing a theme ── */
     .theme-actions {
       display: flex;
@@ -898,6 +902,28 @@
       <br>
       <div class="slider-value" id="ram-servers-value"></div>
       <br><br><br>
+
+      <!-- Which relay carries a shared world. Only shown to an admin: for
+           everybody else it is the launcher's decision, not a knob, and
+           picking wrong means nobody can join. -->
+      <div id="relay-backend-wrap" style="display:none;">
+        <h3>Sharing over the internet</h3>
+        <p class="relay-backend-about">
+          A shared world is carried by a relay. Either way the address people are
+          given is one of the launcher's own — with e4mc that name is pointed at
+          the hostname they assign.
+        </p>
+        <div class="relay-backend-row">
+          <label class="setting-toggle"
+            data-tip="e4mc when the helper that talks to them is installed, and the launcher's own relay when it is not. The right answer unless you are testing one of them."><input type="radio" name="relay-backend" value="auto"> Whichever works</label>
+          <label class="setting-toggle"
+            data-tip="e4mc's relays, dialled over QUIC by the bundled helper. Theirs carry the traffic."><input type="radio" name="relay-backend" value="e4mc"> Always e4mc</label>
+          <label class="setting-toggle"
+            data-tip="The launcher's own relay, which you run. Nothing leaves your infrastructure."><input type="radio" name="relay-backend" value="own"> Always our own relay</label>
+        </div>
+        <div id="relay-backend-state" class="relay-backend-about"></div>
+      </div>
+
       <h3>Developer</h3>
       <label class="setting-toggle" data-tip="Opens DevTools with F12 or Ctrl+Shift+I, and turns on the dev-mod tools and custom CSS."><input type="checkbox" id="dev-mode"> Developer mode</label>
 
@@ -1622,6 +1648,45 @@
       // Only with developer mode on. Applied to every page, after its own
       // styles, so it can move or restyle anything the settings do not
       // reach. Kept in the settings so every window picks it up.
+      // ── which relay carries a shared world ──
+      //
+      // Admin only. For everybody else the launcher decides, because picking
+      // the wrong one means a world nobody can join.
+      (async () => {
+        const wrap = document.getElementById('relay-backend-wrap');
+        const state = document.getElementById('relay-backend-state');
+        if (!wrap) return;
+        let admin = false;
+        try {
+          const accs = await ipcRenderer.invoke('relay:accounts');
+          for (const a of (accs || [])) {
+            const info = await ipcRenderer.invoke('relay:adminInfo', { accountId: a.id });
+            if (info && info.isAdmin) { admin = true; break; }
+          }
+        } catch { /* not an admin, then */ }
+        if (!admin) return;
+
+        const show = (r) => {
+          for (const el of wrap.querySelectorAll('input[name="relay-backend"]')) {
+            el.checked = el.value === (r.setting || 'auto');
+          }
+          state.textContent = r.e4mcAvailable
+            ? `Using ${r.inUse === 'e4mc' ? "e4mc's relays" : "the launcher's own relay"} right now.`
+            : "The e4mc helper is not installed in this copy, so the launcher's own relay is being used.";
+        };
+        let now = { setting: 'auto', inUse: 'own', e4mcAvailable: false };
+        try { now = await ipcRenderer.invoke('relay:backend'); } catch { /* defaults */ }
+        wrap.style.display = '';
+        show(now);
+        for (const el of wrap.querySelectorAll('input[name="relay-backend"]')) {
+          el.addEventListener('change', async () => {
+            if (!el.checked) return;
+            const r = await ipcRenderer.invoke('relay:setBackend', { backend: el.value });
+            if (r && r.success) show({ ...now, ...r, e4mcAvailable: now.e4mcAvailable });
+          });
+        }
+      })();
+
       const cssWrap = document.getElementById('custom-css-wrap');
       const cssBox = document.getElementById('custom-css');
       // Ctrl+F, same as every other editor in the launcher.

@@ -48,7 +48,7 @@ process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.
 // served on the SAME public port as Minecraft (25565) — a Minecraft handshake
 // never begins with an HTTP method, so we can tell the two apart from the first
 // bytes and route by the token in the request URL. No extra port to open.
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23, ALIAS: 24, ALIAS_DATA: 25 };
 
 // URL token (the "random safety token" in the pack path) -> the host serving it.
 const packRoutes = new Map();
@@ -107,6 +107,100 @@ async function cfPointDirect(fullHost, domain, ip) {
   return res?.result?.id ? { id: res.result.id, zoneId } : null;
 }
 async function cfRemoveDirect(rec) { if (!rec) return; try { await cfRequest("DELETE", `/zones/${rec.zoneId}/dns_records/${rec.id}`); } catch { /* ignore */ } }
+
+// ── Pointing one of our names at somebody else's ───────────────────────────
+//
+// The launcher can share a world through this relay or through e4mc's. With
+// e4mc the tunnel is theirs and so is the hostname they assign -- but the name
+// a person gives their friends should still be one of ours, so that name is
+// made to point at theirs.
+//
+// A CNAME is what does that, and it carries the whole answer: whatever their
+// name resolves to, ours resolves to the same. The port is the part a CNAME
+// cannot carry, so when their server is not on the default port an SRV record
+// is added beside it -- which is exactly what SRV is for, and what the game
+// looks up before it connects.
+async function cfDeleteByName(zoneId, type, fullName) {
+  const existing = await cfRequest("GET", `/zones/${zoneId}/dns_records?type=${type}&name=${encodeURIComponent(fullName)}`);
+  for (const r of (existing?.result || [])) {
+    try { await cfRequest("DELETE", `/zones/${zoneId}/dns_records/${r.id}`); } catch { /* ignore */ }
+  }
+}
+
+async function cfPointAlias(fullHost, domain, target, port) {
+  const zoneId = await cfZoneIdFor(domain);
+  if (!zoneId) return { ok: false, error: "This relay cannot edit that domain's DNS." };
+  const srvName = `_minecraft._tcp.${fullHost}`;
+  // Whatever was there before goes first, A records included: a name cannot be
+  // both a CNAME and an A record, and it may have been pointed straight at a
+  // host by the direct-connect path.
+  await cfDeleteByName(zoneId, "A", fullHost);
+  await cfDeleteByName(zoneId, "AAAA", fullHost);
+  await cfDeleteByName(zoneId, "CNAME", fullHost);
+  await cfDeleteByName(zoneId, "SRV", srvName);
+
+  const made = await cfRequest("POST", `/zones/${zoneId}/dns_records`, {
+    type: "CNAME", name: fullHost, content: target, ttl: 60, proxied: false,
+  });
+  if (!made?.result?.id) {
+    return { ok: false, error: (made?.errors?.[0]?.message) || "The name could not be pointed there." };
+  }
+  let srv = null;
+  if (Number(port) && Number(port) !== 25565) {
+    const res = await cfRequest("POST", `/zones/${zoneId}/dns_records`, {
+      type: "SRV", name: srvName, ttl: 60,
+      data: { service: "_minecraft", proto: "_tcp", name: fullHost, priority: 0, weight: 5, port: Number(port), target },
+    });
+    srv = res?.result?.id ? { port: Number(port), target } : null;
+    if (!srv) log("SRV for", srvName, "failed:", JSON.stringify(res?.errors || res));
+  }
+  return { ok: true, host: fullHost, target, srv };
+}
+
+async function cfClearAlias(fullHost, domain) {
+  const zoneId = await cfZoneIdFor(domain);
+  if (!zoneId) return { ok: false, error: "This relay cannot edit that domain's DNS." };
+  await cfDeleteByName(zoneId, "CNAME", fullHost);
+  await cfDeleteByName(zoneId, "SRV", `_minecraft._tcp.${fullHost}`);
+  return { ok: true };
+}
+
+// `who` is the Mojang-VERIFIED profile this connection proved, so the same
+// rule the tunnel uses decides which names may be touched: nothing a client
+// says about itself is read here.
+async function handleAlias(req, who, isAdmin) {
+  const op = String(req?.op || "");
+  const sub = subLabelSafe(req?.subdomain);
+  if (!sub) return { ok: false, error: "No name was given." };
+  if (!isAdmin && !nonAdminSubAllowed(sub, who.name)) {
+    return { ok: false, error: `${sub} is not yours to point anywhere.` };
+  }
+  if (!CF.enabled) return { ok: false, error: "This relay has no DNS credentials, so it cannot point a name anywhere." };
+  const fullHost = `${sub}.${DOMAIN}`;
+  if (op === "clear") return cfClearAlias(fullHost, DOMAIN);
+  if (op !== "set") return { ok: false, error: `Unknown alias op "${op}".` };
+
+  const target = String(req?.host || "").trim().toLowerCase();
+  // A hostname, and nothing that could be anything else. This becomes a DNS
+  // record, so it is checked rather than trusted.
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(target) || target.length > 253) {
+    return { ok: false, error: "That is not a hostname this can point at." };
+  }
+  if (target.endsWith("." + DOMAIN) || target === DOMAIN) {
+    return { ok: false, error: "A name here cannot be pointed at itself." };
+  }
+  const port = Number(req?.port) || 25565;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return { ok: false, error: "That is not a port." };
+  return cfPointAlias(fullHost, DOMAIN, target, port);
+}
+
+// The same cleaning subLabel does, but refusing rather than mangling: a name
+// that had to be changed to be safe is not the name that was asked for.
+function subLabelSafe(s) {
+  const v = String(s || "").trim().toLowerCase();
+  if (!v || v.length > 80) return null;
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(v) ? v : null;
+}
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
   const buf = Buffer.allocUnsafe(9 + len);
@@ -1108,6 +1202,13 @@ function handleControl(sock) {
       try { out = handleTheme(req, { uuid: state.uuid, name: state.name }); }
       catch (e) { out = { ok: false, error: String(e && e.message || e) }; }
       send(T.THEME_DATA, streamId, Buffer.from(JSON.stringify(out)));
+      return;
+    }
+    if (type === T.ALIAS) {
+      let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      handleAlias(req, { uuid: state.uuid, name: state.name }, adminUuids.has(state.uuid))
+        .then((out) => send(T.ALIAS_DATA, streamId, Buffer.from(JSON.stringify(out))))
+        .catch((e) => send(T.ALIAS_DATA, streamId, Buffer.from(JSON.stringify({ ok: false, error: String(e && e.message || e) }))));
       return;
     }
     if (type === T.ADMIN) {

@@ -20,6 +20,7 @@ import appIconParts from './app-icon.js';
 import serverJoin from './server-join.js';
 import upnp from './upnp.js';
 import relayClient from './relayClient.js';
+import e4mc from './e4mc.js';
 import fileManager from './fileManager.js';
 import remod from './remod.js';
 import { convertSkinPixels, slimFromPixels } from './skin-model.js';
@@ -903,6 +904,13 @@ const DEFAULT_SETTINGS = {
   // RCON -- which the launcher switches on per server with a password of that
   // server's own, bound to the loopback.
   serversOutliveLauncher: false,
+  // Which relay carries a shared world. "e4mc" is e4mc's, dialled through the
+  // quiclime sidecar; "own" is the launcher's own, which the owner runs.
+  // "auto" is e4mc when the sidecar is there and the launcher's own when it is
+  // not -- so a copy built without the sidecar still shares worlds rather
+  // than failing to. Either way the name people are given is one of ours:
+  // with e4mc it is pointed at the hostname they assign.
+  relayBackend: "auto",
 };
 for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
   if (!settings.has(k)) settings.set(k, v);
@@ -6763,7 +6771,104 @@ function subLabel(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9-]+
 // something a window can ask for: an event server's file can say to do it the
 // moment the server has finished starting, and there is nobody at a window to
 // press the button for it.
-async function openRelayFor({ key, name, localPort, subdomain, domain, accountId }) {
+// ── Sharing through e4mc instead ───────────────────────────────────────────
+//
+// The two relays do the same job and end the same way: a name somebody can
+// type. What differs is who carries the traffic. With e4mc the tunnel is
+// theirs and so is the hostname they assign -- so the launcher asks its own
+// relay to point one of ITS names at theirs, and that is the name people are
+// given. A person's friends should not have to care which relay is in use,
+// and the name should not change under them when it does.
+// "auto" is not a relay, it is a preference: e4mc when the sidecar that talks
+// to it is actually there, and the launcher's own when it is not.
+function relayBackendInUse(asked) {
+  const want = String(asked || settings.get("relayBackend", "auto") || "auto");
+  if (want === "e4mc" || want === "own") return want;
+  return e4mc.available() ? "e4mc" : "own";
+}
+
+ipcMain.handle("relay:backend", () => ({
+  setting: String(settings.get("relayBackend", "auto") || "auto"),
+  inUse: relayBackendInUse(),
+  e4mcAvailable: e4mc.available(),
+}));
+
+ipcMain.handle("relay:setBackend", (event, { backend } = {}) => {
+  const want = String(backend || "auto");
+  if (!["auto", "e4mc", "own"].includes(want)) return { success: false, error: "Unknown relay" };
+  settings.set("relayBackend", want);
+  return { success: true, setting: want, inUse: relayBackendInUse() };
+});
+
+async function openViaE4mc({ k, name, localPort, accountId, subdomain }) {
+  if (!e4mc.available()) {
+    return { success: false, error: "The part of the launcher that talks to e4mc is not installed in this copy." };
+  }
+  const relay = await e4mc.pickRelay();
+  if (relay.from === "fallback") {
+    devtoolsLog(`[e4mc] the broker could not be reached (${relay.why}); using ${relay.host}`);
+  }
+
+  // Everything it says, as it says it: the relay's own broadcasts are
+  // messages for the person, and a player arriving is worth showing.
+  const onEvent = (event) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.webContents.send("e4mc-event", { key: k, ...event }); } catch { /* gone */ }
+    }
+    if (event.type === "broadcast" && event.message) devtoolsLog(`[e4mc] ${event.message}`);
+    if (event.type === "stopped") activeRelays.delete(k);
+  };
+
+  let session;
+  try {
+    session = await e4mc.share({ localPort, relay, onEvent });
+  } catch (err) {
+    return { success: false, error: String(err && err.message || err) };
+  }
+
+  // What their name actually resolves to. They hand out a hostname on the
+  // default port, but they do not have to, and a CNAME cannot carry a port --
+  // so if theirs has an SRV record, ours needs one too or players would be
+  // sent to the right machine on the wrong port.
+  let target = { host: session.domain, port: 25565, srv: null };
+  try { target = await e4mc.resolveTarget(session.domain); }
+  catch (e) { devtoolsLog(`[e4mc] ${session.domain} could not be looked up: ${e.message}`); }
+
+  // And a name of ours pointed at it. Only possible with an account, since the
+  // relay will not let anybody point a name they have not proved is theirs.
+  let ours = null, aliasNote = null;
+  const account = await accountCredsByIdFresh(accountId);
+  if (account) {
+    const sub = subdomain || subLabel(account.name);
+    try {
+      const r = await relayClient.aliasRelay({
+        host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+        account, rejectUnauthorized: settings.get("relayVerifyTls", true) !== false,
+        req: { op: "set", subdomain: sub, host: target.host, port: target.port },
+      });
+      if (r && r.ok) ours = r.host;
+      else aliasNote = (r && r.error) || "the name could not be pointed at it";
+    } catch (e) { aliasNote = String(e && e.message || e); }
+    if (aliasNote) devtoolsLog(`[e4mc] ${aliasNote}`);
+  } else {
+    aliasNote = "Sign in with a Microsoft account to get a name of your own; e4mc's works either way.";
+  }
+
+  const shownAddr = ours || session.address;
+  activeRelays.set(k, {
+    shownAddr, directAddress: null, localPort, upnpMapped: false,
+    port: target.port, backend: "e4mc", e4mcDomain: session.domain,
+    ourName: ours, aliasAccount: ours ? account : null,
+    close: () => { try { session.close(); } catch { /* already gone */ } },
+  });
+  return {
+    success: true, address: shownAddr, port: target.port, directAddress: null,
+    backend: "e4mc", e4mc: { domain: session.domain, relay: relay.host, srv: target.srv || null },
+    note: aliasNote,
+  };
+}
+
+async function openRelayFor({ key, name, localPort, subdomain, domain, accountId, backend }) {
   const k = key || name;
   try {
     if (activeRelays.has(k)) {
@@ -6772,6 +6877,10 @@ async function openRelayFor({ key, name, localPort, subdomain, domain, accountId
     }
     if (!localPort && name) { try { localPort = serverManager.getServerPort(name); } catch { /* ignore */ } }
     if (!localPort) return { success: false, error: "No local port to share" };
+
+    // Which relay carries it. The caller may say; otherwise it is the setting.
+    const which = relayBackendInUse(backend);
+    if (which === "e4mc") return await openViaE4mc({ k, name, localPort, accountId, subdomain });
 
     const account = await accountCredsByIdFresh(accountId);
     if (!account) return { success: false, error: "Sharing over the internet needs a premium Minecraft account. Add one in the Login page first." };
@@ -6818,6 +6927,19 @@ ipcMain.handle("relay:close", async (event, { key, name }) => {
   const s = activeRelays.get(k);
   if (s) {
     try { s.close(); } catch { /* ignore */ }
+    // A name pointed at e4mc's has to be unpointed, or it keeps resolving to a
+    // tunnel that is no longer there -- which looks exactly like a server that
+    // is up and refusing connections.
+    if (s.backend === "e4mc" && s.ourName && s.aliasAccount) {
+      const sub = String(s.ourName).replace(new RegExp(`\\.${DOMAIN_BASE.replace(/\./g, "\\.")}$`), "");
+      try {
+        await relayClient.aliasRelay({
+          host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+          account: s.aliasAccount, rejectUnauthorized: settings.get("relayVerifyTls", true) !== false,
+          req: { op: "clear", subdomain: sub },
+        });
+      } catch (e) { devtoolsLog(`[e4mc] ${s.ourName} could not be unpointed: ${e.message}`); }
+    }
     if (s.upnpMapped) { try { await upnp.closePort(Number(s.localPort)); } catch { /* ignore */ } }
     activeRelays.delete(k);
     // Tear down the pack host + drop the (now-dead) public URL from the server.
@@ -6829,7 +6951,13 @@ ipcMain.handle("relay:close", async (event, { key, name }) => {
 ipcMain.handle("relay:status", async (event, { key, name }) => {
   const k = key || name;
   const s = activeRelays.get(k);
-  return s ? { active: true, address: s.shownAddr || s.address, port: s.port, directAddress: s.directAddress || null } : { active: false };
+  return s
+    ? {
+      active: true, address: s.shownAddr || s.address, port: s.port,
+      directAddress: s.directAddress || null,
+      backend: s.backend || "own", e4mcDomain: s.e4mcDomain || null,
+    }
+    : { active: false };
 });
 
 // ── UPnP auto port-forward (self-hosting) ──

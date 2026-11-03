@@ -5,7 +5,7 @@ import net from "net";
 import tls from "tls";
 import https from "https";
 
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23, ALIAS: 24, ALIAS_DATA: 25 };
 
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
@@ -206,6 +206,21 @@ export function themeRelay(opts) {
 }
 
 /**
+ * Pointing a name of ours at somewhere else: { op: 'set', subdomain, host,
+ * port } or { op: 'clear', subdomain }.
+ *
+ * The launcher can share a world through its own relay or through e4mc's. With
+ * e4mc the tunnel is theirs and so is the hostname they assign -- but the name
+ * a person hands to their friends should still be the launcher's own, so that
+ * name is pointed at theirs. The relay owns the DNS for it, so the relay is
+ * what does it, and the connection proves which account is asking so nobody
+ * can point somebody else's name anywhere.
+ */
+export function aliasRelay(opts) {
+  return askRelay({ ...opts, ask: T.ALIAS, reply: T.ALIAS_DATA });
+}
+
+/**
  * The admin panel: { op: 'panels', password } for the layout, then whatever
  * ops the panels that came back name. The relay decides what exists and what
  * it looks like; the launcher only draws it.
@@ -291,4 +306,4 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
 // exporting a theme died on "relayClient.themeRelay is not a function" even
 // though the function was right there -- main.js reaches these through the
 // default import.
-export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, themeRelay, adminRelay };
+export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, themeRelay, aliasRelay, adminRelay };
