@@ -22,6 +22,7 @@ import { chromium } from "playwright";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { FINGERPRINT, diffPrints, settled } from "./lib/pageprint.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FE = path.join(ROOT, "frontend");
@@ -121,80 +122,16 @@ const STUB = `
  * because a page's own <style> block applying to another page is exactly the
  * failure mode of putting them all in one document.
  */
-const FINGERPRINT = `(() => {
-  const want = [
-    "display", "position", "boxSizing", "overflow", "overflowX", "overflowY",
-    "flexDirection", "justifyContent", "alignItems", "gridTemplateColumns",
-    "fontFamily", "fontSize", "fontWeight", "lineHeight", "textAlign",
-    "color", "backgroundColor", "borderRadius",
-    "marginTop", "marginRight", "marginBottom", "marginLeft",
-    "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-    "zIndex", "opacity", "visibility",
-  ];
-  const round = (n) => Math.round(n * 10) / 10;
-  const out = [];
-  const seen = new Set();
-  // Everything with an id, plus the elements that carry layout: those are what
-  // a shell could disturb without anybody noticing in a screenshot.
-  const nodes = document.querySelectorAll(
-    "[id], body, .sidebar, .main-scrolly, .full-scrolly, [data-fit-height], .modal-overlay, .modal-content, #toolbar, .drag-region"
-  );
-  for (const el of nodes) {
-    if (seen.has(el)) continue;
-    seen.add(el);
-    const r = el.getBoundingClientRect();
-    const cs = getComputedStyle(el);
-    const style = {};
-    for (const k of want) style[k] = cs[k];
-    out.push({
-      key: el.id ? "#" + el.id : el.tagName.toLowerCase() + "." + (el.className || "").toString().trim().split(/\\s+/).filter(Boolean).slice(0, 3).join("."),
-      box: [round(r.x), round(r.y), round(r.width), round(r.height)],
-      style,
-    });
-  }
-  out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  return {
-    scroll: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
-    count: out.length,
-    nodes: out,
-  };
-})()`;
-
 async function capture(page, file) {
   await page.goto("file://" + path.join(FE, file), { waitUntil: "load" });
   // Let the page settle: fonts, the theme being applied, data-fit-height, and
   // whatever an inline script does on a timer.
-  await page.waitForTimeout(900);
   try { await page.evaluate(() => document.fonts && document.fonts.ready); } catch { /* no font API */ }
-  await page.waitForTimeout(200);
-  const print = await page.evaluate(FINGERPRINT);
+  // Read until it stops moving rather than after a guessed wait: these pages
+  // fade an overlay out and fill a list in after load.
+  const print = await settled(page);
   const shot = await page.screenshot({ fullPage: false, timeout: 15000 });
   return { print, shot };
-}
-
-/** What differs, as the first handful of differences rather than a wall. */
-function diffPrints(a, b) {
-  const out = [];
-  if (JSON.stringify(a.scroll) !== JSON.stringify(b.scroll)) {
-    out.push(`the page's own size: was ${a.scroll.join("x")}, now ${b.scroll.join("x")}`);
-  }
-  const byKey = (p) => new Map(p.nodes.map(n => [n.key, n]));
-  const before = byKey(a), after = byKey(b);
-  for (const [key, was] of before) {
-    const now = after.get(key);
-    if (!now) { out.push(`${key} is gone`); continue; }
-    if (JSON.stringify(was.box) !== JSON.stringify(now.box)) {
-      out.push(`${key} moved: was [${was.box}], now [${now.box}]`);
-    }
-    for (const k of Object.keys(was.style)) {
-      if (was.style[k] !== now.style[k]) {
-        out.push(`${key} ${k}: was ${was.style[k]}, now ${now.style[k]}`);
-      }
-    }
-    if (out.length > 40) { out.push("…and more"); return out; }
-  }
-  for (const key of after.keys()) if (!before.has(key)) out.push(`${key} is new`);
-  return out;
 }
 
 const pages = fs.readdirSync(FE)

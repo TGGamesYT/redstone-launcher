@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>Redstone Launcher</title>
+  <!--
+    The launcher, as one page.
+
+    Every page used to carry its own copy of the title bar and the sidebar, so
+    navigating anywhere threw both away and built them again: the window
+    controls flickered, the instance list was re-fetched, the running-instances
+    pill restarted its poll, and the sidebar's highlight flashed. This holds
+    them once, and the page you are on lives in the frame below.
+
+    The frame covers the WHOLE window rather than the space left over, and the
+    two bars are drawn over it -- both are position:fixed at 38px tall and 70px
+    wide, which is exactly what every page's layout already assumes. So no
+    page's geometry changes at all: it is still laid out for a title bar and a
+    sidebar in those places, because they are still in those places. All a
+    framed page does is not draw its own on top (see the `in-shell` class, set
+    in theme-boot.js before anything renders).
+
+    Each page therefore stays a complete page on its own, which is what makes
+    it possible to prove that none of them changed -- see
+    tests/pages-baseline.mjs, which photographs all of them.
+  -->
+  <script src="theme-boot.js"></script>
+  <script src="outline.js" defer></script>
+  <link rel="stylesheet" href="server.css" />
+  <link rel="stylesheet" href="material-icons.css">
+  <script src="defaults.js"></script>
+  <script src="console-commands.js"></script>
+  <script src="loading.js"></script>
+  <script src="modalfx.js"></script>
+  <script src="pixelart.js"></script>
+  <script src="blockrender.js"></script>
+  <script src="modelpicker.js"></script>
+  <script src="versionicon.js"></script>
+  <script src="uimodal.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+
+    /* The whole window. The bars are fixed and sit over it, so the page inside
+       is laid out exactly as it was when it drew them itself. */
+    #view {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      margin: 0;
+      padding: 0;
+      display: block;
+      /* Under the bars (the toolbar is 8001, the sidebar just below it) and
+         under nothing else. */
+      z-index: 0;
+      background: transparent;
+      color-scheme: normal;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="toolbar">
+    <div class="toolbar-buttons-left">
+      <button id="backBtn">⬅</button>
+      <button id="forwardBtn">➡</button>
+    </div>
+    <div class="drag-region">Redstone Launcher</div>
+    <div class="toolbar-buttons">
+      <div id="instance-processes"></div>
+      <button id="min-btn">—</button>
+      <button id="max-btn">◻</button>
+      <button id="close-btn">✕</button>
+    </div>
+  </div>
+  <div class="sidebar">
+    <ul class="menu top">
+      <a href="index.html">
+        <li><i class="material-icons">home</i><span>Home</span></li>
+      </a>
+      <a href="instances.html">
+        <li><i class="material-icons">play_arrow</i><span>Instances</span></li>
+      </a>
+      <a href="modrinth.html" class="modrinth">
+        <li><span>Modrinth</span></li>
+      </a>
+      <a href="server.html">
+        <li><i class="material-icons">storage</i><span>Server Manager</span></li>
+      </a>
+    </ul>
+    <ul class="menu middle" id="instances">
+      <li><i class="material-icons">add</i><span>Add an instance</span></li>
+    </ul>
+    <ul class="menu bottom">
+      <li id="update"><i class="material-icons">download</i><span id="updateText">Download the latest update</span></li>
+      <li><a href="profile-manager.html"><i class="material-icons">face</i></a><span>Skins</span></li>
+      <a href="players.html">
+        <li id="players-login"><i class="material-icons">login</i><span>Login</span></li>
+      </a>
+      <li><a href="settings.html"><i class="material-icons">settings</i></a><span>Settings</span></li>
+
+    </ul>
+  </div>
+
+  <iframe id="view" src="index.html" name="view"
+    allow="fullscreen" referrerpolicy="no-referrer"></iframe>
+
+  <!-- What every page's own inline script declared before sidebar.js ran.
+       sidebar.js has always relied on its host page for these rather than
+       declaring them, so the shell is now that host. -->
+  <script>
+    const { ipcRenderer, shell } = require('electron');
+    let selectedPlayerId = null;
+  </script>
+  <script src="shell.js"></script>
+  <script src="sidebar.js"></script>
+  <script src="notifications.js"></script>
+</body>
+
+</html>

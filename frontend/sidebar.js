@@ -1085,7 +1085,14 @@ function getSetting(key) {
   return settings[key] ?? defaultSettings[key];
 }
 
-createInstanceInfoBar(document.getElementById("instance-processes"));
+// The running-instances pill belongs to the title bar, and the title bar
+// belongs to the shell. A framed page has one in its markup too -- every page
+// is still a complete page on its own -- but it is hidden, and building it
+// there would mean a second copy polling the main process every three seconds
+// on top of the shell's. The shell's is the real one.
+if (window.parent === window || !document.documentElement.classList.contains("in-shell")) {
+  createInstanceInfoBar(document.getElementById("instance-processes"));
+}
 
 // ── Offline handling ──
 // When there's no internet, grey out and block the things that need it (the

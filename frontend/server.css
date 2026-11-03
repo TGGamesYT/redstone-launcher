@@ -1853,3 +1853,22 @@ body.app-offline [data-needs-net] {
 
 /* A strip that must stay on one line, however many tabs it has. */
 .tabstrip.nowrap { flex-wrap: nowrap; overflow-x: auto; }
+
+/* ── A page being shown inside the shell ───────────────────────────────────
+   The launcher is one page: a shell holding the title bar and the sidebar,
+   with the current page in a frame filling the window beneath them. The frame
+   covers the WHOLE window rather than the area left over, so a page's own
+   layout is untouched -- it is still laid out for a title bar of that height
+   and a sidebar of that width, and the shell draws both in exactly those
+   places. All the page has to do is not draw its own on top of them.
+
+   Hidden rather than removed: every page is still a complete page on its own,
+   which is what makes it possible to prove that none of them changed.
+
+   This lives here because server.css is the one stylesheet every page loads.
+   It was in common.css first, which only half of them do -- so half the pages
+   drew two title bars. */
+html.in-shell #toolbar,
+html.in-shell .sidebar {
+  display: none !important;
+}

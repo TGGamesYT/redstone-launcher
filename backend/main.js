@@ -1197,7 +1197,13 @@ function createWindow() {
     frame: false,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
+      contextIsolation: false,
+      // The launcher is one page now: a shell holding the title bar and the
+      // sidebar, with the page you are on in a frame beneath them. That frame
+      // is where every page's script actually runs, and all of it uses
+      // `require('electron')` -- which a subframe does not get unless it is
+      // asked for here.
+      nodeIntegrationInSubFrames: true
     }
   });
   if (typeof win.setAccentColor === "function") {
@@ -1219,7 +1225,9 @@ function createWindow() {
   win.webContents.on("devtools-opened", () => {
     if (!settings.get("devMode", false)) { try { win.webContents.closeDevTools(); } catch { /* ignore */ } }
   });
-  win.loadFile('frontend/index.html');
+  // The shell, not a page. It holds the bars and frames whichever page is
+  // open, so navigating stops throwing the bars away and building them again.
+  win.loadFile('frontend/shell.html');
   win.on("maximize", () => {
     win.webContents.send("window-maximized");
   });
@@ -1257,6 +1265,27 @@ let pendingDeepLink = null;
 function findDeepLink(argv) { return (argv || []).find(a => typeof a === 'string' && a.startsWith(DEEPLINK_SCHEME + '://')) || null; }
 
 // Perform a shortcut's action: navigate the window to the right page with query
+// Show a page in the shell's frame.
+//
+// Kept here as well as sent, because a deep link can arrive before the shell
+// has finished loading -- the window is created and the link dispatched in the
+// same breath on a cold start -- and a message sent to a window that is not
+// listening yet is simply lost. The shell asks for this as soon as it is up.
+let pendingShellNav = null;
+
+function showInShell(page) {
+  pendingShellNav = page;
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("shell-navigate", page);
+  } catch { /* it will ask */ }
+}
+
+ipcMain.handle("shell:pending", () => {
+  const page = pendingShellNav;
+  pendingShellNav = null;
+  return page;
+});
+
 // params; the page's own code starts the server / launches the instance.
 function dispatchDeepLink(url) {
   if (!url) return;
@@ -1264,14 +1293,17 @@ function dispatchDeepLink(url) {
     const u = new URL(url); // redstonelauncher://server?name=… | ://instance?id=…&mode=…
     const kind = u.hostname;
     if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    // Into the FRAME, not over the window: loading a page into the window
+    // itself would replace the shell, and the title bar and sidebar would go
+    // with it.
     const load = () => {
       if (kind === 'server') {
-        mainWindow.loadFile('frontend/server.html', { search: `?srv=${encodeURIComponent(u.searchParams.get('name') || '')}&action=start` });
+        showInShell(`server.html?srv=${encodeURIComponent(u.searchParams.get('name') || '')}&action=start`);
       } else if (kind === 'instance') {
         const p = new URLSearchParams(u.search);
         p.set('i', u.searchParams.get('id') || '');
         p.set('shortcut', '1');
-        mainWindow.loadFile('frontend/instances.html', { search: '?' + p.toString() });
+        showInShell('instances.html?' + p.toString());
       }
     };
     if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', load); else load();

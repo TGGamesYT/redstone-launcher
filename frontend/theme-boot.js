@@ -10,6 +10,59 @@
 // on <body> as well, so a page could open with no background over a
 // transparent body — a white window until the next navigation. One file now.
 (function () {
+  // ── Inside the shell ──────────────────────────────────────────────────────
+  //
+  // The launcher is one page now: a shell holding the title bar and the
+  // sidebar, with whichever page you are on in a frame filling the window
+  // underneath them. The bars therefore stop reloading when you navigate.
+  //
+  // A page keeps its OWN bars in its markup -- it is still a complete page on
+  // its own, which is what makes it possible to check that none of them
+  // changed -- and simply hides them when it is the one being framed. The
+  // shell's bars are drawn in exactly the same place, so nothing about the
+  // page's own layout moves: it is still laid out for a title bar of that
+  // height and a sidebar of that width, because they are still there, just
+  // drawn by the shell.
+  //
+  // Set here rather than from the shell because this is the first script on
+  // every page: a class added any later would show a frame with two title
+  // bars in it for a frame or two.
+  let framed = false;
+  try { framed = window.parent !== window; } catch { framed = true; }
+  if (framed) {
+    document.documentElement.classList.add('in-shell');
+
+    // And tell the shell which page this is.
+    //
+    // It cannot work that out by looking: these pages are file:// URLs, and a
+    // file:// document is its own opaque origin, so the shell may not read a
+    // frame's location at all -- not in a browser and not in Electron either,
+    // unless web security is turned off, which is not a trade worth making
+    // for a sidebar highlight. A message crosses an origin boundary; a
+    // property read does not.
+    //
+    // Sent more than once because a page sets its own title after its data
+    // arrives, and the window's title should follow the way it did when the
+    // page WAS the window.
+    const announce = () => {
+      try {
+        window.parent.postMessage({
+          rsShell: 'page',
+          page: (location.pathname.split('/').pop() || '').toLowerCase(),
+          search: location.search || '',
+          title: document.title || '',
+        }, '*');
+      } catch { /* nothing to tell */ }
+    };
+    announce();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', announce, { once: true });
+    }
+    window.addEventListener('load', announce);
+    let left = 12;
+    const again = setInterval(() => { announce(); if (--left <= 0) clearInterval(again); }, 400);
+  }
+
   let cached = {};
   try { cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}') || {}; } catch { return; }
   const root = document.documentElement;

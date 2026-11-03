@@ -66,3 +66,21 @@ Everything that would differ between runs is frozen: the clock, the random
 greeting, and every answer the main process would give. A page that throws is
 recorded too, because the ones that throw under these stubs have to throw the
 same way afterwards.
+
+## shell-test.mjs
+
+In `run-all.sh`, and self-contained: for every page it photographs that page on
+its own and then the same page framed in the shell, in the same run, and
+compares. A page changed on purpose changes both sides, so the only thing that
+can fail it is the framing actually doing something -- which is what makes it
+worth keeping rather than a one-off check.
+
+The one allowed difference is the bars: a framed page hides its own, because
+the shell draws identical ones in exactly the same places. Everything else has
+to match to a tenth of a pixel with the same computed styles.
+
+It also checks what the design rests on: that the frame covers the whole window
+rather than the space left over (which is why no page's layout moves), that the
+bars are drawn over it at the heights every page already assumes, that a
+sidebar link moves the FRAME rather than the shell, and -- by marking the title
+bar and navigating -- that the bars are never rebuilt.
