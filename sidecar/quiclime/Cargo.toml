@@ -1,0 +1,36 @@
+# The QUIC half of talking to e4mc's relays.
+#
+# The launcher is Electron, and Electron cannot speak QUIC: Node ships it as a
+# build-time option that is off in every release build, and Chromium's
+# WebTransport only does HTTP/3's ALPN, so it will not interoperate. e4mc's
+# relay is raw QUIC with ALPN "quiclime". So this is a small program that does
+# the one thing JavaScript cannot, and nothing else -- it is told a relay and a
+# local port, and it reports what happens on stdout as one JSON object per
+# line.
+#
+# quinn is the same QUIC implementation the relay itself is built on, which is
+# the point: the handshake cannot disagree with itself.
+[package]
+name = "quiclime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[dependencies]
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "0.26"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "time", "sync"] }
+serde_json = "1"
+rustls-pemfile = "2"
+
+[dev-dependencies]
+rcgen = { version = "0.13", features = ["pem"] }
+
+# A launcher ships this; it should be small and it should not carry debug info.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
