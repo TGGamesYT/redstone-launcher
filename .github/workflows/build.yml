@@ -18,6 +18,24 @@ jobs:
         with:
           node-version: 20
 
+      # The build scripts have a pre-step that builds the quiclime sidecar for
+      # this runner's operating system -- which is how a release ends up with
+      # one for every platform without anybody cross-compiling. The runners do
+      # ship Rust, but relying on an image's contents is how a build breaks
+      # quietly one day.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sidecar/quiclime/target
+          key: ${{ runner.os }}-sidecar-${{ hashFiles('sidecar/quiclime/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-sidecar-
+
       - name: Install dependencies
         run: npm i
 
@@ -53,6 +71,24 @@ jobs:
         with:
           node-version: 20
 
+      # The build scripts have a pre-step that builds the quiclime sidecar for
+      # this runner's operating system -- which is how a release ends up with
+      # one for every platform without anybody cross-compiling. The runners do
+      # ship Rust, but relying on an image's contents is how a build breaks
+      # quietly one day.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sidecar/quiclime/target
+          key: ${{ runner.os }}-sidecar-${{ hashFiles('sidecar/quiclime/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-sidecar-
+
       - name: Install dependencies
         run: npm i
 
@@ -82,6 +118,24 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: 20
+
+      # The build scripts have a pre-step that builds the quiclime sidecar for
+      # this runner's operating system -- which is how a release ends up with
+      # one for every platform without anybody cross-compiling. The runners do
+      # ship Rust, but relying on an image's contents is how a build breaks
+      # quietly one day.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sidecar/quiclime/target
+          key: ${{ runner.os }}-sidecar-${{ hashFiles('sidecar/quiclime/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-sidecar-
 
       - name: Install dependencies
         run: npm i

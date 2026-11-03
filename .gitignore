@@ -1,5 +1,8 @@
 node_modules
 .vscode
+# Matches at any depth, so this also covers sidecar/dist -- the built quiclime
+# binaries, which `npm run sidecar` makes and electron-builder packages out of
+# sidecar/dist/current. They are build output, not source.
 dist
 # The admin panel's password (not tracked)
 relay-server/admin-password.txt

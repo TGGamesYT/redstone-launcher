@@ -22,33 +22,58 @@ no network); this program is the transport, and `backend/e4mc.js` runs it.
 ### Building
 
 ```sh
-cd sidecar/quiclime
-cargo test --release     # stands up a real quiclime relay and runs the binary against it
-cargo build --release
+npm run sidecar        # for the machine you are on
 ```
 
-`backend/e4mc.js` finds `target/release/quiclime` on its own when running from
-a checkout, so nothing else is needed to develop against it.
+That is all a developer needs. It leaves the binary in
+`sidecar/quiclime/target/release/`, which is where `backend/e4mc.js` looks when
+the launcher is run from a checkout, so e4mc works immediately afterwards with
+no packaging step.
+
+It also copies it to `sidecar/dist/<platform>-<arch>/` and to
+`sidecar/dist/current/`. The second is what electron-builder packages.
+
+Other ways in:
+
+```sh
+npm run sidecar:all                         # every target this machine can link
+npm run sidecar -- --mac-both               # both macOS architectures
+npm run sidecar -- --target=win32-x64       # one in particular
+SKIP_SIDECAR=1 npm run buildLinux           # package without it
+```
+
+`npm run sidecar:all` is expected to fail most targets on any one machine --
+there is no Windows linker on a Mac -- so it reports what it managed and
+carries on. Asking for ONE target and not getting it is an error.
+
+And the tests, which stand up an actual quiclime relay and run the binary
+against it:
+
+```sh
+cd sidecar/quiclime && cargo test --release
+```
 
 ### Packaging
 
-`package.json` ships whatever is in `sidecar/dist/<platform>-<arch>/` as the
-app's `resources/sidecar/`, which is the first place the launcher looks. So a
-release build wants, for example:
+`npm run buildWin`, `buildLinux` and `buildMac` each build the sidecar first,
+through an npm `pre` step. Since every release job runs on its own operating
+system, that is how a release ends up with a binary for each platform without
+anybody cross-compiling: the Windows job builds the Windows one, and so on.
 
-```
-sidecar/dist/win32-x64/quiclime.exe
-sidecar/dist/darwin-arm64/quiclime
-sidecar/dist/linux-x64/quiclime
-```
+electron-builder ships `sidecar/dist/current/` as the app's
+`resources/sidecar/`, which is the first place `backend/e4mc.js` looks. One
+fixed path rather than a `${platform}-${arch}` macro, because the build script
+has already put the right binary there and a path that cannot be
+misinterpreted cannot ship the wrong binary.
 
-`.github/workflows/sidecar.yml` builds and tests all of those and uploads them
-as artifacts; dropping them into those directories before `npm run buildWin`
-(or the equivalent) is what gets them into the installer.
+If Rust is missing the build stops and says so, rather than quietly producing
+an installer with no e4mc support. `SKIP_SIDECAR=1` is the way past that when
+it is actually wanted -- a copy without the sidecar still shares worlds, since
+the relay setting's default is "whichever works" and falls back to the
+launcher's own relay.
 
-A copy with no sidecar still works: the relay setting's default is "whichever
-works", which falls back to the launcher's own relay rather than failing to
-share.
+`.github/workflows/sidecar.yml` additionally builds and tests all four targets
+on every change to the crate, and uploads them as artifacts.
 
 ### Credit
 

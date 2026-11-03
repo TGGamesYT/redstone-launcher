@@ -11,8 +11,13 @@
     "start": "electron .",
     "preapp": "node scripts/ensure-electron.cjs",
     "app": "electron .",
+    "sidecar": "node scripts/build-sidecar.mjs",
+    "sidecar:all": "node scripts/build-sidecar.mjs --all",
+    "prebuildWin": "node scripts/build-sidecar.mjs",
     "buildWin": "electron-builder --win --publish=never",
+    "prebuildLinux": "node scripts/build-sidecar.mjs",
     "buildLinux": "electron-builder --linux AppImage deb --publish=never",
+    "prebuildMac": "node scripts/build-sidecar.mjs --mac-both",
     "buildMac": "electron-builder --mac --publish=never"
   },
   "keywords": [],
@@ -53,7 +58,7 @@
     ],
     "extraResources": [
       {
-        "from": "sidecar/dist/${platform}-${arch}",
+        "from": "sidecar/dist/current",
         "to": "sidecar",
         "filter": [
           "**/*"
