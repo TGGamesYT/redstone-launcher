@@ -40,3 +40,29 @@ Current files:
   what is on them.
 - `entity-parts-test.mjs` — which parts of a mob the launcher hides while
   it stands still, checked against a real client jar.
+
+## pages-baseline.mjs
+
+Not part of `run-all.sh`, deliberately: it is a before-and-after tool, not a
+regression suite, and it fails on every intentional change to a page until the
+baselines are saved again.
+
+It exists for folding the launcher into a single page. The requirement on that
+work is that every page comes out exactly as it was, so all fifteen are
+photographed first and compared afterwards:
+
+```sh
+node tests/pages-baseline.mjs --save        # on the tree as it is now
+node tests/pages-baseline.mjs               # after changing something
+node tests/pages-baseline.mjs --only=settings
+```
+
+Each page gets a screenshot and a fingerprint -- the box of every element with
+an id, plus the computed properties a refactor like this could disturb. The
+fingerprint is what catches things: a screenshot says something moved, the
+fingerprint says `body paddingLeft: was 20px, now 1px`.
+
+Everything that would differ between runs is frozen: the clock, the random
+greeting, and every answer the main process would give. A page that throws is
+recorded too, because the ones that throw under these stubs have to throw the
+same way afterwards.
