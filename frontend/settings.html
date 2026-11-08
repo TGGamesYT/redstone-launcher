@@ -47,6 +47,20 @@
       padding: 8px 22px;
     }
 
+    /* Undo and redo sit in the same strip but are not sections: they take
+       only the room they need and do not share out the width. */
+    .section-switcher button.switcher-tool {
+      flex: 0 0 auto;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .section-switcher button.switcher-tool i {
+      font-size: 18px;
+    }
+
     /* Switching tabs: the panel itself stays put and only its contents
        change, so there is nothing to fade the panel for. The old tab used to
        be hidden outright and the new one faded up from nothing over a
@@ -638,6 +652,13 @@
       <button data-section="theme">🎨</button>
       <button data-section="advanced">🛠️</button>
       <button data-section="suggest" title="Suggest something">📝</button>
+      <!-- Everything here saves the moment it is touched, so there has to be
+           a way back from it. Not section buttons: they are a size of their
+           own and do not switch anything. -->
+      <button id="settings-undo" class="switcher-tool" title="Undo (Ctrl+Z)">
+        <i class="material-icons">undo</i></button>
+      <button id="settings-redo" class="switcher-tool" title="Redo (Ctrl+Shift+Z)">
+        <i class="material-icons">redo</i></button>
     </div>
 
     <!-- === General Section === -->
@@ -1065,15 +1086,115 @@
     const themeBackgroundGradient = (secondary) => [mixWithBlack(secondary, 0.42), mixWithBlack(secondary, 0.16)];
 
 
+    // ── going back ──────────────────────────────────────────────────────
+    //
+    // Every control here takes effect and is saved the moment it is touched,
+    // and there was no way back from any of it: a colour dragged past the
+    // one you wanted, a font changed to see what it looked like, a
+    // background picked by mistake. The only undo was to remember what it
+    // had been.
+    //
+    // Nothing about the controls is changed to do this. Every save on this
+    // page goes through one call, so that call is where the settings AS THEY
+    // WERE are written down first -- only the keys being changed, so undoing
+    // a colour does not drag anything else back with it. Ctrl+Z sends the
+    // old values back the same way, and the page reloads, which is what
+    // applying a saved theme already does and the reason every control here
+    // can be trusted to show what is actually stored.
+    //
+    // Kept in sessionStorage rather than a variable: the reload is part of
+    // the undo, so a stack in memory would not survive its own use.
+    const UNDO_KEY = 'settingsUndo', REDO_KEY = 'settingsRedo', UNDO_MAX = 40;
+    const readStack = (k) => { try { return JSON.parse(sessionStorage.getItem(k) || '[]') || []; } catch { return []; } };
+    const writeStack = (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v.slice(-UNDO_MAX))); } catch { /* private window */ } };
+
+    // Everything stored, as this page last saw it. Kept in step as it saves,
+    // so the "before" of a change is known without asking the main process
+    // in the middle of a drag.
+    let known = {};
+    const rawSend = ipcRenderer.send.bind(ipcRenderer);
+    let recording = true;
+    ipcRenderer.send = (channel, payload, ...rest) => {
+      if (channel === 'save-settings' && payload && typeof payload === 'object') {
+        if (recording) {
+          const before = {};
+          let changed = false;
+          for (const k of Object.keys(payload)) {
+            const was = known[k] === undefined ? null : known[k];
+            if (JSON.stringify(was) !== JSON.stringify(payload[k])) { before[k] = was; changed = true; }
+          }
+          if (changed) {
+            // A colour picker reports every step of a drag. Steps of the
+            // same drag -- the same keys, moments apart -- are one change to
+            // go back from, not forty.
+            const stack = readStack(UNDO_KEY);
+            const last = stack[stack.length - 1];
+            const sameKeys = last && JSON.stringify(Object.keys(last.before).sort()) === JSON.stringify(Object.keys(before).sort());
+            if (sameKeys && Date.now() - last.at < 900) last.at = Date.now();
+            else stack.push({ before, at: Date.now() });
+            writeStack(UNDO_KEY, stack);
+            writeStack(REDO_KEY, []);
+          }
+        }
+        Object.assign(known, payload);
+      }
+      return rawSend(channel, payload, ...rest);
+    };
+
+    async function settingsStepBack(forward) {
+      const fromKey = forward ? REDO_KEY : UNDO_KEY;
+      const toKey = forward ? UNDO_KEY : REDO_KEY;
+      const from = readStack(fromKey);
+      const step = from.pop();
+      if (!step) { if (window.notify) notify(forward ? 'Nothing to redo' : 'Nothing to undo'); return; }
+      // What it is about to stop being, so this can be stepped forward again.
+      const now = {};
+      for (const k of Object.keys(step.before)) now[k] = known[k] === undefined ? null : known[k];
+      const to = readStack(toKey);
+      to.push({ before: now, at: Date.now() });
+      writeStack(fromKey, from);
+      writeStack(toKey, to);
+      recording = false;
+      rawSend('save-settings', step.before);
+      // Everything on this page is showing the value that has just been put
+      // back; the same reload applying a saved theme does.
+      setTimeout(() => location.reload(), 60);
+    }
+    document.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const t = e.target;
+      // Not while typing into something: Ctrl+Z in a text box is the text
+      // box's own undo and must stay that.
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && t.type !== 'range' && t.type !== 'color' && t.type !== 'checkbox') return;
+      const k = String(e.key || '').toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); settingsStepBack(false); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); settingsStepBack(true); }
+    });
+
+    document.getElementById('settings-undo').onclick = () => settingsStepBack(false);
+    document.getElementById('settings-redo').onclick = () => settingsStepBack(true);
+    // Greyed out when there is nothing on the stack to use them on.
+    (function paintUndoButtons() {
+      const u = document.getElementById('settings-undo');
+      const r = document.getElementById('settings-redo');
+      const tick = () => {
+        u.disabled = !readStack(UNDO_KEY).length;
+        r.disabled = !readStack(REDO_KEY).length;
+      };
+      tick();
+      setInterval(tick, 500);
+    })();
+
     async function init() {
       const totalRAM = await ipcRenderer.invoke('get-system-ram');
       const settings = await ipcRenderer.invoke('get-settings');
+      known = { ...settings };
 
       function getSetting(key, defaultValue) {
         return settings[key] ?? defaultSettings[key] ?? defaultValue;
       }
 
-      const switcherBtns = [...document.querySelectorAll('.section-switcher button')];
+      const switcherBtns = [...document.querySelectorAll('.section-switcher button[data-section]')];
       // Which one you are on was never marked here at all -- the handler
       // showed the panel and left every button looking the same, so the
       // strip had nothing to put its highlight on.

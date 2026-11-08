@@ -730,6 +730,14 @@
       <p id="ipCropHint" style="margin:8px 0 0; font-size:11px; opacity:0.7; text-align:center;">
         Drag to choose what's in frame · scroll to zoom
       </p>
+      <!-- Lining a picture up with the square by eye is a pixel-at-a-time
+           job, and being one pixel out is visible in a 32-pixel icon. With
+           this on, the picture pulls to the middle and to each edge of the
+           square. Off for anything that has to sit just so. -->
+      <label style="display:flex; align-items:center; gap:6px; justify-content:center;
+        margin:6px 0 0; font-size:11px; opacity:0.8;">
+        <input type="checkbox" id="ipCropSnap"> Snap to the edges and the middle
+      </label>
       <div class="ip-section-title" style="margin-top:8px;">Zoom</div>
       <input type="range" id="ipCropZoom" min="100" max="400" value="100" style="width:100%;">
       <div class="ip-section-title" style="margin-top:8px;">Corners</div>
@@ -872,12 +880,47 @@
       try { stage.setPointerCapture(e.pointerId); } catch { /* not captured; move still works */ }
       stage.style.cursor = 'grabbing';
     });
+    // ── snapping ──
+    //
+    // The places worth landing on are the middle of the square and each of
+    // its edges: an offset of zero is centred, and an offset of exactly how
+    // much is hanging over puts that side of the picture flush with that
+    // side of the square. Everything else is wherever you put it.
+    const snapBox = ov.querySelector('#ipCropSnap');
+    let cropSnap = true;
+    try { cropSnap = localStorage.getItem('iconCropSnap') !== 'off'; } catch { /* no storage */ }
+    if (snapBox) {
+      snapBox.checked = cropSnap;
+      snapBox.onchange = () => {
+        cropSnap = !!snapBox.checked;
+        try { localStorage.setItem('iconCropSnap', cropSnap ? 'on' : 'off'); } catch { /* no storage */ }
+        draw();
+      };
+    }
+    const SNAP_PX = 10;              // of the 256 the square is across
+    const pull = (v, lines) => {
+      let best = v, near = SNAP_PX + 1;
+      for (const line of lines) {
+        const d = Math.abs(line - v);
+        if (d < near) { near = d; best = line; }
+      }
+      return near <= SNAP_PX ? best : v;
+    };
+    const snapOffsets = () => {
+      if (!cropSnap || !im.naturalWidth) return;
+      const s = Math.max(OUT / im.naturalWidth, OUT / im.naturalHeight) * zoom;
+      const overX = (im.naturalWidth * s - OUT) / 2, overY = (im.naturalHeight * s - OUT) / 2;
+      ox = pull(ox, [0, overX, -overX]);
+      oy = pull(oy, [0, overY, -overY]);
+    };
+
     stage.addEventListener('pointermove', e => {
       if (!drag) return;
       // Stage pixels -> canvas pixels.
       const k = OUT / stage.getBoundingClientRect().width;
       ox = drag.ox + (e.clientX - drag.x) * k;
       oy = drag.oy + (e.clientY - drag.y) * k;
+      snapOffsets();
       draw();
     });
     const endDrag = () => { drag = null; stage.style.cursor = 'grab'; };

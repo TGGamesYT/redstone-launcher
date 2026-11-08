@@ -9,6 +9,37 @@ started.
 
 ---
 
+## 0. Round 46
+
+- [x] **Snapping on the main page, which can be turned off.** — *An edge
+      dragged to a round number or level with the thing beside it was a
+      percentage to watch and stop on by hand, and being one column out of
+      line is invisible while dragging and very visible afterwards. An edge
+      being resized, and a segment being moved, now pull to the lines worth
+      landing on: the halves, thirds and quarters of the page, and every edge
+      anything else in that row already has. Three columns of pull, and a
+      button in the edit bar turns it off and remembers.*
+- [x] **Snapping when cropping an icon, which can be turned off.** — *The
+      picture pulls to the middle of the square and to each of its edges --
+      ten pixels in 256 -- with a tick box under the frame. Lining a picture
+      up by eye was a pixel-at-a-time job and one pixel out is visible in a
+      32-pixel icon.*
+- [~] **The missing assets are a race, not a failed download.** — *Taking the
+      one mechanism in it that is real and checkable: `<name>.part` is the
+      same path for every launch, and the assets folder is shared. Two
+      instances starting at once -- or one starting while another is already
+      running -- both decide the same asset needs fetching and both write to
+      that one temp file, and whichever renames last puts two interleaved
+      downloads into place under the hash the game trusts and never checks
+      again. That is an asset that has been on the disk for a year reading as
+      missing, with no download having failed and nothing in any log. Each
+      download now has a temp name of its own, and a rename refused because
+      something else has the file open is not a failure when what is already
+      there is byte for byte what we were about to write. Whether that is THE
+      cause is not claimed; it is a race that was really there.*
+
+---
+
 ## 0. Round 45
 
 - [x] **The loading screen.** — *Three things. It wore the theme's colours
@@ -71,8 +102,17 @@ started.
       layout as it was is kept on a stack -- fifty deep -- and Ctrl+Z walks
       back up it, Ctrl+Shift+Z or Ctrl+Y forward again, with buttons for both
       in the edit bar since a shortcut nobody is told about is not an undo.*
-- [ ] **No way back while changing the theme or the settings.** — Not done
-      yet; the home page's is.
+- [x] **No way back while changing the theme or the settings.** — *Every
+      control on the settings page takes effect and is saved the moment it is
+      touched. Every one of those saves goes through one call, so that call
+      is where the settings as they WERE are written down first -- only the
+      keys being changed, so undoing a colour drags nothing else back with
+      it, and the steps of one drag of a colour picker are one change to go
+      back from rather than forty. Ctrl+Z puts them back and the page
+      reloads, which is what applying a saved theme already does and the
+      reason every control on it can be trusted to show what is stored. Not
+      while typing in a text box, where Ctrl+Z is the box's own undo. Undo
+      and redo buttons sit in the strip at the top.*
 - [x] **Space below the home page that crops what is in it.** — *Forty pixels
       of the scroller was a transparent bottom border, which is room the page
       cannot draw in: a segment sized to the page ended at the top of it and

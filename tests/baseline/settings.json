@@ -3,7 +3,7 @@
   1280,
   800
  ],
- "count": 123,
+ "count": 125,
  "nodes": [
   {
    "key": "#add-gradient-color",
@@ -3322,6 +3322,86 @@
     "paddingLeft": "12px",
     "zIndex": "auto",
     "opacity": "1",
+    "visibility": "visible"
+   }
+  },
+  {
+   "key": "#settings-redo",
+   "box": [
+    1217,
+    43,
+    38,
+    35
+   ],
+   "style": {
+    "display": "flex",
+    "position": "relative",
+    "boxSizing": "border-box",
+    "overflow": "visible",
+    "overflowX": "visible",
+    "overflowY": "visible",
+    "flexDirection": "row",
+    "justifyContent": "center",
+    "alignItems": "center",
+    "gridTemplateColumns": "none",
+    "fontFamily": "Pixel",
+    "fontSize": "16px",
+    "fontWeight": "600",
+    "lineHeight": "normal",
+    "textAlign": "center",
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": "0px",
+    "marginTop": "0px",
+    "marginRight": "0px",
+    "marginBottom": "0px",
+    "marginLeft": "0px",
+    "paddingTop": "8px",
+    "paddingRight": "10px",
+    "paddingBottom": "8px",
+    "paddingLeft": "10px",
+    "zIndex": "1",
+    "opacity": "0.75",
+    "visibility": "visible"
+   }
+  },
+  {
+   "key": "#settings-undo",
+   "box": [
+    1177,
+    43,
+    38,
+    35
+   ],
+   "style": {
+    "display": "flex",
+    "position": "relative",
+    "boxSizing": "border-box",
+    "overflow": "visible",
+    "overflowX": "visible",
+    "overflowY": "visible",
+    "flexDirection": "row",
+    "justifyContent": "center",
+    "alignItems": "center",
+    "gridTemplateColumns": "none",
+    "fontFamily": "Pixel",
+    "fontSize": "16px",
+    "fontWeight": "600",
+    "lineHeight": "normal",
+    "textAlign": "center",
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": "0px",
+    "marginTop": "0px",
+    "marginRight": "0px",
+    "marginBottom": "0px",
+    "marginLeft": "0px",
+    "paddingTop": "8px",
+    "paddingRight": "10px",
+    "paddingBottom": "8px",
+    "paddingLeft": "10px",
+    "zIndex": "1",
+    "opacity": "0.75",
     "visibility": "visible"
    }
   },

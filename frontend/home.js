@@ -36,6 +36,45 @@
   };
   /** Is anything in this row stacked, i.e. not the full height of it? */
   const rowIsSplit = (segs) => segs.some(s => yOf(s) !== 0 || vhOf(s) !== ROWS);
+
+  // ── snapping ────────────────────────────────────────────────────────────
+  //
+  // Dragging an edge to a round number, or level with the thing beside it,
+  // meant watching a percentage and stopping on it by hand -- a segment one
+  // column out of line with the one above is not something you can see while
+  // you are dragging and is very visible afterwards. An edge now pulls to
+  // the lines that are worth landing on: the halves, thirds and quarters of
+  // the page, and every edge anything else in that row already has.
+  //
+  // Toggleable, and remembered, because a layout that will not sit where it
+  // is put is worse than one that needs care.
+  const SNAP_TOL = 3;              // columns
+  let SNAP = true;
+  try { SNAP = localStorage.getItem('homeSnap') !== 'off'; } catch { /* no storage */ }
+  const setSnap = (on) => {
+    SNAP = !!on;
+    try { localStorage.setItem('homeSnap', SNAP ? 'on' : 'off'); } catch { /* no storage */ }
+  };
+  /** The lines worth landing on in this row. */
+  function snapLines(row, selfId) {
+    const lines = new Set([0, COLUMNS, 25, 33, 50, 67, 75]);
+    for (const s of row || []) {
+      if (s.id === selfId) continue;
+      lines.add(s.x || 0);
+      lines.add((s.x || 0) + (s.w || COLUMNS));
+    }
+    return [...lines];
+  }
+  /** Pull a column to the nearest line, if one is close enough. */
+  function snapCol(v, lines, tol = SNAP_TOL) {
+    if (!SNAP) return v;
+    let best = v, near = tol + 1;
+    for (const line of lines) {
+      const d = Math.abs(line - v);
+      if (d < near) { near = d; best = line; }
+    }
+    return near <= tol ? best : v;
+  }
   let editing = false;
   let profilesCache = [];
 
@@ -1572,7 +1611,10 @@
       const w = Math.min(me.w || COLUMNS, room);
       // Lands under the pointer where there is room to, rather than always
       // at the left of the space.
-      const x = Math.max(gap.from, Math.min(col - Math.floor(w / 2), gap.to - w));
+      let x = Math.max(gap.from, Math.min(col - Math.floor(w / 2), gap.to - w));
+      // Level with something, or on a round line, rather than one column off
+      // it -- but never outside the space it is going into.
+      x = Math.max(gap.from, Math.min(snapCol(x, snapLines(here, drag.id)), gap.to - w));
       return { row, x, w, newRow: false, what: w < (me.w || COLUMNS) ? `fits ${w}%` : 'here' };
     }
 
@@ -1859,9 +1901,11 @@
         const onMove = (ev) => {
           const dx = (ev.clientX - startX) / colW;
           restore();
+          const lines = snapLines(row, seg.id);
           if (east) {
             // The right edge moves; the left one stays exactly where it is.
-            const right = Math.round(Math.max(startXc + MIN_W, Math.min(hardRight, startXc + startW + dx)));
+            const right = snapCol(
+              Math.round(Math.max(startXc + MIN_W, Math.min(hardRight, startXc + startW + dx))), lines);
             seg.w = right - startXc;
             // Each neighbour in the way keeps its right edge and gives up the
             // room on its left -- it shrinks, rather than being shoved along
@@ -1876,7 +1920,8 @@
             }
           } else {
             // The left edge moves; the right one stays exactly where it is.
-            const left = Math.round(Math.min(startXc + startW - MIN_W, Math.max(hardLeft, startXc + dx)));
+            const left = snapCol(
+              Math.round(Math.min(startXc + startW - MIN_W, Math.max(hardLeft, startXc + dx))), lines);
             seg.x = left;
             seg.w = (startXc + startW) - left;
             let at = left;
@@ -2365,9 +2410,19 @@
       redo.title = 'Redo (Ctrl+Shift+Z)';
       redo.innerHTML = '<i class="material-icons">redo</i>';
       redo.onclick = () => stepBack(true);
+      // Snapping, on or off, and it says which it is.
+      const snap = el('button', 'icon-only');
+      snap.id = 'home-snap';
+      const paintSnap = () => {
+        snap.title = SNAP ? 'Snapping is on (edges pull to the lines)' : 'Snapping is off';
+        snap.style.opacity = SNAP ? '1' : '0.45';
+        snap.innerHTML = `<i class="material-icons">${SNAP ? 'grid_on' : 'grid_off'}</i>`;
+      };
+      snap.onclick = () => { setSnap(!SNAP); paintSnap(); };
+      paintSnap();
       const done = el('button', '', 'Done');
       done.onclick = () => setEditing(false);
-      bar.append(undo, redo, add, reset, done);
+      bar.append(undo, redo, snap, add, reset, done);
       paintUndo();
     } else {
       // The icon on its own, bottom right.

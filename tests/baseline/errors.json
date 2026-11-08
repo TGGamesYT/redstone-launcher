@@ -1,8 +1,3 @@
 [
- "admin.html: Cannot read properties of undefined (reading 'reduce')",
- "curseforge_project.html: Cannot set properties of null (setting 'onclick')",
- "events.html: Cannot read properties of null (reading 'addEventListener')",
- "instances.html: versionManifest is not defined",
- "modrinth_project.html: Cannot set properties of null (setting 'onclick')",
  "settings.html: noUiSlider: 'range' value isn't numeric."
 ]

@@ -286,9 +286,22 @@ function verifyDownloads() {
     s.end(() => { s.off("error", onError); ok(); });
   });
 
+  // One temp name per download, not one per FILE.
+  //
+  // `<name>.part` is the same path for everybody, and the assets folder is
+  // shared: two instances starting at once, or one starting while another is
+  // already running, both decide the same asset needs fetching and both
+  // write to that one temp file. Two writers interleaving in one file, then
+  // renamed into place under the asset's hash -- which is the name the game
+  // trusts and never checks again. That is an asset that has been on the
+  // disk since forever reading as missing or broken, with no download having
+  // failed and nothing in any log to say so.
+  const stamp = `${process.pid.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  let partSeq = 0;
+
   Handler.prototype.downloadAsync = async function (url, directory, name, retry, type) {
     const dest = path.join(directory, name);
-    const part = `${dest}.part`;
+    const part = `${dest}.part-${stamp}-${(++partSeq).toString(36)}`;
     const wantHash = HASH_NAME.test(name) ? name.toLowerCase() : null;
     let last = null;
 
@@ -353,7 +366,24 @@ function verifyDownloads() {
             const had = sha.digest("hex");
             if (had !== wantHash) throw new Error(`sha1 is ${had} and should be ${wantHash}`);
           }
-          fs.renameSync(part, dest);                    // never a partial file under the real name
+          // Into place in one step, so nothing ever reads a half-written
+          // file under the real name.
+          //
+          // On Windows this fails outright when something else has the
+          // destination open -- another instance of the game, or another
+          // launch doing the same thing a moment earlier. That is not a
+          // failure if what is already there is the file we were going to
+          // write: an asset is stored under its own hash, so a destination
+          // whose name we just matched byte for byte is the same file, and
+          // the copy we fetched is simply redundant.
+          try {
+            fs.renameSync(part, dest);
+          } catch (renameFailed) {
+            const already = wantHash && fs.existsSync(dest)
+              && require_("crypto").createHash("sha1").update(fs.readFileSync(dest)).digest("hex") === wantHash;
+            if (!already) throw renameFailed;
+            try { fs.unlinkSync(part); } catch { /* it will be swept up */ }
+          }
           this.client.emit("download", name);
           return { failed: false, asset: null };
         } catch (e) {
