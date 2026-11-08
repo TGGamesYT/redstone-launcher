@@ -107,6 +107,20 @@ async function settled(target, { tries = 25, gap = 220 } = {}) {
     await new Promise(r => setTimeout(r, 150));
   }
 
+  // And then the same grace the overlay's own fade used to give it.
+  //
+  // A page in the shell does not draw its own loading screen -- the shell's
+  // covers the whole change -- so the wait above returns at once for a
+  // framed page and only after the fade for the same page standing alone.
+  // That is a different moment in the page's life, and the two were being
+  // compared: the framed one was photographed before its list had arrived.
+  for (let i = 0; i < 60; i++) {
+    const done = await target.evaluate(() => document.readyState === "complete");
+    if (done) break;
+    await new Promise(r => setTimeout(r, 150));
+  }
+  await new Promise(r => setTimeout(r, 900));
+
   let last = null;
   for (let i = 0; i < tries; i++) {
     const now = await target.evaluate(FINGERPRINT);

@@ -286,6 +286,25 @@ let cachedTheme = {};
 try { cachedTheme = JSON.parse(localStorage.getItem('launcherTheme') || '{}') || {}; } catch { cachedTheme = {}; }
 try { applyTheme(cachedTheme); } catch (e) { console.warn('cached theme failed to apply', e); }
 
+// A theme changed somewhere else in the launcher.
+//
+// The settings page paints itself as you pick a colour; everything else used
+// to find out at the next page change, when it was rebuilt. The two bars are
+// not rebuilt any more -- they are the shell's and the shell is not the page
+// the colour was picked on -- so they stayed the old colour until a restart.
+// Whoever is told repaints, which is the shell, the page in its frame, and
+// any window of its own.
+ipcRenderer.on('settings-updated', (_e, settings) => {
+  if (!settings) return;
+  try { applyTheme(settings); } catch (e) { console.warn('theme failed to apply', e); }
+  try { localStorage.setItem('launcherTheme', JSON.stringify(settings)); } catch { /* ignore */ }
+  try {
+    if (window.LauncherCustomCss) {
+      window.LauncherCustomCss.apply(settings.devMode ? (settings.customCss || '') : '');
+    }
+  } catch { /* ignore */ }
+});
+
 ipcRenderer.invoke('get-settings').then(settings => {
   try { applyTheme(settings); } catch (e) { console.warn('theme failed to apply', e); }
   // The real settings may differ from the cache the boot script used -- a
@@ -566,6 +585,11 @@ function _setLoadText(text) {
   if (el && text) el.textContent = text;
 }
 function _showOverlay(text) {
+  // In the shell, the loading screen is the shell's one. A page asks for it
+  // rather than putting up its own: two of them, one over the other and not
+  // in quite the same place, is what made the animation jump as the shell's
+  // faded and the page's showed through.
+  tellShell('loading', { text: text || '' });
   const overlay = document.getElementById('loading-overlay');
   if (!overlay) return;
   overlay.classList.remove('fade-out');

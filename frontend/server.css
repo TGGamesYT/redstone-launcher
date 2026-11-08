@@ -566,6 +566,13 @@ html[data-smoothing="smooth"] {
   bottom: 0;
   background: linear-gradient(135deg, var(--very-dark) 0%, color-mix(in srgb, var(--secondary-color) 40%, black) 100%);
   display: flex;
+  /* The background the launcher is actually wearing, not a stand-in for it.
+     A loading screen in the theme's colours over a window with a picture
+     behind it is a flat panel dropped over the thing it is part of; with the
+     picture it is the launcher, waiting. The image is drawn exactly as
+     <html> draws it (see html.custom-bg) so it lines up with what is
+     underneath, and is overlaid rather than replaced so the text stays
+     readable over a bright one. */
   flex-direction: column;
   justify-content: center;
   align-items: center;
@@ -577,9 +584,47 @@ html[data-smoothing="smooth"] {
   border-top-left-radius: var(--border-radius);
 }
 
+html.custom-bg .loading-overlay {
+  background-color: var(--app-bg-color);
+  background-image:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--very-dark) 72%, transparent) 0%,
+      color-mix(in srgb, color-mix(in srgb, var(--secondary-color) 40%, black) 72%, transparent) 100%),
+    var(--app-background);
+  background-size: auto, var(--app-bg-size);
+  background-repeat: no-repeat, var(--app-bg-repeat);
+  background-position: center center;
+  background-attachment: scroll, fixed;
+  image-rendering: var(--app-bg-render, auto);
+}
+
 .loading-overlay.fade-out {
   opacity: 0;
   pointer-events: none;
+}
+
+/* Big enough to watch. The pistons are the launcher's own animation out of
+   Minecraft's own textures, and at the size of an ordinary spinner's ring
+   none of that reads -- it is four grey smudges. This is the whole screen's
+   only moving part; it can have the room. */
+.loading-overlay .loading-spinner {
+  width: 148px;
+  height: 148px;
+}
+
+.loading-overlay .loading-text {
+  font-size: 22px;
+}
+
+/* A page in the shell does not draw its own.
+   The shell's goes up the moment a page change starts and comes down when
+   the page is ready, so the page's own would be a second copy of the same
+   thing underneath it -- and the two are not in quite the same place, which
+   is what made the animation jump as one faded into the other. The page asks
+   the shell to show it instead (pageLoading in sidebar.js), so there is one
+   loading screen, in one place, for the whole launcher. */
+html.in-shell #loading-overlay {
+  display: none !important;
 }
 
 .loading-container {

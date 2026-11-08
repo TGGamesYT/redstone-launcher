@@ -201,7 +201,16 @@
       // layout box rather than getBoundingClientRect, which for a spinner
       // mid-rotation reports the box the turned square sweeps out -- up to
       // half as big again, and different every frame.
-      const size = Math.round(Math.max(el.offsetWidth, el.offsetHeight)) || 48;
+      // A spinner inside something that is not being shown measures zero --
+      // the shell's loading screen is exactly that, hidden until a page
+      // change starts -- so the size it is MEANT to be is read from the
+      // stylesheet when the layout has nothing to say.
+      let size = Math.round(Math.max(el.offsetWidth, el.offsetHeight));
+      if (!size) {
+        const cs = getComputedStyle(el);
+        size = Math.round(Math.max(parseFloat(cs.width) || 0, parseFloat(cs.height) || 0));
+      }
+      if (!size) size = 48;
       el.style.border = 'none';
       el.style.animation = 'none';
       el.style.borderRadius = '0';

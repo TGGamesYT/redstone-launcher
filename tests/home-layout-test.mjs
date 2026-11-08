@@ -129,6 +129,79 @@ check("and every segment sits where it says it does", await placed(), [
 ]);
 await shot(p, "rows.png");
 
+// ── two segments stacked inside ONE row ──
+//
+// A row used to be one line: two things could sit side by side on it and
+// nothing else. Dropping one on the top or the bottom of another made a new
+// row right across the page, so a narrow column with two things in it, one
+// above the other, could not be built at all. `y` and `vh` say where a
+// segment starts down its row and how much of it it takes.
+await set([
+  { id: "tall", type: "player", row: 0, x: 0, w: 50, h: 0, y: 0, vh: 12 },
+  { id: "top", type: "greeting", row: 0, x: 50, w: 50, h: 0, y: 0, vh: 6 },
+  { id: "bot", type: "recent", row: 0, x: 50, w: 50, h: 0, y: 6, vh: 6 },
+]);
+check("a row can hold one segment above another", await placed(), [
+  { id: "tall", row: 0, x: 0, w: 50 },
+  { id: "top", row: 0, x: 50, w: 50 },
+  { id: "bot", row: 0, x: 50, w: 50 },
+], "all on one row, and the right-hand half split between two of them");
+const stack = await p.$$eval("#home-segments .hs", (els) => {
+  const box = (id) => els.find(e => e.dataset.id === id).getBoundingClientRect();
+  const t = box("top"), b = box("bot"), tall = box("tall");
+  return {
+    topIsAbove: Math.round(t.bottom) <= Math.round(b.top) + 1,
+    theyMeet: Math.abs(t.bottom - b.top) < 2,
+    together: Math.abs((b.bottom - t.top) - tall.height) < 2,
+  };
+});
+check("one is drawn above the other, they meet, and together they are the row",
+  stack, { topIsAbove: true, theyMeet: true, together: true });
+
+// And that surviving a save, which is where it used to be undone: two
+// segments at the same x were treated as fighting over the same columns, so
+// the second was shoved sideways or onto a row of its own.
+check("stacking survives being saved",
+  (await p.evaluate(() => window.__tidy([
+    { id: "tall", type: "player", row: 0, x: 0, w: 50, y: 0, vh: 12 },
+    { id: "top", type: "greeting", row: 0, x: 50, w: 50, y: 0, vh: 6 },
+    { id: "bot", type: "recent", row: 0, x: 50, w: 50, y: 6, vh: 6 },
+  ]))).map(s => [s.id, s.row, s.x, s.w]),
+  [["tall", 0, 0, 50], ["top", 0, 50, 50], ["bot", 0, 50, 50]]);
+
+// Two at the same height still cannot overlap, which is the rule that was
+// there before and the reason stacking had to be told apart from it.
+check("two at the same height still do not overlap",
+  (await p.evaluate(() => window.__tidy([
+    { id: "a", type: "greeting", row: 0, x: 0, w: 60, y: 0, vh: 12 },
+    { id: "b", type: "recent", row: 0, x: 30, w: 60, y: 0, vh: 12 },
+  ]))).map(s => [s.id, s.row, s.x, s.w]),
+  [["a", 0, 0, 60], ["b", 1, 0, 60]]);
+
+// ── going back ──
+//
+// Every change took effect and was saved at once with no way back from any
+// of it: a segment dragged somewhere by accident had to be put back by hand.
+await set([
+  { id: "a", type: "greeting", row: 0, x: 0, w: 100, h: 0 },
+  { id: "b", type: "recent", row: 1, x: 0, w: 100, h: 0 },
+]);
+await p.evaluate(() => window.Home.apply([
+  { id: "a", type: "greeting", row: 0, x: 0, w: 40, h: 0 },
+  { id: "b", type: "recent", row: 0, x: 40, w: 60, h: 0 },
+]));
+await p.waitForTimeout(150);
+check("a change takes effect", (await placed()).map(s => [s.id, s.row, s.w]),
+  [["a", 0, 0, 40], ["b", 0, 40, 60]].map(([id, row, , w]) => [id, row, w]));
+await p.evaluate(() => window.Home.undo());
+await p.waitForTimeout(200);
+check("and can be undone", (await placed()).map(s => [s.id, s.row, s.w]),
+  [["a", 0, 100], ["b", 1, 100]]);
+await p.evaluate(() => window.Home.redo());
+await p.waitForTimeout(200);
+check("and done again", (await placed()).map(s => [s.id, s.row, s.w]),
+  [["a", 0, 40], ["b", 0, 60]]);
+
 // ── a gap in a row ──
 // Impossible before: the segments were laid end to end and a row was just
 // where they happened to wrap.

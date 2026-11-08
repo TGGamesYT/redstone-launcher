@@ -1625,6 +1625,7 @@ ipcMain.handle('get-setting', (event, key) => {
 
 ipcMain.handle('set-setting', (event, key, value) => {
   settings.set(key, value);
+  tellEveryoneSettingsChanged();
   return settings.get(key);
 });
 
@@ -1653,7 +1654,32 @@ ipcMain.on('save-settings', (event, newsettings) => {
   // is the gradient the backing follows anyway.
   const bgChanged = bgNow !== wasBg && (icon.mergeBlock || /"mode":"gradient"/.test(bgNow + wasBg));
   if ((color !== wasBase || second !== wasSecond || bgChanged) && icon.kind !== 'image') retintAppIconSoon();
+  tellEveryoneSettingsChanged();
 });
+
+// Everything that is showing has to follow a change of theme.
+//
+// The settings page paints ITSELF as you pick a colour, and saves. Nothing
+// else was told, which did not matter while every page carried its own copy
+// of the title bar and the sidebar and the next page change rebuilt them in
+// the new colours. The bars belong to the shell now and the shell is not the
+// page the colour was picked on, so they kept the old theme until the
+// launcher was restarted. (`settings-updated` already existed, for applying a
+// saved theme, and nothing anywhere listened for it.)
+//
+// Settled first: a colour picker reports every step of a drag, and each step
+// is a save.
+let _settingsToldSoon = null;
+function tellEveryoneSettingsChanged() {
+  if (_settingsToldSoon) clearTimeout(_settingsToldSoon);
+  _settingsToldSoon = setTimeout(() => {
+    _settingsToldSoon = null;
+    const all = { ...DEFAULT_SETTINGS, ...settings.store };
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.webContents.send("settings-updated", all); } catch { /* gone */ }
+    }
+  }, 120);
+}
 
 // A colour picker reports every step of a drag, and each one used to re-tint
 // the icon: a sharp pass, an .ico, and a PowerShell run, dozens of times a
@@ -4876,6 +4902,21 @@ const clampX = (v) => Math.max(0, Math.min(HOME_COLUMNS - HOME_W_MIN, Math.round
 // existed: as tall as the row. The named three are what makes room above a
 // segment a thing that exists, and therefore what makes dragging its top edge
 // mean anything.
+// A row is divided up and down into this many parts, which is what lets two
+// segments be stacked inside one row rather than only side by side. A
+// segment that says nothing takes the whole height, which is every layout
+// made before this existed.
+const HOME_ROWS = 12;
+const clampSubY = (v) => {
+  const n = Math.round(Number(v) || 0);
+  return Number.isFinite(n) ? Math.max(0, Math.min(HOME_ROWS - 1, n)) : 0;
+};
+const clampSubVh = (v, y) => {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return HOME_ROWS - y;
+  return Math.max(1, Math.min(HOME_ROWS - y, n));
+};
+
 const HOME_VALIGNS = ["stretch", "top", "middle", "bottom"];
 const clampValign = (v) => (HOME_VALIGNS.includes(String(v)) ? String(v) : "stretch");
 
@@ -4913,19 +4954,36 @@ function tidyRows(layout) {
   const out = [];
   let n = 0;
   for (const r of [...byRow.keys()].sort((a, b) => a - b)) {
-    const row = byRow.get(r).sort((a, b) => clampX(a.x) - clampX(b.x));
-    let at = 0;
+    const row = byRow.get(r).sort((a, b) =>
+      (clampSubY(a.y) - clampSubY(b.y)) || (clampX(a.x) - clampX(b.x)));
+    // Two segments only compete for the same columns when they are at the
+    // same HEIGHT in the row. Without that, stacking one above another --
+    // which is the whole point of y and vh -- was undone the moment it was
+    // saved: they share an x, so the second was shoved to the right or onto
+    // a row of its own.
+    const placed = [];
+    const overlaps = (a, b) => {
+      const ay = clampSubY(a.y), ah = clampSubVh(a.vh, ay);
+      const by = clampSubY(b.y), bh = clampSubVh(b.vh, by);
+      return ay < by + bh && by < ay + ah;
+    };
     for (const seg of row) {
+      const at = placed.filter(p => overlaps(p, seg))
+        .reduce((most, p) => Math.max(most, p.x + p.w), 0);
       let x = Math.max(at, clampX(seg.x));
       let w = clampW(seg.w);
       if (x + w > HOME_COLUMNS) {
-        // No room left on this row: it gets one of its own rather than
-        // being squeezed below the width anything can be read at.
-        if (at > 0) { out.push({ ...seg, row: ++n, x: 0, w: Math.min(w, HOME_COLUMNS) }); at = HOME_COLUMNS; continue; }
+        // No room left beside it on this row: it gets one of its own rather
+        // than being squeezed below the width anything can be read at.
+        if (at > 0) {
+          out.push({ ...seg, row: ++n, x: 0, w: Math.min(w, HOME_COLUMNS), y: 0, vh: HOME_ROWS });
+          continue;
+        }
         w = HOME_COLUMNS - x;
       }
-      out.push({ ...seg, row: n, x, w });
-      at = x + w;
+      const put = { ...seg, row: n, x, w };
+      placed.push(put);
+      out.push(put);
     }
     n++;
   }
@@ -4975,7 +5033,7 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
     .slice(0, 40)
     .map((seg, i) => {
       const allowed = new Set(["id", "type", "w", "h", "scale",
-        "row", "x", "valign",
+        "row", "x", "y", "vh", "valign",
         ...(HOME_TYPES.find(t => t.type === seg.type).options || []).map(o => o.id)]);
       const out = {};
       // Only the options this type declares, so an edited layout cannot
@@ -4988,6 +5046,11 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
       out.scale = clampScale(seg.scale);
       out.row = clampRow(seg.row);
       out.x = clampX(seg.x);
+      // Where it sits DOWN its row, and how much of the row it takes, so two
+      // segments can be stacked inside one row. Absent means the whole of
+      // it, which is every layout made before rows could be divided.
+      out.y = clampSubY(seg.y);
+      out.vh = clampSubVh(seg.vh, out.y);
       out.valign = clampValign(seg.valign);
       return out;
     });
@@ -6553,7 +6616,20 @@ async function themedIconPng(opts = {}) {
   const layers = iconLayers();
   // "Plain" is the logo as it was drawn, which is also the fallback if a
   // layer is missing -- an install without them should still have an icon.
-  if (icon.kind === "plain" || !Object.values(layers).every(f => fs.existsSync(f))) {
+  // The launcher's own colours mean the launcher's own icon.
+  //
+  // Rebuilding it from the layers in the default red does NOT give back the
+  // icon as it was drawn -- the layers are flat fills and the artwork is not,
+  // so the icon came out visibly re-tinted even when nothing about the theme
+  // had been changed. There is nothing to recolour TO in that case, so the
+  // drawn icon is used as it is. (`mergeBlock` is a real change to it, and a
+  // picture of your own is a different icon entirely; both still build.)
+  const untouched = !(opts.mergeBlock == null ? icon.mergeBlock : opts.mergeBlock)
+    && (opts.color || settings.get("baseColor", DEFAULT_SETTINGS.baseColor)) === DEFAULT_SETTINGS.baseColor
+    && settings.get("secondaryColor", DEFAULT_SETTINGS.secondaryColor) === DEFAULT_SETTINGS.secondaryColor
+    && String((settings.get("background", null) || {}).mode || "theme") !== "gradient";
+
+  if (icon.kind === "plain" || untouched || !Object.values(layers).every(f => fs.existsSync(f))) {
     return sharp(ICON_SOURCE()).resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
   }
   const fills = iconFills({

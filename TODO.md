@@ -9,6 +9,79 @@ started.
 
 ---
 
+## 0. Round 45
+
+- [x] **The loading screen.** — *Three things. It wore the theme's colours
+      instead of the background the launcher is actually wearing, so it read
+      as a flat panel dropped over the window rather than the launcher
+      waiting; it paints the background now, with the scrim over it rather
+      than instead of it. The pistons were drawn at the size of a spinner's
+      ring, which is four grey smudges -- they get a hundred and forty-eight
+      pixels, and the size no longer comes out wrong when the screen is
+      measured while hidden, which is what the shell's one always is. And the
+      animation jumped as it faded, because there were TWO loading screens:
+      the shell's fading out over the page's own, which is inside a frame
+      that may have a scrollbar and so is centred a few pixels off. A page in
+      the shell does not draw one any more; it asks the shell to show the one
+      there is.*
+- [ ] **The 3221225477 crash is in the assets, not the pack merge.** — Not
+      the server pack, not a jar hash, and not a failed download either: the
+      files all arrive and the launch reports no trouble. Nothing further has
+      been changed for it. I have guessed at this three times now and been
+      wrong three times; the next attempt waits for a log of a launch that
+      ends this way, with whatever the launcher printed before it.
+- [x] **Two segments cannot share a line, one above the other.** — *A row was
+      one line and nothing else: dropping a segment on another's top or
+      bottom made a whole new row across the page. A row is divided up and
+      down as well as across now -- `y` and `vh` beside `x` and `w` -- so
+      dropping on the top or the bottom of a segment splits THAT segment's
+      space and takes the half the pointer is on. The line between two
+      stacked segments is dragged like any other edge. The one that is left
+      when the other moves away takes the whole row back. It also had to stop
+      being undone on the way to disk: two segments at the same x were read
+      as fighting over the same columns, so the second was shoved sideways --
+      they only compete when they are at the same height in the row.*
+- [x] **"Where in its space", up and down, does nothing.** — *It was applied
+      as the segment's place in its ROW, which does nothing unless something
+      else in that row is taller -- so on a row of its own, which is where
+      the player render usually is, there was nothing for it to do. The same
+      setting now also places what is INSIDE the segment, which is what you
+      see when the segment is as tall as its row. The render in particular
+      had its box's two axes crossed: the across setting was driving
+      justify-content, which on a column box is the up-and-down axis, so
+      asking for it on the left put it at the top and the up-and-down setting
+      had nothing left to drive.*
+- [x] **A theme change does not reach the bars.** — *The settings page paints
+      itself as you pick a colour and saves; nothing else was told. That did
+      not matter while every page carried its own bars and the next page
+      change rebuilt them -- the bars are the shell's now, and the shell is
+      not the page the colour was picked on, so they kept the old theme until
+      a restart. A save tells every window, and whoever is told repaints:
+      the shell, the page in its frame, and any window of its own.
+      (`settings-updated` already existed, for applying a saved theme, and
+      nothing anywhere had ever listened for it.)*
+- [x] **The icon is tinted under the launcher's own theme.** — *An icon of
+      kind "theme" is always rebuilt from the flat layer fills, and the
+      artwork is not flat, so rebuilding it in the default red does not give
+      back the icon as it was drawn. With the default colours and nothing
+      borrowed from the background there is nothing to recolour TO, so the
+      drawn icon is used as it is.*
+- [x] **No way back while editing the home page.** — *Every change took
+      effect and was saved at once and there was no undo for any of it. The
+      layout as it was is kept on a stack -- fifty deep -- and Ctrl+Z walks
+      back up it, Ctrl+Shift+Z or Ctrl+Y forward again, with buttons for both
+      in the edit bar since a shortcut nobody is told about is not an undo.*
+- [ ] **No way back while changing the theme or the settings.** — Not done
+      yet; the home page's is.
+- [x] **Space below the home page that crops what is in it.** — *Forty pixels
+      of the scroller was a transparent bottom border, which is room the page
+      cannot draw in: a segment sized to the page ended at the top of it and
+      was cut off there, with the rest reachable only by scrolling into
+      blank. The room under the last row is that row's own bottom padding,
+      which is inside the segment and cannot crop it.*
+
+---
+
 ## 0. Round 44
 
 - [x] **Resizing a segment's top edge into something grows the bottom

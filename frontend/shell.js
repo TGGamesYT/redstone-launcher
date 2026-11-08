@@ -171,6 +171,10 @@
     // "I have finished loading" -- the moment the page would have taken its
     // own loading screen down, so it is the moment to take ours down.
     if (m.rsShell === "ready") loadingDown();
+    // A page asking for the loading screen for something it is doing in
+    // place -- going into an instance and back, say. Same screen, so what it
+    // looks like and where it is never changes.
+    if (m.rsShell === "loading") loadingUp(m.text || "Loading...");
     // A page changing page on its own, which the shell cannot see coming.
     // Only if the loading screen is not already up, so this does not restart
     // one the shell itself raised a moment ago and lose what it says.
