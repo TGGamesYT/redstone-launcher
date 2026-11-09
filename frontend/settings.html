@@ -698,6 +698,41 @@
         <div id="poolSkinsState" style="font-size:12px;opacity:0.75;margin-top:6px;"></div>
       </div>
 
+      <h3 style="margin-top:30px;">Cloud syncing</h3>
+      <!-- Keeping things in your own Google Drive so they follow you between
+           computers. The launcher can only ever see the folder it makes --
+           the scope it asks for is "files this app created" and nothing
+           wider -- and everything in it is encrypted with a key that is in
+           two halves: one in that folder, one the relay derives from your
+           Minecraft account and only hands to a connection Mojang has
+           verified. Neither half opens anything alone. -->
+      <div id="cloud-box" style="margin-bottom:50px;">
+        <p class="bg-hint" id="cloud-what" style="margin:0 0 10px;">
+          Keep your settings, themes, instances and worlds in your own Google Drive,
+          so they follow you to another computer.
+        </p>
+        <div id="cloud-signed-out">
+          <button type="button" id="cloud-signin" class="bg-btn">Sign in with Google…</button>
+          <span id="cloud-signin-state" class="bg-hint" style="margin-left:10px;"></span>
+        </div>
+        <div id="cloud-signed-in" style="display:none;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <span id="cloud-who" class="bg-hint"></span>
+            <span id="cloud-room" class="bg-hint"></span>
+            <button type="button" id="cloud-signout" class="bg-btn">Sign out</button>
+            <button type="button" id="cloud-forget" class="bg-btn">Sign out and empty the folder</button>
+          </div>
+          <label class="setting-toggle" data-tip="Your launcher settings: the theme, the colours, the background, and everything on this page that is not about this computer in particular."><input type="checkbox" class="cloud-kind" data-kind="settings"> Settings</label>
+          <label class="setting-toggle" data-tip="The themes you have made or installed."><input type="checkbox" class="cloud-kind" data-kind="themes"> Themes</label>
+          <label class="setting-toggle" data-tip="Your saved multiplayer servers."><input type="checkbox" class="cloud-kind" data-kind="servers"> Server list</label>
+          <label class="setting-toggle" data-tip="Your instances, as a pack: the version, the loader, the mods and where each came from, and the resource packs. Mods are recorded rather than uploaded wherever they can be fetched again, so an instance is small."><input type="checkbox" class="cloud-kind" data-kind="instances"> Instances</label>
+          <label class="setting-toggle" data-tip="Your worlds. A world that is open in a game on one computer is marked as such, so another computer warns you rather than letting two of you edit it at once."><input type="checkbox" class="cloud-kind" data-kind="worlds"> Worlds</label>
+          <label class="setting-toggle" data-tip="The accounts you are signed in with. Encrypted with both halves of the key, so the Drive file is of no use without the Minecraft account it belongs to — and the relay cannot read it either."><input type="checkbox" class="cloud-kind" data-kind="accounts"> Signed-in accounts</label>
+          <div id="cloud-items" style="margin-top:14px;"></div>
+          <div id="cloud-error" class="bg-hint" style="margin-top:10px;color:var(--base-color);"></div>
+        </div>
+      </div>
+
       <h3>Getting started</h3>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:50px;">
         <button id="runTourBtn" data-tip="The tour that runs the first time you open the launcher.">Run the tour again</button>
@@ -2221,6 +2256,109 @@
         bgPreview.style.backgroundRepeat = css ? css.repeat : 'no-repeat';
         bgPreview.style.imageRendering = css ? css.render : 'auto';
       }
+
+
+      // ── cloud syncing ──
+      //
+      // The page only ever shows what the main process reports; nothing
+      // about the Drive or the keys is worked out here.
+      (function cloudSection() {
+        const box = document.getElementById('cloud-box');
+        if (!box) return;
+        const outBox = document.getElementById('cloud-signed-out');
+        const inBox = document.getElementById('cloud-signed-in');
+        const who = document.getElementById('cloud-who');
+        const room = document.getElementById('cloud-room');
+        const items = document.getElementById('cloud-items');
+        const errBox = document.getElementById('cloud-error');
+        const signInState = document.getElementById('cloud-signin-state');
+
+        const size = (n) => {
+          if (!Number.isFinite(n)) return '';
+          const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+          let i = 0, v = n;
+          while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+          return `${v < 10 && i ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
+        };
+
+        async function paint() {
+          const r = await ipcRenderer.invoke('cloud:status');
+          const on = r && r.ok && r.signedIn;
+          outBox.style.display = on ? 'none' : '';
+          inBox.style.display = on ? '' : 'none';
+          errBox.textContent = (r && r.error) || '';
+          if (!on) return;
+          who.textContent = r.email ? `Signed in as ${r.email}` : 'Signed in';
+          room.textContent = r.room && r.room.limit
+            ? `· ${size(r.room.limit - r.room.used)} free of ${size(r.room.limit)}`
+            : '';
+          const kinds = r.kinds || {};
+          for (const b of document.querySelectorAll('.cloud-kind')) {
+            b.checked = !!kinds[b.dataset.kind];
+          }
+          // What is actually up there, and where each came from -- which is
+          // the only way to tell a sync that is working from one that looks
+          // like it is.
+          items.innerHTML = '';
+          for (const it of (r.items || []).sort((a, b) => b.at - a.at)) {
+            const row = document.createElement('div');
+            row.className = 'bg-img-row';
+            const name = document.createElement('div');
+            name.className = 'who';
+            name.textContent = it.name || it.key;
+            const when = document.createElement('div');
+            when.className = 'who';
+            when.style.flex = '0 0 auto';
+            when.style.opacity = '0.7';
+            when.textContent = `${size(it.size)} · from ${it.deviceName} · ${new Date(it.at).toLocaleString()}`;
+            const off = document.createElement('button');
+            off.type = 'button';
+            off.textContent = 'Stop syncing';
+            off.title = 'Takes it out of the Drive. It stays on this computer.';
+            off.onclick = async () => {
+              const [kind, id] = it.key.includes('/') ? it.key.split('/') : [it.key, null];
+              await ipcRenderer.invoke('cloud:unsync', { kind, id });
+              paint();
+            };
+            const ord = document.createElement('div');
+            ord.className = 'ord';
+            ord.appendChild(off);
+            row.append(name, when, ord);
+            items.appendChild(row);
+          }
+        }
+
+        document.getElementById('cloud-signin').addEventListener('click', async () => {
+          signInState.textContent = 'Waiting for your browser…';
+          const r = await ipcRenderer.invoke('cloud:signIn');
+          signInState.textContent = (r && r.ok) ? '' : ((r && r.error) || 'Could not sign in.');
+          paint();
+        });
+        document.getElementById('cloud-signout').addEventListener('click', async () => {
+          await ipcRenderer.invoke('cloud:signOut', {});
+          paint();
+        });
+        document.getElementById('cloud-forget').addEventListener('click', async () => {
+          // Emptying the folder is not something to do on one click: the
+          // other computers lose what is in it too.
+          const sure = window.uiConfirm
+            ? await uiConfirm('Sign out and delete everything in the Drive folder?'
+              + ' Your other computers stop syncing and what is up there is gone.'
+              + ' Nothing on this computer is touched.',
+              { title: 'Empty the folder', ok: 'Sign out and empty', danger: true })
+            : confirm('Sign out and delete everything in the Drive folder?');
+          if (!sure) return;
+          await ipcRenderer.invoke('cloud:signOut', { andRemove: true });
+          paint();
+        });
+        for (const b of document.querySelectorAll('.cloud-kind')) {
+          b.addEventListener('change', async () => {
+            await ipcRenderer.invoke('cloud:setKind', { kind: b.dataset.kind, on: b.checked });
+            paint();
+          });
+        }
+        paint();
+      })();
 
       function saveBackground() {
         ipcRenderer.send('save-settings', { background: bg });

@@ -44,6 +44,7 @@ import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { screenSkinPixels } from './skinFilter.js';
 import * as iconModels from './icon-models.js';
+import { cloud as makeCloud } from './cloud.js';
 
 // Everything the main process says reaches the page, not just the shell.
 //
@@ -6218,6 +6219,70 @@ ipcMain.handle("relay:accounts", () => premiumAccounts());
 
 // Ask the relay whether this account is an admin + which domains it may use (for
 // the share modal's styling). The relay is the sole authority.
+// ── Cloud syncing ──────────────────────────────────────────────────────────
+//
+// Signing in with Google and keeping things in that person's own Drive. The
+// relay provides two things and sees none of the data: the Google OAuth
+// client it was set up with, and half of the key each account's data is
+// encrypted with. The other half lives in the Drive, so neither the relay
+// nor Google can open anything alone -- see backend/cloud-crypto.js.
+let _cloud = null;
+function cloudService() {
+  if (_cloud) return _cloud;
+  _cloud = makeCloud({
+    settings,
+    // Every call proves the Minecraft account to the relay with Mojang's
+    // hasJoined, which is what makes the relay's key half this account's.
+    relayCall: async (req) => {
+      const account = await relayAccountForSync();
+      if (!account) {
+        return { ok: false, error: "Sign in with a Microsoft account first — the key for your synced data is tied to it." };
+      }
+      const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
+      return relayClient.cloudRelay({
+        host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+        account, rejectUnauthorized, req,
+      });
+    },
+  });
+  return _cloud;
+}
+
+const cloudSaid = (e) => ({
+  ok: false,
+  error: String(e && e.message || e),
+  signedOut: !!(e && e.signedOut),
+});
+
+ipcMain.handle("cloud:status", async () => {
+  try { return { ok: true, ...(await cloudService().status()) }; }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:signIn", async () => {
+  try { return await cloudService().signIn(); }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:signOut", async (event, { andRemove } = {}) => {
+  try { return await cloudService().signOut({ andRemove: !!andRemove }); }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:setKind", (event, { kind, on } = {}) => {
+  try { return { ok: true, kinds: cloudService().setKind(String(kind || ""), !!on) }; }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:list", async () => {
+  try { return { ok: true, items: await cloudService().list() }; }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:unsync", async (event, { kind, id } = {}) => {
+  try { return await cloudService().unsync(String(kind || ""), id || null); }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:unsyncAll", async () => {
+  try { return await cloudService().unsyncAll(); }
+  catch (e) { return cloudSaid(e); }
+});
+
 ipcMain.handle("relay:adminInfo", async (event, { accountId }) => {
   try {
     const account = await accountCredsByIdFresh(accountId);
