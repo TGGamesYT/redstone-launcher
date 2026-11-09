@@ -25,6 +25,14 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Everything about this relay that is not in the repository: the admin
+// password, the CurseForge token, who may change them. It used to be
+// scattered across environment variables, admin-password.txt and the
+// defaults baked in below; config.js holds it in one file now and brings
+// what was already on disk in by itself. Environment variables still win,
+// so nothing running today changes behaviour.
+import config from "./config.js";
+
 const CONTROL_PORT = parseInt(process.env.RELAY_CONTROL_PORT || "47238", 10);
 const MC_PORT = parseInt(process.env.RELAY_MC_PORT || "25565", 10);
 const DOMAIN = process.env.RELAY_DOMAIN || "redstonemc.net";
@@ -58,7 +66,9 @@ const packRoutes = new Map();
 // DIRECTLY (no relay hop, no latency penalty). Without it, the wildcard record
 // keeps *.redstonemc.net on the VPS and the relay tunnel carries the traffic.
 const CF = {
-  token: process.env.CF_API_TOKEN || "",
+  // Read each time rather than captured at start, so setting it in the admin
+  // panel takes effect on a relay that is already running.
+  get token() { return config.get("curseforgeToken") || ""; },
   get enabled() { return !!this.token; },
 };
 function cfRequest(method, apiPath, body) {
@@ -740,29 +750,12 @@ function handleSuggest(req, who) {
 // constant time against its own hash, so a wrong guess takes exactly as long
 // as a right one, and it is re-read every minute so it can be changed on a
 // relay that is already running.
-const ADMIN_PASSWORD_FILE = process.env.RELAY_ADMIN_PASSWORD_FILE || path.join(__dirname, "admin-password.txt");
-
-let adminPasswordHash = null;
-function reloadAdminPassword() {
-  try {
-    const raw = fs.readFileSync(ADMIN_PASSWORD_FILE, "utf8").trim();
-    // The file holds the SHA-256 of the password, not the password. Nothing
-    // here ever needs the password itself -- it only needs to recognise it --
-    // so there is no reason for the VPS to have a copy of it lying about.
-    adminPasswordHash = /^[0-9a-f]{64}$/i.test(raw) ? Buffer.from(raw, "hex") : null;
-    if (raw && !adminPasswordHash) {
-      log("admin password file is not a sha256 hash; see the README");
-    }
-  } catch { adminPasswordHash = null; }
-}
-reloadAdminPassword();
-setInterval(reloadAdminPassword, 60_000).unref();
-
-function adminOk(password) {
-  if (!adminPasswordHash) return false;
-  const given = crypto.createHash("sha256").update(String(password || "")).digest();
-  try { return crypto.timingSafeEqual(given, adminPasswordHash); } catch { return false; }
-}
+// It lives in config.json now, which config.js moved it into on the first
+// run that found an admin-password.txt -- so a box that has not been touched
+// comes up working and nobody has to be told to do anything. Still the hash
+// and never the password, still compared in constant time, and still re-read
+// when it changes so it can be set on a relay that is already running.
+const adminOk = (password) => config.adminPasswordOk(password);
 
 const SUGGESTIONS_PANEL = {
   id: "suggestions",
@@ -948,9 +941,109 @@ const RELAY_PANEL = {
   ],
 };
 
+// ── The relay's own settings ──────────────────────────────────────────────
+//
+// The credentials and the deployment settings, editable from the panel
+// instead of over SSH. It is NOT behind the admin password: the password is
+// shared with whoever helps run the relay, and this page changes the relay's
+// own credentials, which is not the same trust. It is behind the account,
+// verified by Mojang's hasJoined on this connection -- so being on the
+// owner list and being signed in as that account are both required, and
+// neither can be claimed by a modified client.
+//
+// Anybody else does not see the panel at all (see panelsFor), and the ops
+// refuse them even if they ask for them by name.
+const SETTINGS_PANEL = {
+  id: "settings",
+  title: "Relay settings",
+  empty: "Nothing to configure.",
+  list: { op: "settings.list" },
+  key: "id",
+  search: ["label"],
+  row: {
+    title: "label",
+    sub: "state",
+    badge: { field: "source", tone: { environment: "bad", file: "good" } },
+  },
+  detail: [
+    { kind: "heading", field: "label" },
+    { kind: "note", field: "help" },
+    { kind: "note", field: "state", label: "Now" },
+    { kind: "note", field: "note", label: "Where it comes from" },
+    {
+      kind: "form", label: "Change it:",
+      fields: [{ id: "value", label: "New value", kind: "text" }],
+      actions: [
+        {
+          label: "Save", tone: "good", op: "settings.set",
+          send: { id: "id", value: "value" },
+          refresh: true,
+        },
+        {
+          label: "Clear", op: "settings.clear", send: { id: "id" },
+          confirm: { text: "Clear {label}? It goes back to its default.", ok: "Clear" },
+          refresh: true,
+        },
+      ],
+    },
+  ],
+};
+
 const ADMIN_PANELS = [SUGGESTIONS_PANEL, USERS_PANEL, RELAY_PANEL];
+/**
+ * Which panels this account gets.
+ *
+ * The settings panel is only offered to the people who may use it, so it is
+ * not a locked door on everybody else's screen.
+ */
+const panelsFor = (who) =>
+  config.isOwner(who && who.uuid) ? [...ADMIN_PANELS, SETTINGS_PANEL] : ADMIN_PANELS;
+
+/** One setting as a row of the panel. */
+function settingRow(f) {
+  const where = {
+    environment: `Set by ${f.env} on the service, which overrides this page.`,
+    file: `Set in ${path.basename(config.FILE)}.`,
+    default: "Not set; the built-in default is in use.",
+  }[f.source];
+  return {
+    id: f.id, label: f.label, help: f.help, source: f.source, note: where,
+    // Never the value of a secret. The panel shows that there IS one.
+    state: f.set !== undefined
+      ? (f.set ? "Set" : "Not set")
+      : (Array.isArray(f.value) ? (f.value.join(", ") || "Not set") : (String(f.value || "") || "Not set")),
+  };
+}
+
+
+// Which ops may only be used by an owner. Checked in handleAdmin against the
+// account Mojang verified, not against anything the request says.
+const OWNER_OPS = new Set(["settings.list", "settings.set", "settings.clear"]);
 
 const ADMIN_OPS = {
+  "settings.list": () => ({ ok: true, rows: config.describe().map(settingRow) }),
+
+  "settings.set": (req) => {
+    const id = String(req.id || "");
+    const value = req.value == null ? "" : String(req.value);
+    if (!value.trim()) return { ok: false, error: "Nothing to save." };
+    try {
+      config.set({ [id]: value });
+      // Never the value, and never which setting on a secret -- the log is
+      // the one place a password would otherwise end up written down.
+      log("admin settings.set", id);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
+
+  "settings.clear": (req) => {
+    try {
+      config.set({ [String(req.id || "")]: "" });
+      log("admin settings.clear", String(req.id || ""));
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
+
   "suggestions.list": () => ({
     ok: true,
     rows: suggestions.items.slice().sort((a, b) => b.at - a.at).map(adminSuggestion),
@@ -1098,9 +1191,18 @@ const ADMIN_OPS = {
 function handleAdmin(req, who) {
   if (!adminOk(req.password)) return { ok: false, error: "no" };
   const op = String(req.op || "");
-  if (op === "panels") return { ok: true, panels: ADMIN_PANELS };
+  if (op === "panels") return { ok: true, panels: panelsFor(who) };
   const fn = ADMIN_OPS[op];
   if (!fn) return { ok: false, error: "unknown op" };
+  // The settings are the relay's own credentials, so the password is not
+  // enough for them: the account has to be on the owner list, and `who` came
+  // from Mojang's hasJoined for this connection (see the AUTH frame) rather
+  // than from anything the request claims. Asking for the op by name does
+  // not get round the panel not being offered.
+  if (OWNER_OPS.has(op) && !config.isOwner(who && who.uuid)) {
+    log("admin", op, "REFUSED for", who.name || who.uuid || "an unknown account");
+    return { ok: false, error: "Only the relay's owner can change these." };
+  }
   log("admin", op, "by", who.name || who.uuid);
   return fn(req, who);
 }

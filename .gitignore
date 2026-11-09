@@ -4,7 +4,12 @@ node_modules
 # binaries, which `npm run sidecar` makes and electron-builder packages out of
 # sidecar/dist/current. They are build output, not source.
 dist
-# The admin panel's password (not tracked)
+# Everything about the relay that is not in the repository: the admin
+# password's hash, the CurseForge token, the Google client secret, and who
+# may change them. See relay-server/config.js.
+relay-server/config.json
+relay-server/config.json.*.tmp
+# Where the admin password used to live. Still read once, to move it in.
 relay-server/admin-password.txt
 relay-server/relay-suggestions.json
 relay-server/relay-seen.json

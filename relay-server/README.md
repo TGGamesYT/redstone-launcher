@@ -42,8 +42,12 @@ ranges, so it plays nicely with your existing nginx/UFW setup.
 | `RELAY_ADMINS`       | `./admins.json`                                | `{ "uuids": ["<uuid>", …] }` (dashes optional) |
 | `RELAY_STATE`        | `./relay-state.json`                           | Tracks recently-used subdomains.         |
 | `RELAY_SUGGESTIONS`  | `./relay-suggestions.json`                     | Suggestions people have sent, and who is timed out. |
-| `RELAY_ADMIN_PASSWORD_FILE` | `./admin-password.txt`                  | The admin panel's password, in plain text. **Not** in the repository — see below. |
-| `CF_API_TOKEN`       | *(unset = relay-only)*                         | Cloudflare API token with **Zone → DNS → Edit** on every domain you want to offer. The token's zones are what admins may pick from. |
+| `RELAY_CONFIG`       | `./config.json`                                | Everything that is not in the repository — see **Settings** below. |
+| `RELAY_ADMIN_PASSWORD_FILE` | `./admin-password.txt`                  | Where the admin password used to live. Read once and moved into `config.json`; nothing needs it after that. |
+| `CF_API_TOKEN`       | *(unset = relay-only)*                         | Cloudflare API token with **Zone → DNS → Edit** on every domain you want to offer. The token's zones are what admins may pick from. Can be set in `config.json` instead. |
+
+An environment variable, where it is set, always beats `config.json` — so
+nothing already deployed changes behaviour.
 
 ### Direct path (recommended — avoids relaying game traffic)
 
@@ -82,13 +86,44 @@ printf '%s' 'something long and random' | sha256sum | cut -d' ' -f1 > admin-pass
 chmod 600 admin-password.txt
 ```
 
+The first time the relay starts and finds that file, it moves the hash into
+`config.json` and says so in the log. The old file is left exactly where it is
+— deleting the only copy of a password's hash because a migration thinks it
+worked is not a trade worth making — but nothing reads it again. After that,
+the password is changed from the admin panel's **Relay settings** page.
+
 The relay only ever has to recognise the password, never know it, so there is
-no reason for a copy of it to be sitting on the VPS. The file holds 64 hex
-characters and nothing else; anything else in it is ignored and logged. The
-comparison is done in constant time, so a wrong guess takes exactly as long
-as a right one. The file is re-read every minute, so the password can be
-changed on a relay that is already running — and with no file, or an empty
-one, the admin panel is simply closed to everybody.
+no reason for a copy of it to be sitting on the VPS. The comparison is done in
+constant time, so a wrong guess takes exactly as long as a right one. With no
+password set, the admin panel is simply closed to everybody.
+
+## Settings
+
+`config.json` holds everything about this relay that is not in the repository:
+the admin password's hash, the CurseForge token, the Google OAuth client for
+Drive syncing, the base domain, and the list of accounts allowed to change any
+of it. It is created on first use, is `chmod 600`, and is in `.gitignore`.
+
+It can be edited on the box, and it is re-read when it changes, so an edit
+takes effect on a relay that is already running. It can also be edited from
+the admin panel, which is the point of it.
+
+**Who may.** The **Relay settings** page is not behind the admin password. The
+password is shared with whoever helps run the relay; that page changes the
+relay's own credentials, which is not the same trust. It is behind the
+*account*: the connection's UUID, as verified by Mojang's `hasJoined` and not
+as claimed by the client, must be in `ownerUuids` — which starts as
+TGdoesCode alone. Anybody else is not shown the page, and asking for its ops
+by name is refused.
+
+`ownerUuids` is a list and the file can be edited over SSH, so signing in with
+a different account is one line to undo rather than a wall. It cannot be
+emptied from the panel: there would be nobody left who could put somebody back.
+
+**Secrets are write-only.** The panel shows whether a token is set, never what
+it is, and setting a new one has never needed reading the old one. A value
+that an environment variable is overriding is shown as such, so "I changed it
+and nothing happened" is not a mystery.
 
 Then, in the launcher (with **Developer mode** on), open devtools on any page
 and type:
