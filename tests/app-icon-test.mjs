@@ -91,7 +91,7 @@ check("and the cog is grey, which is what it is for", cogAsShipped.sat < 0.1, tr
 // the colour the layer was drawn for now, so the same colour reproduces the
 // artwork and every other theme is shifted by as much as it differs.
 const DEFAULT_BASE = "#b30c0c", DEFAULT_SECOND = "#ff4d4d";
-const anchors = { background: icon.lightnessOf(DEFAULT_BASE), gem: icon.lightnessOf(DEFAULT_SECOND) };
+const anchors = { background: DEFAULT_BASE, gem: DEFAULT_SECOND };
 const meanLight = (data, mask) => {
   let l = 0, n = 0;
   for (let i = 0, p = 0; i < data.length; i += 4, p++) {
@@ -112,6 +112,27 @@ const ownAnchored = await raw(await icon.buildIcon(layers, {
   gem: { kind: "color", hex: DEFAULT_SECOND },
 }, SIZE, anchors));
 
+// The strongest form of it: built in the colours the artwork was drawn for,
+// the result IS the artwork. Not close -- the same pixels.
+const samePixels = (a, b, mask) => {
+  let n = 0, same = 0;
+  for (let i = 0, p = 0; i < a.length; i += 4, p++) {
+    if (!mask[p] || a[i + 3] < 200) continue;
+    n++;
+    if (a[i] === b[i] && a[i + 1] === b[i + 1] && a[i + 2] === b[i + 2]) same++;
+  }
+  return { n, same, pct: n ? same / n : 0 };
+};
+const bgSame = samePixels(asShipped.data, ownAnchored.data, bgOnly);
+const gemSame = samePixels(asShipped.data, ownAnchored.data, gemOnly);
+check("built in the launcher's own colours, the backing is the artwork pixel for pixel",
+  bgSame.pct > 0.999, true, `${bgSame.same} of ${bgSame.n}`);
+check("and so is the gem",
+  gemSame.pct > 0.999, true, `${gemSame.same} of ${gemSame.n}`);
+const bgWas = samePixels(asShipped.data, ownUnanchored.data, bgOnly);
+check("which it was NOT before -- hardly a pixel of it matched",
+  bgWas.pct < 0.1, true, `${bgWas.same} of ${bgWas.n}`);
+
 check("built in the launcher's own colours, the backing is as light as it was drawn",
   Math.abs(meanLight(ownAnchored.data, bgOnly) - drawnBg) < 0.01, true,
   `${meanLight(ownAnchored.data, bgOnly).toFixed(3)} against the artwork's ${drawnBg.toFixed(3)}`);
@@ -121,6 +142,27 @@ check("and the gem likewise",
 check("which it was NOT without it -- the backing came out far lighter",
   meanLight(ownUnanchored.data, bgOnly) > drawnBg + 0.1, true,
   `${meanLight(ownUnanchored.data, bgOnly).toFixed(3)} against ${drawnBg.toFixed(3)}`);
+
+// And the colour within a layer survives, which is what stops the facets of
+// the gem running into one another. Every pixel used to be given the fill's
+// saturation outright, so a layer whose facets differ in saturation came out
+// flat.
+const satSpread = (data, mask) => {
+  let n = 0, sum = 0, sq = 0;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    if (!mask[p] || data[i + 3] < 200) continue;
+    const s2 = icon.rgbToHsl(data[i], data[i + 1], data[i + 2])[1];
+    sum += s2; sq += s2 * s2; n++;
+  }
+  const mean2 = sum / n;
+  return Math.sqrt(Math.max(0, sq / n - mean2 * mean2));
+};
+check("the gem's facets keep the colour that tells them apart",
+  Math.abs(satSpread(ownAnchored.data, gemOnly) - satSpread(asShipped.data, gemOnly)) < 0.005, true,
+  `spread ${satSpread(ownAnchored.data, gemOnly).toFixed(3)} against the artwork's ${satSpread(asShipped.data, gemOnly).toFixed(3)}`);
+check("where they used to be given one saturation between them",
+  satSpread(ownUnanchored.data, gemOnly) < 0.01, true,
+  `spread ${satSpread(ownUnanchored.data, gemOnly).toFixed(3)} -- flat`);
 
 // A lighter theme colour still lightens it -- the anchor is a starting
 // point, not a cap.

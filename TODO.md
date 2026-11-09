@@ -23,6 +23,20 @@ started.
       space and is not taken in; the edge stops, and the readout says which.
       The drag carries on from there rather than ending, so the line between
       the halves can be moved in the same gesture.*
+- [x] **The recoloured icon is still lighter, and its colours run
+      together.** — *The lightness was anchored but the hue and the
+      saturation were still taken from the fill outright. The backing is
+      drawn fully saturated and the base colour is 0.874, so every pixel lost
+      a tenth of its colour -- and at a fixed lightness less saturation is
+      nearer to grey, which reads as LIGHTER as well as flatter. The gem was
+      worse: its facets differ from each other in saturation as much as in
+      lightness, and one saturation between them is what made them run
+      together. All three of hue, saturation and lightness are shifts from
+      the colour the layer was drawn for now, applied to each pixel's own.
+      Built in the launcher's own colours the result IS the artwork, pixel
+      for pixel -- 11399 of 11399 backing pixels and 1245 of 1245 gem pixels,
+      where before not one matched -- and the gem's spread of saturation
+      comes out at the artwork's 0.136 rather than 0.004.*
 - [x] **The icon's backing and gem are far too bright.** — *The recolouring
       re-centred each layer on the FILL colour's lightness: every pixel kept
       its distance from the layer's average, and the average became whatever

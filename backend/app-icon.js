@@ -165,38 +165,53 @@ export async function shadeLayer(layerPng, fill, size, opts = {}) {
   }
   const mean = n ? sum / n : 0.5;
 
-  // How light the colour is that this layer was DRAWN for.
+  // The colour this layer was DRAWN for.
   //
-  // Without it, the layer is re-centred on the fill colour's own lightness:
-  // every pixel keeps its distance from the layer's average, and the average
-  // becomes whatever the theme colour happens to be. The launcher's own
-  // backing is drawn at a lightness of about 0.21 and its base colour is
-  // 0.375, so painting the backing in the launcher's OWN colour came out
-  // nearly twice as light as the artwork -- and every other theme was
-  // brightened by the same amount, which is why the backing and the gem
-  // always looked lit up.
+  // Without it, a layer is re-centred on the fill colour: every pixel keeps
+  // its distance from the layer's average LIGHTNESS, and then takes the
+  // fill's hue and the fill's saturation outright. Two things go wrong with
+  // that, and both of them show.
   //
-  // With it, the fill's lightness is read as a DIFFERENCE from the colour
-  // the layer was drawn for: the same colour reproduces the artwork exactly,
-  // a lighter one lightens it by as much as it is lighter, and a darker one
-  // darkens it. Nothing is judged by hue, so this is still right for a
-  // layer of any colour being turned into any other.
-  const anchor = Number.isFinite(opts.anchor) ? opts.anchor : null;
+  // The lightness: the backing is drawn at about 0.21 and the launcher's
+  // base colour is 0.375, so painting the backing in the launcher's OWN
+  // colour came out nearly twice as light as the artwork, and every other
+  // theme was lifted by the same amount.
+  //
+  // The saturation, which is the subtler half: the backing is drawn fully
+  // saturated and the base colour is 0.874, so every pixel of it lost a
+  // tenth of its colour -- and at a fixed lightness, less saturation is
+  // nearer to grey and reads as LIGHTER, on top of being flatter. The gem is
+  // worse: its facets differ from each other in saturation as much as in
+  // lightness, and giving them all one saturation is what makes them run
+  // together instead of reading as facets.
+  //
+  // With an anchor, the fill is read as a DIFFERENCE from the colour the
+  // layer was drawn for, and that difference is applied to each pixel's own
+  // hue, saturation and lightness. The same colour therefore gives the
+  // artwork back pixel for pixel; another colour moves all of it by as much
+  // as that colour differs, so every difference WITHIN the layer survives.
+  const anchor = opts.anchor ? rgbToHsl(...hexToRgb(opts.anchor)) : null;
 
   const px = await fillPixels(want, size);
   const out = Buffer.from(data);
   for (let i = 0, p = 0; i < out.length; i += 4, p += 3) {
     if (out[i + 3] < 8) continue;
-    const l = rgbToHsl(out[i], out[i + 1], out[i + 2])[2];
+    const [h, sat, l] = rgbToHsl(out[i], out[i + 1], out[i + 2]);
     const [fh, fs, fl] = rgbToHsl(px[p], px[p + 1], px[p + 2]);
-    const want_l = anchor == null ? fl + (l - mean) : l + (fl - anchor);
-    const [r, g, b] = hslToRgb(fh, fs, clamp01(want_l));
+    let r, g, b;
+    if (anchor) {
+      // Hue is a circle, so the shift wraps rather than clamping.
+      const hue = (((h + (fh - anchor[0])) % 360) + 360) % 360;
+      [r, g, b] = hslToRgb(hue, clamp01(sat + (fs - anchor[1])), clamp01(l + (fl - anchor[2])));
+    } else {
+      [r, g, b] = hslToRgb(fh, fs, clamp01(fl + (l - mean)));
+    }
     out[i] = r; out[i + 1] = g; out[i + 2] = b;
   }
   return out;
 }
 
-/** How light a colour is, for use as an anchor. */
+/** How light a colour is. */
 export function lightnessOf(hex) {
   const [r, g, b] = hexToRgb(hex);
   return rgbToHsl(r, g, b)[2];

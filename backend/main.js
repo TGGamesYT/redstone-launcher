@@ -6637,8 +6637,8 @@ async function themedIconPng(opts = {}) {
   // rather than every icon being re-centred on its theme colour's own
   // lightness, which lit the backing and the gem up whatever the theme.
   const anchors = {
-    background: appIconParts.lightnessOf(DEFAULT_SETTINGS.baseColor),
-    gem: appIconParts.lightnessOf(DEFAULT_SETTINGS.secondaryColor),
+    background: DEFAULT_SETTINGS.baseColor,
+    gem: DEFAULT_SETTINGS.secondaryColor,
   };
   return appIconParts.buildIcon(layers, fills, 256, anchors);
 }
