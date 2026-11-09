@@ -4445,6 +4445,24 @@
 
               const renderWorlds = async () => {
                 const worlds = await ipcRenderer.invoke("get-instance-worlds", { profileId: profile.id });
+                // What the cloud has, and who has a world open on another
+                // computer. Both are "if syncing is on" -- neither failing
+                // may stop the worlds list from being drawn.
+                const cloud = await ipcRenderer.invoke("cloud:status").catch(() => null);
+                const cloudOn = !!(cloud && cloud.ok && cloud.signedIn && (cloud.kinds || {}).worlds);
+                const synced = new Map();
+                const openNow = new Map();
+                if (cloudOn) {
+                  for (const it of (cloud.items || [])) {
+                    if (it.kind === "worlds") synced.set(String(it.id).split(":").slice(1).join(":"), it);
+                  }
+                  const r = await ipcRenderer.invoke("cloud:worldsOpen").catch(() => null);
+                  for (const o of ((r && r.open) || [])) {
+                    if (o.stale || o.mine) continue;
+                    const [inst, ...rest] = String(o.key).split(":");
+                    if (String(inst) === String(profile.id)) openNow.set(rest.join(":"), o);
+                  }
+                }
                 // Playing a world IS launching the instance, so while the
                 // game is running there is nothing to play -- the same as the
                 // Servers tab, which already knew this.
@@ -4479,6 +4497,7 @@
                 bar.appendChild(openSaves);
                 tabContent.appendChild(bar);
 
+                const seenHere = new Set();
                 const ul = document.createElement("ul");
                 ul.className = "profile-list";
                 if (!worlds.length) {
@@ -4514,9 +4533,27 @@
                     play.title = "Already running — close the game first";
                   } else if (canQuickPlay) {
                     play.title = "Play this world";
-                    play.onclick = (e) => {
+                    play.onclick = async (e) => {
                       e.stopPropagation();
                       if (!selectedPlayerId) { play.title = "Select a player first!"; return; }
+                      // A world open on another computer is the one way
+                      // syncing can lose an afternoon's work: both sides
+                      // build, and whichever uploads second wins. Said
+                      // rather than refused -- see backend/cloud-lock.js.
+                      if (cloudOn) {
+                        const claim = await ipcRenderer.invoke("cloud:openingWorld",
+                          { instanceId: profile.id, world: w.folder }).catch(() => null);
+                        const was = claim && claim.was;
+                        if (was) {
+                          const since = was.since ? new Date(was.since).toLocaleString() : "a while ago";
+                          const go = window.uiConfirm
+                            ? await uiConfirm(`"${w.name}" has been open on ${was.deviceName} since ${since}.`
+                              + ` If you both play it, whichever syncs second wins and the other afternoon is lost.`,
+                              { title: "Open somewhere else", ok: "Play anyway", danger: true })
+                            : confirm(`"${w.name}" is open on ${was.deviceName}. Play anyway?`);
+                          if (!go) return;
+                        }
+                      }
                       ipcRenderer.send("launch-profile", {
                         profileId: profile.id, playerId: selectedPlayerId,
                         quickPlay: { type: "singleplayer", identifier: w.folder }
@@ -4528,6 +4565,87 @@
                     play.title = "Quick-play a world requires Minecraft 1.20+";
                   }
                   actions.appendChild(play);
+                  if (cloudOn) seenHere.add(w.folder);
+
+                  if (cloudOn) {
+                    // Where this world stands with the cloud, on the row,
+                    // rather than somewhere else that has to be gone and
+                    // looked at.
+                    const open = openNow.get(w.folder);
+                    const have = synced.get(w.folder);
+                    if (open) {
+                      const mark = document.createElement("span");
+                      mark.className = "profile-details";
+                      mark.style.cssText = "margin-right:8px;opacity:0.9;";
+                      mark.textContent = `Open on ${open.deviceName}`;
+                      mark.title = `Since ${open.since ? new Date(open.since).toLocaleString() : "a while ago"}.`
+                        + " Playing it here too means whichever syncs second wins.";
+                      actions.appendChild(mark);
+                    }
+                    const sync = document.createElement("button");
+                    sync.className = "card-action-btn";
+                    sync.innerHTML = `<i class="material-icons">${have ? "cloud_done" : "cloud_upload"}</i>`;
+                    sync.title = have
+                      ? `In the cloud, from ${have.deviceName}. Click to send this computer's copy.`
+                      : "Keep this world in the cloud.";
+                    sync.onclick = async (e) => {
+                      e.stopPropagation();
+                      sync.disabled = true;
+                      const r = await ipcRenderer.invoke("cloud:pushWorld",
+                        { instanceId: profile.id, world: w.folder });
+                      sync.disabled = false;
+                      if (r && r.conflict) {
+                        alert(`"${w.name}" also changed on ${(r.theirs && r.theirs.deviceName) || "another computer"}.`
+                          + " Nothing has been overwritten.");
+                      } else if (r && !r.ok) {
+                        alert(r.error || "Could not sync that world.");
+                      }
+                      renderWorlds();
+                    };
+                    actions.appendChild(sync);
+                  }
+                  li.appendChild(actions);
+                  ul.appendChild(li);
+                }
+
+                // Worlds that are in the cloud and not on this computer.
+                // Listed where the others are rather than behind an import
+                // dialog: the point of syncing one is that the other machine
+                // simply has it.
+                for (const [folder, it] of synced) {
+                  if (seenHere.has(folder)) continue;
+                  const li = document.createElement("li");
+                  li.className = "profile-item is-off";
+                  const img = document.createElement("img");
+                  img.src = DEFAULT_ICON;
+                  li.appendChild(img);
+                  const info = document.createElement("div");
+                  info.className = "profile-info";
+                  const name = document.createElement("div");
+                  name.className = "profile-name";
+                  name.textContent = it.name || folder;
+                  const details = document.createElement("div");
+                  details.className = "profile-details";
+                  details.textContent = `In the cloud, from ${it.deviceName}`;
+                  info.append(name, details);
+                  li.append(info);
+
+                  const actions = document.createElement("div");
+                  actions.className = "card-actions";
+                  const get = document.createElement("button");
+                  get.className = "card-action-btn";
+                  get.innerHTML = `<i class="material-icons">cloud_download</i>`;
+                  get.title = "Bring this world onto this computer.";
+                  get.onclick = async (e) => {
+                    e.stopPropagation();
+                    get.disabled = true;
+                    const r = await ipcRenderer.invoke("cloud:pullWorld",
+                      { instanceId: profile.id, world: folder });
+                    get.disabled = false;
+                    if (!r || !r.ok) alert((r && (r.error || r.why)) || "Could not bring that world down.");
+                    renderWorlds();
+                  };
+                  actions.appendChild(get);
                   li.appendChild(actions);
                   ul.appendChild(li);
                 }
@@ -4645,6 +4763,45 @@
                     if (tabButtons.logs) tabButtons.logs.click();
                   };
                   actions.appendChild(play);
+                  if (cloudOn) seenHere.add(w.folder);
+
+                  if (cloudOn) {
+                    // Where this world stands with the cloud, on the row,
+                    // rather than somewhere else that has to be gone and
+                    // looked at.
+                    const open = openNow.get(w.folder);
+                    const have = synced.get(w.folder);
+                    if (open) {
+                      const mark = document.createElement("span");
+                      mark.className = "profile-details";
+                      mark.style.cssText = "margin-right:8px;opacity:0.9;";
+                      mark.textContent = `Open on ${open.deviceName}`;
+                      mark.title = `Since ${open.since ? new Date(open.since).toLocaleString() : "a while ago"}.`
+                        + " Playing it here too means whichever syncs second wins.";
+                      actions.appendChild(mark);
+                    }
+                    const sync = document.createElement("button");
+                    sync.className = "card-action-btn";
+                    sync.innerHTML = `<i class="material-icons">${have ? "cloud_done" : "cloud_upload"}</i>`;
+                    sync.title = have
+                      ? `In the cloud, from ${have.deviceName}. Click to send this computer's copy.`
+                      : "Keep this world in the cloud.";
+                    sync.onclick = async (e) => {
+                      e.stopPropagation();
+                      sync.disabled = true;
+                      const r = await ipcRenderer.invoke("cloud:pushWorld",
+                        { instanceId: profile.id, world: w.folder });
+                      sync.disabled = false;
+                      if (r && r.conflict) {
+                        alert(`"${w.name}" also changed on ${(r.theirs && r.theirs.deviceName) || "another computer"}.`
+                          + " Nothing has been overwritten.");
+                      } else if (r && !r.ok) {
+                        alert(r.error || "Could not sync that world.");
+                      }
+                      renderWorlds();
+                    };
+                    actions.appendChild(sync);
+                  }
 
                   const editBtn = document.createElement("button");
                   editBtn.className = "card-action-btn";

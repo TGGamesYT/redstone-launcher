@@ -733,6 +733,7 @@
             <span id="cloud-sync-state" class="bg-hint"></span>
           </div>
           <div id="cloud-conflicts" style="margin-top:12px;"></div>
+          <div id="cloud-instances" style="margin-top:14px;"></div>
           <div id="cloud-items" style="margin-top:14px;"></div>
           <div id="cloud-error" class="bg-hint" style="margin-top:10px;color:var(--base-color);"></div>
         </div>
@@ -2301,6 +2302,82 @@
           for (const b of document.querySelectorAll('.cloud-kind')) {
             b.checked = !!kinds[b.dataset.kind];
           }
+          // The instances, each with its own button. Not swept up by "sync
+          // everything": sending somebody's whole instance list to the cloud
+          // because they ticked a box is not what ticking a box means.
+          const insts = document.getElementById('cloud-instances');
+          insts.innerHTML = '';
+          if (kinds.instances) {
+            const r2 = await ipcRenderer.invoke('cloud:instances').catch(() => null);
+            for (const p of ((r2 && r2.instances) || [])) {
+              const row = document.createElement('div');
+              row.className = 'bg-img-row';
+              const who = document.createElement('div');
+              who.className = 'who';
+              who.textContent = `${p.name} · ${p.version || '?'} ${p.loader || ''}`;
+              const state = document.createElement('div');
+              state.className = 'who';
+              state.style.cssText = 'flex:0 0 auto;opacity:0.7;';
+              state.textContent = p.synced ? `in the cloud, from ${p.synced.deviceName}` : 'not synced';
+              const ord = document.createElement('div');
+              ord.className = 'ord';
+              const send = document.createElement('button');
+              send.type = 'button';
+              send.textContent = p.synced ? 'Send this copy' : 'Sync';
+              send.title = 'Records the mods rather than uploading them, and carries the config.';
+              send.onclick = async () => {
+                send.disabled = true;
+                const got = await ipcRenderer.invoke('cloud:pushInstance', { id: p.id });
+                send.disabled = false;
+                if (got && got.conflict) {
+                  alert(`${p.name} also changed on ${(got.theirs && got.theirs.deviceName) || 'another computer'}.`
+                    + ' Nothing has been overwritten.');
+                } else if (got && !got.ok) {
+                  alert(got.error || 'Could not sync that instance.');
+                } else if (got && got.describe && got.describe.skipped.length) {
+                  alert(`${p.name} is synced, but ${got.describe.skipped.length} file(s) could not come with it:\n\n`
+                    + got.describe.skipped.slice(0, 8).map(x => `${x.path} — ${x.why}`).join('\n'));
+                }
+                paint();
+              };
+              ord.appendChild(send);
+              row.append(who, state, ord);
+              insts.appendChild(row);
+            }
+            for (const i of ((r2 && r2.elsewhere) || [])) {
+              const row = document.createElement('div');
+              row.className = 'bg-img-row';
+              const who = document.createElement('div');
+              who.className = 'who';
+              who.textContent = i.name;
+              const state = document.createElement('div');
+              state.className = 'who';
+              state.style.cssText = 'flex:0 0 auto;opacity:0.7;';
+              state.textContent = `in the cloud, from ${i.deviceName}`;
+              const ord = document.createElement('div');
+              ord.className = 'ord';
+              const get = document.createElement('button');
+              get.type = 'button';
+              get.textContent = 'Bring it here';
+              get.title = 'Fetches the mods again and writes the config. Nothing is written until every file is found.';
+              get.onclick = async () => {
+                get.disabled = true;
+                const got = await ipcRenderer.invoke('cloud:pullInstance', { id: i.id });
+                get.disabled = false;
+                if (got && !got.ok) {
+                  alert(got.missing
+                    ? `${got.missing.length} file(s) could not be found, so nothing was written:\n\n`
+                      + got.missing.slice(0, 8).map(x => x.path).join('\n')
+                    : (got.error || 'Could not bring that instance here.'));
+                }
+                paint();
+              };
+              ord.appendChild(get);
+              row.append(who, state, ord);
+              insts.appendChild(row);
+            }
+          }
+
           // What is actually up there, and where each came from -- which is
           // the only way to tell a sync that is working from one that looks
           // like it is.

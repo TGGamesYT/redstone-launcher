@@ -3,7 +3,7 @@
   1280,
   800
  ],
- "count": 142,
+ "count": 143,
  "nodes": [
   {
    "key": "#add-gradient-color",
@@ -1920,6 +1920,46 @@
     "paddingRight": "12px",
     "paddingBottom": "6px",
     "paddingLeft": "12px",
+    "zIndex": "auto",
+    "opacity": "1",
+    "visibility": "visible"
+   }
+  },
+  {
+   "key": "#cloud-instances",
+   "box": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "style": {
+    "display": "block",
+    "position": "static",
+    "boxSizing": "border-box",
+    "overflow": "visible",
+    "overflowX": "visible",
+    "overflowY": "visible",
+    "flexDirection": "row",
+    "justifyContent": "normal",
+    "alignItems": "normal",
+    "gridTemplateColumns": "none",
+    "fontFamily": "Pixel",
+    "fontSize": "16px",
+    "fontWeight": "400",
+    "lineHeight": "normal",
+    "textAlign": "start",
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": "0px",
+    "marginTop": "14px",
+    "marginRight": "0px",
+    "marginBottom": "0px",
+    "marginLeft": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
     "zIndex": "auto",
     "opacity": "1",
     "visibility": "visible"

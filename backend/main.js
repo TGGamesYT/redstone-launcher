@@ -48,6 +48,7 @@ import { cloud as makeCloud } from './cloud.js';
 // CurseForge's file fingerprint, moved out so the pack format can name a
 // CurseForge file without loading the whole launcher.
 import { getFingerprint } from './cf-fingerprint.js';
+import { RENEW_MS as CLOUD_RENEW_MS } from './cloud-lock.js';
 
 // Everything the main process says reaches the page, not just the shell.
 //
@@ -470,6 +471,33 @@ ipcMain.handle("playtime:get", (event, { profileId } = {}) => {
   return { success: true, total, sessions, instances: store };
 });
 
+// Which world, if any, each running game is in -- so the claim in the cloud
+// can be renewed while it plays and given back when it stops. Keyed the same
+// way as runningInstances, because a world is claimed by a PROCESS: two
+// copies of one instance would otherwise have one of them clear the other's.
+const playingWorld = new Map();   // `${id}-${pid}` -> { id, world, timer }
+
+function keepWorldClaimed(id, pid, world) {
+  if (!world) return;
+  const key = `${id}-${pid}`;
+  const tick = () => {
+    cloudService().stillPlaying(id, world).catch(() => { /* offline: it goes stale, which is the designed outcome */ });
+  };
+  const timer = setInterval(tick, CLOUD_RENEW_MS);
+  timer.unref?.();
+  playingWorld.set(key, { id, world, timer });
+}
+
+function releaseWorldClaim(key) {
+  const held = playingWorld.get(key);
+  if (!held) return;
+  clearInterval(held.timer);
+  playingWorld.delete(key);
+  // Not awaited: the game has already gone, and a claim that fails to clear
+  // goes stale by itself rather than warning for ever.
+  cloudService().closedWorld(held.id, held.world).catch(() => { });
+}
+
 function startInstance(id, pid) {
   const now = Date.now();
   const key = `${id}-${pid}`; // unique per process
@@ -490,6 +518,7 @@ function stopInstance(id, pid = null) {
     if (runningInstances.has(key)) {
       const data = runningInstances.get(key);
       runningInstances.delete(key);
+      releaseWorldClaim(key);
       if (data && data.startTime) addPlaytime(id, Date.now() - data.startTime);
       devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${pid})`);
     }
@@ -497,6 +526,7 @@ function stopInstance(id, pid = null) {
     for (const [key, data] of runningInstances.entries()) {
       if (data.id === id) {
         runningInstances.delete(key);
+        releaseWorldClaim(key);
         if (data.startTime) addPlaytime(id, Date.now() - data.startTime);
         devtoolsLog(`[Tracker] Stopped instance ${id} (PID ${data.pid})`);
       }
@@ -3977,6 +4007,12 @@ function launchViaWorker(profileId, cfg, run = null) {
           broadcastProgress(profileId, { done: true, label: 'Starting Minecraft' });
           instanceMeta.set(profileId, { name: cfg.name, version: cfg.gameVersion });
           startInstance(profileId, m.pid);
+          // A synced world being played is said out loud, and kept said
+          // while the game runs, so another computer is warned rather than
+          // both of them building in the same chunk.
+          if (quickPlay && quickPlay.type === "singleplayer" && quickPlay.identifier) {
+            keepWorldClaimed(profileId, m.pid, String(quickPlay.identifier));
+          }
           runStarted(profileId, run, m.pid);
           updateGamePresence();
           broadcastLog(profileId, `[INFO] Launched Minecraft instance "${profileId}" (PID ${m.pid})`, run);
@@ -6184,6 +6220,56 @@ ipcMain.handle("relay:accounts", () => premiumAccounts());
 // client it was set up with, and half of the key each account's data is
 // encrypted with. The other half lives in the Drive, so neither the relay
 // nor Google can open anything alone -- see backend/cloud-crypto.js.
+/**
+ * A file a pack recorded, fetched again.
+ *
+ * In order of how certain each is: the exact download the pack remembered,
+ * then Modrinth by sha1, then CurseForge by its fingerprint. Whatever comes
+ * back is checked against the hash by the unpacker, so a mirror handing over
+ * something else does not become a problem on launch.
+ */
+async function cloudFetchFile(entry) {
+  const tryUrl = async (url) => {
+    if (!url) return null;
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return null;
+      return Buffer.from(await r.arrayBuffer());
+    } catch { return null; }
+  };
+  let bytes = await tryUrl(entry.url);
+  if (bytes) return bytes;
+
+  if (entry.sha1) {
+    try {
+      const r = await fetch(`https://api.modrinth.com/v2/version_file/${entry.sha1}`);
+      if (r.ok) {
+        const v = await r.json();
+        const file = (v.files || []).find(f => (f.hashes && f.hashes.sha1) === entry.sha1) || (v.files || [])[0];
+        bytes = await tryUrl(file && file.url);
+        if (bytes) return bytes;
+      }
+    } catch { /* on to CurseForge */ }
+  }
+
+  if (entry.fingerprint) {
+    try {
+      const r = await fetch(`${WORKER_URL}/fingerprints`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprints: [entry.fingerprint] }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        const m = (data.data?.exactMatches || [])[0];
+        bytes = await tryUrl(m && m.file && m.file.downloadUrl);
+        if (bytes) return bytes;
+      }
+    } catch { /* nothing else to try */ }
+  }
+  return null;
+}
+
 let _cloud = null;
 function cloudService() {
   if (_cloud) return _cloud;
@@ -6214,6 +6300,37 @@ function cloudService() {
           try { if (!w.isDestroyed()) w.webContents.send("players-updated", list); } catch { /* gone */ }
         }
       },
+      readProfiles: () => { try { return JSON.parse(fs.readFileSync(profilesPath, "utf8")); } catch { return []; } },
+      // The shared multiplayer list, which is the one every instance uses
+      // when "Sync multiplayer servers" is on. Read as entries rather than
+      // as the NBT file, so it merges between computers instead of one
+      // binary replacing another.
+      readServers: () => {
+        try { return readServersFrom(sharedCfgPath("servers.dat")) || []; }
+        catch { return null; }
+      },
+      writeServers: (list) => {
+        if (!Array.isArray(list)) return;
+        try {
+          const here = readServersFrom(sharedCfgPath("servers.dat")) || [];
+          const by = new Map(here.map(e => [String(e.ip || "") + "\u0000" + String(e.name || ""), e]));
+          for (const e of list) {
+            const key = String(e.ip || "") + "\u0000" + String(e.name || "");
+            if (!by.has(key)) by.set(key, e);
+          }
+          writeServersTo(sharedCfgPath("servers.dat"), [...by.values()]);
+        } catch { /* a server list that will not merge is not worth failing a sync over */ }
+      },
+      instanceDir: (id) => path.join(dataDir, "client", String(id)),
+      worldDir: (id, name) => path.join(dataDir, "client", String(id), "saves", String(name)),
+      // Nothing is passed for `knownFile`: the hashes a pack records are
+      // enough to ask Modrinth and CurseForge on the other side, and the
+      // launcher's own lookup cache is keyed per instance and per tab in a
+      // way that does not line up with a path in a pack. The hook is there
+      // in cloud-pack.js for when it is worth wiring up; a version of it
+      // that always answers "I do not know" would only look like it did
+      // something.
+      fetchFile: (entry) => cloudFetchFile(entry),
     },
   });
   return _cloud;
@@ -6258,6 +6375,62 @@ ipcMain.handle("cloud:resolve", async (event, { kind, keep } = {}) => {
     const c = cloudService();
     return keep === "mine" ? await c.keepMine(String(kind || "")) : await c.takeTheirs(String(kind || ""));
   } catch (e) { return cloudSaid(e); }
+});
+// ── instances and worlds, one at a time ──
+//
+// Not swept up by "sync everything": sending somebody's whole instance list
+// to the cloud because they ticked a box is not what ticking a box means.
+// The instances, for the cloud section to list. Just enough to show a row:
+// the page that manages instances has its own, richer, answer for this.
+ipcMain.handle("cloud:instances", async () => {
+  try {
+    const profiles = JSON.parse(fs.readFileSync(profilesPath, "utf8")) || [];
+    const items = await cloudService().list().catch(() => []);
+    const up = new Map(items.filter(i => i.kind === "instances").map(i => [String(i.id), i]));
+    return {
+      ok: true,
+      instances: profiles.map(p => ({
+        id: p.id, name: p.name, version: p.version, loader: p.loader,
+        synced: up.get(String(p.id)) || null,
+      })),
+      // In the cloud and not on this computer at all.
+      elsewhere: [...up.values()].filter(i => !profiles.some(p => String(p.id) === String(i.id))),
+    };
+  } catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:previewInstance", async (event, { id } = {}) => {
+  try { return { ok: true, pack: cloudService().previewInstance(id) }; }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:pushInstance", async (event, { id } = {}) => {
+  try { return await cloudService().pushInstance(id); }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:pullInstance", async (event, { id } = {}) => {
+  try { return await cloudService().pullInstance(id); }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:pushWorld", async (event, { instanceId, world } = {}) => {
+  try { return await cloudService().pushWorld(instanceId, world); }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:pullWorld", async (event, { instanceId, world } = {}) => {
+  try { return await cloudService().pullWorld(instanceId, world); }
+  catch (e) { return cloudSaid(e); }
+});
+// Who has a world open. Asked before a game starts, and shown in the worlds
+// list so it is visible before anybody is halfway through loading one.
+ipcMain.handle("cloud:worldsOpen", async () => {
+  try { return { ok: true, open: await cloudService().whoHasWorlds() }; }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:openingWorld", async (event, { instanceId, world } = {}) => {
+  try { return await cloudService().openingWorld(instanceId, world); }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:closedWorld", async (event, { instanceId, world } = {}) => {
+  try { return await cloudService().closedWorld(instanceId, world); }
+  catch (e) { return cloudSaid(e); }
 });
 ipcMain.handle("cloud:unsyncAll", async () => {
   try { return await cloudService().unsyncAll(); }

@@ -315,6 +315,10 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
 
   return {
     push, pull, list, unsync, unsyncAll, compare,
+    // The same two-half encryption, for things that live in the folder but
+    // are not items with versions -- the world claims, which are written and
+    // thrown away constantly and have no history worth keeping.
+    sealFor: seal, openFor: open,
     readManifest, writeManifest, driveHalf,
     // So a caller can hash the same way before deciding whether to push.
     hash: (b) => crypto.createHash("sha256")

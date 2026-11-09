@@ -22,6 +22,8 @@ import google from "./cloud-google.js";
 import cloudDrive from "./cloud-drive.js";
 import cloudSync from "./cloud-sync.js";
 import items from "./cloud-items.js";
+import cloudPack from "./cloud-pack.js";
+import cloudLock from "./cloud-lock.js";
 
 /**
  * Build the service.
@@ -96,6 +98,18 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
       drive: driveFor(), relayHalf, deviceId: d.id, deviceName: d.name,
     });
   };
+
+  /** Who has a world open, across every computer signed in to this Drive. */
+  function lockbook() {
+    const d = device();
+    const s = syncer();
+    return cloudLock.locks({
+      drive: driveFor(),
+      seal: (kind, v) => s.sealFor(kind, v),
+      open: (kind, b) => s.openFor(kind, b),
+      deviceId: d.id, deviceName: d.name,
+    });
+  }
 
   // ── what this computer has agreed with ──────────────────────────────────
   //
@@ -254,6 +268,92 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     },
   };
 
+  // ── instances and worlds ────────────────────────────────────────────────
+  //
+  // Many of each, so they are not in WHAT: each is pushed and pulled by
+  // name rather than swept up by "sync everything". Sending somebody's
+  // whole instance list to the cloud because they ticked a box is not what
+  // ticking a box should mean.
+
+  /** Describe an instance without sending it, so the page can say what will go. */
+  function previewInstance(id) {
+    if (!content.instanceDir || !content.readProfiles) throw new Error("Instances are not available here.");
+    const profile = (content.readProfiles() || []).find(p => String(p.id) === String(id));
+    if (!profile) throw new Error("No such instance.");
+    return cloudPack.describePack(cloudPack.packInstance({
+      profile, dir: content.instanceDir(id),
+      known: content.knownFile || (() => null),
+    }));
+  }
+
+  async function pushInstance(id) {
+    const profile = (content.readProfiles() || []).find(p => String(p.id) === String(id));
+    if (!profile) throw new Error("No such instance.");
+    const p = cloudPack.packInstance({
+      profile, dir: content.instanceDir(id), known: content.knownFile || (() => null),
+    });
+    const r = await push("instances", String(id), Buffer.from(JSON.stringify(p)), { name: profile.name });
+    return { ...r, describe: cloudPack.describePack(p) };
+  }
+
+  async function pullInstance(id, { into } = {}) {
+    const r = await pull("instances", String(id));
+    if (!r.ok) return r;
+    const p = JSON.parse(r.bytes.toString("utf8"));
+    return cloudPack.unpackInstance({
+      pack: p,
+      dir: into || content.instanceDir(id),
+      fetchFile: content.fetchFile || (async () => null),
+    });
+  }
+
+  async function pushWorld(instanceId, worldName) {
+    if (!content.worldDir) throw new Error("Worlds are not available here.");
+    const dir = content.worldDir(instanceId, worldName);
+    const w = cloudPack.packWorld({ dir, name: worldName });
+    const key = `${instanceId}:${worldName}`;
+    return push("worlds", key, Buffer.from(JSON.stringify(w)), { name: worldName });
+  }
+
+  async function pullWorld(instanceId, worldName) {
+    const key = `${instanceId}:${worldName}`;
+    const r = await pull("worlds", key);
+    if (!r.ok) return r;
+    return cloudPack.unpackWorld({
+      world: JSON.parse(r.bytes.toString("utf8")),
+      dir: content.worldDir(instanceId, worldName),
+    });
+  }
+
+  /**
+   * About to play a synced world.
+   *
+   * Says who else has it open, and claims it either way -- the answer is a
+   * warning for somebody to read, not a refusal. See cloud-lock.js for why
+   * it is not a lock.
+   */
+  async function openingWorld(instanceId, worldName) {
+    const key = `${instanceId}:${worldName}`;
+    const r = await lockbook().take(key, { name: worldName });
+    relayHalfCache = null;
+    return r;
+  }
+  async function stillPlaying(instanceId, worldName) {
+    const r = await lockbook().renew(`${instanceId}:${worldName}`, { name: worldName });
+    relayHalfCache = null;
+    return r;
+  }
+  async function closedWorld(instanceId, worldName) {
+    const r = await lockbook().give(`${instanceId}:${worldName}`);
+    relayHalfCache = null;
+    return r;
+  }
+  async function whoHasWorlds() {
+    const r = await lockbook().all();
+    relayHalfCache = null;
+    return r;
+  }
+
   /**
    * Sync everything that is switched on.
    *
@@ -327,6 +427,9 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
   return {
     client, status, signIn, signOut,
     syncNow, takeTheirs, keepMine, WHAT,
+    previewInstance, pushInstance, pullInstance,
+    pushWorld, pullWorld,
+    openingWorld, stillPlaying, closedWorld, whoHasWorlds,
     plan: planFor, push, pull, pushOver, unsync,
     list: () => syncer().list(),
     unsyncAll: async () => { const r = await syncer().unsyncAll(); settings.set("cloudAgreed", {}); return r; },
