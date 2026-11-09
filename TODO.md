@@ -80,6 +80,16 @@ started.
       and never stretched, off the SHAFT of the texture. It is now drawn one
       to one from row four down, tiled where the reach is longer than the
       twelve rows of shaft there are.*
+- [x] **The neck uses the base block's grey, not what a piston's neck is
+      made of.** — *Right, and it was my fix for the stretching that put it
+      there. `piston_side` holds both: the top four rows are the WOOD the arm
+      and the head's collar are both cut from, and the twelve below are the
+      stone body. I moved the arm off the stretched whole strip and onto the
+      body's rows, so it came out the colour of the block it comes out of —
+      which is the same thing as not drawing an arm at all. It is the wood
+      band now, columns 4 to 8 and rows 0 to 4, which is the rectangle the
+      game's own piston head takes its arm from, at its own size and tiled
+      along however far it reaches.*
 - [ ] **`Failed to refresh player: error.auth.minecraft.login`** — in
       Electron's log while signed in fine, with
       `[Relay] token refresh failed, trying existing token: undefined` after

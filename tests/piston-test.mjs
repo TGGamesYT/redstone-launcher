@@ -147,19 +147,24 @@ check("the head is the collar off the top of the texture, not the body's pattern
   apart(colours.head, colours.body) > 25, true,
   `head ${colours.head} against body ${colours.body}`);
 
-// And the arm is the shaft all the way along it.
+// And the arm is WOOD, all the way along it.
 //
-// It used to be the whole strip stretched to length, and the strip is the
-// head's tan collar at one end and the body's grey at the other -- so the
-// arm came out the colour of the head where it met the head and the colour
-// of the body where it met the body, and there was no rod to see between
-// them. The shaft is grey; the collar is not.
-const tan = (c) => c[0] - c[2] > 40;
-check("the arm is the shaft, not the head's collar stretched out",
-  [tan(colours.head), tan(colours.armNearHead), tan(colours.armNearBody)],
-  [true, false, false],
+// piston_side holds both: the top four rows are the wooden band the arm and
+// the collar are cut from, and the twelve below are the stone body. Taking
+// the arm from the body's rows made it the body's grey, which is the same
+// thing as not drawing an arm -- it is the colour of the block it comes out
+// of. Taking the whole strip and stretching it, which is what it was before
+// that, gave an arm that was the head's colour at one end and the body's at
+// the other and no rod in between.
+const wood = (c) => c[0] - c[2] > 40;
+check("the arm is wood, which is what a piston's arm is made of",
+  [wood(colours.head), wood(colours.armNearHead), wood(colours.armNearBody)],
+  [true, true, true],
   `head ${colours.head}, arm ${colours.armNearHead} and ${colours.armNearBody}`);
-check("and it is the same kind of thing at both ends of itself",
+check("and it is not the grey of the body it comes out of",
+  apart(colours.armNearBody, colours.body) > 60, true,
+  `arm ${colours.armNearBody} against body ${colours.body}`);
+check("and it is the same thing at both ends of itself",
   apart(colours.armNearHead, colours.armNearBody) < 140, true,
   "one rod, not a gradient from the head's colour to the body's");
 

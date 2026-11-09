@@ -160,27 +160,26 @@
         [0, FACE, TEX, TEX - FACE], [0, FACE, TEX, TEX - FACE]);
       // The arm, from the body's face out to the back of the head.
       //
-      // One to one, and from the SHAFT of the texture -- rows 4 down, the
-      // grey stone -- rather than the whole strip stretched to length. Both
-      // of those were wrong and in the same direction. The strip x4..8 of
-      // piston_side is the head's tan collar for its first four rows and the
-      // body's grey for the rest, so stretching the whole of it to fit gave
-      // an arm that was the head's colour where it met the head and the
-      // body's colour where it met the body: the two ends simply blended
-      // into the things they touched and there was no rod to see between
-      // them. The game's own arm is 4 across and 12 long, drawn at its own
-      // size and never stretched, which is why it reads as a rod.
+      // A piston's arm is WOOD, and piston_side has both in it: the top four
+      // rows are the wooden band the arm and the head's collar are cut from,
+      // and the twelve below are the stone body. Taking the arm from the
+      // body's rows made it the body's grey, which is the same thing as not
+      // drawing an arm at all -- it is the colour of the block it comes out
+      // of. Taking the WHOLE strip and stretching it to length, which is
+      // what it was before that, was worse again: the top of it is the
+      // collar, so the arm was the head's colour where it met the head and
+      // the body's where it met the body, and there was no rod between them.
       //
-      // Tiled, because a reach of a whole block is sixteen and the shaft is
-      // twelve. Laid from the head END backwards, so the join never moves
-      // while the piston is travelling.
+      // So: columns 4 to 8, rows 0 to 4 -- which is the rectangle the game's
+      // own piston head takes its arm from -- at its own size, tiled along
+      // however far the arm has to reach. Laid from the head END backwards,
+      // so the seams do not travel while the piston does.
       if (reach > 0) {
-        const SHAFT = TEX - FACE;
         let left = reach, at = FACE - reach;
         while (left > 0) {
-          const n = Math.min(left, SHAFT);
+          const n = Math.min(left, FACE);
           drawLocal(cx, images.side, bpx, bpy, p.d,
-            [ARM, FACE, ARM, n], [(TEX - ARM) / 2, at, ARM, n]);
+            [ARM, 0, ARM, n], [(TEX - ARM) / 2, at, ARM, n]);
           at += n; left -= n;
         }
       }
