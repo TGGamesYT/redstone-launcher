@@ -45,6 +45,9 @@ import { createRequire } from 'module';
 import { screenSkinPixels } from './skinFilter.js';
 import * as iconModels from './icon-models.js';
 import { cloud as makeCloud } from './cloud.js';
+// CurseForge's file fingerprint, moved out so the pack format can name a
+// CurseForge file without loading the whole launcher.
+import { getFingerprint } from './cf-fingerprint.js';
 
 // Everything the main process says reaches the page, not just the shell.
 //
@@ -65,51 +68,6 @@ const CLASS_ID_FOLDERS = {
   6552: "shaderpacks",
   17: "saves"
 };
-
-const _WHITESPACE_BYTES = new Set([
-  9, 10, 13, 32 // \t, \n, \r, space  <-- match the Python set exactly
-]);
-
-// use Python's / CurseForge's multiplier constant (0x5bd1e995 == 1540483477)
-const _MULTIPLEX = 0x5bd1e995;
-
-function getFingerprint(path) {
-  if (!fs.existsSync(path) || !fs.statSync(path).isFile()) {
-    throw new Error(`File not found: ${path}`);
-  }
-
-  const data = fs.readFileSync(path);
-  let lenNoWs = 0;
-  for (const b of data) {
-    if (!_WHITESPACE_BYTES.has(b)) lenNoWs++;
-  }
-
-  let num2 = (1 ^ lenNoWs) >>> 0;
-  let num3 = 0;
-  let num4 = 0;
-
-  for (const b of data) {
-    if (_WHITESPACE_BYTES.has(b)) continue;
-
-    num3 |= (b << num4);
-    num4 += 8;
-    if (num4 === 32) {
-      const num6 = Math.imul(num3, _MULTIPLEX) >>> 0;
-      const num7 = Math.imul((num6 ^ (num6 >>> 24)) >>> 0, _MULTIPLEX) >>> 0;
-      num2 = Math.imul(num2, _MULTIPLEX) ^ num7;
-      num2 >>>= 0;
-      num3 = 0;
-      num4 = 0;
-    }
-  }
-
-  if (num4 > 0) {
-    num2 = Math.imul(num2 ^ num3, _MULTIPLEX) >>> 0;
-  }
-
-  let num6 = Math.imul(num2 ^ (num2 >>> 13), _MULTIPLEX) >>> 0;
-  return (num6 ^ (num6 >>> 15)) >>> 0;
-}
 
 function computeSHA1(filePath) {
   if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
