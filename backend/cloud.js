@@ -21,6 +21,7 @@ import os from "os";
 import google from "./cloud-google.js";
 import cloudDrive from "./cloud-drive.js";
 import cloudSync from "./cloud-sync.js";
+import items from "./cloud-items.js";
 
 /**
  * Build the service.
@@ -30,7 +31,7 @@ import cloudSync from "./cloud-sync.js";
  *   relayCall(req)      ask the relay's cloud channel, already authenticated
  *   fetchImpl           for the tests
  */
-export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser }) {
+export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, content = {} }) {
   // Held only while the launcher is running.
   let accessToken = null, accessUntil = 0, relayHalfCache = null, clientCache = null;
 
@@ -63,7 +64,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser }) {
     // A minute's grace, so a long upload does not expire half way through
     // the one call that was started just before the hour.
     if (accessToken && accessUntil > Date.now() + 60_000) return accessToken;
-    const r = await google.refresh({ client: await client(), refreshToken: now.refreshToken });
+    const r = await google.refresh({ client: await client(), refreshToken: now.refreshToken, fetchImpl });
     accessToken = r.accessToken;
     accessUntil = r.expiresAt;
     return accessToken;
@@ -113,7 +114,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser }) {
   // ── signing in and out ──────────────────────────────────────────────────
 
   async function signIn() {
-    const got = await google.signIn({ client: await client(), ...(openBrowser ? { openBrowser } : {}) });
+    const got = await google.signIn({ client: await client(), fetchImpl, ...(openBrowser ? { openBrowser } : {}) });
     save({ refreshToken: got.refreshToken, email: got.email, at: Date.now() });
     accessToken = got.accessToken;
     accessUntil = got.expiresAt;
@@ -132,7 +133,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser }) {
       try { await syncer().unsyncAll(); } catch { /* say it below rather than refuse to sign out */ }
     }
     const now = saved();
-    await google.revoke({ refreshToken: now && now.refreshToken }).catch(() => { });
+    await google.revoke({ refreshToken: now && now.refreshToken, fetchImpl }).catch(() => { });
     save(null);
     settings.set("cloudAgreed", {});
     accessToken = null; accessUntil = 0; relayHalfCache = null;
@@ -164,7 +165,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser }) {
    * The page asks this before offering a button, so "Sync" and "Download"
    * are never the same button with different consequences.
    */
-  async function plan(kind, id, bytes) {
+  async function planFor(kind, id, bytes) {
     const s = syncer();
     const key = id ? `${kind}/${id}` : kind;
     const m = await s.readManifest();
@@ -222,9 +223,111 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser }) {
     return kinds();
   };
 
+  // ── what each kind is, here ─────────────────────────────────────────────
+  //
+  // The reading and writing of the launcher's own files is handed in, so
+  // this file stays about syncing and cloud-items.js stays about what is in
+  // a thing. A kind with nothing behind it simply does not run, which is how
+  // the ones not written yet behave rather than by throwing.
+  const WHAT = {
+    settings: {
+      name: "Settings",
+      read: () => items.settingsFor(settings),
+      write: (v) => items.applySettings(settings, v),
+    },
+    themes: {
+      name: "Themes",
+      read: () => (content.readThemes ? content.readThemes() : null),
+      write: (v) => content.writeThemes
+        && content.writeThemes(items.mergeThemes(content.readThemes(), v).themes),
+    },
+    accounts: {
+      name: "Accounts",
+      read: () => (content.readPlayers ? items.accountsFor(content.readPlayers()) : null),
+      write: (v) => content.writePlayers
+        && content.writePlayers(items.mergeAccounts(content.readPlayers(), v).players),
+    },
+    servers: {
+      name: "Server list",
+      read: () => (content.readServers ? content.readServers() : null),
+      write: (v) => content.writeServers && content.writeServers(v),
+    },
+  };
+
+  /**
+   * Sync everything that is switched on.
+   *
+   * Reports per kind rather than throwing on the first one that will not go:
+   * one conflict must not stop the other five from syncing, and the page has
+   * to be able to say which was which.
+   *
+   * Nothing is overwritten. A kind that has changed in both places comes back
+   * as a conflict for somebody to decide, which is what compare() is for.
+   */
+  async function syncNow({ only } = {}) {
+    const want = kinds();
+    const out = [];
+    for (const [kind, spec] of Object.entries(WHAT)) {
+      if (only && kind !== only) continue;
+      if (!want[kind]) continue;
+      try {
+        const mine = spec.read();
+        if (mine === null || mine === undefined) {
+          out.push({ kind, did: "nothing", why: "there is nothing here to sync yet" });
+          continue;
+        }
+        const bytes = Buffer.from(JSON.stringify(mine));
+        const plan = await planFor(kind, null, bytes);
+        if (plan.do === "push") {
+          const r = await push(kind, null, bytes, { name: spec.name });
+          out.push({ kind, did: r.ok ? "pushed" : "conflict", why: r.why || plan.why, version: r.version });
+        } else if (plan.do === "pull") {
+          const r = await pull(kind, null);
+          if (r.ok) {
+            spec.write(JSON.parse(r.bytes.toString("utf8")));
+            out.push({ kind, did: "pulled", why: plan.why, first: !!plan.first });
+          }
+          else out.push({ kind, did: "nothing", why: r.inManifest ? "it is missing from the Drive" : "there is nothing to take" });
+        } else {
+          out.push({ kind, did: plan.do, why: plan.why, mine: plan.mine, theirs: plan.theirs });
+        }
+      } catch (e) {
+        out.push({ kind, did: "failed", why: String(e && e.message || e), signedOut: !!(e && e.signedOut) });
+      }
+    }
+    relayHalfCache = null;
+    settings.set("cloudLastSync", Date.now());
+    return { ok: true, results: out, at: Date.now() };
+  }
+
+  /**
+   * Take the Drive's copy, throwing away what is here.
+   *
+   * Only ever after being told there is a conflict, and only when somebody
+   * says so -- which is why it is its own call and not an option on a sync.
+   */
+  async function takeTheirs(kind) {
+    const spec = WHAT[kind];
+    if (!spec) throw new Error(`Nothing called ${kind} is synced.`);
+    const r = await pull(kind, null);
+    if (!r.ok) return { ok: false, why: "there is nothing in the Drive to take" };
+    spec.write(JSON.parse(r.bytes.toString("utf8")));
+    return { ok: true };
+  }
+
+  /** Keep what is here, and make the Drive match it. */
+  async function keepMine(kind) {
+    const spec = WHAT[kind];
+    if (!spec) throw new Error(`Nothing called ${kind} is synced.`);
+    const mine = spec.read();
+    if (mine === null || mine === undefined) return { ok: false, why: "there is nothing here to send" };
+    return pushOver(kind, null, Buffer.from(JSON.stringify(mine)), { name: spec.name });
+  }
+
   return {
     client, status, signIn, signOut,
-    plan, push, pull, pushOver, unsync,
+    syncNow, takeTheirs, keepMine, WHAT,
+    plan: planFor, push, pull, pushOver, unsync,
     list: () => syncer().list(),
     unsyncAll: async () => { const r = await syncer().unsyncAll(); settings.set("cloudAgreed", {}); return r; },
     kinds, setKind, device,

@@ -6244,6 +6244,19 @@ function cloudService() {
         account, rejectUnauthorized, req,
       });
     },
+    // Reading and writing the launcher's own files is handed in, so cloud.js
+    // stays about syncing rather than about where anything is kept.
+    content: {
+      readThemes: () => loadThemes(),
+      writeThemes: (list) => saveThemes(list),
+      readPlayers: () => loadPlayers(),
+      writePlayers: (list) => {
+        savePlayers(list);
+        for (const w of BrowserWindow.getAllWindows()) {
+          try { if (!w.isDestroyed()) w.webContents.send("players-updated", list); } catch { /* gone */ }
+        }
+      },
+    },
   });
   return _cloud;
 }
@@ -6277,6 +6290,16 @@ ipcMain.handle("cloud:list", async () => {
 ipcMain.handle("cloud:unsync", async (event, { kind, id } = {}) => {
   try { return await cloudService().unsync(String(kind || ""), id || null); }
   catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:syncNow", async (event, { only } = {}) => {
+  try { return await cloudService().syncNow({ only: only || null }); }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:resolve", async (event, { kind, keep } = {}) => {
+  try {
+    const c = cloudService();
+    return keep === "mine" ? await c.keepMine(String(kind || "")) : await c.takeTheirs(String(kind || ""));
+  } catch (e) { return cloudSaid(e); }
 });
 ipcMain.handle("cloud:unsyncAll", async () => {
   try { return await cloudService().unsyncAll(); }

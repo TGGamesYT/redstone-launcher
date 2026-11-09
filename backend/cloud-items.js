@@ -29,14 +29,9 @@
  */
 export const NOT_SETTINGS = [
   // Secrets. These must never leave this machine.
-  "cloudGoogle",            // the way back into the Drive we would be writing to
   "themeSigningKey",        // signs a theme as you
 
   // This computer, not you.
-  "cloudDeviceId",
-  "cloudDeviceName",
-  "cloudAgreed",            // which version of each item THIS computer has
-  "cloudKinds",             // what THIS computer chooses to sync
   "pendingUpdate",          // an update downloaded here
   "javaPath", "javaPaths",  // where Java is on this disk
   "dataDir", "instancesDir",
@@ -80,12 +75,29 @@ export const looksSecret = (key, value) => {
   return false;
 };
 
+/**
+ * Everything syncing itself keeps, which is never synced.
+ *
+ * All of it is about THIS computer -- which Google account it is signed in
+ * with, what it has agreed with, when it last ran -- and one of them is the
+ * refresh token for the very Drive being written to.
+ *
+ * It is a prefix rather than a list because of what happened without one.
+ * `cloudLastSync` is written BY a sync and was then included IN the next
+ * one, so the settings changed every time they were synced: every sync
+ * pushed, both computers pushed at each other for ever, and a push from
+ * either looked to the other like a change worth conflicting over.
+ * Anything syncing writes about itself has that shape, so the rule is about
+ * the shape rather than about the names.
+ */
+const OURS = /^cloud[A-Z]/;
+
 /** The settings that are yours, ready to go. */
 export function settingsFor(store, { all } = {}) {
   const out = {};
   const every = all || store.store || {};
   for (const [k, v] of Object.entries(every)) {
-    if (NOT_SETTINGS.includes(k)) continue;
+    if (NOT_SETTINGS.includes(k) || OURS.test(k)) continue;
     if (looksSecret(k, v)) continue;
     out[k] = v;
   }
@@ -103,7 +115,7 @@ export function applySettings(store, incoming) {
   if (!incoming || typeof incoming !== "object") return { changed: [] };
   const changed = [];
   for (const [k, v] of Object.entries(incoming)) {
-    if (NOT_SETTINGS.includes(k)) continue;
+    if (NOT_SETTINGS.includes(k) || OURS.test(k)) continue;
     if (looksSecret(k, v)) continue;
     store.set(k, v);
     changed.push(k);

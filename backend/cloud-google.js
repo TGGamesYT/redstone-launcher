@@ -53,8 +53,8 @@ const DONE_PAGE = (title, body) => `<!doctype html><html><head><meta charset="ut
  div{max-width:28rem;padding:2rem}h1{font-size:1.3rem;margin:0 0 .5rem}p{opacity:.75;margin:0}
 </style></head><body><div><h1>${title}</h1><p>${body}</p></div></body></html>`;
 
-async function postForm(url, form) {
-  const res = await fetch(url, {
+async function postForm(url, form, fetchImpl = fetch) {
+  const res = await fetchImpl(url, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(form).toString(),
@@ -80,7 +80,7 @@ async function postForm(url, form) {
  * carries it, which is why PKCE exists -- but Google's token endpoint still
  * wants it for this client type.
  */
-export function signIn({ client, openBrowser = openInBrowser, timeoutMs = 5 * 60 * 1000 } = {}) {
+export function signIn({ client, openBrowser = openInBrowser, timeoutMs = 5 * 60 * 1000, fetchImpl = fetch } = {}) {
   if (!client || !client.clientId) {
     return Promise.reject(new Error("This relay has no Google client set up yet."));
   }
@@ -134,7 +134,7 @@ export function signIn({ client, openBrowser = openInBrowser, timeoutMs = 5 * 60
           code_verifier: verifier,
           grant_type: "authorization_code",
           redirect_uri: redirectUri,
-        });
+        }, fetchImpl);
         // Without one there is nothing to sync with tomorrow, only today.
         if (!tok.refresh_token) {
           throw new Error("Google did not send a refresh token."
@@ -144,7 +144,7 @@ export function signIn({ client, openBrowser = openInBrowser, timeoutMs = 5 * 60
           refreshToken: tok.refresh_token,
           accessToken: tok.access_token,
           expiresAt: Date.now() + (Number(tok.expires_in) || 3600) * 1000,
-          email: await emailOf(tok.access_token).catch(() => null),
+          email: await emailOf(tok.access_token, fetchImpl).catch(() => null),
         });
       } catch (e) { finish(reject, e); }
     });
@@ -179,13 +179,13 @@ export function signIn({ client, openBrowser = openInBrowser, timeoutMs = 5 * 60
 }
 
 /** A fresh access token from the refresh token. */
-export async function refresh({ client, refreshToken }) {
+export async function refresh({ client, refreshToken, fetchImpl = fetch }) {
   const tok = await postForm(TOKEN_URL, {
     client_id: client.clientId,
     ...(client.clientSecret ? { client_secret: client.clientSecret } : {}),
     refresh_token: refreshToken,
     grant_type: "refresh_token",
-  });
+  }, fetchImpl);
   return {
     accessToken: tok.access_token,
     expiresAt: Date.now() + (Number(tok.expires_in) || 3600) * 1000,
@@ -193,8 +193,8 @@ export async function refresh({ client, refreshToken }) {
 }
 
 /** Which account this is, for the settings page to show. */
-export async function emailOf(accessToken) {
-  const res = await fetch(INFO_URL, { headers: { Authorization: `Bearer ${accessToken}` } });
+export async function emailOf(accessToken, fetchImpl = fetch) {
+  const res = await fetchImpl(INFO_URL, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`Google said ${res.status} when asked who this is.`);
   const info = await res.json();
   return info.email || null;
@@ -206,9 +206,9 @@ export async function emailOf(accessToken) {
  * Signing out has to do this and not only drop the token locally: a token
  * that still works somewhere is not signed out, it is merely out of sight.
  */
-export async function revoke({ refreshToken }) {
+export async function revoke({ refreshToken, fetchImpl = fetch }) {
   if (!refreshToken) return;
-  await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(refreshToken)}`,
+  await fetchImpl(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(refreshToken)}`,
     { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } })
     .catch(() => { /* offline: the local copy still goes */ });
 }

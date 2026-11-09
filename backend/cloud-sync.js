@@ -171,6 +171,20 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
       return { do: "nothing", why: "both sides are the same", version: t };
     }
 
+    // A computer that has never synced this before has nothing to have
+    // changed FROM, so there is no conflict to have: it takes the Drive's
+    // copy. Treating it as a clash means every new computer clashes on
+    // everything the moment it signs in, which is noise rather than a
+    // question -- and of the things synced, two of the three merge, so
+    // nothing is lost by taking.
+    //
+    // It is marked as the first one, so the page can say what it did and
+    // offer to put this computer's back rather than leaving somebody to
+    // find out that their settings changed.
+    if (!b.version && !b.hash) {
+      return { do: "pull", first: true, why: "this computer has not synced this before" };
+    }
+
     // Without a remembered hash there is no way to tell whether this computer
     // has changed anything, so it is taken to have -- which errs towards
     // asking rather than towards overwriting.

@@ -707,20 +707,19 @@
            Minecraft account and only hands to a connection Mojang has
            verified. Neither half opens anything alone. -->
       <div id="cloud-box" style="margin-bottom:50px;">
-        <p class="bg-hint" id="cloud-what" style="margin:0 0 10px;">
-          Keep your settings, themes, instances and worlds in your own Google Drive,
-          so they follow you to another computer.
-        </p>
         <div id="cloud-signed-out">
-          <button type="button" id="cloud-signin" class="bg-btn">Sign in with Google…</button>
+          <button type="button" id="cloud-signin" class="bg-btn"
+            data-tip="Keeps your settings, themes, instances and worlds in your own Google Drive, so they follow you to another computer. The launcher can only see the folder it makes — it asks for access to files it created and nothing wider — and everything in that folder is encrypted with a key in two halves: one kept in the folder, one the relay works out from your Minecraft account and only hands over after Mojang has verified it. Neither half opens anything on its own.">Sign in with Google…</button>
           <span id="cloud-signin-state" class="bg-hint" style="margin-left:10px;"></span>
         </div>
         <div id="cloud-signed-in" style="display:none;">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
             <span id="cloud-who" class="bg-hint"></span>
             <span id="cloud-room" class="bg-hint"></span>
-            <button type="button" id="cloud-signout" class="bg-btn">Sign out</button>
-            <button type="button" id="cloud-forget" class="bg-btn">Sign out and empty the folder</button>
+            <button type="button" id="cloud-signout" class="bg-btn"
+              data-tip="Stops syncing on this computer. What is in the Drive is left alone, so your other computers carry on.">Sign out</button>
+            <button type="button" id="cloud-forget" class="bg-btn"
+              data-tip="Stops syncing everywhere and deletes the launcher's folder from your Drive. Nothing on this computer is touched.">Sign out and empty the folder</button>
           </div>
           <label class="setting-toggle" data-tip="Your launcher settings: the theme, the colours, the background, and everything on this page that is not about this computer in particular."><input type="checkbox" class="cloud-kind" data-kind="settings"> Settings</label>
           <label class="setting-toggle" data-tip="The themes you have made or installed."><input type="checkbox" class="cloud-kind" data-kind="themes"> Themes</label>
@@ -728,6 +727,12 @@
           <label class="setting-toggle" data-tip="Your instances, as a pack: the version, the loader, the mods and where each came from, and the resource packs. Mods are recorded rather than uploaded wherever they can be fetched again, so an instance is small."><input type="checkbox" class="cloud-kind" data-kind="instances"> Instances</label>
           <label class="setting-toggle" data-tip="Your worlds. A world that is open in a game on one computer is marked as such, so another computer warns you rather than letting two of you edit it at once."><input type="checkbox" class="cloud-kind" data-kind="worlds"> Worlds</label>
           <label class="setting-toggle" data-tip="The accounts you are signed in with. Encrypted with both halves of the key, so the Drive file is of no use without the Minecraft account it belongs to — and the relay cannot read it either."><input type="checkbox" class="cloud-kind" data-kind="accounts"> Signed-in accounts</label>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;">
+            <button type="button" id="cloud-sync" class="bg-btn"
+              data-tip="Sends what has changed here and takes what has changed elsewhere. Anything that changed in both places is shown rather than decided for you.">Sync now</button>
+            <span id="cloud-sync-state" class="bg-hint"></span>
+          </div>
+          <div id="cloud-conflicts" style="margin-top:12px;"></div>
           <div id="cloud-items" style="margin-top:14px;"></div>
           <div id="cloud-error" class="bg-hint" style="margin-top:10px;color:var(--base-color);"></div>
         </div>
@@ -2327,6 +2332,56 @@
             items.appendChild(row);
           }
         }
+
+        const syncState = document.getElementById('cloud-sync-state');
+        const conflicts = document.getElementById('cloud-conflicts');
+
+        // What a sync did, per kind. Reported rather than summarised: one
+        // kind clashing must not read as the whole sync having failed, and
+        // "synced" with nothing behind it is the thing people stop trusting.
+        function showResults(results) {
+          conflicts.innerHTML = '';
+          const said = [];
+          for (const r of results || []) {
+            if (r.did === 'conflict') {
+              const row = document.createElement('div');
+              row.className = 'bg-img-row';
+              const what = document.createElement('div');
+              what.className = 'who';
+              what.textContent = `${r.kind} — ${r.why}`;
+              const ord = document.createElement('div');
+              ord.className = 'ord';
+              for (const [keep, label, tip] of [
+                ['mine', 'Keep this computer\'s', 'Sends what is here, replacing what is in the Drive.'],
+                ['theirs', 'Take the Drive\'s', 'Replaces what is here with what is in the Drive.'],
+              ]) {
+                const b = document.createElement('button');
+                b.type = 'button'; b.textContent = label; b.title = tip;
+                b.onclick = async () => {
+                  await ipcRenderer.invoke('cloud:resolve', { kind: r.kind, keep });
+                  doSync();
+                };
+                ord.appendChild(b);
+              }
+              row.append(what, ord);
+              conflicts.appendChild(row);
+            } else if (r.did === 'failed') {
+              said.push(`${r.kind}: ${r.why}`);
+            } else if (r.did !== 'nothing') {
+              said.push(`${r.kind} ${r.did}`);
+            }
+          }
+          syncState.textContent = said.length ? said.join(' · ') : 'Everything is up to date.';
+        }
+
+        async function doSync() {
+          syncState.textContent = 'Syncing…';
+          const r = await ipcRenderer.invoke('cloud:syncNow', {});
+          if (!r || !r.ok) { syncState.textContent = (r && r.error) || 'Could not sync.'; return; }
+          showResults(r.results);
+          paint();
+        }
+        document.getElementById('cloud-sync').addEventListener('click', doSync);
 
         document.getElementById('cloud-signin').addEventListener('click', async () => {
           signInState.textContent = 'Waiting for your browser…';
