@@ -214,7 +214,7 @@
     0
    ],
    "style": {
-    "display": "flex",
+    "display": "grid",
     "position": "static",
     "boxSizing": "border-box",
     "overflow": "visible",
@@ -223,7 +223,7 @@
     "flexDirection": "column",
     "justifyContent": "normal",
     "alignItems": "stretch",
-    "gridTemplateColumns": "none",
+    "gridTemplateColumns": "11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px 11.6875px",
     "fontFamily": "Pixel",
     "fontSize": "16px",
     "fontWeight": "400",

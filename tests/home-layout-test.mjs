@@ -1,9 +1,11 @@
 // The home page's layout.
 //
-// A row is a row now, rather than something that fell out of the widths.
-// That one change is what makes a gap in a row possible, keeps one row's
-// size from disturbing the next, lets a segment be dropped into empty space
-// or between two rows, and lets a left edge be dragged left.
+// One grid for the whole page, and a segment is a rectangle in it: x and w
+// across, y and h down. There are no rows and nothing is a container, which
+// is what makes every one of these true -- a segment can be made taller
+// without anything else moving, two can sit side by side at any heights at
+// all, an edge stops where it meets something instead of shoving it, and a
+// gap stays a gap.
 import { chromium } from "playwright";
 import fs from "fs";
 import path from "path";
@@ -82,17 +84,19 @@ const cut = (a, b) => {
 };
 const backend = new Function(`
   const HOME_COLUMNS = 100, HOME_W_MIN = 12, HOME_W_DEFAULT = 100;
+  const HOME_TYPES = [];
   const clampW = (v) => Math.max(HOME_W_MIN, Math.min(HOME_COLUMNS, Math.round(Number(v) || HOME_W_DEFAULT)));
-  ${cut("const clampRow =", "ipcMain.handle(\"home:layout\"")}
-  return { tidyRows, placeRows, clampX, clampRow };
+  ${cut("// How tall a segment is, in grid rows.", "ipcMain.handle(\"home:layout\"")}
+  return { tidyGrid, placeGrid, clampX, clampY, clampH, HOME_UNIT };
 `)();
+const UNIT = backend.HOME_UNIT;
 
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium", args: ["--no-sandbox"] });
 const p = await (await browser.newContext({ viewport: { width: 1000, height: 760 } })).newPage();
 const errors = [];
 p.on("pageerror", (e) => errors.push(e.message));
 await p.goto("file://" + path.join(OUT, "probe.html"), { waitUntil: "domcontentloaded" });
-await p.exposeFunction("__tidy", (layout) => backend.tidyRows(layout));
+await p.exposeFunction("__tidy", (layout) => backend.tidyGrid(layout));
 await p.waitForTimeout(100);
 
 const set = async (layout) => {
@@ -100,52 +104,66 @@ const set = async (layout) => {
   await p.evaluate(() => window.Home.mount());
   await p.waitForTimeout(250);
 };
-// Where every segment actually is on screen, in columns of the row it is in.
-const placed = () => p.$$eval("#home-segments .hs", (els) => els.map((e) => {
-  const box = e.parentElement.getBoundingClientRect();
-  const r = e.getBoundingClientRect();
-  return {
-    id: e.dataset.id,
-    row: Number(e.parentElement.dataset.row),
-    x: Math.round(((r.left - box.left) / box.width) * 100),
-    w: Math.round((r.width / box.width) * 100),
-  };
-}));
+// Where every segment actually is ON SCREEN, read back in grid units: the
+// hundredths across, and the rows of UNIT pixels down. Measured rather than
+// read off the styles, so what is checked is what is drawn.
+const placed = (unit) => p.$$eval("#home-segments .hs", (els, u) => {
+  // The grid's CONTENT box. The page carries its right-hand gutter as
+  // padding on this element, so the element is two columns wider than the
+  // columns in it.
+  const el = document.getElementById("home-segments");
+  const b = el.getBoundingClientRect(), cs = getComputedStyle(el);
+  const left = b.left + parseFloat(cs.paddingLeft);
+  const top = b.top + parseFloat(cs.paddingTop);
+  const width = b.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  return els.map((e) => {
+    const r = e.getBoundingClientRect();
+    return {
+      id: e.dataset.id,
+      x: Math.round(((r.left - left) / width) * 100),
+      y: Math.round((r.top - top) / u),
+      w: Math.round((r.width / width) * 100),
+      h: Math.round(r.height / u),
+    };
+  }).sort((a, b) => (a.y - b.y) || (a.x - b.x));
+}, unit);
 const layout = () => p.evaluate(() => window.__layout);
 const saved = () => p.evaluate(() => window.__saved);
 
-// ── rows are real ──
+// ── a segment is a rectangle in one grid ──
 await set([
-  { id: "a", type: "greeting", row: 0, x: 0, w: 100, h: 0 },
-  { id: "b", type: "recent", row: 1, x: 0, w: 58, h: 0 },
-  { id: "c", type: "player", row: 1, x: 58, w: 42, h: 0 },
+  { id: "a", type: "greeting", x: 0, y: 0, w: 100, h: 3 },
+  { id: "b", type: "recent", x: 0, y: 3, w: 58, h: 15 },
+  { id: "c", type: "player", x: 58, y: 3, w: 42, h: 15 },
 ]);
-check("each row is drawn as a row of its own",
-  await p.$$eval("#home-segments .hs-rowbox", (e) => e.length), 2);
-check("and every segment sits where it says it does", await placed(), [
-  { id: "a", row: 0, x: 0, w: 100 },
-  { id: "b", row: 1, x: 0, w: 58 },
-  { id: "c", row: 1, x: 58, w: 42 },
+check("there are no row containers left at all",
+  await p.$$eval("#home-segments .hs-rowbox", (e) => e.length), 0,
+  "a row was a box, and the box is what made a segment's height somebody else's business");
+check("every segment sits exactly where it says it does", await placed(UNIT), [
+  { id: "a", x: 0, y: 0, w: 100, h: 3 },
+  { id: "b", x: 0, y: 3, w: 58, h: 15 },
+  { id: "c", x: 58, y: 3, w: 42, h: 15 },
 ]);
-await shot(p, "rows.png");
+await shot(p, "grid.png");
 
-// ── two segments stacked inside ONE row ──
+// ── side by side, at different heights ──
 //
-// A row used to be one line: two things could sit side by side on it and
-// nothing else. Dropping one on the top or the bottom of another made a new
-// row right across the page, so a narrow column with two things in it, one
-// above the other, could not be built at all. `y` and `vh` say where a
-// segment starts down its row and how much of it it takes.
+// THE thing rows made impossible, reported twice. A row was as tall as the
+// tallest thing in it, so two segments beside each other were the same
+// height whatever they said; making one taller made the row taller and
+// pushed everything below it down the page. Nothing is worked out from
+// anything else now, so these are simply three rectangles.
 await set([
-  { id: "tall", type: "player", row: 0, x: 0, w: 50, h: 0, y: 0, vh: 12 },
-  { id: "top", type: "greeting", row: 0, x: 50, w: 50, h: 0, y: 0, vh: 6 },
-  { id: "bot", type: "recent", row: 0, x: 50, w: 50, h: 0, y: 6, vh: 6 },
+  { id: "tall", type: "player", x: 0, y: 0, w: 50, h: 18 },
+  { id: "top", type: "greeting", x: 50, y: 0, w: 50, h: 7 },
+  { id: "bot", type: "recent", x: 50, y: 7, w: 50, h: 11 },
 ]);
-check("a row can hold one segment above another", await placed(), [
-  { id: "tall", row: 0, x: 0, w: 50 },
-  { id: "top", row: 0, x: 50, w: 50 },
-  { id: "bot", row: 0, x: 50, w: 50 },
-], "all on one row, and the right-hand half split between two of them");
+check("two segments can sit beside one that is taller than both of them",
+  await placed(UNIT), [
+    { id: "tall", x: 0, y: 0, w: 50, h: 18 },
+    { id: "top", x: 50, y: 0, w: 50, h: 7 },
+    { id: "bot", x: 50, y: 7, w: 50, h: 11 },
+  ]);
 const stack = await p.$$eval("#home-segments .hs", (els) => {
   const box = (id) => els.find(e => e.dataset.id === id).getBoundingClientRect();
   const t = box("top"), b = box("bot"), tall = box("tall");
@@ -155,81 +173,107 @@ const stack = await p.$$eval("#home-segments .hs", (els) => {
     together: Math.abs((b.bottom - t.top) - tall.height) < 2,
   };
 });
-check("one is drawn above the other, they meet, and together they are the row",
+check("one is drawn above the other, they meet, and together they are the tall one",
   stack, { topIsAbove: true, theyMeet: true, together: true });
 
-// And that surviving a save, which is where it used to be undone: two
-// segments at the same x were treated as fighting over the same columns, so
-// the second was shoved sideways or onto a row of its own.
-check("stacking survives being saved",
+// And that surviving a save.
+check("it survives being saved",
   (await p.evaluate(() => window.__tidy([
-    { id: "tall", type: "player", row: 0, x: 0, w: 50, y: 0, vh: 12 },
-    { id: "top", type: "greeting", row: 0, x: 50, w: 50, y: 0, vh: 6 },
-    { id: "bot", type: "recent", row: 0, x: 50, w: 50, y: 6, vh: 6 },
-  ]))).map(s => [s.id, s.row, s.x, s.w]),
-  [["tall", 0, 0, 50], ["top", 0, 50, 50], ["bot", 0, 50, 50]]);
+    { id: "tall", type: "player", x: 0, y: 0, w: 50, h: 18 },
+    { id: "top", type: "greeting", x: 50, y: 0, w: 50, h: 7 },
+    { id: "bot", type: "recent", x: 50, y: 7, w: 50, h: 11 },
+  ]))).map(s => [s.id, s.x, s.y, s.w, s.h]),
+  [["tall", 0, 0, 50, 18], ["top", 50, 0, 50, 7], ["bot", 50, 7, 50, 11]]);
 
-// Two at the same height still cannot overlap, which is the rule that was
-// there before and the reason stacking had to be told apart from it.
-check("two at the same height still do not overlap",
+// Two on the same ground still cannot be, which only a layout edited by
+// hand can ask for. The later one is moved straight down and nothing else
+// is touched.
+check("two on the same ground do not overlap",
   (await p.evaluate(() => window.__tidy([
-    { id: "a", type: "greeting", row: 0, x: 0, w: 60, y: 0, vh: 12 },
-    { id: "b", type: "recent", row: 0, x: 30, w: 60, y: 0, vh: 12 },
-  ]))).map(s => [s.id, s.row, s.x, s.w]),
-  [["a", 0, 0, 60], ["b", 1, 0, 60]]);
+    { id: "a", type: "greeting", x: 0, y: 0, w: 60, h: 6 },
+    { id: "b", type: "recent", x: 30, y: 3, w: 60, h: 6 },
+  ]))).map(s => [s.id, s.x, s.y]),
+  [["a", 0, 0], ["b", 30, 6]]);
+
+// ── a layout from when there were rows ──
+//
+// Every layout anybody has is one of these. Each old row becomes a band of
+// grid rows as tall as the tallest thing in it, in order down the page, so
+// a page comes forward looking as it did.
+const brought = backend.placeGrid([
+  { id: "a", type: "greeting", row: 0, x: 0, w: 100, h: 0 },
+  { id: "b", type: "recent", row: 1, x: 0, w: 58, h: 220 },
+  { id: "c", type: "player", row: 1, x: 58, w: 42, h: 0 },
+]);
+check("an old layout comes forward with its rows one under the other",
+  brought.map(s => [s.id, s.x, s.y, s.w]),
+  [["a", 0, 0, 100], ["b", 0, 3, 58], ["c", 58, 3, 42]],
+  "a greeting is worth three rows and a row of instances ten, so the second band starts at 3");
+check("and nothing is left of the row it was in",
+  brought.every(s => !("row" in s) && !("vh" in s)), true);
+const split = backend.placeGrid([
+  { id: "tall", type: "player", row: 0, x: 0, w: 50, h: 0, y: 0, vh: 12 },
+  { id: "top", type: "greeting", row: 0, x: 50, w: 50, h: 0, y: 0, vh: 6 },
+  { id: "bot", type: "recent", row: 0, x: 50, w: 50, h: 0, y: 6, vh: 6 },
+]);
+check("a row that was divided up and down keeps its halves",
+  split.map(s => [s.id, s.y, s.h]),
+  [["tall", 0, 15], ["top", 0, 8], ["bot", 8, 8]],
+  "the twelfths of a row become that share of the band the row became");
 
 // ── going back ──
 //
 // Every change took effect and was saved at once with no way back from any
 // of it: a segment dragged somewhere by accident had to be put back by hand.
 await set([
-  { id: "a", type: "greeting", row: 0, x: 0, w: 100, h: 0 },
-  { id: "b", type: "recent", row: 1, x: 0, w: 100, h: 0 },
+  { id: "a", type: "greeting", x: 0, y: 0, w: 100, h: 6 },
+  { id: "b", type: "recent", x: 0, y: 6, w: 100, h: 6 },
 ]);
 await p.evaluate(() => window.Home.apply([
-  { id: "a", type: "greeting", row: 0, x: 0, w: 40, h: 0 },
-  { id: "b", type: "recent", row: 0, x: 40, w: 60, h: 0 },
+  { id: "a", type: "greeting", x: 0, y: 0, w: 40, h: 6 },
+  { id: "b", type: "recent", x: 40, y: 0, w: 60, h: 6 },
 ]));
 await p.waitForTimeout(150);
-check("a change takes effect", (await placed()).map(s => [s.id, s.row, s.w]),
-  [["a", 0, 0, 40], ["b", 0, 40, 60]].map(([id, row, , w]) => [id, row, w]));
+check("a change takes effect", (await placed(UNIT)).map(s => [s.id, s.x, s.y, s.w]),
+  [["a", 0, 0, 40], ["b", 40, 0, 60]]);
 await p.evaluate(() => window.Home.undo());
 await p.waitForTimeout(200);
-check("and can be undone", (await placed()).map(s => [s.id, s.row, s.w]),
-  [["a", 0, 100], ["b", 1, 100]]);
+check("and can be undone", (await placed(UNIT)).map(s => [s.id, s.x, s.y, s.w]),
+  [["a", 0, 0, 100], ["b", 0, 6, 100]]);
 await p.evaluate(() => window.Home.redo());
 await p.waitForTimeout(200);
-check("and done again", (await placed()).map(s => [s.id, s.row, s.w]),
-  [["a", 0, 40], ["b", 0, 60]]);
+check("and done again", (await placed(UNIT)).map(s => [s.id, s.x, s.y, s.w]),
+  [["a", 0, 0, 40], ["b", 40, 0, 60]]);
 
-// ── a gap in a row ──
-// Impossible before: the segments were laid end to end and a row was just
-// where they happened to wrap.
+// ── a gap stays a gap ──
+//
+// Nothing compacts. A page that quietly rearranges itself after every change
+// is not a page anyone can lay out.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 30, h: 0 },
-  { id: "b", type: "player", row: 0, x: 60, w: 40, h: 0 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 30, h: 6 },
+  { id: "b", type: "player", x: 60, y: 4, w: 40, h: 8 },
 ]);
-check("a row can have a gap in it", await placed(), [
-  { id: "a", row: 0, x: 0, w: 30 },
-  { id: "b", row: 0, x: 60, w: 40 },
-], "the second one stays where it was put, rather than sliding up against the first");
+check("a gap across and a gap down are both left alone", await placed(UNIT), [
+  { id: "a", x: 0, y: 0, w: 30, h: 6 },
+  { id: "b", x: 60, y: 4, w: 40, h: 8 },
+], "nothing slides up against anything or closes up behind it");
 
-// ── one row's height is its own ──
+// ── one segment's height is its own ──
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 50, h: 300 },
-  { id: "b", type: "player", row: 0, x: 50, w: 50, h: 300 },
-  { id: "c", type: "projects", row: 1, x: 0, w: 100, h: 0 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 50, h: 14 },
+  { id: "b", type: "player", x: 50, y: 0, w: 50, h: 14 },
+  { id: "c", type: "projects", x: 0, y: 14, w: 100, h: 10 },
 ]);
-const tops = await p.$$eval("#home-segments .hs-rowbox", (e) => e.map(b => Math.round(b.getBoundingClientRect().top)));
-await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 50, h: 120 },
-  { id: "b", type: "player", row: 0, x: 50, w: 50, h: 120 },
-  { id: "c", type: "projects", row: 1, x: 0, w: 100, h: 0 },
-]);
-const after = await p.$$eval("#home-segments .hs-rowbox", (e) => e.map(b => Math.round(b.getBoundingClientRect().top)));
-check("shrinking a row moves the next one UP, not into it",
-  [after[0] === tops[0], after[1] < tops[1], (await placed()).filter(s => s.row === 1).length], [true, true, 1],
-  "the next row used to curl up into the one above as the wrapping re-flowed");
+const before = await placed(UNIT);
+await p.evaluate(() => window.Home.apply(window.__layout.map(s =>
+  s.id === "a" ? { ...s, h: 6 } : { ...s })));
+await p.waitForTimeout(200);
+const after = await placed(UNIT);
+check("making one segment shorter moves NOTHING else",
+  after.filter(s => s.id !== "a"), before.filter(s => s.id !== "a"),
+  "the row used to be as tall as its tallest, so this dragged the whole page up with it");
+check("and the one that changed is the only one that did",
+  after.find(s => s.id === "a").h, 6);
 
 // ── the page's own margins ──
 await set([{ id: "a", type: "greeting", row: 0, x: 0, w: 100, h: 0 }]);
@@ -255,10 +299,15 @@ const edit = async () => {
   await p.waitForTimeout(200);
 };
 // Press and hold a segment, move to a point, let go.
+//
+// Taken by the middle of its top edge, which is clear of the handles in the
+// corners -- so it keeps that grip as it moves and lands with its CENTRE
+// where the pointer is, not a corner. Every expectation below is written
+// from that: a segment w wide dropped at column c lands at c - w/2.
 const dragTo = async (id, to) => {
   const from = await p.evaluate((i) => {
     const e = document.querySelector(`#home-segments .hs[data-id="${i}"]`).getBoundingClientRect();
-    return { x: Math.round(e.left + e.width / 2), y: Math.round(e.top + 20) };
+    return { x: Math.round(e.left + e.width / 2), y: Math.round(e.top + 4) };
   }, id);
   await p.mouse.move(from.x, from.y);
   await p.mouse.down();
@@ -267,86 +316,83 @@ const dragTo = async (id, to) => {
   await p.waitForTimeout(140);
   return from;
 };
-// A point inside a row, at a given column.
-const at = async (row, col, dy = 0) => p.evaluate(([r, c, d]) => {
-  const box = [...document.querySelectorAll("#home-segments .hs-rowbox")].find(b => Number(b.dataset.row) === r);
-  const g = box.getBoundingClientRect();
-  return { x: Math.round(g.left + (g.width * c) / 100), y: Math.round(g.top + g.height / 2 + d) };
-}, [row, col, dy]);
+// A point in the grid, at a given column and row.
+const at = async (col, row) => p.evaluate(([c, r, u]) => {
+  const el = document.getElementById("home-segments");
+  const b = el.getBoundingClientRect(), cs = getComputedStyle(el);
+  const left = b.left + parseFloat(cs.paddingLeft);
+  const width = b.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  return { x: Math.round(left + (width * c) / 100), y: Math.round(b.top + parseFloat(cs.paddingTop) + r * u) };
+}, [col, row, UNIT]);
 
-// Into empty space, which was not possible at all before.
+// ── moving one ──
+//
+// A drop used to mean one of five things, because where a segment could go
+// was decided by the rows that happened to exist: a gap in a row, half of
+// somebody's width, half of their height, a new row above, a new row below.
+// It goes WHERE THE POINTER IS now, at the size it already is.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 40, h: 0 },
-  { id: "b", type: "player", row: 1, x: 0, w: 30, h: 0 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 40, h: 8 },
+  { id: "b", type: "player", x: 0, y: 8, w: 30, h: 8 },
 ]);
 await edit();
-await dragTo("b", await at(0, 75));
-check("dropping into empty space shows where it will land",
-  await p.$$eval("#home-segments .hs-slot", (e) => e.map(x => [Number(x.style.getPropertyValue("--x")), Number(x.style.getPropertyValue("--w"))])),
-  [[60, 30]], "a line down somebody's side was all there was, and empty space was not a target");
+await dragTo("b", await at(75, 2));
+check("the landing place is shown where it will land, at the size it is",
+  await p.$$eval("#home-segments .hs-slot", (e) => e.map(x => ["x", "y", "w", "h"]
+    .map(k => Number(x.style.getPropertyValue("--" + k))))),
+  [[60, 2, 30, 8]],
+  "and it is a rectangle in the same grid, not a line down somebody's side");
 await p.mouse.up();
 await p.waitForTimeout(300);
-check("and it lands there", (await placed()).find(s => s.id === "b"), { id: "b", row: 0, x: 60, w: 30 });
+check("and it lands there", (await placed(UNIT)).find(s => s.id === "b"),
+  { id: "b", x: 60, y: 2, w: 30, h: 8 });
 
-// A big one into a small space: narrowed to fit rather than ignored.
+// Onto something it cannot trade with -- `c` is standing where `a` would
+// have to go -- so it takes the nearest clear space to where it was aimed.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 75, h: 0 },
-  { id: "b", type: "player", row: 1, x: 0, w: 80, h: 0 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 60, h: 8 },
+  { id: "b", type: "player", x: 0, y: 10, w: 30, h: 6 },
+  { id: "c", type: "clock", x: 40, y: 12, w: 40, h: 8 },
 ]);
 await edit();
-await dragTo("b", await at(0, 88));
+await dragTo("b", await at(20, 2));
 await p.mouse.up();
 await p.waitForTimeout(300);
-check("a big segment dropped into a small space shrinks to fit",
-  (await placed()).find(s => s.id === "b"), { id: "b", row: 0, x: 75, w: 25 },
-  "the drop used to be ignored outright, and the segment spilled into the next row");
+check("dropped on top of something, it takes the nearest clear space instead",
+  (await placed(UNIT)).find(s => s.id === "b"), { id: "b", x: 5, y: 8, w: 30, h: 6 },
+  "straight down out of the way, which is nearer than right across the page");
+check("and the one it was dropped on has not moved",
+  (await placed(UNIT)).find(s => s.id === "a"), { id: "a", x: 0, y: 0, w: 60, h: 8 },
+  "a drop used to halve the segment under the pointer and take half of it");
 
-// Onto another: they share ITS space, half each.
+// Two the same size trade places, which is the one thing "drop it on that
+// one" can mean that is not a guess.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 },
-  { id: "b", type: "player", row: 1, x: 0, w: 100, h: 0 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 50, h: 8 },
+  { id: "b", type: "player", x: 50, y: 0, w: 50, h: 8 },
 ]);
 await edit();
-await dragTo("b", await at(0, 20));
+await dragTo("b", await at(25, 4));
 await p.mouse.up();
 await p.waitForTimeout(300);
-check("dropping onto a segment shares that segment's space between the two",
-  (await placed()).sort((x, y) => x.x - y.x),
-  [{ id: "b", row: 0, x: 0, w: 50 }, { id: "a", row: 0, x: 50, w: 50 }],
-  "it used to drop a line and then put the segment on a row of its own");
+check("dropped squarely onto one it could trade with, they swap",
+  (await placed(UNIT)).map(s => [s.id, s.x, s.y]).sort(),
+  [["a", 50, 0], ["b", 0, 0]].sort(),
+  "each one into the other\'s place exactly, not wherever the pointer was over it");
 
-// Onto the right-hand one of a split row: it shares THAT one's half.
+// And a swap trades their PLACES, not how big they are.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 50, h: 0 },
-  { id: "b", type: "player", row: 0, x: 50, w: 50, h: 0 },
-  { id: "c", type: "projects", row: 1, x: 0, w: 100, h: 0 },
+  { id: "big", type: "recent", x: 0, y: 0, w: 50, h: 14 },
+  { id: "small", type: "player", x: 50, y: 0, w: 50, h: 5 },
 ]);
 await edit();
-await dragTo("c", await at(0, 90));
+await dragTo("small", await at(25, 7));
 await p.mouse.up();
 await p.waitForTimeout(300);
-check("dropping onto the right-hand one of a split row shares that row",
-  (await placed()).filter(s => s.row === 0).sort((x, y) => x.x - y.x),
-  [{ id: "a", row: 0, x: 0, w: 50 }, { id: "b", row: 0, x: 50, w: 25 }, { id: "c", row: 0, x: 75, w: 25 }],
-  "it used to land in the next row instead");
-
-// Between two rows: a row of its own, there.
-await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 },
-  { id: "b", type: "player", row: 1, x: 0, w: 100, h: 0 },
-  { id: "c", type: "projects", row: 2, x: 0, w: 100, h: 0 },
-]);
-await edit();
-const join = await p.evaluate(() => {
-  const boxes = [...document.querySelectorAll("#home-segments .hs-rowbox")];
-  const r = boxes[0].getBoundingClientRect();
-  return { x: Math.round(r.left + r.width / 2), y: Math.round(r.bottom) };
-});
-await dragTo("c", join);
-await p.mouse.up();
-await p.waitForTimeout(300);
-check("and dropping between two rows makes a row of its own there",
-  (await placed()).map(s => [s.id, s.row]), [["a", 0], ["c", 1], ["b", 2]]);
+check("and they keep their own sizes through it",
+  (await placed(UNIT)).map(s => [s.id, s.x, s.h]).sort(),
+  [["big", 50, 14], ["small", 0, 5]].sort(),
+  "the one standing still used to be given the mover\'s height as well as its place");
 
 // ── resizing ────────────────────────────────────────────────────────────
 const dragGrip = async (id, corner, dx, dy = 0) => {
@@ -361,144 +407,120 @@ const dragGrip = async (id, corner, dx, dy = 0) => {
   await p.mouse.up();
   await p.waitForTimeout(260);
 };
+const colPx = await p.evaluate(() => {
+  const el = document.getElementById("home-segments"), cs = getComputedStyle(el);
+  return (el.getBoundingClientRect().width
+    - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) / 100;
+});
 
 // The left edge moves left, and the right edge stays put.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 40, h: 0 },
-  { id: "b", type: "player", row: 0, x: 60, w: 40, h: 0 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 40, h: 8 },
+  { id: "b", type: "player", x: 60, y: 0, w: 40, h: 8 },
 ]);
 await edit();
-const colPx = await p.evaluate(() => document.querySelector("#home-segments .hs-rowbox").getBoundingClientRect().width / 100);
 await dragGrip("b", "nw", Math.round(-10 * colPx));
 check("dragging a left edge moves the LEFT edge",
-  (await placed()).find(s => s.id === "b"), { id: "b", row: 0, x: 50, w: 50 },
+  (await placed(UNIT)).find(s => s.id === "b"), { id: "b", x: 50, y: 0, w: 50, h: 8 },
   "it used to pin the segment to the left of the row and grow it the wrong way");
 
-// And the neighbour gives way rather than being a wall. An edge that simply
-// stopped at its neighbour meant a segment could never be made bigger once
-// there was anything beside it.
+// And it stops where it meets its neighbour, rather than pushing it.
 await dragGrip("b", "nw", Math.round(-30 * colPx));
-check("an edge dragged into its neighbour makes the neighbour give way",
-  (await placed()).find(s => s.id === "b"), { id: "b", row: 0, x: 20, w: 80 });
-check("and the neighbour shrinks rather than being shoved along",
-  (await placed()).find(s => s.id === "a"), { id: "a", row: 0, x: 0, w: 20 },
-  "its left edge stays where it is; the room comes off its right");
+check("an edge stops where it meets its neighbour",
+  (await placed(UNIT)).find(s => s.id === "b"), { id: "b", x: 40, y: 0, w: 60, h: 8 });
+check("and the neighbour is not moved or squeezed by it",
+  (await placed(UNIT)).find(s => s.id === "a"), { id: "a", x: 0, y: 0, w: 40, h: 8 },
+  "nothing on the page moves because something else was resized");
 
-// ── growing into the next row ──
+// Past a neighbour that is NOT level with it, because it is not in the way.
+await set([
+  { id: "a", type: "recent", x: 0, y: 0, w: 40, h: 6 },
+  { id: "b", type: "player", x: 60, y: 8, w: 40, h: 6 },
+]);
+await edit();
+await dragGrip("b", "nw", Math.round(-55 * colPx));
+check("an edge goes past something that is not level with it",
+  (await placed(UNIT)).find(s => s.id === "b"), { id: "b", x: 5, y: 8, w: 95, h: 6 },
+  "the one above is nowhere near this row of the page, so it is not in the way");
+
+// ── UP AND DOWN, which is the half rows made impossible ──
 //
-// Two rows are two separate grids, so a segment could never be made taller
-// than the one it is in: dragging its bottom edge down only made its own row
-// taller and pushed the next one further down the page, and dragging the top
-// edge up had nowhere to go at all. Dragged past the end of its row into
-// space in the next one, the two become ONE row and the segment has the
-// height of both.
+// A row was a box as tall as what was in it. Dragging the bottom edge down
+// made the BOX taller and shoved everything below it further down the page;
+// dragging the top edge up had nowhere at all to go. What was there instead
+// was a special gesture -- drag far enough past the end of the row and the
+// row below is taken into this one -- which is the thing that was reported,
+// twice, as still being a rowed system.
 await set([
-  { id: "tall", type: "player", row: 0, x: 0, w: 50, h: 0 },
-  { id: "mate", type: "greeting", row: 0, x: 50, w: 50, h: 0 },
-  { id: "under", type: "recent", row: 1, x: 50, w: 50, h: 0 },
+  { id: "tall", type: "player", x: 0, y: 2, w: 50, h: 6 },
+  { id: "mate", type: "greeting", x: 50, y: 0, w: 50, h: 10 },
+  { id: "under", type: "recent", x: 50, y: 10, w: 50, h: 6 },
 ]);
 await edit();
-check("two rows to begin with",
-  (await placed()).map(s => [s.id, s.row]), [["tall", 0], ["mate", 0], ["under", 1]]);
+await dragGrip("tall", "se", 0, 4 * UNIT);
+check("dragging the bottom edge down simply makes it taller",
+  (await placed(UNIT)).find(s => s.id === "tall"), { id: "tall", x: 0, y: 2, w: 50, h: 10 });
+check("and nothing else on the page moves a pixel",
+  (await placed(UNIT)).filter(s => s.id !== "tall"),
+  [{ id: "mate", x: 50, y: 0, w: 50, h: 10 }, { id: "under", x: 50, y: 10, w: 50, h: 6 }],
+  "this used to make the row taller and push the next one down the page");
 
-await dragGrip("tall", "se", 0, 240);
-const grown = await placed();
-check("dragging the bottom edge into the space below takes that row in",
-  grown.map(s => [s.id, s.row]).sort(),
-  [["mate", 0], ["tall", 0], ["under", 0]].sort(),
-  "the row below had nothing in those columns, so the two became one row");
-const heights = await p.$$eval("#home-segments .hs", (els) => {
-  const h = (id) => Math.round(els.find(e => e.dataset.id === id).getBoundingClientRect().height);
-  return { tall: h("tall"), mate: h("mate"), under: h("under") };
-});
-check("and the segment has the height of both",
-  [heights.tall > heights.mate * 1.6, heights.tall > heights.under * 1.6], [true, true],
-  `${heights.tall}px against ${heights.mate}px and ${heights.under}px`);
-check("while the other two keep half each",
-  Math.abs(heights.mate - heights.under) < 3, true,
-  `${heights.mate}px and ${heights.under}px`);
+await dragGrip("tall", "nw", 0, -2 * UNIT);
+check("dragging the top edge UP makes it taller upwards",
+  (await placed(UNIT)).find(s => s.id === "tall"), { id: "tall", x: 0, y: 0, w: 50, h: 12 },
+  "the top edge used to have nowhere to go, because a row had no space above it");
 
-// Not when something is in the way: the row below has a segment in those
-// columns, so there is no space to grow into and the edge does not take it.
+// And it stops at what is above it rather than taking that row in.
 await set([
-  { id: "tall", type: "player", row: 0, x: 0, w: 50, h: 0 },
-  { id: "blocker", type: "recent", row: 1, x: 0, w: 100, h: 0 },
+  { id: "over", type: "greeting", x: 0, y: 0, w: 50, h: 4 },
+  { id: "tall", type: "recent", x: 0, y: 8, w: 50, h: 6 },
 ]);
 await edit();
-await dragGrip("tall", "se", 0, 240);
-check("a row with something in the way is not taken in",
-  (await placed()).map(s => [s.id, s.row]), [["tall", 0], ["blocker", 1]],
-  "that is not space; it is somebody else's");
+await dragGrip("tall", "nw", 0, -8 * UNIT);
+check("a top edge stops at what is above it",
+  (await placed(UNIT)).find(s => s.id === "tall"), { id: "tall", x: 0, y: 4, w: 50, h: 10 });
+check("and what was above it is exactly where it was",
+  (await placed(UNIT)).find(s => s.id === "over"), { id: "over", x: 0, y: 0, w: 50, h: 4 },
+  "the row above used to be swallowed into this one and divided in half");
 
-// And upwards, which could not be done at all before.
-await set([
-  { id: "over", type: "greeting", row: 0, x: 50, w: 50, h: 0 },
-  // Tall enough that its top handle and its bottom handle are not in the
-  // same place: an empty player segment in this harness is barely taller
-  // than one handle, and a press lands on whichever is drawn last.
-  { id: "tall", type: "recent", row: 1, x: 0, w: 50, h: 160 },
-]);
+// Down past the end of everything: the page simply grows.
+await set([{ id: "a", type: "recent", x: 0, y: 0, w: 100, h: 6 }]);
 await edit();
-// Far enough past the top of the row to mean it, and no further: the top
-// handle of a segment near the top of the page is a few dozen pixels from
-// the top of the window, and a drag that goes off the top of it is not a
-// drag the browser reports.
-await dragGrip("tall", "nw", 0, -60);
-check("dragging the top edge into the space above takes that row in",
-  (await placed()).map(s => [s.id, s.row]).sort(),
-  [["over", 0], ["tall", 0]].sort());
-const up = await p.$$eval("#home-segments .hs", (els) => {
-  const el = (id) => els.find(e => e.dataset.id === id);
-  const b = (id) => el(id).getBoundingClientRect();
-  const row = el("tall").parentElement.getBoundingClientRect();
-  const near = (a, c) => Math.abs(a - c) < 3;
-  return {
-    // The one that took the row in reaches from the top of it to the bottom.
-    spansAll: near(b("tall").top, row.top) && near(b("tall").bottom, row.bottom),
-    // The one that was there keeps the top half and does not reach the floor.
-    halfOnly: near(b("over").top, row.top) && b("over").bottom < row.bottom - 2,
-    note: `row ${Math.round(row.height)}px, it ${Math.round(b("tall").height)}px, the other ${Math.round(b("over").height)}px`,
-  };
-});
-check("and it reaches from the top of the row it took in to the bottom",
-  [up.spansAll, up.halfOnly], [true, true], up.note);
+await dragGrip("a", "se", 0, 10 * UNIT);
+check("the bottom edge has somewhere to go even at the end of the page",
+  (await placed(UNIT)).find(s => s.id === "a").h, 16);
 
-// Only up to MIN_W, though: it gives way, it does not disappear.
-await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 40, h: 0 },
-  { id: "b", type: "player", row: 0, x: 40, w: 60, h: 0 },
-]);
-await edit();
-await dragGrip("b", "nw", Math.round(-90 * colPx));
-check("a neighbour is never squeezed past the narrowest a segment may be",
-  (await placed()).find(s => s.id === "a").w, 12);
+// Never shorter than the least a segment may be.
+await dragGrip("a", "se", 0, -40 * UNIT);
+check("and never shorter than a segment may be",
+  (await placed(UNIT)).find(s => s.id === "a").h, 3);
 
 // And the side NOT being dragged is left completely alone.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 30, h: 0 },
-  { id: "b", type: "player", row: 0, x: 30, w: 30, h: 0 },
-  { id: "c", type: "clock", row: 0, x: 60, w: 40, h: 0 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 30, h: 6 },
+  { id: "b", type: "player", x: 30, y: 0, w: 30, h: 6 },
+  { id: "c", type: "clock", x: 60, y: 0, w: 40, h: 6 },
 ]);
 await edit();
 await dragGrip("b", "ne", Math.round(20 * colPx));
-check("dragging the right edge touches only what is to the right",
-  (await placed()).filter(s => s.id !== "b"),
-  [{ id: "a", row: 0, x: 0, w: 30 }, { id: "c", row: 0, x: 80, w: 20 }],
-  "the one on the left must not move because the right edge did");
+check("dragging the right edge touches only this segment",
+  await placed(UNIT),
+  [{ id: "a", x: 0, y: 0, w: 30, h: 6 }, { id: "b", x: 30, y: 0, w: 30, h: 6 },
+   { id: "c", x: 60, y: 0, w: 40, h: 6 }],
+  "it meets the one on its right at once, and the one on the left must not move either way");
 
-// The right edge of the last one on a row reaches the edge of the page.
+// The right edge of the last one reaches the edge of the page.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 30, h: 0 },
-  { id: "b", type: "player", row: 0, x: 30, w: 40, h: 0 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 30, h: 6 },
+  { id: "b", type: "player", x: 30, y: 0, w: 40, h: 6 },
 ]);
 await edit();
 await dragGrip("b", "ne", Math.round(40 * colPx));
-check("the last segment on a row can be taken out to the page's edge",
-  (await placed()).find(s => s.id === "b"), { id: "b", row: 0, x: 30, w: 70 },
-  "there was no sharing of that edge between rows, and pulling it there resized from the other side instead");
+check("the last segment across can be taken out to the page's edge",
+  (await placed(UNIT)).find(s => s.id === "b"), { id: "b", x: 30, y: 0, w: 70, h: 6 });
 
 // ── after Done ──
-await set([{ id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 }]);
+await set([{ id: "a", type: "recent", x: 0, y: 0, w: 100, h: 6 }]);
 await edit();
 check("editing puts the handles on", await p.$$eval("#home-segments .hs-grip", (e) => e.length > 0), true);
 await p.evaluate(() => {
@@ -523,7 +545,7 @@ const sizeOf = (sel) => p.evaluate((q) => {
   return e ? Math.round(e.getBoundingClientRect().width) : null;
 }, sel);
 
-await set([{ id: "a", type: "projects", row: 0, x: 0, w: 50, h: 0, scale: 100 }]);
+await set([{ id: "a", type: "projects", x: 0, y: 0, w: 50, h: 10, scale: 100 }]);
 await p.evaluate(() => {
   // Stand-in contents of the shape the real segments build.
   const n = document.querySelector("#home-segments .hs");
@@ -566,12 +588,18 @@ check("nothing hangs over the edge of its segment",
   "the player render spilled over where the others were cut off, which looked like two rules because it was");
 
 // ── what the drop preview shows ─────────────────────────────────────────
-await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 },
-  { id: "b", type: "player", row: 1, x: 0, w: 100, h: 0 },
-]);
-await edit();
-await dragTo("b", await at(0, 20));
+//
+// Two the same size, one above the other, so dropping one on the other is a
+// trade and there is something for the preview to act out.
+const swapSet = async () => {
+  await set([
+    { id: "a", type: "recent", x: 0, y: 0, w: 100, h: 6 },
+    { id: "b", type: "player", x: 0, y: 6, w: 100, h: 6 },
+  ]);
+  await edit();
+  await dragTo("b", await at(50, 2));
+};
+await swapSet();
 check("the landing place is a darkened area, not a coloured one",
   await p.evaluate(() => {
     const s = document.querySelector(".hs-slot");
@@ -583,38 +611,36 @@ check("the landing place is a darkened area, not a coloured one",
 
 // Nothing is acted out until you have settled on a place.
 check("nothing moves the instant the pointer crosses something",
-  await p.$$eval("#home-segments .hs.hs-would, #home-segments .hs.hs-would-dim", (e) => e.length), 0);
+  await p.$$eval("#home-segments .hs.hs-would", (e) => e.length), 0);
 await p.waitForTimeout(1100);
 check("but holding still acts out what would happen",
   await p.$$eval("#home-segments .hs.hs-would", (e) => e.map(n => [n.dataset.id,
-    Number(n.style.getPropertyValue("--x")), Number(n.style.getPropertyValue("--w"))])),
-  [["a", 50, 50]],
-  "the segment being dropped onto slides to the half it would end up in");
+    Number(n.style.getPropertyValue("--y")), Number(n.style.getPropertyValue("--h"))])),
+  [["a", 6, 6]],
+  "the one being traded with slides to the place it would end up in");
 check("at half strength, so it reads as a suggestion",
   await p.$eval("#home-segments .hs.hs-would", (e) => getComputedStyle(e).opacity), "0.5");
 
-// Move on, and it goes back to where it really is.
-await p.mouse.move(5, 5, { steps: 4 });
+// Move on to empty ground, where nothing would have to move, and the one
+// that was sliding goes back to where it really is.
+const away = await at(50, 20);
+await p.mouse.move(away.x, away.y, { steps: 4 });
 await p.waitForTimeout(200);
 check("moving on puts everything back",
-  await p.$$eval("#home-segments .hs", (e) => e.map(n => [n.classList.contains("hs-would"), n.style.getPropertyValue("--x")])),
-  [["a", false, "0"], ["b", false, "0"]].map(x => [x[1], x[2]]));
+  await p.$$eval("#home-segments .hs", (e) => e.map(n => [n.dataset.id,
+    n.classList.contains("hs-would"), n.style.getPropertyValue("--y")])),
+  [["a", false, "0"], ["b", false, "6"]]);
 await p.mouse.up();
 await p.waitForTimeout(300);
 
 // And what it acted out is what happens.
-await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 },
-  { id: "b", type: "player", row: 1, x: 0, w: 100, h: 0 },
-]);
-await edit();
-await dragTo("b", await at(0, 20));
+await swapSet();
 await p.waitForTimeout(1100);
 const previewed = await p.$$eval("#home-segments .hs.hs-would", (e) => e.map(n => [n.dataset.id,
-  Number(n.style.getPropertyValue("--x")), Number(n.style.getPropertyValue("--w"))]));
+  Number(n.style.getPropertyValue("--x")), Number(n.style.getPropertyValue("--y"))]));
 await p.mouse.up();
 await p.waitForTimeout(350);
-const landed = (await placed()).filter(s => s.id !== "b").map(s => [s.id, s.x, s.w]);
+const landed = (await placed(UNIT)).filter(s => s.id !== "b").map(s => [s.id, s.x, s.y]);
 check("and dropping does what was acted out", landed, previewed);
 
 // No green anywhere in the page's own styles.
@@ -624,8 +650,8 @@ check("none of the moving markers are coloured",
 
 // ── the settings of one segment ─────────────────────────────────────────
 await set([
-  { id: "g", type: "greeting", row: 0, x: 0, w: 100, h: 0, size: 32, align: "left", text: "" },
-  { id: "r", type: "recent", row: 1, x: 0, w: 100, h: 0, title: "Continue playing", count: 6, view: "list", scale: 100 },
+  { id: "g", type: "greeting", x: 0, y: 0, w: 100, h: 6, size: 32, align: "left", text: "" },
+  { id: "r", type: "recent", x: 0, y: 6, w: 100, h: 9, title: "Continue playing", count: 6, view: "list", scale: 100 },
 ]);
 await edit();
 await p.evaluate(() => {
@@ -634,8 +660,8 @@ await p.evaluate(() => {
 await p.waitForTimeout(250);
 check("a segment's settings open with what it is set to",
   await p.$$eval(".he-opt input, .he-opt select", (els) => els.map(e => e.type === "checkbox" ? e.checked : e.value)),
-  ["Continue playing", "6", "list", "100", "0", "100", "stretch"],
-  "its own options, then the width, height, inside size and place down the row every type has");
+  ["Continue playing", "6", "list", "100", "9", "100", "stretch"],
+  "its own options, then the width, height in rows, inside size and where its contents sit");
 
 await p.evaluate(() => {
   const all = [...document.querySelectorAll(".he-opt input, .he-opt select")];
@@ -679,8 +705,8 @@ check("a toggle reads and writes too", await (async () => {
 // clock restarted, every row of projects fetched again, for a change that
 // touched none of them.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 50, h: 0 },
-  { id: "b", type: "player", row: 0, x: 50, w: 50, h: 0 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 50, h: 8 },
+  { id: "b", type: "player", x: 50, y: 0, w: 50, h: 8 },
 ]);
 await p.evaluate(() => {
   // A mark on each node, which only survives if the node itself does.
@@ -689,7 +715,7 @@ await p.evaluate(() => {
 // Added the way the page adds one: through the layout and a save.
 await p.evaluate(async () => {
   const L = window.__layout;
-  if (!L.some(x => x.id === "c")) L.push({ id: "c", type: "projects", row: 1, x: 0, w: 100, h: 0 });
+  if (!L.some(x => x.id === "c")) L.push({ id: "c", type: "projects", x: 0, y: 8, w: 100, h: 8 });
   await window.Home.apply(L);
 });
 await p.waitForTimeout(300);
@@ -712,7 +738,7 @@ check("and resizing one does not redraw anything",
 // ── text and rounded corners ────────────────────────────────────────────
 // The corner radius is a setting and can be large. With a fixed inset the
 // curve reached the first letter of a heading and clipped it.
-await set([{ id: "n", type: "projects", row: 0, x: 0, w: 60, h: 0 }]);
+await set([{ id: "n", type: "projects", x: 0, y: 0, w: 60, h: 8 }]);
 const insetAt = (radius) => p.evaluate((r) => {
   document.documentElement.style.setProperty("--border-radius", r + "px");
   const n = document.querySelector("#home-segments .hs");
@@ -737,7 +763,7 @@ await p.evaluate(() => document.documentElement.style.removeProperty("--border-r
 // too tall: the page became scrollable and scrolling it showed nothing but
 // that blank. The room is a transparent border on the scroller now, which is
 // outside the padding box and never scrolls.
-await set([{ id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 }]);
+await set([{ id: "a", type: "recent", x: 0, y: 0, w: 100, h: 6 }]);
 const fills = await p.evaluate(() => {
   const sc = document.querySelector("[data-fit-height]");
   const node = document.querySelector('#home-segments .hs[data-id="a"]');
@@ -752,53 +778,24 @@ check("filling the visible area exactly leaves nothing to scroll", fills.overflo
   "padding on the content is part of what scrolls; a border is not");
 check("and the breathing room is still there", fills.room > 0, true,
   `${fills.room}px of it, above and below`);
-await set([{ id: "a", type: "recent", row: 0, x: 0, w: 100, h: 0 }]);
+await set([{ id: "a", type: "recent", x: 0, y: 0, w: 100, h: 6 }]);
 
-// ── the top edge ──
+// ── what is inside a segment, up and down ──
 //
-// A row is as tall as its tallest segment, so a shorter one has space either
-// above or below it depending on where it sits -- and until there was a
-// setting for that, every segment filled its row and the top edge had nowhere
-// to go. Dragging it did nothing but change the width.
+// It matters more than it did: every segment has a height of its own now and
+// most are taller than what is in them.
 await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 50, h: 300 },
-  { id: "b", type: "clock", row: 0, x: 50, w: 50, h: 160 },
+  { id: "a", type: "recent", x: 0, y: 0, w: 50, h: 14, valign: "bottom" },
 ]);
-await edit();
-await dragGrip("b", "ne", 0, -60);
-check("dragging a top edge upwards makes the segment TALLER",
-  (await saved()).find(x => x.id === "b").h, 220,
-  "it used to be the one thing a top handle could not do");
-check("and pins it to the bottom, so the bottom edge is what stayed",
-  await p.evaluate(() => {
-    const seg = window.__saved.find(s => s.id === "b");
-    const node = document.querySelector('#home-segments .hs[data-id="b"]');
-    return [seg.valign, getComputedStyle(node).alignSelf];
-  }),
-  ["bottom", "end"],
-  "dragging one edge may never move the other, so the gesture says which is pinned");
-
-await dragGrip("b", "ne", 0, 40);
-check("and dragging it back down makes it shorter again",
-  (await saved()).find(x => x.id === "b").h, 180);
-
-await dragGrip("b", "se", 0, 50);
-check("the bottom edge pins the top instead",
-  await p.evaluate(() => window.__saved.find(s => s.id === "b").valign), "top");
-
-// ── where it sits down its row ──
-await set([
-  { id: "a", type: "recent", row: 0, x: 0, w: 50, h: 300 },
-  { id: "b", type: "clock", row: 0, x: 50, w: 50, h: 120, valign: "bottom" },
-]);
-const down = await p.evaluate(() => {
-  const a = document.querySelector('#home-segments .hs[data-id="a"]').getBoundingClientRect();
-  const b = document.querySelector('#home-segments .hs[data-id="b"]').getBoundingClientRect();
-  return { gapAbove: Math.round(b.top - a.top), bottomsLevel: Math.abs(b.bottom - a.bottom) < 2 };
+const inside = await p.evaluate(() => {
+  const n = document.querySelector('#home-segments .hs[data-id="a"]');
+  n.insertAdjacentHTML("beforeend", '<div class="hs-list" style="height:40px"></div>');
+  const r = n.getBoundingClientRect(), k = n.lastElementChild.getBoundingClientRect();
+  return { place: getComputedStyle(n).justifyContent, roomAbove: Math.round(k.top - r.top) };
 });
-check("a segment set to the bottom of its row has space above it",
-  [down.gapAbove > 100, down.bottomsLevel], [true, true],
-  `${down.gapAbove}px of room above it, and its bottom level with the tall one's`);
+check("a segment set to the bottom holds its contents at the bottom",
+  [inside.place, inside.roomAbove > 100], ["flex-end", true],
+  `${inside.roomAbove}px of room above them in a 14-row segment`);
 
 // ── the player render, in a segment too narrow for it ──
 //
@@ -809,7 +806,7 @@ check("a segment set to the bottom of its row has space above it",
 // not flex, and what is drawn is letterboxed rather than scaled to the box --
 // and the segment measures the room and tells the viewer, which is what keeps
 // it sharp.
-await set([{ id: "a", type: "player", row: 0, x: 0, w: 18, h: 0 }]);
+await set([{ id: "a", type: "player", x: 0, y: 0, w: 18, h: 14 }]);
 const squash = await p.evaluate(() => {
   const n = document.querySelector('#home-segments .hs[data-id="a"]');
   n.innerHTML = "";

@@ -17,25 +17,66 @@
   let TYPES = [];
   let COLUMNS = 100;
   const MIN_W = 12;        // the narrowest a segment may be made
-  // A row is also divided up and down, in these units, so two segments can
-  // be stacked INSIDE one row rather than only side by side.
+
+  // ── where everything is ─────────────────────────────────────────────────
   //
-  // A row used to be one line and nothing else: dropping a segment on the top
-  // or the bottom of another made a whole new row across the page, so two
-  // things could never share one line's worth of width with one above the
-  // other. `y` and `vh` say where a segment starts down its row and how much
-  // of it it takes, exactly as `x` and `w` do across. Everything made before
-  // this has neither, which reads as the whole height -- so an old layout is
-  // laid out by the same code, unchanged.
-  const ROWS = 12;         // sub-rows per row
-  const MIN_VH = 3;        // the shortest a stacked segment may be made
-  const yOf = (s) => Math.max(0, Math.min(ROWS - 1, Number(s && s.y) || 0));
-  const vhOf = (s) => {
-    const v = Number(s && s.vh);
-    return Number.isFinite(v) && v > 0 ? Math.max(1, Math.min(ROWS - yOf(s), Math.round(v))) : ROWS - yOf(s);
+  // One grid for the whole page, and a segment is a rectangle in it: x and w
+  // across in hundredths, y and h down in grid rows of UNIT pixels. That is
+  // the whole model, and it is the third attempt at it.
+  //
+  // The first laid segments out in order and wrapped them when they ran out
+  // of width, so a row was a consequence rather than a place. The second gave
+  // each segment a `row`, and each row its own container and its own grid --
+  // which is what every remaining complaint was about, and all for the same
+  // reason: a row was a BOX. A segment could not be made taller than the box
+  // it was in, so dragging its bottom edge down made the whole box taller and
+  // shoved the next one down the page; dragging its top edge up had nowhere
+  // to go at all. Two segments could not sit side by side at different
+  // heights, because the box was as tall as the taller of them. Dividing a
+  // row up and down (`y` and `vh` out of twelve) only moved the problem
+  // inside the box: the box was still there, still had to be as tall as its
+  // contents, and still could not be shared with the box below it.
+  //
+  // There are no boxes now. A segment says where it is and nothing is worked
+  // out from anything else, so its top edge and its bottom edge are the same
+  // kind of thing as its left and its right: each moves until it would run
+  // into something, and stops there. Nothing is ever pushed out of the way
+  // and nothing closes up behind a segment that moves -- a gap is a gap
+  // because somebody left one.
+  const UNIT = 22;         // pixels per grid row
+  const MIN_H = 3;         // the shortest a segment may be made, in rows
+  const MAX_H = 80;
+  const MAX_Y = 400;
+  const SPARE = 6;         // empty rows kept under the page, to drop into
+
+  const xOf = (s) => Math.max(0, Number(s && s.x) || 0);
+  const wOf = (s) => {
+    const v = Math.round(Number(s && s.w));
+    return Number.isFinite(v) && v > 0 ? Math.max(MIN_W, Math.min(COLUMNS, v)) : COLUMNS;
   };
-  /** Is anything in this row stacked, i.e. not the full height of it? */
-  const rowIsSplit = (segs) => segs.some(s => yOf(s) !== 0 || vhOf(s) !== ROWS);
+  const yOf = (s) => Math.max(0, Math.min(MAX_Y, Math.round(Number(s && s.y) || 0)));
+  const hOf = (s) => {
+    const v = Math.round(Number(s && s.h));
+    return Number.isFinite(v) && v > 0 ? Math.max(MIN_H, Math.min(MAX_H, v)) : MIN_H;
+  };
+  /** A segment as a plain rectangle, which is all the layout rules need. */
+  const rectOf = (s) => ({ x: xOf(s), y: yOf(s), w: wOf(s), h: hOf(s) });
+  /** Do these two rectangles share any of the grid? */
+  const hits = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w
+    && a.y < b.y + b.h && b.y < a.y + a.h;
+  /** Is this rectangle clear of everything except the segments named? */
+  const isFree = (r, ...exceptIds) => !LAYOUT.some(s =>
+    !exceptIds.includes(s.id) && hits(rectOf(s), r));
+  /**
+   * How many rows the page is.
+   *
+   * With room under it while it is being edited, so there is somewhere to
+   * drag a segment to below everything there is -- and without it otherwise,
+   * because empty rows at the bottom of the page are a strip of nothing to
+   * scroll through for anybody who is only looking at it.
+   */
+  const pageRows = () =>
+    LAYOUT.reduce((most, s) => Math.max(most, yOf(s) + hOf(s)), 0) + (editing ? SPARE : 0);
 
   // ── snapping ────────────────────────────────────────────────────────────
   //
@@ -55,13 +96,23 @@
     SNAP = !!on;
     try { localStorage.setItem('homeSnap', SNAP ? 'on' : 'off'); } catch { /* no storage */ }
   };
-  /** The lines worth landing on in this row. */
-  function snapLines(row, selfId) {
+  /** The columns worth landing on: the page's own, and everyone else's. */
+  function snapLines(selfId) {
     const lines = new Set([0, COLUMNS, 25, 33, 50, 67, 75]);
-    for (const s of row || []) {
+    for (const s of LAYOUT) {
       if (s.id === selfId) continue;
-      lines.add(s.x || 0);
-      lines.add((s.x || 0) + (s.w || COLUMNS));
+      lines.add(xOf(s));
+      lines.add(xOf(s) + wOf(s));
+    }
+    return [...lines];
+  }
+  /** And the rows worth landing on: every edge anything else already has. */
+  function snapRows(selfId) {
+    const lines = new Set([0]);
+    for (const s of LAYOUT) {
+      if (s.id === selfId) continue;
+      lines.add(yOf(s));
+      lines.add(yOf(s) + hOf(s));
     }
     return [...lines];
   }
@@ -201,16 +252,21 @@
          scrolling into blank. The room under the last row is that row's own
          bottom padding, which is inside the segment and so cannot crop it. */
       .home-scroller { border-top:14px solid transparent; }
-      .hs-rowbox { display:grid; grid-template-columns:repeat(100, 1fr);
+      /* One grid for the page, not one per row.
+         A row used to be a container, and every segment in it was placed in
+         that container's own grid. Which meant a segment could not be taller
+         than its row, two segments could not sit side by side at different
+         heights, and making one taller made the row taller and pushed the
+         next one down the page. There is one grid now and a segment is a
+         rectangle in it, so there is nothing for its height to be measured
+         against and nothing for it to push. */
+      #home-segments { display:grid; grid-template-columns:repeat(100, 1fr);
+        grid-auto-rows:var(--unit, 22px);
+        grid-template-rows:repeat(var(--rows, 1), var(--unit, 22px));
         align-items:stretch; }
       .hs { position:relative; box-sizing:border-box; min-width:0;
         grid-column: calc(var(--x, 0) + 1) / span var(--w, 100);
-        /* One grid row, always. A grid with no explicit rows puts two items
-           whose columns overlap on separate lines, which is why the shaded
-           landing place for a drop into the row a segment is already in
-           appeared BELOW it rather than behind it. Pinned to the same line,
-           they overlap and the z-order decides which is on top. */
-        grid-row:1;
+        grid-row: calc(var(--y, 0) + 1) / span var(--h, 3);
         padding:0 11px 22px;
         display:flex; flex-direction:column;
         /* How big the things inside are drawn, as a multiplier. */
@@ -224,8 +280,12 @@
          The part that holds the contents clips, and the handles sit outside
          it. */
       .hs > * { max-width:100%; min-width:0; }
-      .hs[data-h] > .hs-body, .hs[data-h] > .hs-list, .hs[data-h] > .hs-row,
-      .hs[data-h] > .hs-grid, .hs[data-h] > .hs-player { overflow:auto; min-height:0; }
+      /* Every segment has a height of its own now, so every segment's
+         contents have somewhere to overflow and have to be told what to do
+         about it. This used to be conditional on a pixel height, which most
+         segments did not have. */
+      .hs > .hs-body, .hs > .hs-list, .hs > .hs-row,
+      .hs > .hs-grid, .hs > .hs-player { overflow:auto; min-height:0; }
       /* A render is a fixed-size canvas; it is scaled down to the room there
          is rather than hanging over the side of its segment. */
       /* Scaled DOWN to fit, never squashed. The player box is a flex column, so
@@ -248,11 +308,16 @@
       .hs-empty { opacity:0.6; font-size:13px; }
       .hs-error { opacity:0.7; font-size:12px; }
 
-      /* Narrow windows: a row stops being a row rather than its segments
-         being squeezed to nothing. Each takes the whole width, in order. */
+      /* Narrow windows: the grid stops being a grid rather than its segments
+         being squeezed to nothing. Each takes the whole width, down the page
+         in the order they are laid out in -- which is what --order says, set
+         from the layout, because a flex line has no idea where a segment
+         would have been. The height is kept, so a segment that was given one
+         still has it. */
       @media (max-width: 820px) {
-        .hs-rowbox { display:flex; flex-direction:column; }
-        .hs { grid-column:auto; }
+        #home-segments { display:flex; flex-direction:column; }
+        .hs { grid-column:auto; grid-row:auto; order:var(--order, 0);
+          height:calc(var(--h, 3) * var(--unit, 22px)); }
       }
 
       /* A row of project cards, which scrolls sideways rather than wrapping
@@ -424,22 +489,21 @@
          on it is the launcher talking about itself, where a shadow where the
          thing will be is just the answer. */
       .hs-slot { grid-column: calc(var(--x, 0) + 1) / span var(--w, 100);
-        grid-row:1;
+        grid-row: calc(var(--y, 0) + 1) / span var(--h, 3);
         margin:0 11px 22px; border-radius:var(--border-radius);
         background:rgba(0,0,0,0.42);
         box-shadow:inset 0 0 0 1px rgba(255,255,255,0.18);
-        pointer-events:none; min-height:54px; position:relative; z-index:6; }
-      /* A row of its own, between two that are already there. */
-      .hs-rowslot { height:0; margin:0; }
-      .hs-rowslot .hs-slot { min-height:46px; }
+        pointer-events:none; position:relative; z-index:6; }
+      /* Nowhere to go: the space is taken and there is no room near it. Said
+         with a shape rather than a word, the same as the rest of it. */
+      .hs-slot.no { background:rgba(0,0,0,0.18);
+        box-shadow:inset 0 0 0 1px rgba(255,120,110,0.55); }
 
       /* Hold still over a spot and the page shows you what it would do:
          whatever has to move to make room slides to where it would go, at
          half strength, and slides back when you move on. A line and a word
          described it; this performs it. */
-      .hs.hs-would { opacity:0.5; transition:opacity 0.18s ease, grid-column 0.28s ease; }
-      .hs.hs-would-dim { opacity:0.35; transition:opacity 0.18s ease; }
-      .hs-rowbox { transition:grid-template-columns 0.2s ease; }
+      .hs.hs-would { opacity:0.5; transition:opacity 0.18s ease; }
 
       /* A handle in each corner. The two bottom ones change the height as
          well, the top ones only the width. */
@@ -745,13 +809,13 @@
         const availW = box.clientWidth || node.clientWidth || 0;
         if (availW > 40 && ww > availW) { ww = Math.floor(availW); hh = Math.round(ww / ASPECT); }
 
-        // Down: only when the segment has a height of its own, because
-        // otherwise the segment is as tall as its contents and fitting to it
-        // would chase itself. And measured from the SEGMENT, less whatever
-        // else is in it -- the heading, the account name -- rather than from
-        // the box, which at this point holds one canvas that has not been
-        // sized yet and is therefore a few pixels tall.
-        if (seg.h) {
+        // Down: measured from the SEGMENT, less whatever else is in it --
+        // the heading, the account name -- rather than from the box, which
+        // at this point holds one canvas that has not been sized yet and is
+        // therefore a few pixels tall. Unconditional now: every segment has
+        // a height of its own, where this used to be skipped for the many
+        // that were as tall as their contents.
+        {
           let availH = node.clientHeight || 0;
           for (const kid of node.children) {
             if (kid === box || kid.classList.contains('hs-tools')
@@ -1228,40 +1292,6 @@
     }
   }
 
-  // ── where everything is ─────────────────────────────────────────────────
-  //
-  // A row is a row. Each segment says which row it is on, where along that
-  // row it starts, and how many of the hundred columns it takes. Nothing is
-  // worked out from the order any more, which is what makes a gap in a row
-  // possible, keeps one row's size from disturbing the next, and gives a
-  // drop somewhere to land that is not on top of something else.
-
-  const rowsOf = (layout) => {
-    const by = new Map();
-    for (const seg of layout) {
-      const r = Number(seg.row) || 0;
-      if (!by.has(r)) by.set(r, []);
-      by.get(r).push(seg);
-    }
-    return [...by.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([row, segs]) => ({ row, segs: segs.sort((a, b) => (a.x || 0) - (b.x || 0)) }));
-  };
-
-  // What is free on a row, as a list of {from, to} column ranges.
-  function gapsIn(segs, ignoreId) {
-    const taken = segs.filter(s => s.id !== ignoreId).sort((a, b) => (a.x || 0) - (b.x || 0));
-    const out = [];
-    let at = 0;
-    for (const s of taken) {
-      const x = s.x || 0;
-      if (x > at) out.push({ from: at, to: x });
-      at = Math.max(at, x + (s.w || COLUMNS));
-    }
-    if (at < COLUMNS) out.push({ from: at, to: COLUMNS });
-    return out.filter(g => g.to - g.from >= 1);
-  }
-
   // What a segment's CONTENTS depend on. Its size and where it sits are not
   // in here: moving or resizing one does not change what it draws, so it does
   // not have to be drawn again.
@@ -1270,7 +1300,7 @@
   // it sits down its row is the second kind -- redrawing a player segment over
   // it would throw its viewer away and build another.
   const contentKey = (seg) => {
-    const { row, x, w, h, y, vh, scale, valign, ...rest } = seg;
+    const { x, y, w, h, scale, valign, ...rest } = seg;
     return JSON.stringify(rest);
   };
 
@@ -1302,97 +1332,75 @@
     for (const node of keep.values()) node.remove();
     host.innerHTML = '';
 
-    for (const { row, segs } of rowsOf(LAYOUT)) {
-      const box = el('div', 'hs-rowbox');
-      box.dataset.row = String(row);
-      host.appendChild(box);
-      applyRowTracks(box, segs);
-      for (const seg of segs) {
-        const had = keep.get(seg.id);
-        if (had) {
-          box.appendChild(had);
-          applyOne(had, seg);
-          // The handles belong to the editing state, not to the contents.
-          if (had._offTools) { try { had._offTools(); } catch { /* fine */ } }
-          had._offTools = null;
-          for (const n of had.querySelectorAll(':scope > .hs-tools, :scope > .hs-grip, :scope > .hs-size')) n.remove();
-          if (editing) addTools(had, seg);
-          continue;
-        }
-        const node = el('section', 'hs');
-        node.dataset.id = seg.id;
-        node._key = contentKey(seg);
-        box.appendChild(node);
-        applyOne(node, seg);
-        drawInto(node, seg);
-        if (editing) addTools(node, seg);
+    applyPageRows();
+    // Down the page and then across, which is the order a narrow window
+    // falls back to and the order the keyboard would walk them in.
+    const order = [...LAYOUT].sort((a, b) => (yOf(a) - yOf(b)) || (xOf(a) - xOf(b)));
+    for (const seg of order) {
+      const had = keep.get(seg.id);
+      if (had) {
+        host.appendChild(had);
+        applyOne(had, seg);
+        // The handles belong to the editing state, not to the contents.
+        if (had._offTools) { try { had._offTools(); } catch { /* fine */ } }
+        had._offTools = null;
+        for (const n of had.querySelectorAll(':scope > .hs-tools, :scope > .hs-grip, :scope > .hs-size')) n.remove();
+        if (editing) addTools(had, seg);
+        continue;
       }
+      const node = el('section', 'hs');
+      node.dataset.id = seg.id;
+      node._key = contentKey(seg);
+      host.appendChild(node);
+      applyOne(node, seg);
+      drawInto(node, seg);
+      if (editing) addTools(node, seg);
     }
     if (scroller) scroller.scrollTop = was;
   }
 
-  // One segment's width, position, height and content scale. A segment with
-  // no height is as tall as its contents, which is how the page has always
-  // been.
-  // Where a segment sits down its row. Nothing by default, which leaves the
-  // grid's own stretch: as tall as the row, which is what every layout did
-  // before this existed. The named three are what makes space ABOVE a segment
-  // possible, and therefore what makes dragging its top edge mean anything.
-  const VALIGN = { top: 'start', middle: 'center', bottom: 'end' };
+  // One segment's rectangle and the size of what is drawn inside it.
+  //
+  // Where its CONTENTS sit inside it, which matters now that every segment
+  // has a height of its own and most are taller than what is in them.
+  const VALIGN = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
 
   /**
-   * How a row is divided up and down, from what is in it.
+   * How many rows tall the page is.
    *
-   * A row with nothing stacked is one track, which is exactly what the grid
-   * did before any of this -- so those rows are laid out by the same rule and
-   * cannot have moved. A row with something stacked gets one track per
-   * boundary anything in it uses, each as tall a share as it covers, and each
-   * segment spans from its own boundary to the next one it reaches.
+   * The grid needs saying, because an implicit grid is only as tall as what
+   * is in it -- and the room UNDER the last segment is where a segment is
+   * dragged to when it is being moved to the end of the page. Without it
+   * there is nothing below the bottom one to aim at.
    */
-  function applyRowTracks(box, segs) {
-    if (!rowIsSplit(segs)) {
-      box.style.removeProperty('grid-template-rows');
-      box.classList.remove('hs-split');
-      return;
-    }
-    const edges = new Set([0, ROWS]);
-    for (const s of segs) { edges.add(yOf(s)); edges.add(yOf(s) + vhOf(s)); }
-    const lines = [...edges].sort((a, b) => a - b);
-    box._lines = lines;
-    box.style.gridTemplateRows = lines.slice(1)
-      .map((to, i) => `minmax(0, ${to - lines[i]}fr)`).join(' ');
-    box.classList.add('hs-split');
+  function applyPageRows() {
+    const host = document.getElementById('home-segments');
+    if (!host) return;
+    host.style.setProperty('--unit', UNIT + 'px');
+    host.style.setProperty('--rows', String(pageRows()));
   }
 
   function applyOne(node, seg) {
-    node.style.setProperty('--x', String(seg.x || 0));
-    node.style.setProperty('--w', String(seg.w || COLUMNS));
-    // Down the row. A row that has nothing stacked in it leaves this alone,
-    // so those segments keep the single pinned line they have always had.
-    const box = node.parentElement;
-    const lines = box && box.classList.contains('hs-split') ? box._lines : null;
-    if (lines) {
-      const a = lines.indexOf(yOf(seg)), b = lines.indexOf(yOf(seg) + vhOf(seg));
-      node.style.gridRow = `${(a < 0 ? 0 : a) + 1} / ${(b < 0 ? lines.length - 1 : b) + 1}`;
-    } else {
-      node.style.removeProperty('grid-row');
-    }
+    node.style.setProperty('--x', String(xOf(seg)));
+    node.style.setProperty('--w', String(wOf(seg)));
+    node.style.setProperty('--y', String(yOf(seg)));
+    node.style.setProperty('--h', String(hOf(seg)));
     node.style.setProperty('--s', String((seg.scale || 100) / 100));
-    // Where it sits up and down, which is two things at once and was only
-    // ever one of them.
-    //
-    // align-self places the SEGMENT in its row, which does nothing at all
-    // unless something else in that row is taller than it -- so for a segment
-    // on a row of its own, which is most of them and the player render in
-    // particular, the setting appeared to do nothing. The same answer also
-    // places what is INSIDE the segment, which is what you see when the
-    // segment is the full height of its row. Between them there is always
-    // something for it to move.
+    // What is INSIDE it, up and down. align-self used to do this as well --
+    // it placed the segment in its row, for the one case where something
+    // beside it was taller. There are no rows, so there is nothing to place
+    // a segment in and only the one meaning is left.
     const va = VALIGN[seg.valign];
-    if (va) node.style.alignSelf = va; else node.style.removeProperty('align-self');
+    if (va) node.style.justifyContent = va; else node.style.removeProperty('justify-content');
     if (va) node.dataset.va = seg.valign; else delete node.dataset.va;
-    if (seg.h) { node.style.height = seg.h + 'px'; node.dataset.h = String(seg.h); }
-    else { node.style.removeProperty('height'); delete node.dataset.h; }
+    // Still said out loud, for the player render, which measures it.
+    node.dataset.h = String(hOf(seg) * UNIT);
+    // Where it falls in the list a narrow window turns the grid into: down
+    // the page and then across. A flex line has no idea where a segment
+    // would have been, so it is told.
+    const y = yOf(seg), x = xOf(seg);
+    node.style.setProperty('--order', String(
+      LAYOUT.filter(o => (yOf(o) < y) || (yOf(o) === y && xOf(o) < x)).length));
   }
 
   // Recent instances are the one segment whose data arrives on its own, from
@@ -1424,7 +1432,7 @@
   //   the join between rows  -- a new row of its own, there
   const HOLD_MS = 180;        // how long before a press counts as a move
   let drag = null;            // { id, node, ghost }
-  let dropAt = null;          // { row, x, w, newRow, what }
+  let dropAt = null;          // { x, y, w, h, what }
 
   const PREVIEW_MS = 900;     // how long to hold still before it is acted out
   let previewTimer = null;
@@ -1433,7 +1441,7 @@
   let previewing = false;
 
   function clearDropMarks() {
-    for (const n of document.querySelectorAll('.hs-slot, .hs-rowslot')) n.remove();
+    for (const n of document.querySelectorAll('.hs-slot')) n.remove();
     previewing = false;        // the drag is over; the next one waits again
     clearPreview();
   }
@@ -1446,220 +1454,166 @@
   function clearPreview() {
     if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
     for (const node of document.querySelectorAll('#home-segments .hs')) {
-      node.classList.remove('hs-would', 'hs-would-dim');
+      node.classList.remove('hs-would');
       const seg = LAYOUT.find(x => x.id === node.dataset.id);
-      if (seg) { node.style.setProperty('--x', String(seg.x || 0)); node.style.setProperty('--w', String(seg.w || COLUMNS)); }
+      if (seg) applyOne(node, seg);
     }
   }
 
   // What the layout WOULD be, without changing the one in use. The same
   // rules the drop itself follows, so what is acted out is what happens.
-  /**
-   * A segment left on its own in a row takes the whole of it back.
-   *
-   * Otherwise moving the top half of a split row somewhere else would leave
-   * the bottom half sitting in the bottom of an empty row, which is not what
-   * taking one of them away looks like.
-   */
-  function tidyStacks(list) {
-    for (const { segs } of rowsOf(list)) {
-      for (const s of segs) {
-        if (yOf(s) === 0 && vhOf(s) === ROWS) continue;
-        const beside = segs.some(o => o !== s
-          && (o.x || 0) < (s.x || 0) + (s.w || COLUMNS)
-          && (s.x || 0) < (o.x || 0) + (o.w || COLUMNS));
-        if (!beside) { s.y = 0; s.vh = ROWS; }
-      }
-    }
-    return list;
-  }
-
+  //
+  // There is no tidying up afterwards any more. A row used to have to be
+  // put back in order when something left it -- a segment on its own took
+  // the whole of its row back, rows closed up behind an empty one -- because
+  // a row was a thing that could be half empty or not there. Nothing is
+  // worked out from anything else now, so a move moves exactly one segment
+  // and leaves every other one alone.
   function layoutAfterDrop(fromId, at) {
-    return tidyStacks(layoutAfterDropRaw(fromId, at));
-  }
-
-  function layoutAfterDropRaw(fromId, at) {
     const next = LAYOUT.map(x => ({ ...x }));
     const moved = next.find(s => s.id === fromId);
     if (!moved || !at) return next;
-    if (at.newRow) {
-      for (const s of next) if (s !== moved && (Number(s.row) || 0) >= at.row) s.row = (Number(s.row) || 0) + 1;
-      moved.row = at.row; moved.x = 0;
-      return next;
+    if (at.swap) {
+      const other = next.find(s => s.id === at.swap);
+      // Its PLACE, not its size. Two segments trading places do not trade
+      // how big they are -- a tall one put where a short one was is still
+      // the tall one, and giving it the other's height silently resized it
+      // as a side effect of a move.
+      if (other) { const was = rectOf(moved); other.x = was.x; other.y = was.y; }
     }
-    if (at.split && at.onto) {
-      const onto = next.find(s => s.id === at.onto);
-      if (onto) {
-        const from = yOf(onto), span = vhOf(onto), mine = Math.floor(span / 2);
-        moved.row = at.row;
-        moved.x = onto.x || 0;
-        moved.w = onto.w || COLUMNS;
-        // The track decides how tall each is now, so a height in pixels
-        // would only fight it.
-        moved.h = 0;
-        onto.h = 0;
-        if (at.top) { moved.y = from; moved.vh = mine; onto.y = from + mine; onto.vh = span - mine; }
-        else { onto.y = from; onto.vh = span - mine; moved.y = from + (span - mine); moved.vh = mine; }
-        return next;
-      }
-    }
-    if (at.what === 'share' && at.onto) {
-      const onto = next.find(s => s.id === at.onto);
-      if (onto) {
-        const span = onto.w || COLUMNS, from = onto.x || 0, mine = Math.floor(span / 2);
-        moved.row = at.row; moved.h = onto.h || 0;
-        if (at.left) { moved.x = from; moved.w = mine; onto.x = from + mine; onto.w = span - mine; }
-        else { onto.w = span - mine; moved.x = from + (span - mine); moved.w = mine; }
-        return next;
-      }
-    }
-    moved.row = at.row; moved.x = at.x; moved.w = at.w;
+    moved.x = at.x; moved.y = at.y; moved.w = at.w; moved.h = at.h;
     return next;
   }
 
-  // Act it out: every segment that would have to move slides to where it
-  // would go, at half strength. One that would end up on another row cannot
-  // be slid there -- a row is its own grid -- so it is dimmed instead, which
-  // still says "this one is affected".
+  // Act it out: whatever would move slides to where it would go, at half
+  // strength. Which is at most one other segment, and only in a swap.
   function showPreview(at) {
     const host = document.getElementById('home-segments');
     if (!host || !at) return;
-    const next = layoutAfterDrop(drag.id, at);
-    for (const seg of next) {
+    for (const seg of layoutAfterDrop(drag.id, at)) {
       if (seg.id === drag.id) continue;
       const now = LAYOUT.find(x => x.id === seg.id);
-      if (!now) continue;
       const node = host.querySelector(`.hs[data-id="${seg.id}"]`);
-      if (!node) continue;
-      const sameRow = (Number(now.row) || 0) === (Number(seg.row) || 0);
-      const moves = (now.x || 0) !== (seg.x || 0) || (now.w || COLUMNS) !== (seg.w || COLUMNS);
-      if (sameRow && moves) {
-        node.classList.add('hs-would');
-        node.style.setProperty('--x', String(seg.x || 0));
-        node.style.setProperty('--w', String(seg.w || COLUMNS));
-      } else if (!sameRow) {
-        node.classList.add('hs-would-dim');
-      }
+      if (!now || !node) continue;
+      const r1 = rectOf(now), r2 = rectOf(seg);
+      if (r1.x === r2.x && r1.y === r2.y && r1.w === r2.w && r1.h === r2.h) continue;
+      node.classList.add('hs-would');
+      applyOne(node, seg);
     }
   }
 
-  // Draw the landing place.
+  // Draw the landing place: a shadow exactly the size and shape of the
+  // space it is going into, in the one grid everything else is in.
   function showDrop(at) {
-    for (const n of document.querySelectorAll('.hs-slot, .hs-rowslot')) n.remove();
+    for (const n of document.querySelectorAll('.hs-slot')) n.remove();
     clearPreview();
     if (!at) return;
     const host = document.getElementById('home-segments');
     if (!host) return;
-    const slot = el('div', 'hs-slot');
+    const slot = el('div', 'hs-slot' + (at.blocked ? ' no' : ''));
     slot.style.setProperty('--x', String(at.x));
+    slot.style.setProperty('--y', String(at.y));
     slot.style.setProperty('--w', String(at.w));
-    if (at.newRow) {
-      // Its own row, shown between the two it would go between.
-      const box = el('div', 'hs-rowbox hs-rowslot');
-      box.appendChild(slot);
-      const rows = [...host.querySelectorAll('.hs-rowbox')];
-      const before = rows[at.row] || null;
-      host.insertBefore(box, before);
-      return;
-    }
-    const box = [...host.querySelectorAll('.hs-rowbox')].find(b => Number(b.dataset.row) === at.row);
-    if (box) box.appendChild(slot);
+    slot.style.setProperty('--h', String(at.h));
+    host.appendChild(slot);
+  }
+
+  /**
+   * The grid itself: where its first column starts and how wide it is.
+   *
+   * Its CONTENT box, not the element's. The page carries its right-hand
+   * gutter as padding on this element, so the element is twenty pixels wider
+   * than the columns in it -- which is two columns out of a hundred, and
+   * enough that a segment dropped at the right-hand edge of the page landed
+   * two columns short of it.
+   */
+  function gridBox() {
+    const host = document.getElementById('home-segments');
+    if (!host) return null;
+    const r = host.getBoundingClientRect();
+    const cs = getComputedStyle(host);
+    const left = parseFloat(cs.paddingLeft) || 0;
+    const width = r.width - left - (parseFloat(cs.paddingRight) || 0);
+    if (width <= 0) return null;
+    return { host, left: r.left + left, top: r.top + (parseFloat(cs.paddingTop) || 0), width };
+  }
+
+  /** The grid cell under the pointer, as a fraction so it can be rounded. */
+  function cellAt(e) {
+    const g = gridBox();
+    if (!g) return null;
+    return {
+      col: ((e.clientX - g.left) / g.width) * COLUMNS,
+      row: (e.clientY - g.top) / UNIT,
+    };
   }
 
   // What dropping here would mean.
+  //
+  // It used to mean one of five things -- a gap in a row, half of another
+  // segment's width, half of its height, a new row above, a new row below --
+  // because where a segment could go was decided by the rows that happened
+  // to exist. A segment goes WHERE THE POINTER IS now, at the size it
+  // already is. Nothing is halved, nothing is pushed along, and no row is
+  // made or unmade, because there are no rows.
+  const NEAR = 8;             // how far to look for room, in grid rows
   function dropTarget(e) {
-    const host = document.getElementById('home-segments');
-    if (!host) return null;
     const me = LAYOUT.find(x => x.id === drag.id);
-    if (!me) return null;
-    const boxes = [...host.querySelectorAll('.hs-rowbox:not(.hs-rowslot)')];
-    if (!boxes.length) return { row: 0, x: 0, w: COLUMNS, newRow: true, what: 'new row' };
+    const cell = cellAt(e);
+    if (!me || !cell) return null;
+    const w = wOf(me), h = hOf(me);
+    // Held where it was picked up, rather than snapping a corner to the
+    // pointer -- a segment taken by its middle should not jump.
+    const lines = snapLines(drag.id);
+    const want = {
+      w, h,
+      x: Math.max(0, Math.min(COLUMNS - w,
+        snapCol(Math.round(cell.col - drag.gx), lines))),
+      y: Math.max(0, Math.min(MAX_Y - h, Math.round(cell.row - drag.gy))),
+    };
+    if (isFree(want, drag.id)) return { ...want, what: 'here' };
 
-    // Near the join between two rows -- or above the first, or below the
-    // last -- means a row of its own there.
-    const JOIN = 14;
-    for (let i = 0; i <= boxes.length; i++) {
-      const edge = i === 0
-        ? boxes[0].getBoundingClientRect().top
-        : boxes[i - 1].getBoundingClientRect().bottom;
-      if (Math.abs(e.clientY - edge) <= JOIN) {
-        return { row: i, x: 0, w: me.w || COLUMNS, newRow: true, what: 'new row' };
+    // Taken. If exactly one segment is in the way and it would fit where
+    // this one is standing, they trade places -- which is the one thing
+    // "drop it on that one" can mean that is not a guess.
+    const inTheWay = LAYOUT.filter(s => s.id !== drag.id && hits(rectOf(s), want));
+    if (inTheWay.length === 1) {
+      const other = inTheWay[0];
+      const mine = rectOf(me);
+      const theirs = { x: mine.x, y: mine.y, w: wOf(other), h: hOf(other) };
+      if (theirs.x + theirs.w <= COLUMNS
+        && !LAYOUT.some(s => s.id !== drag.id && s.id !== other.id && hits(rectOf(s), theirs))) {
+        // Squarely into the other one\'s place, rather than wherever the
+        // pointer happened to be over it. Two segments trading places that
+        // end up not quite where each other were is not a trade.
+        const b = rectOf(other);
+        return { x: b.x, y: b.y, w, h, swap: other.id, what: 'swap' };
       }
     }
 
-    const box = boxes.find(b => {
-      const r = b.getBoundingClientRect();
-      return e.clientY >= r.top && e.clientY <= r.bottom;
-    });
-    if (!box) return null;
-    const row = Number(box.dataset.row);
-    const r = box.getBoundingClientRect();
-    const col = Math.max(0, Math.min(COLUMNS - 1,
-      Math.floor(((e.clientX - r.left) / Math.max(1, r.width)) * COLUMNS)));
-
-    const here = LAYOUT.filter(s => (Number(s.row) || 0) === row);
-    const onto = here.find(s => s.id !== drag.id && col >= (s.x || 0) && col < (s.x || 0) + (s.w || COLUMNS));
-
-    if (!onto) {
-      // Empty space. It goes there, as wide as it is or as wide as the space
-      // allows -- a big segment dropped into a small space used to be
-      // ignored outright and then spill into the next row.
-      const gap = gapsIn(here, drag.id).find(g => col >= g.from && col < g.to);
-      if (!gap) return null;
-      const room = gap.to - gap.from;
-      if (room < MIN_W) return null;
-      const w = Math.min(me.w || COLUMNS, room);
-      // Lands under the pointer where there is room to, rather than always
-      // at the left of the space.
-      let x = Math.max(gap.from, Math.min(col - Math.floor(w / 2), gap.to - w));
-      // Level with something, or on a round line, rather than one column off
-      // it -- but never outside the space it is going into.
-      x = Math.max(gap.from, Math.min(snapCol(x, snapLines(here, drag.id)), gap.to - w));
-      return { row, x, w, newRow: false, what: w < (me.w || COLUMNS) ? `fits ${w}%` : 'here' };
-    }
-
-    // Onto another segment. Near its top or its bottom means a row of its
-    // own above or below it -- a segment could only ever be put BESIDE
-    // another one, never over or under it, unless the pointer happened to
-    // find the fourteen pixels of the join between two rows. The band is a
-    // share of the segment's height so it scales with it, and capped so a
-    // tall segment is not nearly all band.
-    const ontoNode = host.querySelector(`.hs[data-id="${onto.id}"]`);
-    if (ontoNode) {
-      const or = ontoNode.getBoundingClientRect();
-      const band = Math.min(or.height * 0.3, 46);
-      const top = e.clientY < or.top + band, bottom = e.clientY > or.bottom - band;
-      if (top || bottom) {
-        // Over or under THAT segment, in the space that segment has.
-        //
-        // This used to make a whole new row across the page, so two things
-        // could never share one line with one above the other -- a row was
-        // one line and that was that. The segment's own space is split
-        // instead: it keeps the half the pointer is not on, and the one
-        // being dragged takes the half it is.
-        if (vhOf(onto) >= MIN_VH * 2) {
-          return { row, x: onto.x || 0, w: onto.w || COLUMNS, newRow: false,
-            what: top ? 'above it' : 'below it', split: true, onto: onto.id, top };
+    // Otherwise the nearest clear space to where the pointer is, up or down
+    // first and then across, so it lands where it was aimed rather than
+    // somewhere else entirely. Nothing within reach means nothing happens:
+    // a segment is not flung to the end of the page for want of room.
+    let best = null, near = Infinity;
+    for (let dy = 0; dy <= NEAR; dy++) {
+      for (const sy of dy ? [dy, -dy] : [0]) {
+        for (let dx = 0; dx <= NEAR * 2; dx++) {
+          for (const sx of dx ? [dx, -dx] : [0]) {
+            const r = {
+              w, h,
+              x: Math.max(0, Math.min(COLUMNS - w, want.x + sx)),
+              y: Math.max(0, want.y + sy),
+            };
+            const d = Math.abs(r.x - want.x) * 0.4 + Math.abs(r.y - want.y);
+            if (d >= near || !isFree(r, drag.id)) continue;
+            near = d; best = r;
+          }
         }
-        // Too short to divide: a row of its own, as before.
-        return top
-          ? { row, x: 0, w: me.w || COLUMNS, newRow: true, what: 'a row above' }
-          : { row: row + 1, x: 0, w: me.w || COLUMNS, newRow: true, what: 'a row below' };
       }
     }
-
-    // Otherwise they share that segment's space, half each. The side of it
-    // the pointer is on decides which half is whose.
-    const span = onto.w || COLUMNS;
-    if (span < MIN_W * 2) {
-      // Too narrow to halve. It takes the whole of it and that one is moved
-      // along, which tidyRows on the other side sorts out.
-      return { row, x: onto.x || 0, w: span, newRow: false, what: 'swap' };
-    }
-    const mine = Math.floor(span / 2);
-    const left = col < (onto.x || 0) + span / 2;
-    const x = left ? (onto.x || 0) : (onto.x || 0) + (span - mine);
-    return { row, x, w: mine, newRow: false, what: 'share', onto: onto.id, left };
+    if (best) return { ...best, what: 'the nearest room' };
+    return { ...want, blocked: true, what: 'no room' };
   }
 
   function onDragMove(e) {
@@ -1667,8 +1621,8 @@
     drag.ghost.style.left = (e.clientX - drag.dx) + 'px';
     drag.ghost.style.top = (e.clientY - drag.dy) + 'px';
     const at = dropTarget(e);
-    const same = at && dropAt && at.row === dropAt.row && at.x === dropAt.x
-      && at.w === dropAt.w && at.newRow === dropAt.newRow;
+    const same = at && dropAt && at.x === dropAt.x && at.y === dropAt.y
+      && at.w === dropAt.w && at.h === dropAt.h && at.swap === dropAt.swap;
     if (same) return;
     dropAt = at;
     showDrop(at);
@@ -1698,7 +1652,7 @@
     clearDropMarks();
     document.removeEventListener('mousemove', onDragMove, true);
     document.removeEventListener('mouseup', endDrag, true);
-    if (!landed) return;
+    if (!landed || landed.blocked) return;
     placeSegment(node.dataset.id, landed);
   }
 
@@ -1712,7 +1666,15 @@
     ghost.appendChild(el('div', '', typeSpec(seg.type).name || seg.type));
     ghost.firstChild.style.cssText = 'padding:10px 12px;font-weight:bold;';
     document.body.appendChild(ghost);
-    drag = { id: seg.id, node, ghost, dx: e.clientX - r.left, dy: e.clientY - r.top };
+    // Where in the segment it was taken hold of, in grid units, so it keeps
+    // that grip instead of jumping a corner to the pointer.
+    const cell = cellAt(e);
+    drag = {
+      id: seg.id, node, ghost,
+      dx: e.clientX - r.left, dy: e.clientY - r.top,
+      gx: cell ? cell.col - xOf(seg) : 0,
+      gy: cell ? cell.row - yOf(seg) : 0,
+    };
     node.classList.add('dragging');
     ghost.style.left = r.left + 'px';
     ghost.style.top = r.top + 'px';
@@ -1779,79 +1741,45 @@
 
   // ── resizing ────────────────────────────────────────────────────────────
   //
-  // A handle in each corner. The two on the right move the right-hand edge;
-  // the two on the left move the LEFT-hand edge, leaving the right where it
-  // is -- which is what dragging a left edge means everywhere else, and what
-  // this did not do: a segment on the right of a row was pinned to the left
-  // and grew the wrong way.
+  // A handle in each corner, and all four do the same kind of thing: the two
+  // edges that meet at that corner move, and the two that do not stay exactly
+  // where they are.
   //
-  // An edge stops where its neighbour is, and nowhere else. It does not have
-  // to meet it, so a row can have a gap in it, and the last segment on a row
-  // can be taken out to the right-hand edge without the one before it being
-  // dragged along.
-  function rowOf(seg) {
-    const r = Number(seg.row) || 0;
-    return LAYOUT.filter(s => (Number(s.row) || 0) === r).sort((a, b) => (a.x || 0) - (b.x || 0));
-  }
-
-  /**
-   * Can this segment grow into the row above or below it?
-   *
-   * Only if the row is there and nothing in it stands in the columns this
-   * segment occupies. A row with something in the way is not space; a row
-   * with a gap wide enough is.
-   */
-  function roomInNextRow(seg, below) {
-    const here = Number(seg.row) || 0;
-    const there = here + (below ? 1 : -1);
-    if (there < 0) return false;
-    const segs = LAYOUT.filter(s => (Number(s.row) || 0) === there);
-    if (!segs.length) return false;                 // no such row: nothing to take in
-    const from = seg.x || 0, to = from + (seg.w || COLUMNS);
-    return !segs.some(o => (o.x || 0) < to && from < (o.x || 0) + (o.w || COLUMNS));
-  }
-
-  /**
-   * Take the row above or below into this one, and let `seg` have the height
-   * of both.
-   *
-   * Two rows are two separate grids, so a segment could never be made taller
-   * than the one it is in: dragging its bottom edge down only made its own
-   * row taller and pushed the next one further down the page, and dragging
-   * the top edge up had nowhere to go at all. Growing into the next row means
-   * the two become ONE row, divided up and down -- which the layout can
-   * already describe (see y and vh). Everything that was in each row keeps
-   * its own half of the new one, and the segment being dragged spans both.
-   */
-  function takeInNextRow(seg, below) {
-    const here = Number(seg.row) || 0;
-    const there = here + (below ? 1 : -1);
-    const half = Math.round(ROWS / 2);
-    // Each row's own divisions squash into the half it keeps.
-    const squash = (list, offset) => {
-      for (const s of list) {
-        const y = Math.round(yOf(s) / 2), vh = Math.max(1, Math.round(vhOf(s) / 2));
-        s.y = Math.min(half - 1, y) + offset;
-        s.vh = Math.max(1, Math.min(half - (s.y - offset), vh));
+  // This is the half of the page that rows made impossible. Across, an edge
+  // had neighbours and stopped at them, which was right. Down, there was
+  // nothing to stop at and nothing to grow into: a row was a box as tall as
+  // what was in it, so dragging the bottom edge down made the BOX taller and
+  // shoved everything below it further down the page, and dragging the top
+  // edge up had nowhere at all to go. What was there instead was a special
+  // gesture -- drag far enough past the end of the row and the row below is
+  // taken into this one and the two become one divided row -- which is the
+  // thing that was reported, twice, as still being a rowed system. It is
+  // gone. An edge moves until it would run into something and stops there,
+  // the same in all four directions, and nothing else on the page moves at
+  // all.
+  //
+  // How far an edge may go: up to the nearest edge of anything that stands
+  // in the way of the rectangle this would become. Worked out as a limit
+  // rather than by trying every column, so an edge dragged fast lands in the
+  // same place as one dragged slowly.
+  /** The furthest `side` of `r` may travel before it overlaps something. */
+  function edgeLimit(r, side, selfId) {
+    let limit = side === 'e' ? COLUMNS : side === 'w' ? 0 : side === 's' ? MAX_Y : 0;
+    for (const o of LAYOUT) {
+      if (o.id === selfId) continue;
+      const b = rectOf(o);
+      if (side === 'e' || side === 'w') {
+        // Only what this would actually run into: something level with it.
+        if (!(r.y < b.y + b.h && b.y < r.y + r.h)) continue;
+        if (side === 'e' && b.x >= r.x + r.w) limit = Math.min(limit, b.x);
+        if (side === 'w' && b.x + b.w <= r.x) limit = Math.max(limit, b.x + b.w);
+      } else {
+        if (!(r.x < b.x + b.w && b.x < r.x + r.w)) continue;
+        if (side === 's' && b.y >= r.y + r.h) limit = Math.min(limit, b.y);
+        if (side === 'n' && b.y + b.h <= r.y) limit = Math.max(limit, b.y + b.h);
       }
-    };
-    const mine = LAYOUT.filter(s => (Number(s.row) || 0) === here);
-    const theirs = LAYOUT.filter(s => (Number(s.row) || 0) === there);
-    squash(mine, below ? 0 : half);
-    squash(theirs, below ? half : 0);
-    for (const s of theirs) s.row = here;
-    // Rows below the pair close up behind it.
-    const gone = below ? there : here;
-    for (const s of LAYOUT) if ((Number(s.row) || 0) > gone && s.row !== here) s.row = (Number(s.row) || 0) - 1;
-    if (!below) for (const s of [...mine, ...theirs]) s.row = Math.min(here, there);
-    // The one being dragged has the whole of it, and a height in pixels
-    // would only fight the tracks that now decide how tall it is. Nor may it
-    // still be pinned to one end of its row: dragging the top edge sets that
-    // pinning, and a segment pinned to the bottom sizes to its contents
-    // instead of filling what it spans -- so it would span both halves of
-    // the new row and draw itself in neither.
-    seg.y = 0; seg.vh = ROWS; seg.h = 0; seg.valign = 'stretch';
-    return true;
+    }
+    return limit;
   }
 
   function addGrips(node, seg) {
@@ -1868,219 +1796,62 @@
         const south = corner === 'sw' || corner === 'se';
         node.classList.add('sizing');
 
-        // Everything the drag is worked out from. Re-read rather than fixed,
-        // because taking in the row above or below changes which row this
-        // segment is in and who is beside it -- and the rest of the drag has
-        // to carry on from there rather than from where it started.
-        let box, colW, startX, startY, startW, startXc, startH;
-        let row, snap, before, after, hardRight, hardLeft, capNorth;
-        let stacked, rowPx, startY0, startVh, neighbour, neighbourStart, neighbourEnd, limitDown, limitUp;
-        // Where the row ENDED when the drag began. Measured once, because
-        // the row grows as the segment does -- its bottom edge would
-        // otherwise keep pace with the pointer and never be passed at all.
-        let rowTop0, rowBottom0;
+        const g = gridBox();
+        const colW = (g ? g.width : node.parentElement.clientWidth) / COLUMNS;
+        const startX = e.clientX, startY = e.clientY;
+        const was = rectOf(seg);
+        const cols = snapLines(seg.id), rows = snapRows(seg.id);
 
-        const nodeFor = (s) => node.parentElement.querySelector(`.hs[data-id="${s.id}"]`);
-        const put = (s) => { const n2 = nodeFor(s); if (n2) applyOne(n2, s); };
-
-        function rebase(ev) {
-          box = node.parentElement;
-          colW = box.clientWidth / COLUMNS;         // one column, in pixels
-          startX = ev.clientX; startY = ev.clientY;
-          startW = seg.w || COLUMNS;
-          startXc = seg.x || 0;
-          startH = seg.h || node.offsetHeight;
-
-          // Where everyone in this row is NOW. Each move is worked out from
-          // here rather than from wherever the last move left things, so
-          // dragging an edge back puts the neighbours it squeezed back
-          // exactly where they were.
-          row = rowOf(seg);
-          const i = row.indexOf(seg);
-          snap = row.map(s => ({ seg: s, x: s.x || 0, w: s.w || COLUMNS }));
-          before = snap.slice(0, i);
-          after = snap.slice(i + 1);
-
-          // How far this edge may go: every segment on that side squeezed
-          // down to MIN_W and no further. They DO give way -- an edge that
-          // simply stopped at its neighbour meant a segment could never be
-          // made bigger once there was anything beside it -- but only the
-          // ones on the side being dragged.
-          hardRight = COLUMNS;
-          for (let k = 0; k < after.length; k++) {
-            hardRight = Math.min(hardRight, (after[k].x + after[k].w) - (k + 1) * MIN_W);
-          }
-          hardLeft = 0;
-          for (let k = 0; k < before.length; k++) {
-            const b = before[before.length - 1 - k];
-            hardLeft = Math.max(hardLeft, b.x + (k + 1) * MIN_W);
-          }
-
-          // How far the TOP edge may rise WITHIN this row: the room the row
-          // already has, which is whatever the tallest other segment in it
-          // has and this one does not. Past that it is not a taller segment
-          // that is wanted but the row above, which is a different gesture
-          // and handled as one.
-          let tallestOther = 0;
-          for (const s of snap) {
-            if (s.seg === seg) continue;
-            const n2 = nodeFor(s.seg);
-            if (n2) tallestOther = Math.max(tallestOther, n2.offsetHeight);
-          }
-          capNorth = Math.max(startH, tallestOther);
-
-          const edge0 = box.getBoundingClientRect();
-          rowTop0 = edge0.top; rowBottom0 = edge0.bottom;
-
-          // Is this one stacked inside its row, and if so who is it stacked
-          // against? The line between the two is what the up-and-down drag
-          // moves then.
-          stacked = rowIsSplit(row);
-          rowPx = box.getBoundingClientRect().height || 1;
-          startY0 = yOf(seg); startVh = vhOf(seg);
-          neighbour = null; neighbourStart = 0; neighbourEnd = ROWS;
-          if (stacked) {
-            const sharesColumns = (o) => (o.x || 0) < (seg.x || 0) + (seg.w || COLUMNS)
-              && (seg.x || 0) < (o.x || 0) + (o.w || COLUMNS);
-            neighbour = row.find(o => o !== seg && sharesColumns(o)
-              && (south ? yOf(o) === startY0 + startVh : yOf(o) + vhOf(o) === startY0)) || null;
-            if (neighbour) { neighbourStart = yOf(neighbour); neighbourEnd = yOf(neighbour) + vhOf(neighbour); }
-          }
-          // How far the line may travel: to the far edge of whoever is on
-          // the other side of it, less the least that one may be left with.
-          limitDown = neighbour ? neighbourEnd - MIN_VH : ROWS;
-          limitUp = neighbour ? neighbourStart + MIN_VH : 0;
-        }
-        rebase(e);
-
-        const restore = () => {
-          for (const s of snap) {
-            if (s.seg === seg) continue;
-            if (s.seg.x === s.x && s.seg.w === s.w) continue;
-            s.seg.x = s.x; s.seg.w = s.w; put(s.seg);
-          }
-        };
-
-        // The anchor is said out loud, because the drag sets it: a segment
-        // that filled its row is pinned to whichever edge was not dragged.
-        const show = (w, h, from) => {
-          // Looked up rather than held on to: taking in a row redraws the
-          // page, and the handles -- this readout among them -- are built
-          // fresh, so the one captured when the drag began is no longer on
-          // the page.
+        const show = (what) => {
           const where = node.querySelector(':scope > .hs-size') || readout;
-          where.textContent = (h ? `${w}% · ${Math.round(h)}px` : `${w}%`) + (from ? ` · ${from}` : '');
+          where.textContent = what;
         };
-        show(startW, seg.h);
-
-        // How far past the row's own edge the pointer has to go before the
-        // next row is taken in. Far enough that it cannot happen by accident
-        // while resizing within the row, near enough to find.
-        const REACH = 16;
+        const say = () => show(`${wOf(seg)}% · ${hOf(seg)} rows`
+          + ` · from the ${south ? 'top' : 'bottom'} ${east ? 'left' : 'right'}`);
+        say();
 
         const onMove = (ev) => {
-          const dx = (ev.clientX - startX) / colW;
-          restore();
-          const lines = snapLines(row, seg.id);
+          const dx = Math.round((ev.clientX - startX) / Math.max(1, colW));
+          const dy = Math.round((ev.clientY - startY) / UNIT);
+
+          // Across. The edge being dragged moves; the other stays put.
           if (east) {
-            // The right edge moves; the left one stays exactly where it is.
-            const right = snapCol(
-              Math.round(Math.max(startXc + MIN_W, Math.min(hardRight, startXc + startW + dx))), lines);
-            seg.w = right - startXc;
-            // Each neighbour in the way keeps its right edge and gives up the
-            // room on its left -- it shrinks, rather than being shoved along
-            // into the next one.
-            let at = right;
-            for (const s of after) {
-              if (at <= s.x) break;                      // not reached: it and everything past it stay put
-              const edge = Math.max(at + MIN_W, s.x + s.w);
-              s.seg.x = at; s.seg.w = edge - at;
-              at = edge;
-              put(s.seg);
-            }
+            const stop = edgeLimit(was, 'e', seg.id);
+            const right = Math.max(was.x + MIN_W,
+              Math.min(stop, snapCol(was.x + was.w + dx, cols)));
+            seg.x = was.x; seg.w = right - was.x;
           } else {
-            // The left edge moves; the right one stays exactly where it is.
-            const left = snapCol(
-              Math.round(Math.min(startXc + startW - MIN_W, Math.max(hardLeft, startXc + dx))), lines);
-            seg.x = left;
-            seg.w = (startXc + startW) - left;
-            let at = left;
-            for (let k = before.length - 1; k >= 0; k--) {
-              const s = before[k];
-              if (at >= s.x + s.w) break;
-              const x = Math.min(s.x, at - MIN_W);
-              s.seg.x = x; s.seg.w = at - x;
-              at = x;
-              put(s.seg);
-            }
+            const stop = edgeLimit(was, 'w', seg.id);
+            const left = Math.min(was.x + was.w - MIN_W,
+              Math.max(stop, snapCol(was.x + dx, cols)));
+            seg.x = left; seg.w = (was.x + was.w) - left;
           }
+
+          // And down, which is now exactly the same gesture. Dragging the
+          // bottom edge down grows INTO the space below if there is any and
+          // stops where there is not; dragging the top edge up does the
+          // same upwards. Nothing is pushed and no rows are merged.
+          if (south) {
+            const stop = edgeLimit(was, 's', seg.id);
+            const bottom = Math.max(was.y + MIN_H,
+              Math.min(stop, Math.min(MAX_Y, snapCol(was.y + was.h + dy, rows, 1))));
+            seg.y = was.y; seg.h = bottom - was.y;
+          } else {
+            const stop = edgeLimit(was, 'n', seg.id);
+            const top = Math.min(was.y + was.h - MIN_H,
+              Math.max(stop, snapCol(was.y + dy, rows, 1)));
+            seg.y = top; seg.h = (was.y + was.h) - top;
+          }
+
           applyOne(node, seg);
-
-          // ── up and down ──
-          //
-          // Dragged past the end of its row and into space in the next one,
-          // the two rows become one and this segment has the height of both.
-          // Short of that, both edges change the height and the one you are
-          // NOT dragging stays where it is, which is the whole of what
-          // dragging an edge means.
-          const past = south ? ev.clientY - rowBottom0 : rowTop0 - ev.clientY;
-          if (past > REACH && roomInNextRow(seg, south)) {
-            takeInNextRow(seg, south);
-            drawAll();                  // the rows themselves changed
-            rebase(ev);                 // and the drag carries on from here
-            show(seg.w, 0, south ? 'took in the row below' : 'took in the row above');
-            return;
-          }
-
-          const dy = ev.clientY - startY;
-
-          // A segment stacked inside its row is resized by moving the line
-          // between it and the one above or below, not by being given a
-          // height in pixels -- the row's tracks decide how tall each of
-          // them is, and a pixel height would only fight them.
-          if (stacked) {
-            const unit = rowPx / ROWS;
-            const steps = Math.round(dy / Math.max(1, unit));
-            if (south) {
-              const end = Math.max(startY0 + MIN_VH, Math.min(limitDown, startY0 + startVh + steps));
-              seg.y = startY0; seg.vh = end - startY0;
-            } else {
-              const top = Math.min(startY0 + startVh - MIN_VH, Math.max(limitUp, startY0 + steps));
-              seg.y = top; seg.vh = (startY0 + startVh) - top;
-            }
-            // And the one it shares the line with gives up exactly what this
-            // one took, so there is never a gap between them.
-            if (neighbour) {
-              if (south) { neighbour.y = seg.y + seg.vh; neighbour.vh = neighbourEnd - neighbour.y; }
-              else { neighbour.y = neighbourStart; neighbour.vh = seg.y - neighbourStart; }
-              const n2 = nodeFor(neighbour);
-              if (n2) applyOne(n2, neighbour);
-            }
-            applyOne(node, seg);
-            show(seg.w, 0, `${Math.round((seg.vh / ROWS) * 100)}% of the row`);
-            return;
-          }
-
-          // Downwards there is always somewhere to go -- the row grows. Up
-          // there is only the room the row already has, and past that it is
-          // the row above that is wanted (handled above).
-          const ceiling = south ? 1200 : Math.min(1200, capNorth);
-          seg.h = Math.max(80, Math.min(ceiling, Math.round(startH + (south ? dy : -dy))));
-          if (south) { if (seg.valign === 'bottom') seg.valign = 'top'; }
-          else if (!seg.valign || seg.valign === 'stretch' || seg.valign === 'top') seg.valign = 'bottom';
-          applyOne(node, seg);
-          const stuck = !south && seg.h >= ceiling && startH - dy > ceiling;
-          show(seg.w, seg.h,
-            stuck
-              ? (roomInNextRow(seg, false) ? 'keep going for the row above' : 'the top of the row')
-              : (south ? 'from the top' : 'from the bottom'));
+          applyPageRows();       // the page may have grown under the segment
+          say();
         };
         const onUp = () => {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           node.classList.remove('sizing');
-          // Rows may have been merged, which is more than a change of size.
-          save();
+          save({ redraw: false });
         };
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
@@ -2173,18 +1944,16 @@
   };
 
   // The size and position of every segment, without touching what is inside
-  // them. Enough on its own whenever nothing moved between rows.
+  // them. Always enough: every segment is in the one grid, so there is no
+  // longer such a thing as moving to another row's container and no reason
+  // for a move to rebuild the page.
   function applyGeometry() {
     const host = document.getElementById('home-segments');
     if (!host) return;
-    // A segment that changed rows cannot be done this way; the page is
-    // rebuilt for that.
+    applyPageRows();
     for (const seg of LAYOUT) {
       const node = host.querySelector(`.hs[data-id="${seg.id}"]`);
-      if (!node) continue;
-      const box = node.parentElement;
-      if (!box || Number(box.dataset.row) !== (Number(seg.row) || 0)) { drawAll(); return; }
-      applyOne(node, seg);
+      if (node) applyOne(node, seg);
     }
   }
 
@@ -2276,10 +2045,12 @@
           // A row of its own at the bottom, which is somewhere definite --
           // without a row of its own a new segment landed wherever the
           // wrapping happened to put it.
-          const lastRow = LAYOUT.reduce((n, x) => Math.max(n, Number(x.row) || 0), -1);
+          // Under everything there is, across the page, which is the one
+          // place that is certainly empty.
+          const below = LAYOUT.reduce((n, x) => Math.max(n, yOf(x) + hOf(x)), 0);
           const seg = {
             id: `${t.type}-${Date.now().toString(36)}`, type: t.type,
-            row: lastRow + 1, x: 0, w: COLUMNS, h: 0, scale: 100,
+            x: 0, y: below, w: COLUMNS, h: t.rows || 14, scale: 100,
           };
           for (const o of t.options || []) seg[o.id] = o.default;
           LAYOUT.push(seg);
@@ -2406,14 +2177,19 @@
       wIn.oninput = () => { values.w = Math.max(MIN_W, Math.min(COLUMNS, parseInt(wIn.value, 10) || COLUMNS)); };
       wWrap.appendChild(wIn);
 
+      // In grid rows, not pixels. A height in pixels was a height nothing
+      // else on the page had to agree about, which is why 0 had to mean
+      // "however tall its contents are" and why the row it was in had to be
+      // as tall as the tallest thing in it. A segment is a rectangle in the
+      // page's grid now, so its height is the same kind of number as its
+      // width and there is no such thing as not having one.
       const hWrap = el('div', 'he-opt');
-      hWrap.appendChild(el('label', '', 'Height in pixels (0 to fit its contents)'));
+      hWrap.appendChild(el('label', '', `Height (rows of ${UNIT}px)`));
       const hIn = el('input');
-      hIn.type = 'number'; hIn.min = 0; hIn.max = 1200;
-      hIn.value = String(values.h || 0);
+      hIn.type = 'number'; hIn.min = MIN_H; hIn.max = MAX_H;
+      hIn.value = String(hOf(values));
       hIn.oninput = () => {
-        const n = parseInt(hIn.value, 10) || 0;
-        values.h = n ? Math.max(80, Math.min(1200, n)) : 0;
+        values.h = Math.max(MIN_H, Math.min(MAX_H, parseInt(hIn.value, 10) || MIN_H));
       };
       hWrap.appendChild(hIn);
 
@@ -2430,16 +2206,14 @@
       };
       sWrap.appendChild(sIn);
 
-      // Where it sits DOWN its row, which had no setting at all -- "where in
-      // its space" offered left, middle and right and nothing else, so a
-      // render could not be put at the bottom of a tall row. It is here
-      // rather than in each type's options because it is true of every
-      // segment, like the width and the height.
+      // Where what is in it sits, up and down. It matters more than it did:
+      // every segment has a height of its own now and most are taller than
+      // what is in them.
       const vWrap = el('div', 'he-opt');
-      vWrap.appendChild(el('label', '', 'Down its row'));
+      vWrap.appendChild(el('label', '', 'What is inside it sits'));
       const vIn = el('select');
       for (const [value, label] of [
-        ['stretch', 'Fill the row'],
+        ['stretch', 'Filling it'],
         ['top', 'At the top'],
         ['middle', 'In the middle'],
         ['bottom', 'At the bottom'],
@@ -2538,6 +2312,9 @@
           if (seg) addTools(node, seg);
         }
       }
+      // The room under the page to drag a segment into comes and goes with
+      // the handles.
+      applyPageRows();
     }
   }
 

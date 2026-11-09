@@ -4631,16 +4631,19 @@ const HOME_DEFAULT = [
   // The greeting is a segment like everything else now, so it can be moved,
   // reworded or taken off the page. It used to be an <h1> in the markup,
   // which meant it was the one thing on the home page nobody could change.
-  { id: "greeting", type: "greeting", w: 100, h: 0 },
-  { id: "recent", type: "recent", title: "Continue playing", count: 6, w: 58, h: 0, action: "both" },
-  { id: "player", type: "player", title: "", height: 260, w: 42, h: 0 },
+  { id: "greeting", type: "greeting", x: 0, y: 0, w: 100, h: 3 },
+  { id: "recent", type: "recent", title: "Continue playing", count: 6,
+    x: 0, y: 3, w: 58, h: 15, action: "both" },
+  { id: "player", type: "player", title: "", height: 260, x: 58, y: 3, w: 42, h: 15 },
   {
     id: "modpacks", type: "projects", title: "Featured modpacks",
-    provider: "modrinth", kind: "modpack", sort: "featured", count: 6, w: 100, h: 0,
+    provider: "modrinth", kind: "modpack", sort: "featured", count: 6,
+    x: 0, y: 18, w: 100, h: 14,
   },
   {
     id: "mods", type: "projects", title: "Featured mods",
-    provider: "modrinth", kind: "mod", sort: "featured", count: 6, w: 100, h: 0,
+    provider: "modrinth", kind: "mod", sort: "featured", count: 6,
+    x: 0, y: 32, w: 100, h: 14,
   },
 ];
 
@@ -4877,12 +4880,40 @@ const HOME_COLUMNS = 100;
 const HOME_W_DEFAULT = 100;        // a row of its own, which is how it was
 const HOME_W_MIN = 12;
 const clampW = (v) => Math.max(HOME_W_MIN, Math.min(HOME_COLUMNS, Math.round(Number(v) || HOME_W_DEFAULT)));
-// 0 means "however tall its contents are", which is the old behaviour.
-const clampH = (v) => {
-  const n = Math.round(Number(v) || 0);
-  if (!n) return 0;
-  return Math.max(80, Math.min(1200, n));
+// How tall a segment is, in grid rows.
+//
+// This was a height in PIXELS, with 0 for "however tall its contents are",
+// and that is what made the home page a list of rows rather than a grid. A
+// segment with no height of its own has to be given one by something, and
+// the something was its row: every segment in a row was as tall as the
+// tallest, the row was as tall as that, and the next row started below it.
+// Which is why resizing a segment upwards could only ever move the row
+// above out of the way, and why two segments could not sit side by side
+// across what were two rows -- there was no such thing as across two rows.
+//
+// A height in grid rows is a height nothing else has to agree about. One
+// row is HOME_UNIT pixels; a segment spans as many as it says.
+const HOME_UNIT = 22;              // pixels per grid row
+const HOME_H_MIN = 3;              // the shortest a segment may be made
+const HOME_H_MAX = 80;             // and the tallest, which is a long page
+const HOME_H_DEFAULT = 14;         // what a segment nothing is known about gets
+// What each kind of segment is worth, in grid rows, when nothing says.
+//
+// A height used to be optional and a segment with none was as tall as its
+// contents, so a greeting was one line and a row of mods was however tall a
+// card is. Every segment has a height of its own now, and giving them all
+// the same one would make a one-line greeting as tall as a row of cards --
+// both when one is added and when an old layout is brought forward.
+const HOME_H_FOR = {
+  greeting: 3, clock: 5, countdown: 5, playtime: 5,
+  friends: 10, news: 12, mcnews: 12, snapshots: 12,
+  recent: 15, projects: 14, media: 12, player: 15,
 };
+const homeRowsFor = (type) => HOME_H_FOR[type] || HOME_H_DEFAULT;
+const HOME_Y_MAX = 400;
+const clampH = (v, type) => Math.max(HOME_H_MIN, Math.min(HOME_H_MAX,
+  Math.round(Number(v) || homeRowsFor(type))));
+const clampY = (v) => Math.max(0, Math.min(HOME_Y_MAX, Math.round(Number(v) || 0)));
 
 // How big the things INSIDE a segment are drawn.
 //
@@ -4890,115 +4921,126 @@ const clampH = (v) => {
 // size the stylesheet said -- which after the grid rework was far smaller
 // than the home page used to show. It is a percentage, like the width.
 const clampScale = (v) => Math.max(50, Math.min(220, Math.round(Number(v) || 100)));
-// Which row a segment is on, and where along it it starts.
+// Where a segment starts across the page.
 //
-// Rows used to be a consequence of the widths: segments were laid out one
+// Columns used to be a consequence of the widths: segments were laid out one
 // after another and wrapped when they ran out of room. That is why a row
 // could not have a gap in it, why shrinking one row pulled the next one up
 // into it, and why there was nowhere to drop a segment except onto another
-// one. A row is a row now, and a segment says where in it it sits.
-const clampRow = (v) => Math.max(0, Math.min(200, Math.round(Number(v) || 0)));
+// one.
 const clampX = (v) => Math.max(0, Math.min(HOME_COLUMNS - HOME_W_MIN, Math.round(Number(v) || 0)));
-// Where a segment sits DOWN its row, when the row is taller than it is --
-// which happens as soon as two segments beside each other have different
-// heights. "stretch" is the default and what every layout did before this
-// existed: as tall as the row. The named three are what makes room above a
-// segment a thing that exists, and therefore what makes dragging its top edge
-// mean anything.
-// A row is divided up and down into this many parts, which is what lets two
-// segments be stacked inside one row rather than only side by side. A
-// segment that says nothing takes the whole height, which is every layout
-// made before this existed.
-const HOME_ROWS = 12;
-const clampSubY = (v) => {
-  const n = Math.round(Number(v) || 0);
-  return Number.isFinite(n) ? Math.max(0, Math.min(HOME_ROWS - 1, n)) : 0;
-};
-const clampSubVh = (v, y) => {
-  const n = Math.round(Number(v));
-  if (!Number.isFinite(n) || n <= 0) return HOME_ROWS - y;
-  return Math.max(1, Math.min(HOME_ROWS - y, n));
-};
-
+// Where a segment's CONTENTS sit inside it, now that every segment has a
+// height of its own and is usually taller than what is in it.
 const HOME_VALIGNS = ["stretch", "top", "middle", "bottom"];
 const clampValign = (v) => (HOME_VALIGNS.includes(String(v)) ? String(v) : "stretch");
 
-// Give rows and positions to a layout that has none -- which is every layout
-// saved before this. Walked the way the old wrapping walked it, so a page
-// comes forward looking exactly as it did.
-function placeRows(layout) {
-  let row = 0, x = 0;
-  return layout.map(seg => {
+/** Do these two rectangles share any of the grid? */
+const homeHits = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w
+  && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/**
+ * Bring a layout forward to x, y, w and h, whatever it was stored as.
+ *
+ * Three generations of layout arrive here. The oldest has widths and nothing
+ * else and was laid out by wrapping. The next has `row`, and a pixel height
+ * where it had one at all. The newest -- after rows stopped being a thing --
+ * already has `y` and `h` in grid rows, and is left exactly as it is.
+ *
+ * The conversion keeps a page looking as it did: each old row becomes a band
+ * of grid rows as tall as its tallest segment needed, the segments in it keep
+ * their columns, and a segment that was stacked inside its row (`y`/`vh` out
+ * of twelve) keeps its share of that band.
+ */
+function placeGrid(layout) {
+  // Rows the oldest layouts never had: worked out by wrapping, as they were.
+  let wrapRow = 0, wrapX = 0;
+  const rowed = layout.map(seg => {
     const w = clampW(seg.w);
-    const hasPlace = Number.isFinite(Number(seg.row)) && Number.isFinite(Number(seg.x));
-    if (hasPlace) {
-      row = clampRow(seg.row);
-      x = Math.min(clampX(seg.x) + w, HOME_COLUMNS);
-      return { ...seg, w, row: clampRow(seg.row), x: clampX(seg.x) };
+    if (Number.isFinite(Number(seg.row))) {
+      return { ...seg, w, _row: Math.max(0, Math.round(Number(seg.row))) };
     }
-    if (x + w > HOME_COLUMNS) { row++; x = 0; }
-    const out = { ...seg, w, row, x };
-    x += w;
+    if (Number.isFinite(Number(seg.y)) && Number.isFinite(Number(seg.h))) {
+      return { ...seg, w, _row: null };     // already a grid; nothing to do
+    }
+    if (wrapX + w > HOME_COLUMNS) { wrapRow++; wrapX = 0; }
+    const out = { ...seg, w, x: wrapX, _row: wrapRow };
+    wrapX += w;
     return out;
   });
+
+  // A pixel height, in grid rows; a segment that had none gets the default.
+  const unitsOf = (s) => {
+    const px = Math.round(Number(s.h) || 0);
+    return px > 0 ? Math.max(HOME_H_MIN, Math.ceil(px / HOME_UNIT)) : homeRowsFor(s.type);
+  };
+  const SUB = 12;                            // what `vh` was out of
+  const stacked = (s) => Number.isFinite(Number(s.vh)) && Number(s.vh) > 0 && Number(s.vh) < SUB;
+
+  // Each old row becomes a band of grid rows, from the top, so each starts
+  // where the one above it ended. A segment already in grid units has its
+  // own y and takes part in none of this.
+  const rows = [...new Set(rowed.filter(s => s._row !== null).map(s => s._row))]
+    .sort((a, b) => a - b);
+  let at = 0;
+  for (const r of rows) {
+    const segs = rowed.filter(s => s._row === r);
+    // As tall as the row was: its tallest segment. A stacked segment only
+    // ever had a share of that, so its own height does not set it.
+    const tall = segs.reduce((most, s) =>
+      Math.max(most, stacked(s) ? HOME_H_MIN : unitsOf(s)), HOME_H_MIN);
+    for (const s of segs) {
+      const sy = Math.max(0, Math.min(SUB - 1, Math.round(Number(s.y) || 0)));
+      const svh = Number.isFinite(Number(s.vh)) && Number(s.vh) > 0
+        ? Math.min(SUB - sy, Math.round(Number(s.vh))) : SUB - sy;
+      if (sy === 0 && svh === SUB) { s.y = at; s.h = tall; }
+      else {
+        s.y = at + Math.round((sy / SUB) * tall);
+        s.h = Math.max(HOME_H_MIN, Math.round((svh / SUB) * tall));
+      }
+    }
+    at += tall;
+  }
+  return rowed.map(({ _row, vh, row, ...s }) =>
+    ({ ...s, x: clampX(s.x), y: clampY(s.y), h: clampH(s.h, s.type) }));
 }
 
-// Rows numbered 0,1,2... with nothing missing, and every segment inside its
-// row in order and not overlapping the one before it. Anything that would
-// overlap is pushed along; anything that then runs off the end starts a row
-// of its own, which is the only way a layout can be made to fit.
-function tidyRows(layout) {
-  const byRow = new Map();
-  for (const seg of layout) {
-    const r = clampRow(seg.row);
-    if (!byRow.has(r)) byRow.set(r, []);
-    byRow.get(r).push(seg);
-  }
+/**
+ * A layout where nothing overlaps anything else.
+ *
+ * Overlap is the only rule a free grid has. There is no compaction: a segment
+ * stays exactly where it was put, gaps and all, because a page that quietly
+ * rearranges itself after every change is not a page anyone can lay out.
+ * What cannot stay -- two segments on the same ground, which only a layout
+ * edited by hand or an old one brought forward can be -- is moved DOWN, the
+ * later one of the two, which is the one change that cannot cascade sideways
+ * into a third.
+ */
+function tidyGrid(layout) {
   const out = [];
-  let n = 0;
-  for (const r of [...byRow.keys()].sort((a, b) => a - b)) {
-    const row = byRow.get(r).sort((a, b) =>
-      (clampSubY(a.y) - clampSubY(b.y)) || (clampX(a.x) - clampX(b.x)));
-    // Two segments only compete for the same columns when they are at the
-    // same HEIGHT in the row. Without that, stacking one above another --
-    // which is the whole point of y and vh -- was undone the moment it was
-    // saved: they share an x, so the second was shoved to the right or onto
-    // a row of its own.
-    const placed = [];
-    const overlaps = (a, b) => {
-      const ay = clampSubY(a.y), ah = clampSubVh(a.vh, ay);
-      const by = clampSubY(b.y), bh = clampSubVh(b.vh, by);
-      return ay < by + bh && by < ay + ah;
+  for (const seg of layout) {
+    const put = {
+      ...seg,
+      x: clampX(seg.x), w: clampW(seg.w),
+      y: clampY(seg.y), h: clampH(seg.h, seg.type),
     };
-    for (const seg of row) {
-      const at = placed.filter(p => overlaps(p, seg))
-        .reduce((most, p) => Math.max(most, p.x + p.w), 0);
-      let x = Math.max(at, clampX(seg.x));
-      let w = clampW(seg.w);
-      if (x + w > HOME_COLUMNS) {
-        // No room left beside it on this row: it gets one of its own rather
-        // than being squeezed below the width anything can be read at.
-        if (at > 0) {
-          out.push({ ...seg, row: ++n, x: 0, w: Math.min(w, HOME_COLUMNS), y: 0, vh: HOME_ROWS });
-          continue;
-        }
-        w = HOME_COLUMNS - x;
-      }
-      const put = { ...seg, row: n, x, w };
-      placed.push(put);
-      out.push(put);
+    if (put.x + put.w > HOME_COLUMNS) put.x = HOME_COLUMNS - put.w;
+    // Straight down until it is clear. Bounded by the tallest the page can
+    // be, after which it simply stays and the two overlap -- better than a
+    // segment flung off the end of a layout nobody can then find.
+    let guard = 0;
+    for (; ;) {
+      const hit = out.find(o => homeHits(o, put));
+      if (!hit || ++guard > 200) break;
+      put.y = Math.min(HOME_Y_MAX, hit.y + hit.h);
     }
-    n++;
+    out.push(put);
   }
-  // Rows renumbered from nothing, so a row emptied by a move leaves no hole.
-  const seen = new Map();
-  for (const seg of out) if (!seen.has(seg.row)) seen.set(seg.row, seen.size);
-  return out.map(seg => ({ ...seg, row: seen.get(seg.row) }));
+  return out;
 }
 
 const homeDefaults = (type) => {
   const spec = HOME_TYPES.find(t => t.type === type);
-  const out = { w: HOME_W_DEFAULT, h: 0, scale: 100 };
+  const out = { w: HOME_W_DEFAULT, h: homeRowsFor(type), scale: 100 };
   for (const o of (spec && spec.options) || []) out[o.id] = o.default;
   return out;
 };
@@ -5009,19 +5051,25 @@ ipcMain.handle("home:layout", () => {
   // Filled out, so the page never has to wonder what a missing option means.
   return {
     success: true,
-    types: HOME_TYPES,
+    // Each type's own default height goes with it, so the page can give a
+    // segment it is adding the right one without a second copy of the list.
+    types: HOME_TYPES.map(t => ({ ...t, rows: homeRowsFor(t.type) })),
     columns: HOME_COLUMNS,
+    unit: HOME_UNIT,
     custom: Array.isArray(saved) && saved.length > 0,
-    // Widths first, then where each one sits: the rows a layout without them
-    // gets are worked out from the widths, so those have to be the real ones.
-    layout: placeRows(layout.map(seg => {
+    // Widths first, then where each one sits: a layout old enough to have
+    // neither rows nor grid positions gets its rows worked out from the
+    // widths, so those have to be the real ones.
+    layout: placeGrid(layout.map(seg => {
       const full = { ...homeDefaults(seg.type), ...seg };
       // Widths were twelfths before they were percentages. Anything that
       // small is a layout from then, so it is brought forward rather than
       // coming out as a sliver.
       if (full.w != null && Number(full.w) <= 12) full.w = Math.round(Number(full.w) / 12 * 100);
       full.w = clampW(full.w);
-      full.h = clampH(full.h);
+      // NOT clamped here: placeGrid has to be able to tell a pixel height
+      // from a height in grid rows, and clamping would make every old
+      // layout's height look like a plausible number of rows.
       full.scale = clampScale(full.scale);
       return full;
     })),
@@ -5036,7 +5084,7 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
     .slice(0, 40)
     .map((seg, i) => {
       const allowed = new Set(["id", "type", "w", "h", "scale",
-        "row", "x", "y", "vh", "valign",
+        "x", "y", "valign",
         ...(HOME_TYPES.find(t => t.type === seg.type).options || []).map(o => o.id)]);
       const out = {};
       // Only the options this type declares, so an edited layout cannot
@@ -5045,19 +5093,14 @@ ipcMain.handle("home:setLayout", (event, { layout } = {}) => {
       out.type = seg.type;
       out.id = String(seg.id || `${seg.type}-${i}`).slice(0, 64);
       out.w = clampW(seg.w);
-      out.h = clampH(seg.h);
+      out.h = clampH(seg.h, seg.type);
       out.scale = clampScale(seg.scale);
-      out.row = clampRow(seg.row);
       out.x = clampX(seg.x);
-      // Where it sits DOWN its row, and how much of the row it takes, so two
-      // segments can be stacked inside one row. Absent means the whole of
-      // it, which is every layout made before rows could be divided.
-      out.y = clampSubY(seg.y);
-      out.vh = clampSubVh(seg.vh, out.y);
+      out.y = clampY(seg.y);
       out.valign = clampValign(seg.valign);
       return out;
     });
-  const tidied = tidyRows(clean);
+  const tidied = tidyGrid(clean);
   settings.set("homeLayout", tidied);
   // NOT back to the window that asked. It already has the answer -- it is
   // the return value -- and sending it the change as well made it rebuild

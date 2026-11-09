@@ -94,10 +94,27 @@ started.
       Electron's log while signed in fine, with
       `[Relay] token refresh failed, trying existing token: undefined` after
       it.
-- [ ] **The home page is still a rowed system.** — Resizing into another row
+- [x] **The home page is still a rowed system.** — Resizing into another row
       moves that row down rather than sharing the space, and two segments
       still cannot sit side by side across what used to be two rows. The row
-      is a container, which is the thing that has to go.
+      is a container, which is the thing that has to go. *It has gone. A row
+      was a BOX, and every remaining complaint came out of that one fact: a
+      segment could not be taller than the box it was in, so dragging its
+      bottom edge down made the box taller and shoved the next one down the
+      page, and dragging its top edge up had nowhere to go; two segments
+      beside each other were the same height whatever they said, because the
+      box was as tall as the taller of them. Dividing a row up and down (`y`
+      and `vh` out of twelve) only moved the problem inside the box. There is
+      one grid for the whole page now and a segment is a rectangle in it: `x`
+      and `w` across in hundredths, `y` and `h` down in rows of 22px. Its top
+      and bottom edges are the same kind of thing as its left and right —
+      each moves until it would run into something and stops, and NOTHING
+      else on the page moves. No row merging, no compaction, no closing up:
+      a gap is a gap because somebody left one. A drop goes where the pointer
+      is at the size it already is, or trades places with what is there, or
+      takes the nearest clear space; it never halves anybody. Old layouts
+      come forward with each row as a band of grid rows as tall as its
+      tallest segment was, so a page looks as it did.*
 
 ---
 
