@@ -61,10 +61,10 @@
   const ARM = 4;                       // the head's arm is 4 px across
   const FACE = 4;                      // and its wooden face 4 px deep
 
+  // Only what can be seen from the side. The wooden face and the inner plate
+  // are both end-on in this view, so neither is ever drawn (see frame()).
   const SRC = {
     side: 'assets/blocks/piston_side.png',
-    inner: 'assets/blocks/piston_inner.png',
-    face: 'assets/blocks/piston_face.png',
     redstone: 'assets/blocks/redstone_block.png',
   };
 
@@ -98,10 +98,13 @@
     { body: [3, 2], block: [3, 1], d: [0, -1] },   // right, pushing up
   ];
 
-  // A texture drawn into one cell, turned so that "up" in the texture points
-  // the way the piston faces. piston_side has its head band along the top, so
-  // turning it is what makes a piston face left rather than up.
-  function drawTurned(cx, im, px, py, d, sx, sy, sw, sh) {
+  // Part of a texture, drawn somewhere in the piston's own frame.
+  //
+  // In that frame the cell is 0..16 both ways and the piston pushes towards
+  // -y, so a head that has gone out sits at a NEGATIVE y and the arm behind
+  // it spans the gap. Turning the frame is what makes a piston face left
+  // rather than up, texture and all.
+  function drawLocal(cx, im, px, py, d, src, dst) {
     const a = d[0] === 0 && d[1] === -1 ? 0
       : d[0] === 1 ? Math.PI / 2
         : d[1] === 1 ? Math.PI
@@ -110,8 +113,7 @@
     cx.translate(px + TEX / 2, py + TEX / 2);
     cx.rotate(a);
     cx.translate(-TEX / 2, -TEX / 2);
-    if (sw === undefined) cx.drawImage(im, 0, 0, TEX, TEX);
-    else cx.drawImage(im, sx, sy, sw, sh, sx, sy, sw, sh);
+    cx.drawImage(im, src[0], src[1], src[2], src[3], dst[0], dst[1], dst[2], dst[3]);
     cx.restore();
   }
 
@@ -132,28 +134,39 @@
       const [bx, by] = p.body, [rx, ry] = p.block, [dx, dy] = p.d;
       const bpx = bx * TEX, bpy = by * TEX;
 
-      // The piston. At rest it is the whole block with its head on the front;
-      // extended, the body is 12 px deep and the inner face shows.
-      if (e <= 0.001) {
-        drawTurned(cx, images.side, bpx, bpy, p.d);
-      } else {
-        // The body, minus the 4 px the head has left with.
-        drawTurned(cx, images.side, bpx, bpy, p.d, 0, FACE, TEX, TEX - FACE);
-        drawTurned(cx, images.inner, bpx, bpy, p.d, 0, 0, TEX, FACE);
-        // The arm, running from the body's face out to where the head is.
-        const reach = e * TEX;
-        const ax = bpx + (dx === 0 ? (TEX - ARM) / 2 : (dx > 0 ? TEX : -reach));
-        const ay = bpy + (dy === 0 ? (TEX - ARM) / 2 : (dy > 0 ? TEX : -reach));
-        const aw = dx === 0 ? ARM : reach;
-        const ah = dy === 0 ? ARM : reach;
-        cx.drawImage(images.side, 0, FACE, TEX, ARM, ax, ay, aw, ah);
-        // And its wooden face, right at the front.
-        const hx = bpx + (dx === 0 ? 0 : (dx > 0 ? TEX + reach - FACE : -reach));
-        const hy = bpy + (dy === 0 ? 0 : (dy > 0 ? TEX + reach - FACE : -reach));
-        const hw = dx === 0 ? TEX : FACE;
-        const hh = dy === 0 ? TEX : FACE;
-        cx.drawImage(images.face, 0, 0, TEX, TEX, hx, hy, hw, hh);
+      // The piston, in three pieces, which is what one is.
+      //
+      // This is a view from the SIDE, so every surface of it that can be seen
+      // is piston_side -- and the two textures that are not, the wooden face
+      // and the inner plate, are both end-on and so are not visible at all.
+      // Drawing them anyway was what made an extended piston look wrong in
+      // three separate ways: the inner plate filled the four pixels the head
+      // had left with, so the body still read as a whole block; the arm was
+      // cut from a band ACROSS the texture rather than the strip along it, so
+      // it was the body's pattern rather than the shaft; and the head wore
+      // the wooden face, which is the one surface a piston never shows from
+      // the side.
+      //
+      //   the head   4 px deep, the collar at the top of the texture
+      //   the arm    4 px across, the strip the game takes it from
+      //   the body   the remaining 12 px, which is what stays behind
+      //
+      // At rest the reach is nothing, the head sits straight on the body and
+      // the three pieces are the whole texture again, so there is no separate
+      // case for it.
+      const reach = e * TEX;
+      // The body: the part of the block that does not travel.
+      drawLocal(cx, images.side, bpx, bpy, p.d,
+        [0, FACE, TEX, TEX - FACE], [0, FACE, TEX, TEX - FACE]);
+      // The arm, from the body's face out to the back of the head. The strip
+      // it is cut from is the one the game's own piston head uses.
+      if (reach > 0) {
+        drawLocal(cx, images.side, bpx, bpy, p.d,
+          [ARM, 0, ARM, TEX], [(TEX - ARM) / 2, FACE - reach, ARM, reach]);
       }
+      // The head: the collar, which is the top four pixels of the texture.
+      drawLocal(cx, images.side, bpx, bpy, p.d,
+        [0, 0, TEX, FACE], [0, -reach, TEX, FACE]);
 
       // The block of redstone, shoved along ahead of the head.
       cx.drawImage(images.redstone, rx * TEX + dx * e * TEX, ry * TEX + dy * e * TEX, TEX, TEX);
@@ -221,7 +234,10 @@
     return found.length;
   }
 
-  window.Loading = { mount, replace, PISTONS, CYCLE };
+  // `frame` is handed out so the shape of a piston can be checked at an
+  // exact point of the cycle rather than by catching the animation at the
+  // right moment (see tests/piston-test.mjs).
+  window.Loading = { mount, replace, frame, PISTONS, CYCLE, TEX, CELLS };
 
   // Spinners that are on the page at load, and any that turn up later.
   const sweep = () => { try { replace(); } catch { /* never break a page over this */ } };

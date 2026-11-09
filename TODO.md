@@ -53,10 +53,22 @@ started.
 - [ ] **Several images stacked as the background.** — Each showing through
       where the one over it is transparent, and a fitted image showing the
       background where it does not reach.
-- [ ] **The piston animation.** — A pushed-out piston draws its base as a
+- [x] **The piston animation.** — A pushed-out piston draws its base as a
       whole block rather than the shorter body; its neck is the base texture
       rather than the shaft; and its head takes the front texture while it is
-      moving.
+      moving. *Three faults, one cause: this is a view from the SIDE, where
+      the only face of a piston that can be seen is `piston_side`. The wooden
+      face and the inner plate are both end-on, so neither is ever visible,
+      and drawing them anyway caused all three — the inner plate filled the
+      four pixels the head had left with, so the body still read as a whole
+      block; the arm was cut from a band ACROSS the texture instead of the
+      strip along it, so it carried the body's pattern rather than the shaft;
+      and the head wore the wooden face. Now drawn as the three pieces a
+      piston is, all off `piston_side`: the twelve pixels that stay behind,
+      a four-pixel arm, and the collar off the top of the texture. At rest
+      the reach is nothing and the three reconstruct the whole texture, so
+      there is no separate case for it. `tests/piston-test.mjs` reads the
+      canvas back and pins the shape.*
 - [ ] **`Failed to refresh player: error.auth.minecraft.login`** — in
       Electron's log while signed in fine, with
       `[Relay] token refresh failed, trying existing token: undefined` after
