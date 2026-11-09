@@ -148,7 +148,7 @@ async function fillPixels(fill, size) {
 // that offset is carried onto the fill's colour. Nothing is judged by hue, so
 // this does the right thing whatever colour the layer happens to be and
 // whatever colour it is being turned into.
-export async function shadeLayer(layerPng, fill, size) {
+export async function shadeLayer(layerPng, fill, size, opts = {}) {
   const want = normaliseFill(fill);
   const base = sharp(layerPng).resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } });
   const { data } = await base.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -165,16 +165,41 @@ export async function shadeLayer(layerPng, fill, size) {
   }
   const mean = n ? sum / n : 0.5;
 
+  // How light the colour is that this layer was DRAWN for.
+  //
+  // Without it, the layer is re-centred on the fill colour's own lightness:
+  // every pixel keeps its distance from the layer's average, and the average
+  // becomes whatever the theme colour happens to be. The launcher's own
+  // backing is drawn at a lightness of about 0.21 and its base colour is
+  // 0.375, so painting the backing in the launcher's OWN colour came out
+  // nearly twice as light as the artwork -- and every other theme was
+  // brightened by the same amount, which is why the backing and the gem
+  // always looked lit up.
+  //
+  // With it, the fill's lightness is read as a DIFFERENCE from the colour
+  // the layer was drawn for: the same colour reproduces the artwork exactly,
+  // a lighter one lightens it by as much as it is lighter, and a darker one
+  // darkens it. Nothing is judged by hue, so this is still right for a
+  // layer of any colour being turned into any other.
+  const anchor = Number.isFinite(opts.anchor) ? opts.anchor : null;
+
   const px = await fillPixels(want, size);
   const out = Buffer.from(data);
   for (let i = 0, p = 0; i < out.length; i += 4, p += 3) {
     if (out[i + 3] < 8) continue;
     const l = rgbToHsl(out[i], out[i + 1], out[i + 2])[2];
     const [fh, fs, fl] = rgbToHsl(px[p], px[p + 1], px[p + 2]);
-    const [r, g, b] = hslToRgb(fh, fs, clamp01(fl + (l - mean)));
+    const want_l = anchor == null ? fl + (l - mean) : l + (fl - anchor);
+    const [r, g, b] = hslToRgb(fh, fs, clamp01(want_l));
     out[i] = r; out[i + 1] = g; out[i + 2] = b;
   }
   return out;
+}
+
+/** How light a colour is, for use as an anchor. */
+export function lightnessOf(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  return rgbToHsl(r, g, b)[2];
 }
 
 // Lay one RGBA buffer over another, in place.
@@ -197,13 +222,13 @@ function over(under, above) {
 // `layers` holds the three PNGs; `fills` says what the first two are made of.
 // A layer with no fill is drawn as it is, which is what the cog always wants
 // and what every layer wants when the icon is left plain.
-export async function buildIcon(layers, fills = {}, size = 256) {
-  const background = await shadeLayer(layers.background, fills.background, size);
-  const gem = await shadeLayer(layers.gem, fills.gem, size);
+export async function buildIcon(layers, fills = {}, size = 256, anchors = {}) {
+  const background = await shadeLayer(layers.background, fills.background, size, { anchor: anchors.background });
+  const gem = await shadeLayer(layers.gem, fills.gem, size, { anchor: anchors.gem });
   const cog = await shadeLayer(layers.cog, null, size);
   over(background, gem);
   over(background, cog);
   return sharp(background, { raw: { width: size, height: size, channels: 4 } }).png().toBuffer();
 }
 
-export default { PART_FILES, buildIcon, shadeLayer, normaliseFill, hexToRgb, rgbToHsl, hslToRgb };
+export default { PART_FILES, buildIcon, shadeLayer, normaliseFill, hexToRgb, rgbToHsl, hslToRgb, lightnessOf };

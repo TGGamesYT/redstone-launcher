@@ -139,6 +139,13 @@
   // where Y and Z are mirrored; playerRenderAnimFlip() switches between the two
   // so it can be settled by looking rather than by argument.
   let flipYZ = false;
+  // A clip says which handedness it was authored in, because a set of them
+  // can be built up out of several rigs -- one authored the Bedrock way and
+  // the next not. The file-wide flag is what a clip that does not say falls
+  // back to, and playerRenderAnimFlip() overrides both so the question can
+  // still be settled by looking.
+  let flipForced = false;
+  const flipFor = (clip) => (flipForced || !clip || clip.flipYZ === undefined) ? flipYZ : !!clip.flipYZ;
 
   // clip: { length, loop, degrees, bones: { <bone>: { rotation: [...],
   //                                         position: [...], scale: [...] } } }
@@ -156,7 +163,8 @@
       anim.animate = function (player) {
         const pose = restPose(player);
         const k = degrees ? DEG : 1;
-        const sy = flipYZ ? -1 : 1, sz = flipYZ ? -1 : 1;
+        const f = flipFor(clip);
+        const sy = f ? -1 : 1, sz = f ? -1 : 1;
         let t = this.progress;
         if (clip.length) t = loops ? t % clip.length : Math.min(t, clip.length);
 
@@ -241,7 +249,8 @@
   function evalClip(rest, clip, t) {
     const pose = blankPose(rest);
     const k = clip.degrees !== false ? DEG : 1;
-    const sy = flipYZ ? -1 : 1, sz = flipYZ ? -1 : 1;
+    const f = flipFor(clip);
+    const sy = f ? -1 : 1, sz = f ? -1 : 1;
     rest.forEach((r, idx) => {
       const tracks = (clip.bones || {})[r.name];
       if (!tracks) return;
@@ -1019,6 +1028,9 @@
   // and the only honest way to settle it is to watch the model. Flip it, watch,
   // and if the flipped version is right, re-run bbmodelconvert.js with --flip.
   window.playerRenderAnimFlip = function () {
+    // Asked for by hand, so it wins over what each clip says about itself --
+    // the point of it is to try the other way round and look.
+    flipForced = true;
     flipYZ = !flipYZ;
     console.log(`Y/Z rotation is now ${flipYZ ? 'MIRRORED' : 'as authored'}.`
       + (flipYZ ? ' If this is the right way round, re-run: node bbmodelconvert.js <file> --flip' : ''));

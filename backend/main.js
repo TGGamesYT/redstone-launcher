@@ -6619,27 +6619,28 @@ async function themedIconPng(opts = {}) {
   const layers = iconLayers();
   // "Plain" is the logo as it was drawn, which is also the fallback if a
   // layer is missing -- an install without them should still have an icon.
-  // The launcher's own colours mean the launcher's own icon.
-  //
-  // Rebuilding it from the layers in the default red does NOT give back the
-  // icon as it was drawn -- the layers are flat fills and the artwork is not,
-  // so the icon came out visibly re-tinted even when nothing about the theme
-  // had been changed. There is nothing to recolour TO in that case, so the
-  // drawn icon is used as it is. (`mergeBlock` is a real change to it, and a
-  // picture of your own is a different icon entirely; both still build.)
-  const untouched = !(opts.mergeBlock == null ? icon.mergeBlock : opts.mergeBlock)
-    && (opts.color || settings.get("baseColor", DEFAULT_SETTINGS.baseColor)) === DEFAULT_SETTINGS.baseColor
-    && settings.get("secondaryColor", DEFAULT_SETTINGS.secondaryColor) === DEFAULT_SETTINGS.secondaryColor
-    && String((settings.get("background", null) || {}).mode || "theme") !== "gradient";
-
-  if (icon.kind === "plain" || untouched || !Object.values(layers).every(f => fs.existsSync(f))) {
+  // Not a special case for the launcher's own colours any more: the
+  // recolouring is anchored to the colours the artwork was drawn for (see
+  // below), so building it in those colours gives the artwork back. One path
+  // for every theme, which is also the only way a fault in it would ever be
+  // noticed.
+  if (icon.kind === "plain" || !Object.values(layers).every(f => fs.existsSync(f))) {
     return sharp(ICON_SOURCE()).resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
   }
   const fills = iconFills({
     color: opts.color,
     mergeBlock: opts.mergeBlock == null ? !!icon.mergeBlock : !!opts.mergeBlock,
   });
-  return appIconParts.buildIcon(layers, fills, 256);
+  // The colours the artwork was drawn for. A theme colour is read as a
+  // difference from these, so the launcher's own colours reproduce the icon
+  // as drawn and every other theme is shifted by as much as it differs --
+  // rather than every icon being re-centred on its theme colour's own
+  // lightness, which lit the backing and the gem up whatever the theme.
+  const anchors = {
+    background: appIconParts.lightnessOf(DEFAULT_SETTINGS.baseColor),
+    gem: appIconParts.lightnessOf(DEFAULT_SETTINGS.secondaryColor),
+  };
+  return appIconParts.buildIcon(layers, fills, 256, anchors);
 }
 
 // Put an icon on the windows and remember it. `icon` is either

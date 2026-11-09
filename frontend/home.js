@@ -1794,6 +1794,66 @@
     return LAYOUT.filter(s => (Number(s.row) || 0) === r).sort((a, b) => (a.x || 0) - (b.x || 0));
   }
 
+  /**
+   * Can this segment grow into the row above or below it?
+   *
+   * Only if the row is there and nothing in it stands in the columns this
+   * segment occupies. A row with something in the way is not space; a row
+   * with a gap wide enough is.
+   */
+  function roomInNextRow(seg, below) {
+    const here = Number(seg.row) || 0;
+    const there = here + (below ? 1 : -1);
+    if (there < 0) return false;
+    const segs = LAYOUT.filter(s => (Number(s.row) || 0) === there);
+    if (!segs.length) return false;                 // no such row: nothing to take in
+    const from = seg.x || 0, to = from + (seg.w || COLUMNS);
+    return !segs.some(o => (o.x || 0) < to && from < (o.x || 0) + (o.w || COLUMNS));
+  }
+
+  /**
+   * Take the row above or below into this one, and let `seg` have the height
+   * of both.
+   *
+   * Two rows are two separate grids, so a segment could never be made taller
+   * than the one it is in: dragging its bottom edge down only made its own
+   * row taller and pushed the next one further down the page, and dragging
+   * the top edge up had nowhere to go at all. Growing into the next row means
+   * the two become ONE row, divided up and down -- which the layout can
+   * already describe (see y and vh). Everything that was in each row keeps
+   * its own half of the new one, and the segment being dragged spans both.
+   */
+  function takeInNextRow(seg, below) {
+    const here = Number(seg.row) || 0;
+    const there = here + (below ? 1 : -1);
+    const half = Math.round(ROWS / 2);
+    // Each row's own divisions squash into the half it keeps.
+    const squash = (list, offset) => {
+      for (const s of list) {
+        const y = Math.round(yOf(s) / 2), vh = Math.max(1, Math.round(vhOf(s) / 2));
+        s.y = Math.min(half - 1, y) + offset;
+        s.vh = Math.max(1, Math.min(half - (s.y - offset), vh));
+      }
+    };
+    const mine = LAYOUT.filter(s => (Number(s.row) || 0) === here);
+    const theirs = LAYOUT.filter(s => (Number(s.row) || 0) === there);
+    squash(mine, below ? 0 : half);
+    squash(theirs, below ? half : 0);
+    for (const s of theirs) s.row = here;
+    // Rows below the pair close up behind it.
+    const gone = below ? there : here;
+    for (const s of LAYOUT) if ((Number(s.row) || 0) > gone && s.row !== here) s.row = (Number(s.row) || 0) - 1;
+    if (!below) for (const s of [...mine, ...theirs]) s.row = Math.min(here, there);
+    // The one being dragged has the whole of it, and a height in pixels
+    // would only fight the tracks that now decide how tall it is. Nor may it
+    // still be pinned to one end of its row: dragging the top edge sets that
+    // pinning, and a segment pinned to the bottom sizes to its contents
+    // instead of filling what it spans -- so it would span both halves of
+    // the new row and draw itself in neither.
+    seg.y = 0; seg.vh = ROWS; seg.h = 0; seg.valign = 'stretch';
+    return true;
+  }
+
   function addGrips(node, seg) {
     const readout = el('div', 'hs-size');
     node.appendChild(readout);
@@ -1804,27 +1864,95 @@
       grip.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const box = node.parentElement;
-        const colW = box.clientWidth / COLUMNS;   // one column, in pixels
-        const startX = e.clientX, startY = e.clientY;
-        const startW = seg.w || COLUMNS;
-        const startXc = seg.x || 0;
-        const startH = seg.h || node.offsetHeight;
         const east = corner === 'ne' || corner === 'se';
         const south = corner === 'sw' || corner === 'se';
         node.classList.add('sizing');
 
-        // Where everyone in this row was when the drag began. Each move is
-        // worked out from HERE rather than from wherever the last move left
-        // things, so dragging an edge back puts the neighbours it squeezed
-        // back exactly where they were.
-        const row = rowOf(seg);
-        const i = row.indexOf(seg);
-        const snap = row.map(s => ({ seg: s, x: s.x || 0, w: s.w || COLUMNS }));
-        const before = snap.slice(0, i);
-        const after = snap.slice(i + 1);
+        // Everything the drag is worked out from. Re-read rather than fixed,
+        // because taking in the row above or below changes which row this
+        // segment is in and who is beside it -- and the rest of the drag has
+        // to carry on from there rather than from where it started.
+        let box, colW, startX, startY, startW, startXc, startH;
+        let row, snap, before, after, hardRight, hardLeft, capNorth;
+        let stacked, rowPx, startY0, startVh, neighbour, neighbourStart, neighbourEnd, limitDown, limitUp;
+        // Where the row ENDED when the drag began. Measured once, because
+        // the row grows as the segment does -- its bottom edge would
+        // otherwise keep pace with the pointer and never be passed at all.
+        let rowTop0, rowBottom0;
+
         const nodeFor = (s) => node.parentElement.querySelector(`.hs[data-id="${s.id}"]`);
         const put = (s) => { const n2 = nodeFor(s); if (n2) applyOne(n2, s); };
+
+        function rebase(ev) {
+          box = node.parentElement;
+          colW = box.clientWidth / COLUMNS;         // one column, in pixels
+          startX = ev.clientX; startY = ev.clientY;
+          startW = seg.w || COLUMNS;
+          startXc = seg.x || 0;
+          startH = seg.h || node.offsetHeight;
+
+          // Where everyone in this row is NOW. Each move is worked out from
+          // here rather than from wherever the last move left things, so
+          // dragging an edge back puts the neighbours it squeezed back
+          // exactly where they were.
+          row = rowOf(seg);
+          const i = row.indexOf(seg);
+          snap = row.map(s => ({ seg: s, x: s.x || 0, w: s.w || COLUMNS }));
+          before = snap.slice(0, i);
+          after = snap.slice(i + 1);
+
+          // How far this edge may go: every segment on that side squeezed
+          // down to MIN_W and no further. They DO give way -- an edge that
+          // simply stopped at its neighbour meant a segment could never be
+          // made bigger once there was anything beside it -- but only the
+          // ones on the side being dragged.
+          hardRight = COLUMNS;
+          for (let k = 0; k < after.length; k++) {
+            hardRight = Math.min(hardRight, (after[k].x + after[k].w) - (k + 1) * MIN_W);
+          }
+          hardLeft = 0;
+          for (let k = 0; k < before.length; k++) {
+            const b = before[before.length - 1 - k];
+            hardLeft = Math.max(hardLeft, b.x + (k + 1) * MIN_W);
+          }
+
+          // How far the TOP edge may rise WITHIN this row: the room the row
+          // already has, which is whatever the tallest other segment in it
+          // has and this one does not. Past that it is not a taller segment
+          // that is wanted but the row above, which is a different gesture
+          // and handled as one.
+          let tallestOther = 0;
+          for (const s of snap) {
+            if (s.seg === seg) continue;
+            const n2 = nodeFor(s.seg);
+            if (n2) tallestOther = Math.max(tallestOther, n2.offsetHeight);
+          }
+          capNorth = Math.max(startH, tallestOther);
+
+          const edge0 = box.getBoundingClientRect();
+          rowTop0 = edge0.top; rowBottom0 = edge0.bottom;
+
+          // Is this one stacked inside its row, and if so who is it stacked
+          // against? The line between the two is what the up-and-down drag
+          // moves then.
+          stacked = rowIsSplit(row);
+          rowPx = box.getBoundingClientRect().height || 1;
+          startY0 = yOf(seg); startVh = vhOf(seg);
+          neighbour = null; neighbourStart = 0; neighbourEnd = ROWS;
+          if (stacked) {
+            const sharesColumns = (o) => (o.x || 0) < (seg.x || 0) + (seg.w || COLUMNS)
+              && (seg.x || 0) < (o.x || 0) + (o.w || COLUMNS);
+            neighbour = row.find(o => o !== seg && sharesColumns(o)
+              && (south ? yOf(o) === startY0 + startVh : yOf(o) + vhOf(o) === startY0)) || null;
+            if (neighbour) { neighbourStart = yOf(neighbour); neighbourEnd = yOf(neighbour) + vhOf(neighbour); }
+          }
+          // How far the line may travel: to the far edge of whoever is on
+          // the other side of it, less the least that one may be left with.
+          limitDown = neighbour ? neighbourEnd - MIN_VH : ROWS;
+          limitUp = neighbour ? neighbourStart + MIN_VH : 0;
+        }
+        rebase(e);
+
         const restore = () => {
           for (const s of snap) {
             if (s.seg === seg) continue;
@@ -1833,70 +1961,22 @@
           }
         };
 
-        // How far this edge may go: every segment on that side squeezed down
-        // to MIN_W and no further. They DO give way -- an edge that simply
-        // stopped at its neighbour meant a segment could never be made bigger
-        // once there was anything beside it -- but only the ones on the side
-        // being dragged, and only while it is being dragged towards them.
-        let hardRight = COLUMNS;
-        for (let k = 0; k < after.length; k++) {
-          hardRight = Math.min(hardRight, (after[k].x + after[k].w) - (k + 1) * MIN_W);
-        }
-        let hardLeft = 0;
-        for (let k = 0; k < before.length; k++) {
-          const b = before[before.length - 1 - k];
-          hardLeft = Math.max(hardLeft, b.x + (k + 1) * MIN_W);
-        }
-
-        // How far the TOP edge may rise: to the top of the row and no
-        // further.
-        //
-        // It used to have no limit, and the result was the opposite of what
-        // dragging an edge means. The top edge is pinned by making the
-        // segment sit at the BOTTOM of its row, so a segment already as tall
-        // as the row has nothing above it to grow into -- and every pixel
-        // asked for past that made the ROW taller, which moved the bottom
-        // edge down while the top stayed exactly where it was. Dragging up
-        // grew the thing downwards.
-        //
-        // The room above is whatever the row has that this segment is not
-        // already using, which is the tallest OTHER segment in it. Measured
-        // from the segments rather than from the row box, which also counts
-        // the gap below the row. Nothing beside it means no room, and the
-        // edge simply does not move.
-        let tallestOther = 0;
-        for (const s of snap) {
-          if (s.seg === seg) continue;
-          const n2 = nodeFor(s.seg);
-          if (n2) tallestOther = Math.max(tallestOther, n2.offsetHeight);
-        }
-        const capNorth = Math.max(startH, tallestOther);
-
-        // Is this one stacked inside its row, and if so who is it stacked
-        // against? The line between the two is what the up-and-down drag
-        // moves then.
-        const stacked = rowIsSplit(row);
-        const rowPx = box.getBoundingClientRect().height || 1;
-        const startY0 = yOf(seg), startVh = vhOf(seg);
-        let neighbour = null, neighbourStart = 0, neighbourEnd = ROWS;
-        if (stacked) {
-          const sharesColumns = (o) => (o.x || 0) < (seg.x || 0) + (seg.w || COLUMNS)
-            && (seg.x || 0) < (o.x || 0) + (o.w || COLUMNS);
-          neighbour = row.find(o => o !== seg && sharesColumns(o)
-            && (south ? yOf(o) === startY0 + startVh : yOf(o) + vhOf(o) === startY0)) || null;
-          if (neighbour) { neighbourStart = yOf(neighbour); neighbourEnd = yOf(neighbour) + vhOf(neighbour); }
-        }
-        // How far the line may travel: to the far edge of whoever is on the
-        // other side of it, less the least that one may be left with.
-        const limitDown = neighbour ? neighbourEnd - MIN_VH : ROWS;
-        const limitUp = neighbour ? neighbourStart + MIN_VH : 0;
-
         // The anchor is said out loud, because the drag sets it: a segment
         // that filled its row is pinned to whichever edge was not dragged.
         const show = (w, h, from) => {
-          readout.textContent = (h ? `${w}% · ${Math.round(h)}px` : `${w}%`) + (from ? ` · ${from}` : '');
+          // Looked up rather than held on to: taking in a row redraws the
+          // page, and the handles -- this readout among them -- are built
+          // fresh, so the one captured when the drag began is no longer on
+          // the page.
+          const where = node.querySelector(':scope > .hs-size') || readout;
+          where.textContent = (h ? `${w}% · ${Math.round(h)}px` : `${w}%`) + (from ? ` · ${from}` : '');
         };
         show(startW, seg.h);
+
+        // How far past the row's own edge the pointer has to go before the
+        // next row is taken in. Far enough that it cannot happen by accident
+        // while resizing within the row, near enough to find.
+        const REACH = 16;
 
         const onMove = (ev) => {
           const dx = (ev.clientX - startX) / colW;
@@ -1936,14 +2016,22 @@
           }
           applyOne(node, seg);
 
-          // Both edges change the height, and the one you are NOT dragging
-          // stays where it is -- which is the whole of what dragging an edge
-          // means. Pinning is what the segment's place down its row says, so
-          // the gesture sets it: drag the bottom and the top is pinned, drag
-          // the top and the bottom is. Without that, a top edge dragged
-          // upwards could only make the segment taller downwards, because a
-          // segment with nothing said about it fills its row from the top --
-          // which is why the top could not be resized at all.
+          // ── up and down ──
+          //
+          // Dragged past the end of its row and into space in the next one,
+          // the two rows become one and this segment has the height of both.
+          // Short of that, both edges change the height and the one you are
+          // NOT dragging stays where it is, which is the whole of what
+          // dragging an edge means.
+          const past = south ? ev.clientY - rowBottom0 : rowTop0 - ev.clientY;
+          if (past > REACH && roomInNextRow(seg, south)) {
+            takeInNextRow(seg, south);
+            drawAll();                  // the rows themselves changed
+            rebase(ev);                 // and the drag carries on from here
+            show(seg.w, 0, south ? 'took in the row below' : 'took in the row above');
+            return;
+          }
+
           const dy = ev.clientY - startY;
 
           // A segment stacked inside its row is resized by moving the line
@@ -1974,21 +2062,25 @@
           }
 
           // Downwards there is always somewhere to go -- the row grows. Up
-          // there is only the room the row already has.
+          // there is only the room the row already has, and past that it is
+          // the row above that is wanted (handled above).
           const ceiling = south ? 1200 : Math.min(1200, capNorth);
           seg.h = Math.max(80, Math.min(ceiling, Math.round(startH + (south ? dy : -dy))));
           if (south) { if (seg.valign === 'bottom') seg.valign = 'top'; }
           else if (!seg.valign || seg.valign === 'stretch' || seg.valign === 'top') seg.valign = 'bottom';
           applyOne(node, seg);
           const stuck = !south && seg.h >= ceiling && startH - dy > ceiling;
-          show(seg.w, seg.h, stuck ? 'the top of the row' : (south ? 'from the top' : 'from the bottom'));
+          show(seg.w, seg.h,
+            stuck
+              ? (roomInNextRow(seg, false) ? 'keep going for the row above' : 'the top of the row')
+              : (south ? 'from the top' : 'from the bottom'));
         };
         const onUp = () => {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           node.classList.remove('sizing');
-          // Only the numbers changed, and the page is already showing them.
-          save({ redraw: false });
+          // Rows may have been merged, which is more than a change of size.
+          save();
         };
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);

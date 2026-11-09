@@ -79,6 +79,66 @@ const cogAsShipped = hueOf(asShipped.data, cogMask);
 check("and the cog is grey, which is what it is for", cogAsShipped.sat < 0.1, true,
   `saturation ${cogAsShipped.sat}`);
 
+// ── the launcher's own colours give back the launcher's own icon ──
+//
+// The recolouring used to re-centre a layer on the FILL colour's lightness:
+// every pixel kept its distance from the layer's average and the average
+// became the theme colour. The backing is drawn at a lightness of about 0.21
+// and the launcher's base colour is 0.375, so painting the backing in the
+// launcher's own colour came out nearly twice as light as the artwork -- and
+// every other theme was lifted by the same amount, which is why the backing
+// and the gem always looked lit up. The fill is read as a DIFFERENCE from
+// the colour the layer was drawn for now, so the same colour reproduces the
+// artwork and every other theme is shifted by as much as it differs.
+const DEFAULT_BASE = "#b30c0c", DEFAULT_SECOND = "#ff4d4d";
+const anchors = { background: icon.lightnessOf(DEFAULT_BASE), gem: icon.lightnessOf(DEFAULT_SECOND) };
+const meanLight = (data, mask) => {
+  let l = 0, n = 0;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    if (!mask[p] || data[i + 3] < 200) continue;
+    l += icon.rgbToHsl(data[i], data[i + 1], data[i + 2])[2]; n++;
+  }
+  return n ? l / n : 0;
+};
+const drawnBg = meanLight(asShipped.data, bgOnly);
+const drawnGem = meanLight(asShipped.data, gemOnly);
+
+const ownUnanchored = await raw(await icon.buildIcon(layers, {
+  background: { kind: "color", hex: DEFAULT_BASE },
+  gem: { kind: "color", hex: DEFAULT_SECOND },
+}, SIZE));
+const ownAnchored = await raw(await icon.buildIcon(layers, {
+  background: { kind: "color", hex: DEFAULT_BASE },
+  gem: { kind: "color", hex: DEFAULT_SECOND },
+}, SIZE, anchors));
+
+check("built in the launcher's own colours, the backing is as light as it was drawn",
+  Math.abs(meanLight(ownAnchored.data, bgOnly) - drawnBg) < 0.01, true,
+  `${meanLight(ownAnchored.data, bgOnly).toFixed(3)} against the artwork's ${drawnBg.toFixed(3)}`);
+check("and the gem likewise",
+  Math.abs(meanLight(ownAnchored.data, gemOnly) - drawnGem) < 0.01, true,
+  `${meanLight(ownAnchored.data, gemOnly).toFixed(3)} against the artwork's ${drawnGem.toFixed(3)}`);
+check("which it was NOT without it -- the backing came out far lighter",
+  meanLight(ownUnanchored.data, bgOnly) > drawnBg + 0.1, true,
+  `${meanLight(ownUnanchored.data, bgOnly).toFixed(3)} against ${drawnBg.toFixed(3)}`);
+
+// A lighter theme colour still lightens it -- the anchor is a starting
+// point, not a cap.
+const lighter = await raw(await icon.buildIcon(layers, {
+  background: { kind: "color", hex: "#ff6666" },
+  gem: { kind: "color", hex: DEFAULT_SECOND },
+}, SIZE, anchors));
+check("a lighter theme colour still makes a lighter backing",
+  meanLight(lighter.data, bgOnly) > drawnBg + 0.1, true,
+  `${meanLight(lighter.data, bgOnly).toFixed(3)} against ${drawnBg.toFixed(3)}`);
+const darker = await raw(await icon.buildIcon(layers, {
+  background: { kind: "color", hex: "#400404" },
+  gem: { kind: "color", hex: DEFAULT_SECOND },
+}, SIZE, anchors));
+check("and a darker one a darker backing",
+  meanLight(darker.data, bgOnly) < drawnBg - 0.05, true,
+  `${meanLight(darker.data, bgOnly).toFixed(3)} against ${drawnBg.toFixed(3)}`);
+
 // ── a green theme ──
 const green = await build({
   background: { kind: "color", hex: "#2ecc40" },

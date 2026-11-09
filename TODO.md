@@ -9,6 +9,49 @@ started.
 
 ---
 
+## 0. Round 48
+
+- [x] **A segment cannot be resized up or down into another row.** — *Two
+      rows are two separate grids, so a segment could never be made taller
+      than the one it is in: dragging its bottom edge down only made its own
+      row taller and pushed the next one further down the page, and dragging
+      the top edge up had nowhere to go at all. Dragged past the end of its
+      row into space in the next one, the two rows now become ONE row divided
+      up and down -- which the layout can already describe -- with everything
+      that was in each row keeping its own half and the segment being dragged
+      spanning both. A row with something in the way in those columns is not
+      space and is not taken in; the edge stops, and the readout says which.
+      The drag carries on from there rather than ending, so the line between
+      the halves can be moved in the same gesture.*
+- [x] **The icon's backing and gem are far too bright.** — *The recolouring
+      re-centred each layer on the FILL colour's lightness: every pixel kept
+      its distance from the layer's average, and the average became whatever
+      the theme colour was. The backing is drawn at a lightness of 0.21 and
+      the launcher's own base colour is 0.375, so painting it in the
+      launcher's OWN colour came out nearly twice as light as the artwork --
+      and every other theme was lifted by the same amount, which is why the
+      backing and the gem always looked lit up. A fill is read as a
+      DIFFERENCE from the colour the layer was drawn for now: the launcher's
+      own colours reproduce the artwork exactly (0.206 against the artwork's
+      0.206, where it used to be 0.369), a lighter theme lightens it by as
+      much as it is lighter, a darker one darkens it. The special case that
+      skipped generation for the default theme is gone -- there is one path
+      for every theme now, which is also the only way a fault in it would be
+      noticed.*
+- [x] **Export only some of a rig's animations, and mix rigs.** — *One rig
+      cannot be right for every animation: a wave wants the arm's pivot at
+      the shoulder and a lean wants it at the waist, which is two models of
+      the same player. `npm run anim -- --list rig.bbmodel` says what is in
+      one; `npm run anim -- export rig.bbmodel wave point` takes only those
+      and ADDS them to what is already there; `wave=wave_low` files it under
+      another name, so the same animation can come from two rigs; `remove`
+      takes one back out. Each clip records which rig it came from and how
+      that rig was authored, so a set built out of several models can have
+      one that mirrors Y/Z and one that does not -- the renderer reads it per
+      clip now rather than once for the file.*
+
+---
+
 ## 0. Round 47
 
 - [x] **Two games of one instance must not get in each other's way.** —

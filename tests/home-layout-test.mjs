@@ -384,6 +384,85 @@ check("and the neighbour shrinks rather than being shoved along",
   (await placed()).find(s => s.id === "a"), { id: "a", row: 0, x: 0, w: 20 },
   "its left edge stays where it is; the room comes off its right");
 
+// ── growing into the next row ──
+//
+// Two rows are two separate grids, so a segment could never be made taller
+// than the one it is in: dragging its bottom edge down only made its own row
+// taller and pushed the next one further down the page, and dragging the top
+// edge up had nowhere to go at all. Dragged past the end of its row into
+// space in the next one, the two become ONE row and the segment has the
+// height of both.
+await set([
+  { id: "tall", type: "player", row: 0, x: 0, w: 50, h: 0 },
+  { id: "mate", type: "greeting", row: 0, x: 50, w: 50, h: 0 },
+  { id: "under", type: "recent", row: 1, x: 50, w: 50, h: 0 },
+]);
+await edit();
+check("two rows to begin with",
+  (await placed()).map(s => [s.id, s.row]), [["tall", 0], ["mate", 0], ["under", 1]]);
+
+await dragGrip("tall", "se", 0, 240);
+const grown = await placed();
+check("dragging the bottom edge into the space below takes that row in",
+  grown.map(s => [s.id, s.row]).sort(),
+  [["mate", 0], ["tall", 0], ["under", 0]].sort(),
+  "the row below had nothing in those columns, so the two became one row");
+const heights = await p.$$eval("#home-segments .hs", (els) => {
+  const h = (id) => Math.round(els.find(e => e.dataset.id === id).getBoundingClientRect().height);
+  return { tall: h("tall"), mate: h("mate"), under: h("under") };
+});
+check("and the segment has the height of both",
+  [heights.tall > heights.mate * 1.6, heights.tall > heights.under * 1.6], [true, true],
+  `${heights.tall}px against ${heights.mate}px and ${heights.under}px`);
+check("while the other two keep half each",
+  Math.abs(heights.mate - heights.under) < 3, true,
+  `${heights.mate}px and ${heights.under}px`);
+
+// Not when something is in the way: the row below has a segment in those
+// columns, so there is no space to grow into and the edge does not take it.
+await set([
+  { id: "tall", type: "player", row: 0, x: 0, w: 50, h: 0 },
+  { id: "blocker", type: "recent", row: 1, x: 0, w: 100, h: 0 },
+]);
+await edit();
+await dragGrip("tall", "se", 0, 240);
+check("a row with something in the way is not taken in",
+  (await placed()).map(s => [s.id, s.row]), [["tall", 0], ["blocker", 1]],
+  "that is not space; it is somebody else's");
+
+// And upwards, which could not be done at all before.
+await set([
+  { id: "over", type: "greeting", row: 0, x: 50, w: 50, h: 0 },
+  // Tall enough that its top handle and its bottom handle are not in the
+  // same place: an empty player segment in this harness is barely taller
+  // than one handle, and a press lands on whichever is drawn last.
+  { id: "tall", type: "recent", row: 1, x: 0, w: 50, h: 160 },
+]);
+await edit();
+// Far enough past the top of the row to mean it, and no further: the top
+// handle of a segment near the top of the page is a few dozen pixels from
+// the top of the window, and a drag that goes off the top of it is not a
+// drag the browser reports.
+await dragGrip("tall", "nw", 0, -60);
+check("dragging the top edge into the space above takes that row in",
+  (await placed()).map(s => [s.id, s.row]).sort(),
+  [["over", 0], ["tall", 0]].sort());
+const up = await p.$$eval("#home-segments .hs", (els) => {
+  const el = (id) => els.find(e => e.dataset.id === id);
+  const b = (id) => el(id).getBoundingClientRect();
+  const row = el("tall").parentElement.getBoundingClientRect();
+  const near = (a, c) => Math.abs(a - c) < 3;
+  return {
+    // The one that took the row in reaches from the top of it to the bottom.
+    spansAll: near(b("tall").top, row.top) && near(b("tall").bottom, row.bottom),
+    // The one that was there keeps the top half and does not reach the floor.
+    halfOnly: near(b("over").top, row.top) && b("over").bottom < row.bottom - 2,
+    note: `row ${Math.round(row.height)}px, it ${Math.round(b("tall").height)}px, the other ${Math.round(b("over").height)}px`,
+  };
+});
+check("and it reaches from the top of the row it took in to the bottom",
+  [up.spansAll, up.halfOnly], [true, true], up.note);
+
 // Only up to MIN_W, though: it gives way, it does not disappear.
 await set([
   { id: "a", type: "recent", row: 0, x: 0, w: 40, h: 0 },
