@@ -253,10 +253,9 @@ const computer = (impl, id, name) => cloudSync.sync({
     (await pc.list()).map(i => i.key), ["worlds/w2"]);
 
   await pc.unsyncAll();
-  const left = [...files.values()].filter(f => f.mimeType !== "application/vnd.google-apps.folder");
-  check("and unsyncing everything leaves nothing behind",
-    left.map(f => f.name), [],
-    "including the manifest and the key, so starting again starts clean");
+  check("and unsyncing everything leaves nothing behind at all",
+    [...files.values()].map(f => f.name), [],
+    "the manifest, the key and the folder itself — not an empty folder somebody has to tidy up");
 }
 {
   // The order matters: a key removed first would leave files nobody can ever
@@ -264,7 +263,7 @@ const computer = (impl, id, name) => cloudSync.sync({
   const src = (await import("fs")).readFileSync(
     new URL("../backend/cloud-sync.js", import.meta.url), "utf8");
   const body = src.slice(src.indexOf("async function unsyncAll"));
-  check("the key is the last thing removed",
+  check("the key is removed after everything it opens",
     body.indexOf("KEY_FILE") > body.indexOf("MANIFEST"), true,
     "anything that fails before it leaves the folder still readable and worth trying again");
 }

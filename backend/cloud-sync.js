@@ -297,6 +297,18 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
     }
     const key = await drive.find(root, KEY_FILE);
     if (key) await drive.remove(key.id);
+    // Then whatever is still in there -- the per-kind sub-folders, and
+    // anything a later version put there that this one does not know about
+    // -- and then the folder itself. Listed rather than assumed: Drive does
+    // remove a folder's contents with it, but "empty the folder" promising
+    // more than it does is exactly the kind of claim nobody checks.
+    for (const left of await drive.list(root).catch(() => [])) {
+      await drive.remove(left.id).catch(() => { /* carry on with the rest */ });
+    }
+    // Last, for the same reason the key was second to last: while it is
+    // there, anything that went wrong above can be tried again.
+    await drive.remove(root).catch(() => { /* already gone, or in use */ });
+    folders = new Map();
     driveHalfCache = null;
     return { ok: true, removed: gone.length };
   }
