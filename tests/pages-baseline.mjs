@@ -108,6 +108,23 @@ const STUB = `
     if (what === "os") return { homedir: () => "/home/test", platform: () => "linux", totalmem: () => 16 * 1024 ** 3 };
     return {};
   };
+  // Nothing moves while it is being photographed.
+  //
+  // A CSS animation is not frozen by freezing the clock, so an element that
+  // is always moving -- the splash screen's progress bar -- is in a different
+  // place in every run, and the comparison fails for a reason that has
+  // nothing to do with the code. Paused, every run catches it in the same
+  // place. Transitions go too: a photograph taken mid-fade is of the fade.
+  const hold = () => {
+    const style = document.createElement('style');
+    style.textContent = '*, *::before, *::after {'
+      + ' animation-play-state: paused !important;'
+      + ' transition: none !important; }';
+    (document.head || document.documentElement).appendChild(style);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hold);
+  else hold();
+
   globalThis.module = { exports: {} };
   globalThis.process = globalThis.process || { platform: "linux", versions: {}, env: {}, cwd: () => "/" };
 })();

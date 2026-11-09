@@ -11033,6 +11033,24 @@ iconModels.configure({
   dataDir,
   log: devtoolsLog,
   findClientJar,
+  // Every version any instance has downloaded, so picking an icon for the
+  // LAUNCHER -- which belongs to no instance and so names no version -- has
+  // something to read rather than nothing at all.
+  downloadedVersions: () => {
+    const seen = new Set();
+    try {
+      const clientDir = path.join(dataDir, "client");
+      for (const id of fs.readdirSync(clientDir)) {
+        const versions = path.join(clientDir, id, "versions");
+        let names = [];
+        try { names = fs.readdirSync(versions); } catch { continue; }
+        for (const v of names) {
+          if (fs.existsSync(path.join(versions, v, `${v}.jar`))) seen.add(v);
+        }
+      }
+    } catch { /* nothing downloaded yet */ }
+    return [...seen];
+  },
   instanceRoot: (profileId) => path.join(dataDir, "client", String(profileId)),
   enabledResourcePacks: readEnabledResourcePacks,
   // How colourful a texture is, which is what decides whether a face with a

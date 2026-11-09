@@ -285,6 +285,43 @@ check("and it is still lit, and still has facets",
     satSpread(blueGem.data, gemOnly) > 0.05], [true, true],
   `${okRange(blueGem.data, gemOnly).toFixed(2)} of light across it, saturation spread ${satSpread(blueGem.data, gemOnly).toFixed(3)}`);
 
+// ── a picture goes in as it is ──
+//
+// A block's texture, or the very picture the launcher is wearing, is not a
+// colour: it has its own light and shade already. Carrying the backing's
+// shading onto it on top of that tinted and darkened a picture that was
+// meant to show as itself.
+{
+  const tile = await sharp({
+    create: { width: 16, height: 16, channels: 4, background: { r: 90, g: 160, b: 60, alpha: 1 } },
+  }).png().toBuffer();
+  const withTexture = await raw(await icon.buildIcon(layers, {
+    background: { kind: "texture", png: tile },
+    gem: { kind: "color", hex: DEFAULT_SECOND },
+  }, SIZE, anchors));
+  let same = 0, n = 0, sr = 0, sg = 0, sb = 0;
+  for (let i = 0, p = 0; i < withTexture.data.length; i += 4, p++) {
+    if (!bgOnly[p] || withTexture.data[i + 3] < 200) continue;
+    n++;
+    sr += withTexture.data[i]; sg += withTexture.data[i + 1]; sb += withTexture.data[i + 2];
+    if (withTexture.data[i] === 90 && withTexture.data[i + 1] === 160 && withTexture.data[i + 2] === 60) same++;
+  }
+  // Not every pixel: the cog and the gem have soft edges, and the pixels
+  // just outside them carry a little of those edges. Shading the texture
+  // would have left nothing exact at all, so most-of-it-exact is the test.
+  const mean = [Math.round(sr / n), Math.round(sg / n), Math.round(sb / n)];
+  check("a texture behind the icon is the texture, not the texture shaded",
+    [n > 100, same / n > 0.85,
+      Math.abs(mean[0] - 90) < 5 && Math.abs(mean[1] - 160) < 5 && Math.abs(mean[2] - 60) < 5],
+    [true, true, true],
+    `${same} of ${n} exact, mean ${mean.join(",")} against the picture's 90,160,60`);
+  // And it is still cut to the shape of the backing rather than filling the
+  // square -- the cog and the gem are drawn over it, and the rounded corners
+  // are the backing's.
+  const cog = hueOf(withTexture.data, cogMask);
+  check("and the cog is still the cog over it", cog.sat < 0.1, true, `saturation ${cog.sat}`);
+}
+
 // ── a green theme ──
 const green = await build({
   background: { kind: "color", hex: "#2ecc40" },

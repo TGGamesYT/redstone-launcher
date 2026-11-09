@@ -2270,7 +2270,7 @@
     "lineHeight": "normal",
     "textAlign": "start",
     "color": "rgb(255, 255, 255)",
-    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "backgroundColor": "color(srgb 0.255 0.077 0.077)",
     "borderRadius": "25px",
     "marginTop": "13px",
     "marginRight": "0px",

@@ -381,10 +381,17 @@ const litness = await page.evaluate(() => {
   const li = [...document.querySelectorAll(".sidebar li")].find(l => !l.classList.contains("current"));
   const s = getComputedStyle(li, "::after");
   const cur = getComputedStyle(document.querySelector(".sidebar li.current"), "::after");
-  return { unlit: [s.content !== "none", s.opacity, /opacity|transform/.test(s.transitionProperty)], lit: cur.opacity };
+  return { unlit: [s.content !== "none", s.opacity], lit: cur.opacity };
 });
-check("an unlit sidebar button has the marker, invisible, with a transition on it",
-  litness.unlit, [true, "0", true]);
+check("an unlit sidebar button has the marker, invisible",
+  litness.unlit, [true, "0"]);
+// The transition is read from the stylesheet rather than from the page: the
+// stub these pages are photographed under turns transitions off, so that
+// nothing is caught mid-fade, and a computed transition would say what the
+// stub did rather than what the launcher does.
+check("and it is something that happens over time rather than at once",
+  /\.sidebar \.menu li::after \{[^}]*transition:[^}]*(opacity|transform)/s
+    .test(fs.readFileSync(path.join(FE, "server.css"), "utf8")), true);
 check("and the current one's is visible", litness.lit, "1");
 
 // The instance shortcuts are not rebuilt when told the same thing twice.

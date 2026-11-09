@@ -609,9 +609,9 @@
    "key": "#modrinthResults",
    "box": [
     90,
-    258,
+    262,
     1190,
-    542
+    538
    ],
    "style": {
     "display": "flex",
@@ -641,7 +641,7 @@
     "paddingBottom": "20px",
     "paddingLeft": "20px",
     "zIndex": "auto",
-    "opacity": "1",
+    "opacity": "0",
     "visibility": "visible"
    }
   },
@@ -1171,7 +1171,7 @@
     70,
     38,
     1210,
-    762
+    758
    ],
    "style": {
     "display": "block",

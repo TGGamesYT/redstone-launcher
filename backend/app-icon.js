@@ -279,6 +279,23 @@ export async function shadeLayer(layerPng, fill, size, opts = {}) {
 
   const px = await fillPixels(want, size);
   const out = Buffer.from(data);
+
+  // A picture goes in as it is.
+  //
+  // Recolouring carries the layer's own light and shade onto the fill, which
+  // is what a layer being made a COLOUR wants. A block's texture, or the very
+  // picture the launcher is wearing behind it, is not a colour: it has its
+  // own light and shade already, and laying the backing's on top of it tints
+  // and darkens a picture that was meant to show as itself. So a texture is
+  // only cut to the shape of the layer.
+  if (want.kind === "texture") {
+    for (let i = 0, p = 0; i < out.length; i += 4, p += 3) {
+      if (out[i + 3] < 8) continue;
+      out[i] = px[p]; out[i + 1] = px[p + 1]; out[i + 2] = px[p + 2];
+    }
+    return out;
+  }
+
   for (let i = 0, p = 0; i < out.length; i += 4, p += 3) {
     if (out[i + 3] < 8) continue;
     let r, g, b;

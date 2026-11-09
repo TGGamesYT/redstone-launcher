@@ -3594,7 +3594,8 @@
         function createContentCard(p, tabName, refresh, running, devMods, devOn, genPacks) {
           const li = document.createElement("li");
           li.className = "profile-item";
-          if (p.disabled) li.style.opacity = "0.45";
+          // Grey, not see-through -- see .profile-item.is-off.
+          if (p.disabled) li.classList.add("is-off");
           // Is this the hot-swapped jar of a registered dev mod?
           const devMod = (devMods || []).find(m => p.filename === m.modId + "-dev.jar" || p.filename === m.modId + "-dev.jar.disabled");
           const genPack = (genPacks || {})[String(p.filename || "").replace(/\.disabled$/i, "")] || null;

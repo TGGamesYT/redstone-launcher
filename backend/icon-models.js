@@ -122,7 +122,38 @@ async function instanceSources(profileId) {
 // still found and still drawn with the mod's own textures. Only the things
 // vanilla also has stop being overridden.
 const _stacks = new Map();
+/**
+ * Which version to read when nobody said.
+ *
+ * Picking an icon for an INSTANCE is always about that instance's version.
+ * Picking one for the launcher itself is about no instance at all, and with
+ * no version there is no jar, no stack and so nothing to list -- which is
+ * why the blocks, items and mobs sections of the launcher's own icon picker
+ * said "No match." before a single letter had been typed.
+ *
+ * The newest version already on this machine, since that costs nothing and
+ * works offline; failing that, Mojang's current release.
+ */
+let _fallbackVersion = null;
+export async function defaultVersion() {
+  if (_fallbackVersion) return _fallbackVersion;
+  try {
+    const have = (DEPS && DEPS.downloadedVersions) ? DEPS.downloadedVersions() : [];
+    if (have.length) {
+      const newest = have.slice().sort((a, b) => VI.compareVersions(b, a))[0];
+      if (newest) return (_fallbackVersion = newest);
+    }
+  } catch { /* fall through to the manifest */ }
+  try {
+    const manifest = await VI.manifestIndex();
+    const latest = manifest && manifest.latest && manifest.latest.release;
+    if (latest) return (_fallbackVersion = latest);
+  } catch { /* offline, and nothing downloaded */ }
+  return null;
+}
+
 export async function stackFor({ profileId = null, version, overrides = true } = {}) {
+  if (!version) version = await defaultVersion();
   const key = `${profileId == null ? '-' : profileId}|${version || '-'}|${overrides ? 'o' : '-'}`;
   const hit = _stacks.get(key);
   if (hit && Date.now() - hit.at < STACK_TTL) return hit.value;
@@ -150,7 +181,7 @@ export async function stackFor({ profileId = null, version, overrides = true } =
   _stacks.set(key, { at: Date.now(), value });
   return value;
 }
-export function dropStacks() { _stacks.clear(); _jarSources.clear(); _entities.clear(); }
+export function dropStacks() { _stacks.clear(); _jarSources.clear(); _entities.clear(); _fallbackVersion = null; }
 
 const atLeast = (v, target) => VI.compareVersions(v, target) >= 0;
 

@@ -898,8 +898,12 @@ html.in-shell.custom-bg::before {
 
 html.custom-bg #shell-notch {
   display: block;
-  /* Above the frame (0), below everything the shell draws over it. */
-  z-index: 1;
+  /* Above the loading screen, which covers the content area -- and the
+     notch sits in the very corner of that area, so at any lower level it
+     was hidden for exactly as long as a page change took, which is the
+     corner blinking out and back on every one of them. It is part of the
+     two bars, and the bars do not go away for a page change. */
+  z-index: 9500;
 }
 
 h1,
@@ -1474,6 +1478,20 @@ a:hover {
 
 
 
+/* Switched off, which is GREY and not see-through.
+   An opacity on the card let whatever the launcher's background happens to
+   be show straight through it: over a picture that is unreadable, and over
+   anything at all it reads as the card fading out rather than as the mod
+   being off. A filter leaves the card as solid as every other one and takes
+   the colour out of it, which is what "off" looks like. */
+.profile-item.is-off {
+  filter: grayscale(1) brightness(0.72);
+}
+
+.profile-item.is-off:hover {
+  filter: grayscale(0.55) brightness(0.88);
+}
+
 .profile-item {
   display: flex;
   align-items: center;
@@ -1658,6 +1676,13 @@ a:hover {
 
 #logs {
   max-width: 90%;
+  /* A panel of the theme's own, not a window onto the background.
+     This had no background at all, so a game's log was read straight off
+     whatever picture the launcher is wearing -- which an outline around the
+     text can make legible but never makes good. The same colour the server
+     console already used, so the two consoles match. */
+  background: color-mix(in srgb, var(--very-dark) 85%, black);
+  color: var(--text-color);
   /* Clip the scrollbar to the rounded rectangle so it doesn't paint over the
      rounded corners (scrollbar-track margin isn't reliable for this). */
   clip-path: inset(0 round var(--border-radius));

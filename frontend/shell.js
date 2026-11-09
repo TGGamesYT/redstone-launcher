@@ -95,8 +95,31 @@
   // What the loading screen says it is doing. The sidebar already has a name
   // for every page it links to -- its tooltip -- so the words come from there
   // rather than from a second list that could disagree with it.
+  // What each page is called.
+  //
+  // Taken from the sidebar's own tooltips at first, which was neat and
+  // wrong: the accounts button's tooltip is the name of whoever is signed
+  // in, so opening it announced "Opening Steve…". A page's name is a fixed
+  // thing and is written down as one; the tooltip is only a fallback for a
+  // page this list does not know.
+  const PAGE_NAMES = {
+    "index.html": "Home",
+    "instances.html": "Instances",
+    "modrinth.html": "the Mod Browser",
+    "modrinth_user.html": "a profile",
+    "modrinth_project.html": "a project",
+    "curseforge_project.html": "a project",
+    "server.html": "Server Manager",
+    "players.html": "Accounts",
+    "profile-manager.html": "Skins",
+    "skin-editor.html": "the Skin Editor",
+    "settings.html": "Settings",
+    "events.html": "Events",
+  };
+
   function label(page) {
     const file = String(page).split(/[?#]/)[0].toLowerCase();
+    if (PAGE_NAMES[file]) return "Opening " + PAGE_NAMES[file] + "…";
     for (const a of document.querySelectorAll(".sidebar a[href]")) {
       if ((a.getAttribute("href") || "").split("/").pop().toLowerCase() !== file) continue;
       const li = a.querySelector("li") || a.closest("li");

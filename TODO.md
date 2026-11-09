@@ -9,6 +9,65 @@ started.
 
 ---
 
+## 0. Round 49
+
+- [x] **The skins page's render stopped settling back to the middle.** — *My
+      doing, adding the render to the home page: a `returnAfter` that is not
+      a number was made to mean "never come back", which is how the home
+      page's "do not settle" is asked for -- but NOT MENTIONING it at all got
+      swept into the same rule, and the skins page passes no options
+      whatever. Not asking and asking for never are two different things now.*
+- [x] **The notch still blinks out on a page change.** — *The shell's loading
+      screen covers the content area, and the notch sits in the very corner
+      of that area, so it was hidden for exactly as long as a page change
+      took. It is part of the two bars, and they do not go away for a page
+      change -- so it is drawn above the loading screen.*
+- [x] **The accounts tab announces "Opening <player name>".** — *The loading
+      screen took each page's name from the sidebar's tooltips, which was
+      neat and wrong: the accounts button's tooltip is whoever is signed in.
+      A page's name is a fixed thing and is written down as one.*
+- [x] **Blocks, items and mobs say "No match." before anything is typed.** —
+      *Only when picking an icon for the LAUNCHER. The catalogue is read out
+      of a version's jar, an instance's version -- and the launcher belongs
+      to no instance, so there was no version, no jar and nothing to list.
+      It falls back to the newest version already on the machine, or to
+      Mojang's current release.*
+- [x] **A switched-off mod or pack is see-through rather than greyed.** —
+      *An opacity on the card let whatever the launcher is wearing show
+      straight through it, which over a picture is unreadable and over
+      anything reads as the card fading out rather than as the mod being
+      off. It is greyed with a filter now and stays as solid as every other
+      card.*
+- [x] **An instance's log is read straight off the background.** — *It had no
+      background of its own at all, so the game's output sat on whatever
+      picture the launcher is wearing -- which an outline around the text can
+      make legible but never makes good. The same panel colour the server
+      console already used, so the two consoles match.*
+- [x] **A picture behind the icon is tinted like the backing.** — *Recolouring
+      carries the layer's own light and shade onto the fill, which is what a
+      layer being made a COLOUR wants. A block's texture, or the very picture
+      the launcher is wearing, is not a colour: it has its own light and
+      shade already. A texture is only cut to the shape of the layer now.*
+- [ ] **A cropping step for the launcher's icon when its back is a picture.**
+      — Zoom, framing and rounding, the way an instance's icon is cropped.
+- [ ] **Several images stacked as the background.** — Each showing through
+      where the one over it is transparent, and a fitted image showing the
+      background where it does not reach.
+- [ ] **The piston animation.** — A pushed-out piston draws its base as a
+      whole block rather than the shorter body; its neck is the base texture
+      rather than the shaft; and its head takes the front texture while it is
+      moving.
+- [ ] **`Failed to refresh player: error.auth.minecraft.login`** — in
+      Electron's log while signed in fine, with
+      `[Relay] token refresh failed, trying existing token: undefined` after
+      it.
+- [ ] **The home page is still a rowed system.** — Resizing into another row
+      moves that row down rather than sharing the space, and two segments
+      still cannot sit side by side across what used to be two rows. The row
+      is a container, which is the thing that has to go.
+
+---
+
 ## 0. Round 48
 
 - [x] **A segment cannot be resized up or down into another row.** — *Two

@@ -570,11 +570,17 @@
     opts = opts || {};
     if (!v || !v.canvas || !v.controls) return { dragging: false, stop() { }, home() { } };
     const canvas = v.canvas;
-    // A returnAfter that is not a number means NEVER come back. It used to
-    // fall through to the 3500ms default, so Infinity -- which is how "do not
-    // settle back" was asked for -- settled back after three and a half
-    // seconds like everything else.
-    const RETURN_AFTER = Number.isFinite(opts.returnAfter) ? opts.returnAfter : null;
+    // Not asking for it and asking for NEVER are two different things.
+    //
+    // A returnAfter that is given but is not a number means never come back:
+    // that is how "do not settle back" is asked for, and it used to fall
+    // through to the default and settle back like everything else. But not
+    // mentioning it at all means the ordinary behaviour, which is to come
+    // home after three and a half seconds -- and that got swept up in the
+    // same change, so the skins page, which passes no options whatever,
+    // stopped settling back to the middle.
+    const RETURN_AFTER = !('returnAfter' in opts) ? 3500
+      : (Number.isFinite(opts.returnAfter) ? opts.returnAfter : null);
     // Whether a flick carries after the pointer goes. Off, a release simply
     // stops where it was left -- which is what somebody who wants it to settle
     // back without it spinning around first is asking for.
