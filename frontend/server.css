@@ -36,7 +36,9 @@ html[data-smoothing="smooth"] {
   --third-color: color-mix(in srgb, var(--base-color) 50%, var(--secondary-color));
   --text-color: #ffffff;
   --text-font: Pixel;
-  --border-radius: 8px;
+  /* The default until the settings arrive, which is also the setting's
+     own default: the roundest the slider goes. */
+  --border-radius: 25px;
   /* What is behind the launcher, when it is not the app's own panel.
      sidebar.js sets these from the Background setting. */
   --app-gradient: none;

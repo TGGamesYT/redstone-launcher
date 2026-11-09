@@ -65,7 +65,7 @@ function error(text, duration = 3000) {
 // abort the rest of this file, leaving pages half-rendered.
 const THEME_FALLBACK = {
   baseColor: '#b30c0c', secondaryColor: '#ff4d4d', thirdColor: '#d92d2d',
-  textColor: '#ffffff', font: 'Pixel', borderRadius: 0, gradientAngle: 180,
+  textColor: '#ffffff', font: 'Pixel', borderRadius: 25, gradientAngle: 180,
   fontSmoothing: 'sharp',
 };
 

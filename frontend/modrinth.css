@@ -17,7 +17,7 @@
   --third-color: color-mix(in srgb, var(--base-color) 50%, var(--secondary-color));
   --text-color: #ffffff;
   --text-font: Pixel;
-  --border-radius: 0;
+  --border-radius: 25px;
   --toolbar-bg: var(--secondary-color);
   --sidebar-bg: linear-gradient(180deg, var(--secondary-color) 0%, color-mix(in srgb, var(--secondary-color) 80%, black) 100%);
   --sidebar-border: color-mix(in srgb, var(--secondary-color) 50%, black);

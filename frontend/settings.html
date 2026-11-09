@@ -816,7 +816,12 @@
       </select>
       <span id="font-smoothing-note" class="slider-value" style="display:none;opacity:0.75;font-size:12px;margin-left:8px;">Restart the launcher to see this</span>
       <br>
-      <label>Border Radius (px):</label>
+      <!-- Not "border radius": it rounds the panels, the buttons, the
+           cards, the modals, the corner where the two bars meet and the
+           window itself. Every corner in the launcher, which is what it is
+           called now. (The setting is still stored as `borderRadius`, so
+           every saved theme keeps working.) -->
+      <label data-tip="How round every corner in the launcher is -- panels, buttons, cards, modals and the window itself.">Corner rounding (px):</label>
       <br>
       <input type="range" id="border-radius" min="0" max="25" step="0.2" style="width: 200px;">
       <span class="slider-value" id="border-radius-value"></span>
@@ -1057,7 +1062,7 @@
       textColor: "#ffffff",
       font: "Pixel",
       fontSmoothing: "sharp",
-      borderRadius: 0,
+      borderRadius: 25,
       autoUpdates: true,
       discordPresence: true,
       autoThird: true,

@@ -45,7 +45,13 @@ function rememberChecksums(assetRoot) {
     dirty = false;
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify(seen));
+      // Merged with whatever another launch has written since this one read
+      // it, and written in one step -- two launches of the same instance
+      // share this file, and a half-written one read by the other is a
+      // whole folder's worth of checksums done again.
+      let theirs = {};
+      try { theirs = JSON.parse(fs.readFileSync(file, "utf8")) || {}; } catch { /* first run */ }
+      writeAtomic(file, JSON.stringify({ ...theirs, ...seen }));
     } catch { /* a cache that cannot be written is only slower */ }
   };
   if (Handler.__remembersChecksums) { Handler.__seen = seen; return save; }
@@ -63,6 +69,103 @@ function rememberChecksums(assetRoot) {
   Handler.__remembersChecksums = true;
   Handler.__seen = seen;
   return save;
+}
+
+// ── Two games of the same instance, at the same time ───────────────────────
+//
+// "Run again" is a second copy of the same instance over the same folders,
+// and a launch while one is already playing is the same thing. Everything
+// under those folders is therefore shared between processes that know
+// nothing about each other, and the launcher has to behave as though one of
+// them is always in the middle of reading something.
+//
+// Two rules, and both of them are here rather than scattered about:
+//
+//   1. Nothing is written in place. A file that something else may be
+//      reading is replaced by writing a new one beside it and renaming it
+//      over the top, which is one step as far as any reader is concerned.
+//   2. Nothing that may be IN USE is deleted. The natives folder is the one
+//      that was: a stale stamp had it thrown away and extracted again, and
+//      doing that to a game that is running out of it takes the DLLs out
+//      from under it. Each launch leaves a mark while it holds the folder,
+//      and the marks of launches that have gone are ignored.
+const inUse = new Set();           // directories this launch has marked
+
+/** Write a file in one step, so a reader never sees half of it. */
+function writeAtomic(file, text) {
+  const tmp = `${file}.tmp-${process.pid.toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  try {
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* never existed */ }
+    throw e;
+  }
+}
+
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
+
+/** Say that this launch is using a directory, and tidy up after ones that are gone. */
+function markInUse(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `.inuse-${process.pid}`), String(Date.now()));
+    inUse.add(dir);
+  } catch { /* a mark that cannot be written only costs caution */ }
+}
+
+/** Is anything ELSE using it? Marks left by processes that have ended are swept. */
+function usedByAnother(dir) {
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return false; }
+  let someone = false;
+  for (const name of names) {
+    const m = /^\.inuse-(\d+)$/.exec(name);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (pid === process.pid) continue;
+    if (alive(pid)) { someone = true; continue; }
+    try { fs.unlinkSync(path.join(dir, name)); } catch { /* another launch got there first */ }
+  }
+  return someone;
+}
+
+function releaseInUse() {
+  for (const dir of inUse) {
+    try { fs.unlinkSync(path.join(dir, `.inuse-${process.pid}`)); } catch { /* already gone */ }
+  }
+  inUse.clear();
+}
+
+/**
+ * Do something no two launches may do at once.
+ *
+ * A lock file that is created exclusively: whoever makes it owns the
+ * critical section. One left behind by a process that has died is taken
+ * over, and one older than the longest this could reasonably take is taken
+ * over too, so a crash cannot wedge every future launch.
+ */
+async function withLock(file, fn, { waitMs = 120000 } = {}) {
+  const started = Date.now();
+  let held = false;
+  while (Date.now() - started < waitMs) {
+    try {
+      fs.writeFileSync(file, String(process.pid), { flag: "wx" });
+      held = true;
+      break;
+    } catch {
+      let stale = false;
+      try {
+        const st = fs.statSync(file);
+        const pid = Number(fs.readFileSync(file, "utf8").trim());
+        stale = (Date.now() - st.mtimeMs > waitMs) || (Number.isFinite(pid) && pid > 0 && !alive(pid));
+      } catch { stale = true; }          // it vanished between the two calls
+      if (stale) { try { fs.unlinkSync(file); } catch { /* someone else took it */ } continue; }
+      await new Promise(r => setTimeout(r, 150));
+    }
+  }
+  try { return await fn(held); }
+  finally { if (held) { try { fs.unlinkSync(file); } catch { /* already gone */ } } }
 }
 
 // ── The library jars nobody was checking ────────────────────────────────────
@@ -156,6 +259,28 @@ function verifyNatives() {
   const real = Handler.prototype.getNatives;
 
   Handler.prototype.getNatives = async function () {
+    // Only one launch at a time gets to decide about the natives folder, and
+    // none of them may take it away from a game that is running out of it.
+    // Two copies of an instance started together used to both find the same
+    // stale stamp, both throw the folder away and both extract into it --
+    // interleaved -- and a launch while one was already playing deleted the
+    // DLLs that game had open.
+    const nativesDir = (() => {
+      try {
+        return path.resolve((this.options.overrides && this.options.overrides.natives)
+          || path.join(this.options.root, "natives", this.version.id));
+      } catch { return null; }
+    })();
+    if (nativesDir) {
+      return withLock(`${nativesDir}.lock`, async () => {
+        markInUse(nativesDir);
+        return nativesInner.call(this);
+      });
+    }
+    return nativesInner.call(this);
+  };
+
+  async function nativesInner() {
     // mcPath and this.version are both set by the time launch() gets here.
     try {
       const want = this.version && this.version.downloads && this.version.downloads.client;
@@ -163,8 +288,16 @@ function verifyNatives() {
       if (jar && want && want.size && fs.existsSync(jar)) {
         const size = fs.statSync(jar).size;
         if (size !== want.size) {
-          this.client.emit("debug", `[redstone]: the client jar is ${size} bytes and should be ${want.size}, fetching it again`);
-          fs.unlinkSync(jar);          // launch() downloads it again when it is gone
+          // Not while another copy of this instance is playing from it: the
+          // game maps its own jar, and on Windows this fails outright while
+          // elsewhere it quietly pulls the file out from under it.
+          if (usedByAnother(path.dirname(jar))) {
+            this.client.emit("debug",
+              `[redstone]: the client jar is the wrong size, but another copy of this instance is using it -- left alone`);
+          } else {
+            this.client.emit("debug", `[redstone]: the client jar is ${size} bytes and should be ${want.size}, fetching it again`);
+            fs.unlinkSync(jar);        // launch() downloads it again when it is gone
+          }
         }
       }
     } catch { /* leave the jar alone if it cannot be measured */ }
@@ -191,19 +324,31 @@ function verifyNatives() {
         let had = null;
         try { had = fs.readFileSync(path.join(dir, ".extracted.json"), "utf8"); } catch { /* never stamped */ }
         if (had !== stamp && fs.existsSync(dir)) {
-          this.client.emit("debug", "[redstone]: the natives were not extracted cleanly, doing it again");
-          fs.rmSync(dir, { recursive: true, force: true });
+          if (usedByAnother(dir)) {
+            // Another copy of this instance is running out of this folder.
+            // Whatever is wrong with it, taking it away mid-game is worse:
+            // the DLLs it has open go with it. It stays as it is, and the
+            // next launch with nothing else running rebuilds it.
+            this.client.emit("debug",
+              "[redstone]: the natives want rebuilding, but another copy of this instance is using them -- left alone");
+            stamp = null;                 // and not stamped as though it were fresh
+          } else {
+            this.client.emit("debug", "[redstone]: the natives were not extracted cleanly, doing it again");
+            fs.rmSync(dir, { recursive: true, force: true });
+          }
         }
       }
     } catch { stamp = null; }
 
     const out = await real.call(this);
     if (dir && stamp) {
-      try { fs.writeFileSync(path.join(dir, ".extracted.json"), stamp); }
+      // In one step: another launch may be reading this to decide whether
+      // the folder is sound.
+      try { writeAtomic(path.join(dir, ".extracted.json"), stamp); }
       catch { /* a stamp that cannot be written only costs one extraction */ }
     }
     return out;
-  };
+  }
 
   Handler.__verifiesNatives = true;
 }
@@ -457,7 +602,12 @@ async function runLaunch(cfg) {
   // NOTE: minecraft-launcher-core already forwards the child's stdout AND stderr
   // through its own "data" event (wired above), so capturing child.stdout/stderr
   // here as well would emit every game line twice. Don't re-capture them.
-  child.on("exit", (code) => post({ type: "exit", pid: child.pid, code }));
+  child.on("exit", (code) => {
+    // This launch is no longer using the shared folders, so the next one may
+    // rebuild them.
+    releaseInUse();
+    post({ type: "exit", pid: child.pid, code });
+  });
   child.on("error", (e) => post({ type: "log", line: "ERROR: " + (e?.message || e) }));
 }
 
@@ -465,5 +615,12 @@ process.parentPort.on("message", async (e) => {
   const msg = e.data;
   if (!msg || msg.type !== "launch") return;
   try { await runLaunch(msg.cfg); }
-  catch (err) { post({ type: "error", error: err && err.message || String(err) }); }
+  catch (err) { releaseInUse(); post({ type: "error", error: err && err.message || String(err) }); }
 });
+
+// However this process ends, it stops laying claim to the shared folders.
+// A mark left behind is swept by the next launch -- it checks whether the
+// process that left it is still alive -- but not leaving one is better.
+for (const signal of ["exit", "SIGINT", "SIGTERM"]) {
+  try { process.on(signal, releaseInUse); } catch { /* not every signal everywhere */ }
+}

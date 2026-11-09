@@ -8,6 +8,12 @@
 // on its next load. The launcher never reads .bbmodel files itself, so nothing
 // has to parse Blockbench's format at runtime.
 //
+//   npm run anim                              animations.bbmodel in the repo root
+//   npm run anim -- path/to/player.bbmodel    a different rig
+//   npm run anim -- --list                    say what is in it, write nothing
+//
+// or directly:
+//
 //   node bbmodelconvert.js path/to/player.bbmodel
 //   node bbmodelconvert.js path/to/player.bbmodel -o frontend/skin-clips.json
 //
@@ -26,6 +32,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const DEFAULT_OUT = path.join('frontend', 'skin-clips.json');
+// The rig lives in the repository, so the usual run takes no arguments at
+// all: `npm run anim`. Naming a file still works, for a one-off or a second
+// rig.
+const DEFAULT_IN = 'animations.bbmodel';
 
 // Blockbench group names -> the parts skinview3d exposes. Case and spacing are
 // normalised first, so "Right Arm", "rightArm" and "right_arm" all land here.
@@ -143,8 +153,14 @@ function convert(model, { flip = true } = {}) {
 
 function main(argv) {
   const args = argv.slice(2);
-  if (!args.length || args.includes('-h') || args.includes('--help')) {
-    console.log('usage: node bbmodelconvert.js <file.bbmodel> [-o out.json] [--flip] [--list]');
+  if (args.includes('-h') || args.includes('--help')) {
+    console.log('usage: npm run anim            -- ' + DEFAULT_IN + ' -> ' + DEFAULT_OUT);
+    console.log('       npm run anim -- --list  -- say what is in it and write nothing');
+    console.log('       npm run anim -- <file.bbmodel> [-o out.json] [--flip] [--list]');
+    console.log('');
+    console.log('  -o, --out <file>   where to write (default: ' + DEFAULT_OUT + ')');
+    console.log('      --flip         mirror Y/Z rotation, for Bedrock-style rigs');
+    console.log('      --list         print what is in the file and write nothing');
     return 0;
   }
   const flip = args.includes('--flip');
@@ -152,9 +168,15 @@ function main(argv) {
   const outIdx = Math.max(args.indexOf('-o'), args.indexOf('--out'));
   const out = outIdx >= 0 ? args[outIdx + 1] : DEFAULT_OUT;
   // The argument after -o is its value, not the input file.
-  const input = args.find((a, i) => !a.startsWith('-') && !(outIdx >= 0 && i === outIdx + 1));
-  if (!input) { console.error('No .bbmodel given.'); return 1; }
-  if (!fs.existsSync(input)) { console.error(`No such file: ${input}`); return 1; }
+  const named = args.find((a, i) => !a.startsWith('-') && !(outIdx >= 0 && i === outIdx + 1));
+  const input = named || DEFAULT_IN;
+  if (!fs.existsSync(input)) {
+    console.error(named
+      ? `No such file: ${input}`
+      : `${DEFAULT_IN} is not in this folder. Put the rig there, or name one: npm run anim -- path/to/rig.bbmodel`);
+    return 1;
+  }
+  if (!named) console.log(`Reading ${DEFAULT_IN}`);
 
   let model;
   try {

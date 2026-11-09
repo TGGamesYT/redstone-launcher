@@ -914,7 +914,10 @@ const DEFAULT_SETTINGS = {
   // antialiasing smears every edge of it into a grey halo -- which is why
   // it looked soft. Off by default; a normal typeface wants it back on.
   fontSmoothing: "sharp",
-  borderRadius: 0,
+  // The roundest the slider goes. Square corners were the default only
+  // because zero is what a number defaults to, and the launcher is drawn to
+  // be round.
+  borderRadius: 25,
   autoUpdates: true,
   discordPresence: true,
   autoThird: true,

@@ -151,7 +151,7 @@
     "textAlign": "start",
     "color": "rgb(255, 255, 255)",
     "backgroundColor": "color(srgb 0.3 0.0905882 0.0905882)",
-    "borderRadius": "0px",
+    "borderRadius": "25px 0px 0px",
     "marginTop": "38px",
     "marginRight": "0px",
     "marginBottom": "0px",

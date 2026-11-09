@@ -9,6 +9,40 @@ started.
 
 ---
 
+## 0. Round 47
+
+- [x] **Two games of one instance must not get in each other's way.** —
+      *Beyond the temp file: the natives folder was the one that really bit.
+      A stale stamp had it thrown away and extracted again, and doing that to
+      a game running out of it takes the DLLs out from under it -- and two
+      launches started together both found the same stale stamp and both
+      extracted into it at once. Only one launch at a time decides about that
+      folder now (a lock that is taken over if whoever held it died), and a
+      folder another launch is still using is left alone rather than rebuilt.
+      Same for deleting the client jar when it is the wrong size. The shared
+      checksum memo is merged with whatever the other launch wrote rather
+      than overwritten, and written by renaming a new file over the old one
+      so the other launch can never read half of it. Marks left by launches
+      that have ended are swept by whoever finds them.
+      tests/concurrency-test.mjs runs the launcher's own code against real
+      processes: a file written in place IS caught half-written by another
+      process (21958 of 32219 reads), one renamed over never is, three
+      launches take the folder in turn, and a lock left by a dead one is
+      taken over.*
+- [x] **An npm command for the animations.** — *`npm run anim`, which reads
+      `animations.bbmodel` from the repository root and writes
+      `frontend/skin-clips.json`. `npm run anim -- --list` says what is in it
+      without writing, and naming a file still works for a one-off.*
+- [x] **"Border radius" is not just the borders.** — *It rounds the panels,
+      the buttons, the cards, the modals, the corner where the two bars meet
+      and the window itself, so it is "Corner rounding" now. Stored under the
+      same name, so every saved theme keeps working. Its default is the
+      roundest the slider goes rather than square -- square was only ever the
+      default because zero is what a number defaults to -- including the
+      value the stylesheets fall back to before the settings have loaded.*
+
+---
+
 ## 0. Round 46
 
 - [x] **Snapping on the main page, which can be turned off.** — *An edge

@@ -332,7 +332,12 @@ const spot = await page.evaluate(() => {
     .find(l => l.querySelector('a[href="settings.html"]'));
   const b = li.getBoundingClientRect();
   const a = li.querySelector("a").getBoundingClientRect();
-  const pt = [Math.round(b.x + 5), Math.round(b.y + 5)];
+  // Below the icon, up the middle of the button. NOT a corner: the buttons
+  // are as round as the corner-rounding setting makes them, and at the
+  // default that is a circle -- a point five pixels into the corner of its
+  // box is outside the button itself, which would be a test failing over
+  // where it aimed rather than over what it is checking.
+  const pt = [Math.round(b.x + b.width / 2), Math.round(b.bottom - 5)];
   return {
     pt,
     // The point really is outside the link, or this proves nothing.
