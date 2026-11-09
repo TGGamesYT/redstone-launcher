@@ -74,6 +74,86 @@ export function hexToRgb(hex) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+// ── a space where "lighter" means lighter ────────────────────────────────
+//
+// HSL is a convenience, not a model of sight. Its "lightness" is the midpoint
+// of the largest and smallest channel, which puts yellow and blue at the same
+// L while yellow is plainly far brighter -- so carrying a layer's shading
+// across to another colour in HSL carries the NUMBERS and not the shading. A
+// gem whose highlight is a lighter, slightly orange red becomes, in blue, a
+// pixel with the same L and a hue 200-odd degrees round: still dark, and no
+// longer reading as a highlight at all. That is the "it just looks like a
+// desaturated dark blue" of it.
+//
+// Oklab is a space built so that equal steps look like equal steps, and its
+// polar form (lightness, chroma, hue) is the one that says what a recolouring
+// means: keep how much lighter this pixel is, keep how much more colourful it
+// is, and turn the hue. Done there, a highlight stays a highlight whatever
+// colour the gem is turned into.
+//
+// https://bottosson.github.io/posts/oklab/
+const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+const linearToSrgb = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+
+/** 0-255 RGB to Oklab's lightness, chroma and hue (hue in degrees). */
+export function rgbToOklch(r, g, b) {
+  const lr = srgbToLinear(r / 255), lg = srgbToLinear(g / 255), lb = srgbToLinear(b / 255);
+  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+  const L = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s;
+  const A = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+  const B = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+  const C = Math.hypot(A, B);
+  const h = C < 1e-7 ? 0 : (((Math.atan2(B, A) * 180) / Math.PI) + 360) % 360;
+  return [L, C, h];
+}
+
+/** The raw conversion back, which may land outside what a screen can show. */
+function oklchToRgbRaw(L, C, h) {
+  const rad = (h * Math.PI) / 180;
+  const A = C * Math.cos(rad), B = C * Math.sin(rad);
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3;
+  return [
+    linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s),
+  ];
+}
+
+/**
+ * Oklab back to 0-255 RGB, kept inside what a screen can actually show.
+ *
+ * A colour asked for in this space can be more colourful than sRGB reaches --
+ * a bright theme colour carried onto an already-vivid pixel, say. Clipping
+ * the three channels where they land would change the hue as well as the
+ * chroma (the channel that overflows is pulled back and the others are not),
+ * so the chroma is lowered instead, which is the part that cannot be shown,
+ * until it fits. The lightness and the hue are what the eye is reading, and
+ * both survive.
+ */
+export function oklchToRgb(L, C, h) {
+  const fits = (rgb) => rgb.every((c) => c >= -0.0001 && c <= 1.0001);
+  let rgb = oklchToRgbRaw(L, C, h);
+  if (!fits(rgb)) {
+    let lo = 0, hi = C;
+    for (let i = 0; i < 14; i++) {
+      const mid = (lo + hi) / 2;
+      if (fits(oklchToRgbRaw(L, mid, h))) lo = mid; else hi = mid;
+    }
+    rgb = oklchToRgbRaw(L, lo, h);
+  }
+  return rgb.map((c) => Math.max(0, Math.min(255, Math.round(c * 255))));
+}
+
+/** A hex colour in Oklab's polar form. */
+export function oklchOf(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  return rgbToOklch(r, g, b);
+}
+
 // ── what a layer is filled with ──
 //
 //   { kind: "color",    hex }
@@ -190,20 +270,35 @@ export async function shadeLayer(layerPng, fill, size, opts = {}) {
   // hue, saturation and lightness. The same colour therefore gives the
   // artwork back pixel for pixel; another colour moves all of it by as much
   // as that colour differs, so every difference WITHIN the layer survives.
-  const anchor = opts.anchor ? rgbToHsl(...hexToRgb(opts.anchor)) : null;
+  // Measured in Oklab, not HSL, so that "as much lighter as it was" means as
+  // much lighter TO THE EYE. HSL puts yellow and blue at the same lightness,
+  // so a highlight that is a lighter, warmer red came out of a blue theme
+  // with the same L, a hue most of the way round the circle, and nothing
+  // left that read as a highlight -- still dark, just bluer.
+  const anchor = opts.anchor ? oklchOf(opts.anchor) : null;
 
   const px = await fillPixels(want, size);
   const out = Buffer.from(data);
   for (let i = 0, p = 0; i < out.length; i += 4, p += 3) {
     if (out[i + 3] < 8) continue;
-    const [h, sat, l] = rgbToHsl(out[i], out[i + 1], out[i + 2]);
-    const [fh, fs, fl] = rgbToHsl(px[p], px[p + 1], px[p + 2]);
     let r, g, b;
     if (anchor) {
-      // Hue is a circle, so the shift wraps rather than clamping.
-      const hue = (((h + (fh - anchor[0])) % 360) + 360) % 360;
-      [r, g, b] = hslToRgb(hue, clamp01(sat + (fs - anchor[1])), clamp01(l + (fl - anchor[2])));
+      const [fL, fC, fh] = rgbToOklch(px[p], px[p + 1], px[p + 2]);
+      const dL = fL - anchor[0], dC = fC - anchor[1], dh = fh - anchor[2];
+      // Asked for the very colour the layer was drawn for: there is nothing
+      // to change, so nothing is changed. Said outright rather than left to
+      // come out in the arithmetic, because "the launcher's own colours give
+      // the artwork back" should be exact and not nearly.
+      if (Math.abs(dL) < 1e-6 && Math.abs(dC) < 1e-6 && Math.abs(dh) < 1e-6) continue;
+      const [L, C, h] = rgbToOklch(out[i], out[i + 1], out[i + 2]);
+      [r, g, b] = oklchToRgb(
+        Math.max(0, Math.min(1, L + dL)),
+        Math.max(0, C + dC),
+        (((h + dh) % 360) + 360) % 360,
+      );
     } else {
+      const l = rgbToHsl(out[i], out[i + 1], out[i + 2])[2];
+      const [fh, fs, fl] = rgbToHsl(px[p], px[p + 1], px[p + 2]);
       [r, g, b] = hslToRgb(fh, fs, clamp01(fl + (l - mean)));
     }
     out[i] = r; out[i + 1] = g; out[i + 2] = b;
@@ -246,4 +341,4 @@ export async function buildIcon(layers, fills = {}, size = 256, anchors = {}) {
   return sharp(background, { raw: { width: size, height: size, channels: 4 } }).png().toBuffer();
 }
 
-export default { PART_FILES, buildIcon, shadeLayer, normaliseFill, hexToRgb, rgbToHsl, hslToRgb, lightnessOf };
+export default { PART_FILES, buildIcon, shadeLayer, normaliseFill, hexToRgb, rgbToHsl, hslToRgb, lightnessOf, rgbToOklch, oklchToRgb, oklchOf };

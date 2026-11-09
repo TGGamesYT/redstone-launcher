@@ -181,6 +181,57 @@ check("and a darker one a darker backing",
   meanLight(darker.data, bgOnly) < drawnBg - 0.05, true,
   `${meanLight(darker.data, bgOnly).toFixed(3)} against ${drawnBg.toFixed(3)}`);
 
+// ── a highlight stays a highlight in another colour ──
+//
+// HSL's "lightness" is the midpoint of the largest and smallest channel,
+// which puts yellow and blue at the same L while yellow is plainly far
+// brighter. Carry a layer's shading across in HSL and the NUMBERS travel but
+// the shading does not: the gem's highlight is a lighter, slightly orange
+// red, and in a blue theme it came out at the same L with its hue most of
+// the way round the circle -- still dark, and no longer reading as a
+// highlight. Oklab is built so that equal steps look like equal steps, so
+// the recolouring is done there.
+const okRange = (data, mask) => {
+  let min = 1, max = 0;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    if (!mask[p] || data[i + 3] < 200) continue;
+    const L = icon.rgbToOklch(data[i], data[i + 1], data[i + 2])[0];
+    if (L < min) min = L;
+    if (L > max) max = L;
+  }
+  return max - min;
+};
+const blueGem = await raw(await icon.buildIcon(layers, {
+  background: { kind: "color", hex: "#1446a0" },
+  gem: { kind: "color", hex: "#4d9bff" },
+}, SIZE, anchors));
+const drawnRange = okRange(asShipped.data, gemOnly);
+check("a gem turned blue keeps the range of light the artwork had",
+  Math.abs(okRange(blueGem.data, gemOnly) - drawnRange) < 0.02, true,
+  `${okRange(blueGem.data, gemOnly).toFixed(3)} against the artwork's ${drawnRange.toFixed(3)}`);
+
+// The same shift done in HSL, for comparison: this is what it looked like,
+// and the point is that it is measurably flatter rather than that it is a
+// matter of taste.
+const inHsl = (() => {
+  const a = icon.rgbToHsl(...icon.hexToRgb(DEFAULT_SECOND));
+  const f = icon.rgbToHsl(...icon.hexToRgb("#4d9bff"));
+  const out = Buffer.from(asShipped.data);
+  for (let i = 0, p = 0; i < out.length; i += 4, p++) {
+    if (!gemOnly[p]) continue;
+    const [h, sat, l] = icon.rgbToHsl(out[i], out[i + 1], out[i + 2]);
+    const [r, g, b] = icon.hslToRgb(
+      (((h + f[0] - a[0]) % 360) + 360) % 360,
+      Math.max(0, Math.min(1, sat + f[1] - a[1])),
+      Math.max(0, Math.min(1, l + f[2] - a[2])));
+    out[i] = r; out[i + 1] = g; out[i + 2] = b;
+  }
+  return out;
+})();
+check("where the same shift done in HSL flattens it",
+  okRange(inHsl, gemOnly) < drawnRange - 0.06, true,
+  `${okRange(inHsl, gemOnly).toFixed(3)} against the artwork's ${drawnRange.toFixed(3)}`);
+
 // ── a green theme ──
 const green = await build({
   background: { kind: "color", hex: "#2ecc40" },

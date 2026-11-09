@@ -23,6 +23,20 @@ started.
       space and is not taken in; the edge stops, and the readout says which.
       The drag carries on from there rather than ending, so the line between
       the halves can be moved in the same gesture.*
+- [x] **A lighter, slightly orange part of the gem comes out as a flat dark
+      blue.** — *The shifts were being measured in HSL, whose "lightness" is
+      the midpoint of the largest and smallest channel -- which puts yellow
+      and blue at the same L while yellow is plainly far brighter. So the
+      numbers travelled and the shading did not: the gem's highlight is a
+      lighter, slightly orange red, and in a blue theme it landed at the same
+      L with its hue most of the way round the circle, still dark and no
+      longer reading as a highlight. The recolouring is done in Oklab now, a
+      space built so that equal steps look like equal steps. Measured: a gem
+      turned blue keeps the artwork's range of light (0.415 against 0.400),
+      where the same shift in HSL collapses it to 0.323. A colour that cannot
+      be shown is brought back into range by lowering its chroma rather than
+      by clipping the channels, so the hue and the lightness survive that
+      too.*
 - [x] **The recoloured icon is still lighter, and its colours run
       together.** — *The lightness was anchored but the hue and the
       saturation were still taken from the fill outright. The backing is
