@@ -50,9 +50,20 @@ started.
       shade already. A texture is only cut to the shape of the layer now.*
 - [ ] **A cropping step for the launcher's icon when its back is a picture.**
       — Zoom, framing and rounding, the way an instance's icon is cropped.
-- [ ] **Several images stacked as the background.** — Each showing through
+- [x] **Several images stacked as the background.** — Each showing through
       where the one over it is transparent, and a fitted image showing the
-      background where it does not reach.
+      background where it does not reach. *A CSS background is already a
+      list of layers, so what was missing was a list to put in it: the
+      setting held one picture and `backgroundCss` built one layer. The
+      setting holds `images` now, first on top, and the settings page lists
+      them with their own Covered/Fitted/Stretched and buttons to move one
+      forward or back. Under the whole stack goes the launcher's own panel
+      rather than a flat slab, so the last fitted picture shows the launcher
+      where it does not reach. A save with one `image` and no list reads as a
+      list of one, so nothing made before this looks any different, and
+      `image` is kept as the top of the list because that is what everything
+      that cares about "the picture" — the theme's colours, the icon's
+      backing — means by it.*
 - [x] **The piston animation.** — A pushed-out piston draws its base as a
       whole block rather than the shorter body; its neck is the base texture
       rather than the shaft; and its head takes the front texture while it is

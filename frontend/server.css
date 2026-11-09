@@ -596,7 +596,11 @@ html.custom-bg .loading-overlay {
   background-size: auto, var(--app-bg-size);
   background-repeat: no-repeat, var(--app-bg-repeat);
   background-position: center center;
-  background-attachment: scroll, fixed;
+  /* The overlay's own wash, then however many layers the background has --
+     a list, now that several pictures can be stacked. A fixed "scroll, fixed"
+     would be repeated round a longer list and give the third picture the
+     wash's attachment. */
+  background-attachment: scroll, var(--app-bg-attach, fixed);
   image-rendering: var(--app-bg-render, auto);
 }
 

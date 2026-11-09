@@ -128,11 +128,26 @@
     } else if (b.mode === 'gradient' && b.gradient && (b.gradient.colors || []).length) {
       image = `linear-gradient(${b.gradient.angle ?? 180}deg, ${b.gradient.colors.join(', ')})`;
       custom = true;
-    } else if (b.mode === 'image' && b.image && (b.image.url || b.image.file)) {
-      const u = b.image.url
-        || ('file:///' + String(b.image.file).replace(/\\/g, '/').replace(/^\/+/, ''));
-      image = `url("${u}")`;
-      size = b.image.fit === 'stretch' ? '100% 100%' : b.image.fit === 'contain' ? 'contain' : 'cover';
+    } else if (b.mode === 'image'
+      && (b.images || [b.image]).some(im => im && (im.url || im.file))) {
+      // Several pictures stacked, top one first, with the launcher's own
+      // panel under the lot of them -- so a fitted one shows what is below
+      // it rather than a slab of colour. One picture and no list is a list
+      // of one, so a save from before this reads the same.
+      const list = (Array.isArray(b.images) && b.images.some(im => im && (im.url || im.file))
+        ? b.images : [b.image]).filter(im => im && (im.url || im.file));
+      const url = (im) => im.url
+        || ('file:///' + String(im.file).replace(/\\/g, '/').replace(/^\/+/, ''));
+      const images = list.map(im => `url("${url(im)}")`);
+      const sizes = list.map(im =>
+        im.fit === 'stretch' ? '100% 100%' : im.fit === 'contain' ? 'contain' : 'cover');
+      images.push('linear-gradient(to bottom, var(--toolbar-bg) 0%, var(--toolbar-bg) 10%,'
+        + ' var(--very-dark) 10%, var(--very-dark) 100%)');
+      sizes.push('auto');
+      image = images.join(', ');
+      size = sizes.join(', ');
+      repeat = images.map(() => 'no-repeat').join(', ');
+      attach = images.map(() => 'fixed').join(', ');
       color = 'var(--very-dark)';
       custom = true;
     } else if (b.mode === 'block' && b.block && b.block.url) {

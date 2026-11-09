@@ -148,6 +148,64 @@ check("a gradient is an image",
 check("and the app's own panel asks for no background at all",
   await css({ mode: "theme" }), null);
 
+// ── several pictures, stacked ──
+//
+// There used to be exactly one. A fitted one showed a flat slab of colour
+// wherever it did not reach, and there was no way to put anything behind a
+// picture with see-through parts.
+const whole = (bg) => p.evaluate((b) => {
+  const c = window.LauncherBackground.css(b);
+  return c && { image: c.image, size: c.size, repeat: c.repeat, attach: c.attach, color: c.color };
+}, bg);
+
+const one = await whole({ mode: "image", image: { url: "a.png", fit: "cover" } });
+check("one picture is still one picture, over the launcher's own panel",
+  [one.image.split("), ").length, one.image.startsWith('url("a.png")'),
+    one.image.includes("linear-gradient(to bottom, var(--toolbar-bg)")],
+  [2, true, true],
+  "the panel underneath is what a fitted one shows where it does not reach, instead of a slab of colour");
+check("and its size and the panel's line up with the two of them",
+  [one.size, one.repeat, one.attach],
+  ["cover, auto", "no-repeat, no-repeat", "fixed, fixed"],
+  "a list that is shorter than the images is repeated round, so these have to match");
+
+const three = await whole({ mode: "image", images: [
+  { url: "top.png", fit: "contain" },
+  { url: "middle.png", fit: "cover" },
+  { url: "bottom.png", fit: "stretch" },
+] });
+check("three are painted in the order they are listed, first on top",
+  (three.image.match(/url\("([^"]+)"\)/g) || []),
+  ['url("top.png")', 'url("middle.png")', 'url("bottom.png")'],
+  "the first layer of a CSS background is the one on top, which is what the list looks like");
+check("each keeps its own way of filling the window",
+  three.size, "contain, cover, 100% 100%, auto",
+  "so a fitted one on top shows the one under it wherever it does not reach");
+check("and there is one of everything else per layer",
+  [three.repeat.split(", ").length, three.attach.split(", ").length], [4, 4]);
+
+// A save from before any of this reads the same as it always did.
+check("one `image` and no list is a list of one",
+  (await whole({ mode: "image", image: { url: "old.png", fit: "contain" } })).image,
+  (await whole({ mode: "image", images: [{ url: "old.png", fit: "contain" }] })).image);
+check("and an empty list falls back to the single one rather than to nothing",
+  (await whole({ mode: "image", images: [], image: { url: "old.png" } })).image
+    .startsWith('url("old.png")'), true);
+check("while no picture at all is still the app's own panel",
+  await whole({ mode: "image", images: [], image: {} }), null);
+
+// It has to survive the page actually painting it, not just be a string.
+const painted = await p.evaluate((b) => {
+  window.LauncherBackground.apply({ background: b });
+  const cs = getComputedStyle(document.documentElement);
+  return {
+    layers: (cs.backgroundImage.match(/url\(|linear-gradient\(/g) || []).length,
+    sizes: cs.backgroundSize.split(", ").length,
+  };
+}, { mode: "image", images: [{ url: "a.png", fit: "contain" }, { url: "b.png", fit: "cover" }] });
+check("and the window really is painted with all of them", painted, { layers: 3, sizes: 3 },
+  "two pictures and the panel under them");
+
 // sidebar.js wires up a whole page's worth of buttons; this probe has none
 // of them, and its complaints about that are not what is under test here.
 const mine = errors.filter((e) => !/setting '(onclick|src|textContent)'|is not defined/.test(e));

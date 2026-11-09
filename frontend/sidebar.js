@@ -104,7 +104,12 @@ function getMiddleColor(hex1, hex2) {
 const BG_FALLBACK = {
   mode: 'theme', color: '#121212',
   gradient: { colors: ['#ff4d4d', '#b30c0c'], angle: 180 },
+  // One picture, or several stacked. `images` is the list; `image` is kept
+  // as the top one of it, because that is what everything that cares about
+  // "the picture" -- taking the theme's colours from it, the icon's backing
+  // -- means by it.
   image: { file: null, fit: 'cover' },
+  images: [],
   block: { url: null, size: 64, cells: 1 },
 };
 // A path to something on disk, as a url the page may load.
@@ -113,6 +118,29 @@ function fileUrl(p) {
   const s = String(p).replace(/\\/g, '/');
   return 'file:///' + s.replace(/^\/+/, '').replace(/[?#]/g, encodeURIComponent);
 }
+// The pictures behind the launcher, top one first.
+//
+// There used to be exactly one, and a fitted one showed a flat slab of
+// colour wherever it did not reach. Several can be stacked now: each shows
+// through the one over it wherever that one is see-through or does not
+// reach, and under the whole stack is the launcher's own panel rather than
+// a slab -- so a fitted picture has the launcher behind it, which is what
+// "the background" means when there is nothing else left to show.
+//
+// A layout with one `image` and no list is a list of one, so nothing saved
+// before this reads any differently.
+function imageLayers(b) {
+  const had = (im) => im && (im.url || im.file);
+  const list = Array.isArray(b.images) && b.images.some(had)
+    ? b.images : [b.image];
+  return list.filter(had).map(im => ({ ...BG_FALLBACK.image, ...im }));
+}
+// What the launcher wears when it has no background of its own: the toolbar's
+// colour across the top tenth and the dark below it. Kept the same as the
+// `html` rule in server.css, which is the thing it is standing in for.
+const BG_PANEL = 'linear-gradient(to bottom, var(--toolbar-bg) 0%, '
+  + 'var(--toolbar-bg) 10%, var(--very-dark) 10%, var(--very-dark) 100%)';
+
 function backgroundCss(bg) {
   const b = { ...BG_FALLBACK, ...(bg || {}) };
   // `color` is painted as background-COLOR and `image` as background-image.
@@ -131,15 +159,26 @@ function backgroundCss(bg) {
     }
   }
   if (b.mode === 'image') {
-    const im = { ...BG_FALLBACK.image, ...(b.image || {}) };
-    const url = im.url || fileUrl(im.file);
-    if (url) {
+    const layers = imageLayers(b);
+    if (layers.length) {
       // Stretched fills the window and distorts; fitted shows all of it with
       // bars; covered fills and crops. Covered is what a wallpaper usually
-      // wants, and is the default. Fitted leaves bars, which are the theme's
-      // own colour rather than nothing.
-      const size = im.fit === 'stretch' ? '100% 100%' : im.fit === 'contain' ? 'contain' : 'cover';
-      return { ...none, image: `url("${url}")`, size, color: 'var(--very-dark)' };
+      // wants, and is the default.
+      const sizeOf = (im) => im.fit === 'stretch' ? '100% 100%'
+        : im.fit === 'contain' ? 'contain' : 'cover';
+      // First in the list is painted on top, which is what the list looks
+      // like. The panel goes last, underneath all of them.
+      const images = layers.map(im => `url("${im.url || fileUrl(im.file)}")`);
+      const sizes = layers.map(sizeOf);
+      images.push(BG_PANEL); sizes.push('auto');
+      return {
+        ...none,
+        image: images.join(', '),
+        size: sizes.join(', '),
+        repeat: images.map(() => 'no-repeat').join(', '),
+        attach: images.map(() => 'fixed').join(', '),
+        color: 'var(--very-dark)',
+      };
     }
   }
   if (b.mode === 'block') {
@@ -240,7 +279,7 @@ function applyBackground(settings) {
   if (window.LauncherOutline) window.LauncherOutline.refresh();
 }
 // The settings page previews with these, and so does its own head script.
-window.LauncherBackground = { css: backgroundCss, apply: applyBackground, FALLBACK: BG_FALLBACK };
+window.LauncherBackground = { css: backgroundCss, apply: applyBackground, FALLBACK: BG_FALLBACK, layers: imageLayers };
 
 // Light text wants a dark outline, dark text a light one. Rec. 709
 // luminance, which is what "does this look light" comes down to.

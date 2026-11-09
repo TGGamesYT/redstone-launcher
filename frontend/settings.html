@@ -479,6 +479,22 @@
       cursor: pointer;
     }
 
+    /* One picture in the stack: what it is, how it fills the window, and
+       where it sits in the pile. */
+    .bg-img-row { display:flex; align-items:center; gap:10px; margin-bottom:8px;
+      padding:8px 10px; border:1px solid var(--border-dark); border-radius:var(--border-radius);
+      background:var(--menu-bg); }
+    .bg-img-row .shot { width:64px; height:40px; flex:none; border-radius:4px;
+      background-size:contain; background-repeat:no-repeat; background-position:center;
+      background-color:var(--very-dark); }
+    .bg-img-row .who { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
+      white-space:nowrap; font-size:0.85rem; }
+    .bg-img-row .fits { display:flex; gap:4px; flex:none; }
+    .bg-img-row .ord { display:flex; gap:4px; flex:none; }
+    .bg-img-row button { padding:4px 8px; font-size:0.78rem; background:var(--third-color);
+      color:var(--text-color); border:1px solid transparent; border-radius:4px; cursor:pointer; }
+    .bg-img-row button.on { background:var(--base-color); border-color:var(--text-color); }
+    .bg-img-row button:disabled { opacity:0.4; cursor:default; }
     .bg-fits, .bg-blockrow {
       display: flex;
       gap: 8px;
@@ -871,15 +887,13 @@
       </div>
 
       <div class="bg-panel" id="bg-panel-image">
-        <button type="button" id="bg-pick-image" class="bg-btn">Choose a picture…</button>
+        <!-- Several pictures, stacked. Each shows through the one over it
+             wherever that one is see-through or does not reach, and under
+             the lot of them is the launcher's own panel -- so a fitted
+             picture has the launcher behind it rather than a slab. -->
+        <div id="bg-image-list"></div>
+        <button type="button" id="bg-pick-image" class="bg-btn">Add a picture…</button>
         <span id="bg-image-name" class="bg-hint" style="margin-left:10px;"></span>
-        <br><br>
-        <label>How it fills the window</label>
-        <div class="bg-fits" id="bg-fits">
-          <button type="button" class="bg-fit" data-fit="cover" title="Fill the window, cropping what does not fit">Covered</button>
-          <button type="button" class="bg-fit" data-fit="contain" title="Show all of it, with bars where it does not reach">Fitted</button>
-          <button type="button" class="bg-fit" data-fit="stretch" title="Fill the window exactly, distorting it">Stretched</button>
-        </div>
         <label class="setting-toggle" id="bg-image-colors-row" style="margin-top:14px;display:none;"
           data-tip="Keeps the theme's base and secondary colours taken from the picture — the middling-dark and middling-bright of it, rather than its lightest and darkest pixels. Stays on, so choosing another picture re-takes them."><input type="checkbox" id="bg-image-colors"> Take the theme from the picture</label>
       </div>
@@ -2166,9 +2180,6 @@
         for (const p of document.querySelectorAll('.bg-panel')) {
           p.classList.toggle('on', p.id === 'bg-panel-' + bg.mode);
         }
-        for (const f of document.querySelectorAll('.bg-fit')) {
-          f.classList.toggle('on', f.dataset.fit === bg.image.fit);
-        }
       }
 
       for (const b of document.querySelectorAll('.bg-mode')) {
@@ -2262,18 +2273,103 @@
         renderGradientColors(); paintBackground(); saveBackground();
       });
 
-      // ── a picture ──
+      // ── pictures ──
+      //
+      // Several, stacked: the first in the list is painted on top, and each
+      // one below shows wherever the one over it is see-through or does not
+      // reach. There used to be exactly one, and a fitted one showed a flat
+      // slab of colour wherever it did not reach.
+      //
+      // `bg.image` is kept as the top of the list, because that is what
+      // everything else that cares about "the picture" -- taking the theme's
+      // colours from it, the launcher's icon backing -- means by it.
       const bgImageName = document.getElementById('bg-image-name');
+      const bgImageList = document.getElementById('bg-image-list');
       const bgImageColors = document.getElementById('bg-image-colors');
-      const showImageName = () => {
-        bgImageName.textContent = bg.image.file
-          ? String(bg.image.file).split(/[\\/]/).pop()
+      const FITS = [
+        ['cover', 'Covered', 'Fill the window, cropping what does not fit'],
+        ['contain', 'Fitted', 'Show all of it, with whatever is under it showing where it does not reach'],
+        ['stretch', 'Stretched', 'Fill the window exactly, distorting it'],
+      ];
+      const hasPicture = (im) => im && (im.url || im.file);
+      // The list, however it was saved. One `image` and no list is a list of
+      // one, so nothing saved before this reads differently.
+      function imageStack() {
+        if (!Array.isArray(bg.images) || !bg.images.some(hasPicture)) {
+          bg.images = hasPicture(bg.image) ? [{ ...bg.image }] : [];
+        }
+        bg.images = bg.images.filter(hasPicture);
+        return bg.images;
+      }
+      // Whatever is on top is "the picture".
+      function syncTopImage() {
+        bg.image = { ...(bg.image || {}), ...(bg.images[0] || { file: null, url: null }) };
+        if (!bg.images.length) { bg.image.file = null; bg.image.url = null; }
+      }
+      function renderImageList() {
+        const list = imageStack();
+        syncTopImage();
+        bgImageList.innerHTML = '';
+        bgImageName.textContent = list.length
+          ? (list.length === 1 ? '' : `${list.length} pictures, the first on top`)
           : 'nothing chosen yet';
-        // Only worth offering once there is a picture to take them from.
         const row = document.getElementById('bg-image-colors-row');
-        if (row) row.style.display = bg.image.file ? '' : 'none';
-      };
-      showImageName();
+        if (row) row.style.display = list.length ? '' : 'none';
+        list.forEach((im, i) => {
+          const el = document.createElement('div');
+          el.className = 'bg-img-row';
+          const shot = document.createElement('div');
+          shot.className = 'shot';
+          const u = im.url || ('file:///' + String(im.file || '').replace(/\\/g, '/').replace(/^\/+/, ''));
+          shot.style.backgroundImage = `url("${u}")`;
+          const who = document.createElement('div');
+          who.className = 'who';
+          who.textContent = String(im.file || im.url || '').split(/[\\/]/).pop();
+          who.title = who.textContent;
+          const fits = document.createElement('div');
+          fits.className = 'fits';
+          for (const [value, label, why] of FITS) {
+            const b = document.createElement('button');
+            b.type = 'button'; b.textContent = label; b.title = why;
+            b.classList.toggle('on', (im.fit || 'cover') === value);
+            b.addEventListener('click', () => {
+              bg.images[i] = { ...bg.images[i], fit: value };
+              renderImageList(); paintBackground(); saveBackground();
+            });
+            fits.appendChild(b);
+          }
+          const ord = document.createElement('div');
+          ord.className = 'ord';
+          const move = (to) => {
+            const [moved] = bg.images.splice(i, 1);
+            bg.images.splice(to, 0, moved);
+            renderImageList(); paintBackground(); saveBackground();
+            if (to === 0 || i === 0) {
+              // The top one is the one the theme's colours come from.
+              if (window.__followBackgroundColours) window.__followBackgroundColours();
+            }
+          };
+          const up = document.createElement('button');
+          up.type = 'button'; up.textContent = '↑'; up.title = 'Further forward';
+          up.disabled = i === 0;
+          up.addEventListener('click', () => move(i - 1));
+          const down = document.createElement('button');
+          down.type = 'button'; down.textContent = '↓'; down.title = 'Further back';
+          down.disabled = i === list.length - 1;
+          down.addEventListener('click', () => move(i + 1));
+          const rm = document.createElement('button');
+          rm.type = 'button'; rm.textContent = 'Remove';
+          rm.addEventListener('click', () => {
+            bg.images.splice(i, 1);
+            renderImageList(); paintBackground(); saveBackground();
+            if (window.__followBackgroundColours) window.__followBackgroundColours();
+          });
+          ord.append(up, down, rm);
+          el.append(shot, who, fits, ord);
+          bgImageList.appendChild(el);
+        });
+      }
+      renderImageList();
       // The same offer the block panel makes, and -- now -- the same answer.
       // They were two separate settings, so ticking it under the picture and
       // then switching to a block found it unticked, which reads as the
@@ -2288,17 +2384,13 @@
         if (r.error) { if (window.notify) notify(r.error, 'error'); return; }
         // The file is copied into the launcher's own folder, so a background
         // does not vanish when the picture is moved or deleted.
-        bg.image = { ...bg.image, file: r.file, url: r.url };
+        //
+        // Added on TOP, which is where you are looking when you add one.
+        imageStack().unshift({ file: r.file, url: r.url, fit: bg.image.fit || 'cover' });
         bg.mode = 'image';
-        showImageName(); showBgPanels(); paintBackground(); saveBackground();
+        renderImageList(); showBgPanels(); paintBackground(); saveBackground();
         if (window.__followBackgroundColours) window.__followBackgroundColours();
       });
-      for (const f of document.querySelectorAll('.bg-fit')) {
-        f.addEventListener('click', () => {
-          bg.image.fit = f.dataset.fit;
-          showBgPanels(); paintBackground(); saveBackground();
-        });
-      }
 
       // ── a block, tiled ──
       const bgBlockName = document.getElementById('bg-block-name');
