@@ -104,15 +104,19 @@
   // -y, so a head that has gone out sits at a NEGATIVE y and the arm behind
   // it spans the gap. Turning the frame is what makes a piston face left
   // rather than up, texture and all.
-  function drawLocal(cx, im, px, py, d, src, dst) {
+  function turnTo(cx, px, py, d) {
     const a = d[0] === 0 && d[1] === -1 ? 0
       : d[0] === 1 ? Math.PI / 2
         : d[1] === 1 ? Math.PI
           : -Math.PI / 2;
-    cx.save();
     cx.translate(px + TEX / 2, py + TEX / 2);
     cx.rotate(a);
     cx.translate(-TEX / 2, -TEX / 2);
+  }
+
+  function drawLocal(cx, im, px, py, d, src, dst) {
+    cx.save();
+    turnTo(cx, px, py, d);
     cx.drawImage(im, src[0], src[1], src[2], src[3], dst[0], dst[1], dst[2], dst[3]);
     cx.restore();
   }
@@ -160,32 +164,38 @@
         [0, FACE, TEX, TEX - FACE], [0, FACE, TEX, TEX - FACE]);
       // The arm, from the body's face out to the back of the head.
       //
-      // The arm is ONE piece, sliding out of the hole.
+      // The arm, exactly as the game's own model cuts it.
       //
-      // The game's piston head is a single object: a plate with a rod four
-      // across behind it, and extending slides the whole thing forward so
-      // that more and more of the rod comes out of the body. The rod is
-      // never redrawn, stretched or repeated -- what changes is how much of
-      // it there is to see.
+      // From block/template_piston_head: the arm is
       //
-      // So the arm is one draw of columns 4 to 8 of piston_side, which is
-      // the strip the game's own model takes it from, cut to exactly as far
-      // as it has come out and drawn at one pixel per pixel. The head end of
-      // the rod is the top of that strip and the rest follows it out of the
-      // hole, which is why nothing has to be invented to fill any length:
-      // the furthest a piston reaches is one block, and the strip is one
-      // block long.
+      //   { "from": [6,6,4], "to": [10,10,20],
+      //     "east": { "uv": [0,0,16,4], "texture": "#side" } }
       //
-      // Three wrong answers got here, each the whole strip used some other
-      // way: squashed to the length (so the arm was the head's colour at one
-      // end and the body's at the other and there was no rod between them),
-      // then cut from the body's rows (so the arm was the colour of the
-      // block it comes out of), then four rows of it repeated (so the arm
-      // was the same inch of wood over and over, which is not what a rod
-      // looks like).
+      // which says three things, and every wrong answer before this got one
+      // of them wrong. It is four across and SIXTEEN long -- a whole block,
+      // so nothing ever has to be invented to fill the reach. Its texture is
+      // the top four rows of piston_side, the wooden band, which is also
+      // where the head's collar is cut from. And the uv runs 0..16 ACROSS
+      // the texture against the arm's 16 length, so the texture's X axis
+      // runs ALONG the arm and its four rows are the arm's thickness. It is
+      // a horizontal strip turned a quarter, not a vertical one.
+      //
+      // Cutting a vertical strip instead is what made it the body's grey
+      // (further down the texture is the stone), and what made the first
+      // four rows have to be squashed or repeated to reach any distance.
+      // Turned the right way there is nothing to squash or repeat: sixteen
+      // pixels of texture for sixteen pixels of arm.
       if (reach > 0) {
-        drawLocal(cx, images.side, bpx, bpy, p.d,
-          [ARM, 0, ARM, reach], [(TEX - ARM) / 2, FACE - reach, ARM, reach]);
+        cx.save();
+        turnTo(cx, bpx, bpy, p.d);
+        // Into the arm's own box, at its top-RIGHT, and turned a quarter --
+        // so the texture's X runs down the arm and its Y across it.
+        cx.translate((TEX + ARM) / 2, FACE - reach);
+        cx.rotate(Math.PI / 2);
+        // As much of the arm as is out of the hole, from the end the head is
+        // on, at one pixel per pixel.
+        cx.drawImage(images.side, 0, 0, reach, FACE, 0, 0, reach, ARM);
+        cx.restore();
       }
       // The head: the collar, which is the top four pixels of the texture.
       drawLocal(cx, images.side, bpx, bpy, p.d,

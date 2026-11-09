@@ -114,6 +114,21 @@ started.
       block long — which is why all three of the earlier answers (squash it,
       move it to the body's rows, repeat it) were solving a problem that was
       not there.*
+- [x] **Check what a piston actually uses for the neck.** — *Done, against
+      `block/template_piston_head` rather than from memory, and it settles
+      all of it. The arm is `from [6,6,4] to [10,10,20]` — four across and
+      SIXTEEN long, a whole block — with `"uv": [0,0,16,4]` on
+      `piston_side`. So it is the top four ROWS of the texture, the wooden
+      band the head's collar is cut from, with the uv running 0..16 across
+      the texture against the arm's 16 length: the texture's X axis runs
+      ALONG the arm and its four rows are the arm's thickness. A horizontal
+      strip turned a quarter, not a vertical one. Every earlier attempt cut a
+      vertical strip, which is why the arm kept coming out the body's grey
+      (further down the texture is stone) and why four rows had to be
+      squashed or repeated to reach any distance — turned the right way
+      there is nothing to squash or repeat, sixteen pixels of texture for
+      sixteen pixels of arm, and it has the metal bands along it because
+      those are the grey squares in that row.*
 - [x] **`Failed to refresh player: error.auth.minecraft.login`** — in
       Electron's log while signed in fine, with
       `[Relay] token refresh failed, trying existing token: undefined` after
