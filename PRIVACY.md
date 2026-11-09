@@ -50,17 +50,33 @@ We request no other Google scopes, and we use no other Google services.
 
 ## 3. What is stored in your Drive
 
-Only inside the folder the launcher creates. Depending on which switches you
-turn on, this may include:
+Only inside the folder the launcher creates, and only the kinds you switch on.
+Each is a separate switch and all of them start off:
 
-- Launcher settings (theme, colours, layout and similar preferences)
-- Themes you have made or installed
-- Your saved multiplayer server list
-- Your instances, recorded as a pack description (versions, mod loader, and
-  which mods came from where)
-- Your Minecraft worlds
-- Your signed-in Minecraft accounts, including the tokens that keep them
-  signed in
+- **Settings** — theme, colours, layout and similar preferences. Settings that
+  belong to the computer rather than to you — where Java is, how much memory
+  to use, which Google account this machine is signed in with — are
+  deliberately excluded and never leave it.
+- **Themes** you have made or installed.
+- **Server list** — your saved multiplayer servers, as entries, so two
+  computers' lists merge rather than one replacing the other.
+- **Instances** — each one sent by name, as a *description* rather than a
+  copy: the mods are recorded by hash and fetched again from Modrinth or
+  CurseForge on the other computer, and only the part that is yours (the
+  config, your options) is actually uploaded. Other people's mod files are
+  not put in your Drive.
+- **Worlds** — each one sent by name. A world is the opposite case: every
+  byte of it is yours and none of it can be fetched from anywhere, so all of
+  it goes, compressed.
+- **Signed-in Minecraft accounts**, including the tokens that keep them
+  signed in.
+
+When you play a synced world, the launcher also writes a small note into the
+folder saying that this computer has it open, so that another computer is
+warned before you both edit the same world. The note holds the world's name
+and the name of this computer, is encrypted like everything else, is renewed
+while the game runs, and is removed when it closes. A note nobody has renewed
+for ten minutes is ignored.
 
 **Everything in that folder except one file is encrypted on your computer
 before it is uploaded**, using AES-256-GCM. Google receives only ciphertext
@@ -140,6 +156,10 @@ including the Limited Use requirements.
 
 You are in control of all of it, and nothing is kept anywhere we could delete
 it for you, because nothing is kept anywhere but your own Drive and your own
+computer.
+
+**To stop syncing one thing** — the *Stop syncing* button beside it in
+*Settings → Cloud syncing*. It is removed from your Drive and stays on your
 computer.
 
 **To stop syncing on one computer** — *Settings → Cloud syncing → Sign out*.
