@@ -98,6 +98,15 @@ const FIELDS = [
     help: "Goes with the client ID above.",
   },
   {
+    id: "cloudKey", kind: "secret", label: "Cloud sync key (this relay's half)",
+    env: null,
+    help: "Made by the relay on its own. Half of the key each account's synced"
+      + " data is encrypted with; the other half is in that person's Drive, so"
+      + " neither this relay nor their Drive can open anything alone. Changing"
+      + " it makes every account's synced data unreadable, so there is rarely"
+      + " a reason to.",
+  },
+  {
     id: "domain", kind: "text", label: "Base domain",
     env: "RELAY_DOMAIN", fallback: "redstonemc.net",
     help: "The domain subdomains are handed out under.",

@@ -137,8 +137,14 @@ async function freshConfig({ files = {}, env = {} } = {}) {
     ["cf-secret-value", "google-secret-value", sha256("pw")].map(v => shown.includes(v)),
     [false, false, false]);
   check("only whether each is set",
-    c.mod.describe().filter(f => f.set !== undefined).map(f => [f.id, f.set]),
-    [["adminPasswordSha256", true], ["curseforgeToken", true], ["googleClientSecret", true]]);
+    ["adminPasswordSha256", "curseforgeToken", "googleClientSecret"]
+      .map(id => c.mod.describe().find(f => f.id === id))
+      .map(f => [f.id, f.set, "value" in f]),
+    [["adminPasswordSha256", true, false], ["curseforgeToken", true, false],
+      ["googleClientSecret", true, false]]);
+  check("and no secret carries a value at all, whatever it is called",
+    c.mod.describe().filter(f => f.set !== undefined).every(f => !("value" in f)), true,
+    "so a secret added later cannot leak by being forgotten about here");
   check("and something that is not a secret is shown as itself",
     c.mod.describe().find(f => f.id === "domain").value, "redstonemc.net");
   c.done();

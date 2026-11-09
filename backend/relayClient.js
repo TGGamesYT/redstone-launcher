@@ -5,7 +5,7 @@ import net from "net";
 import tls from "tls";
 import https from "https";
 
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23, ALIAS: 24, ALIAS_DATA: 25 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23, ALIAS: 24, ALIAS_DATA: 25, CLOUD: 26, CLOUD_DATA: 27 };
 
 function encodeFrame(type, streamId, payload) {
   const len = payload ? payload.length : 0;
@@ -229,6 +229,20 @@ export function adminRelay(opts) {
   return askRelay({ ...opts, ask: T.ADMIN, reply: T.ADMIN_DATA });
 }
 
+/**
+ * Cloud syncing: { op: 'config' } for the Google OAuth client this relay was
+ * set up with, or { op: 'secret' } for the relay's half of the key this
+ * account's synced data is encrypted with.
+ *
+ * The relay never sees any of the data. What it provides is the half of the
+ * key that is not in the Drive -- and only to a connection that has proved
+ * that exact Minecraft account with Mojang, which is what stops the Drive
+ * file being worth anything on its own.
+ */
+export function cloudRelay(opts) {
+  return askRelay({ ...opts, ask: T.CLOUD, reply: T.CLOUD_DATA });
+}
+
 // Open a relay session. Resolves { address, port, close() }.
 //   account: { accessToken, uuid, name }  (a verified premium account)
 export function openRelay({ host, controlPort, subdomain, domain, localPort, account, directIp, rejectUnauthorized = true }) {
@@ -306,4 +320,4 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
 // exporting a theme died on "relayClient.themeRelay is not a function" even
 // though the function was right there -- main.js reaches these through the
 // default import.
-export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, themeRelay, aliasRelay, adminRelay };
+export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, themeRelay, aliasRelay, adminRelay, cloudRelay };

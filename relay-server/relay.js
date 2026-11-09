@@ -56,7 +56,7 @@ process.on("unhandledRejection", (err) => { try { log("[unhandled]", err && err.
 // served on the SAME public port as Minecraft (25565) — a Minecraft handshake
 // never begins with an HTTP method, so we can tell the two apart from the first
 // bytes and route by the token in the request URL. No extra port to open.
-const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23, ALIAS: 24, ALIAS_DATA: 25 };
+const T = { HELLO: 1, CHALLENGE: 2, AUTH: 3, WELCOME: 4, ERROR: 5, OPEN: 6, DATA: 7, CLOSE: 8, PING: 9, PONG: 10, DIRECT: 11, DOMAINS: 12, HTTP: 13, SYNC: 14, SYNC_DATA: 15, SEEN: 16, SEEN_DATA: 17, SUGGEST: 18, SUGGEST_DATA: 19, ADMIN: 20, ADMIN_DATA: 21, THEME: 22, THEME_DATA: 23, ALIAS: 24, ALIAS_DATA: 25, CLOUD: 26, CLOUD_DATA: 27 };
 
 // URL token (the "random safety token" in the pack path) -> the host serving it.
 const packRoutes = new Map();
@@ -1188,6 +1188,66 @@ const ADMIN_OPS = {
   },
 };
 
+
+// ── Cloud syncing ───────────────────────────────────────────────────────────
+//
+// The launcher can keep its settings, themes, instances and worlds in the
+// user's own Google Drive. Two things it needs from here, and neither of them
+// is the data: the relay never sees any of it.
+//
+//   The Google OAuth client. Making one is the relay owner's job, and it does
+//   not belong in the repository, so it lives in config.json and is handed
+//   out here. (A desktop OAuth client's "secret" is not really one -- every
+//   copy of every installed app carries it -- but keeping it here means it
+//   can be rotated without a release, and is not sitting in git.)
+//
+//   Half of the key the account data is encrypted with. The other half lives
+//   in the user's Drive. Neither half alone opens anything: somebody who
+//   gets at the Drive file still needs this relay to hand them the other
+//   half, and it only does that for a connection that has proved that exact
+//   Minecraft account with Mojang; and somebody who gets at this relay has
+//   no Drive to take the first half from.
+//
+// This half is DERIVED rather than stored -- HMAC of the account's UUID under
+// a key the relay keeps -- so there is no per-account table to lose, and
+// losing the relay key is the only thing that invalidates anybody's.
+function cloudRelayKey() {
+  let hex = config.get("cloudKey");
+  if (!/^[0-9a-f]{64}$/i.test(String(hex || ""))) {
+    // Made once, on the first account that asks for it.
+    hex = crypto.randomBytes(32).toString("hex");
+    config.set({ cloudKey: hex });
+    log("cloud: made this relay's key half");
+  }
+  return Buffer.from(String(hex), "hex");
+}
+
+function handleCloud(req, who) {
+  const op = String(req.op || "");
+  if (op === "config") {
+    const clientId = config.get("googleClientId");
+    if (!clientId) {
+      return { ok: false, error: "This relay has no Google client set up yet." };
+    }
+    return {
+      ok: true,
+      clientId,
+      clientSecret: config.get("googleClientSecret") || "",
+    };
+  }
+  if (op === "secret") {
+    // Only ever for the account on this connection. `who.uuid` came from
+    // Mojang's hasJoined for a serverId this relay made up a moment ago, so
+    // asking for somebody else's is not a thing that can be expressed.
+    const uuid = String(who && who.uuid || "");
+    if (!/^[0-9a-f]{32}$/.test(uuid)) return { ok: false, error: "no account" };
+    const half = crypto.createHmac("sha256", cloudRelayKey())
+      .update("cloud-sync-v1:" + uuid).digest("hex");
+    return { ok: true, half };
+  }
+  return { ok: false, error: "unknown op" };
+}
+
 function handleAdmin(req, who) {
   if (!adminOk(req.password)) return { ok: false, error: "no" };
   const op = String(req.op || "");
@@ -1311,6 +1371,14 @@ function handleControl(sock) {
       handleAlias(req, { uuid: state.uuid, name: state.name }, adminUuids.has(state.uuid))
         .then((out) => send(T.ALIAS_DATA, streamId, Buffer.from(JSON.stringify(out))))
         .catch((e) => send(T.ALIAS_DATA, streamId, Buffer.from(JSON.stringify({ ok: false, error: String(e && e.message || e) }))));
+      return;
+    }
+    if (type === T.CLOUD) {
+      let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      let out;
+      try { out = handleCloud(req, { uuid: state.uuid, name: state.name }); }
+      catch (e) { out = { ok: false, error: String(e && e.message || e) }; }
+      send(T.CLOUD_DATA, streamId, Buffer.from(JSON.stringify(out)));
       return;
     }
     if (type === T.ADMIN) {
