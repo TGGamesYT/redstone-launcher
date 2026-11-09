@@ -117,16 +117,24 @@ check("and held still it stays exactly where it was",
 // was a hard cut.
 await apply({ url: TILE, size: 64, scroll: false });
 await p.waitForTimeout(400);
-await p.evaluate(() => {
+// The change and the look at it in ONE turn of the page, before a frame can
+// run. The class is taken off two animation frames after the change, and
+// whether those two frames happen between one p.evaluate and the next is a
+// matter of how busy the machine is -- which is what made this fail about
+// one run in three rather than when anything was wrong.
+const leaving = await p.evaluate(() => {
   window.LauncherBackground.apply({ background: { mode: "color", color: "#101820" } });
+  const cs = getComputedStyle(document.documentElement, "::after");
+  return {
+    held: document.documentElement.classList.contains("bg-changing"),
+    opacity: cs.opacity,
+    isOld: cs.backgroundImage.startsWith("url("),
+  };
 });
 check("the one leaving is held at full strength for a frame",
-  await p.evaluate(() => {
-    const cs = getComputedStyle(document.documentElement, "::after");
-    return [document.documentElement.classList.contains("bg-changing"), cs.opacity];
-  }), [true, "1"]);
+  [leaving.held, leaving.opacity], [true, "1"]);
 check("and it is the OLD background on that layer, not the new one",
-  await p.evaluate(() => getComputedStyle(document.documentElement, "::after").backgroundImage.startsWith("url(")), true);
+  leaving.isOld, true);
 await p.waitForTimeout(500);
 check("then it fades away, leaving the new one",
   await p.evaluate(() => {

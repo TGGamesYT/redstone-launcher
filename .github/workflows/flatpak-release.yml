@@ -18,6 +18,13 @@ jobs:
         with:
           node-version: 20
 
+      # buildLinux has a pre-step that builds the quiclime sidecar, which is
+      # Rust. The runner image happens to ship it, but build.yml installs it
+      # explicitly for the same step and this one did not -- so the two could
+      # drift apart on the day the image changed.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - run: npm ci
       - run: npm run buildLinux
 

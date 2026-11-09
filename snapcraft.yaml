@@ -1,6 +1,9 @@
 name: redstone-launcher
 base: core22
-version: '1.18.0'
+# Taken from package.json rather than written twice (see override-pull).
+# Two version numbers that have to be kept in step by hand are two version
+# numbers that will not be.
+adopt-info: redstone
 summary: Redstone Launcher for Linux
 description: |
   Unofficial Minecraft Launcher.
@@ -12,15 +15,49 @@ parts:
   redstone:
     plugin: nil
     source: .
+    override-pull: |
+      craftctl default
+      # Read with sed rather than node: this runs at pull time, before the
+      # node snap is necessarily on the path.
+      craftctl set version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -1)"
     override-build: |
       # This ensures the robot uses the Node 20 we install below
       export PATH=/snap/bin:$PATH
+
+      # Rust, because the build needs it and snapcraft does not have it.
+      #
+      # `npm run buildLinux` has a pre-step that builds the quiclime sidecar,
+      # which is a Rust program, and scripts/build-sidecar.mjs stops with an
+      # error when cargo is missing rather than quietly shipping a launcher
+      # that cannot use e4mc. Every snap release since the sidecar was added
+      # has failed there.
+      #
+      # The GitHub runner having Rust on it is no help: snapcraft builds
+      # inside its own clean container, which has only what this file asks
+      # for. So it is asked for here.
+      #
+      # rustup rather than the archive's rustc: core22 is Ubuntu 22.04 and
+      # its rustc is older than the 1.75 the crate declares as its
+      # rust-version, so it would fail on the toolchain instead of on the
+      # missing one.
+      if ! command -v cargo >/dev/null 2>&1; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+          | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable
+      fi
+      export PATH="$HOME/.cargo/bin:$PATH"
+      cargo --version
+
       npm install
       npm run buildLinux
       cp -av dist/linux-unpacked/* $SNAPCRAFT_PART_INSTALL/
     build-packages:
       - nodejs
       - npm
+      # What rustup needs to fetch a toolchain, and what that toolchain needs
+      # to link one.
+      - curl
+      - ca-certificates
+      - build-essential
     build-snaps:
       - node/20/stable
     stage-packages:

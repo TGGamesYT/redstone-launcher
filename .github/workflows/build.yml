@@ -6,15 +6,85 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
+  # ── Is there anything to release? ─────────────────────────────────────────
+  #
+  # This runs first and on its own, and everything else waits on it, because
+  # the answer "no" has to cost ten seconds rather than three platforms'
+  # worth of build.
+  #
+  # What was here before only looked at this AFTER building everything, and
+  # it did not work even then:
+  #
+  #     TAG=$BASE
+  #     while gh release view "$TAG" >/dev/null 2>&1; do
+  #       TAG="${BASE}($i)"; i=$((i+1))
+  #     done
+  #
+  # That step had no token on it, so `gh` could not authenticate, so it
+  # exited non-zero, so the loop body never ran once and TAG was always the
+  # bare version. action-gh-release then uploaded onto the release that was
+  # already there -- which REPLACES its files. So every commit to main
+  # rebuilt all three platforms and overwrote the released binaries with
+  # them, under the same version number.
+  #
+  # And had the loop worked it would have been wrong anyway: it would have
+  # published 1.18.0(1), 1.18.0(2), 1.18.0(3) ... one release per commit.
+  # There is no reason to release the same version twice under any name.
+  check:
+    name: Has this version been released already?
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.ask.outputs.build }}
+      tag: ${{ steps.ask.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ask GitHub about this version
+        id: ask
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+
+          # Publishing a release by hand IS the instruction to build it: the
+          # release exists because somebody made it, and its artifacts are
+          # what this run is for. So that path never asks.
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Release ${{ github.event.release.tag_name }} was published by hand — building its artifacts."
+            exit 0
+          fi
+
+          # Otherwise: scripts/released.mjs, which answers yes or no and
+          # fails on anything that is not an answer. See the comment at the
+          # top of it for what used to happen here instead.
+          VERSION=$(node -p "require('./package.json').version")
+          echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$(node scripts/released.mjs "$VERSION")" = "yes" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-win:
     name: Build Windows
     runs-on: windows-latest
+    needs: check
+    if: needs.check.outputs.build == 'true'
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
@@ -41,7 +111,7 @@ jobs:
 
       - name: Build Windows
         run: npm run buildWin
-        
+
       - name: Rename output
         shell: pwsh
         run: |
@@ -53,7 +123,7 @@ jobs:
           $dest = Join-Path $exe.DirectoryName 'Redstone-Launcher.exe'
           Write-Host "Renaming '$($exe.Name)' -> '$dest'"
           Move-Item -Path $exe.FullName -Destination $dest -Force
-          
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
@@ -63,19 +133,16 @@ jobs:
   build-linux:
     name: Build Linux
     runs-on: ubuntu-latest
+    needs: check
+    if: needs.check.outputs.build == 'true'
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # The build scripts have a pre-step that builds the quiclime sidecar for
-      # this runner's operating system -- which is how a release ends up with
-      # one for every platform without anybody cross-compiling. The runners do
-      # ship Rust, but relying on an image's contents is how a build breaks
-      # quietly one day.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -111,19 +178,16 @@ jobs:
   build-mac:
     name: Build macOS
     runs-on: macos-latest
+    needs: check
+    if: needs.check.outputs.build == 'true'
     steps:
-      - uses: actions/checkout@v3
- 
+      - uses: actions/checkout@v4
+
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # The build scripts have a pre-step that builds the quiclime sidecar for
-      # this runner's operating system -- which is how a release ends up with
-      # one for every platform without anybody cross-compiling. The runners do
-      # ship Rust, but relying on an image's contents is how a build breaks
-      # quietly one day.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -156,9 +220,10 @@ jobs:
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-win, build-linux, build-mac]
+    needs: [check, build-win, build-linux, build-mac]
+    if: needs.check.outputs.build == 'true'
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Download Windows executable
         uses: actions/download-artifact@v4
@@ -177,37 +242,16 @@ jobs:
         with:
           name: redstone-launcher-mac
           path: ./release-artifacts/
-     
-      - name: Get version from package.json
-        id: get_version
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Find next available release tag
-        id: tag
-        run: |
-          BASE=${{ steps.get_version.outputs.version }}
-          TAG=$BASE
-          i=1
-          while gh release view "$TAG" >/dev/null 2>&1; do
-            TAG="${BASE}($i)"
-            i=$((i+1))
-          done
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-
-      - name: Create release
-        uses: softprops/action-gh-release@v1
+      # One step, not two. It used to create the release and then upload to
+      # it separately, which is two chances to land on something that is
+      # already there. Which release this is was settled by the check job
+      # before anything was built.
+      - name: Release ${{ needs.check.outputs.tag }}
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.tag }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      - name: Upload artifacts to release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ needs.check.outputs.tag }}
+          name: ${{ needs.check.outputs.tag }}
           files: ./release-artifacts/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}

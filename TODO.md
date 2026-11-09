@@ -176,6 +176,34 @@ started.
       come forward with each row as a band of grid rows as tall as its
       tallest segment was, so a page looks as it did.*
 
+- [x] **The build overwrites the release's files on every commit.** — *It
+      decided whether a version was already out with
+      `while gh release view "$TAG" >/dev/null 2>&1`, on a step with no token
+      on it. `gh` exits non-zero for "there is no such release" and equally
+      for "I could not ask", so with no token it always took the second for
+      the first: the loop body never ran once, the tag was always the bare
+      version, and `action-gh-release` uploaded onto the release already
+      there — which REPLACES its files. Every commit to main rebuilt three
+      platforms and overwrote the released binaries under a version number
+      that had not moved. (And had the loop worked it would have published
+      `1.18.0(1)`, `1.18.0(2)`… one release per commit, which is no better —
+      the absence of any such tag on the repo is how you can tell it never
+      ran.) `scripts/released.mjs` asks once, reads the HTTP status, and
+      treats only 200 and 404 as answers: anything else stops the run. It is
+      a `check` job that everything else waits on, so "already released"
+      costs ten seconds instead of three platforms' worth of build.*
+- [x] **Snap releases have failed since the sidecar was added.** — *`npm run
+      buildLinux` has a pre-step that builds the quiclime sidecar, which is
+      Rust, and `scripts/build-sidecar.mjs` stops rather than quietly
+      shipping a launcher that cannot use e4mc. The GitHub runner having Rust
+      is no help: snapcraft builds in its own clean container with only what
+      `snapcraft.yaml` asks for, and it asked for node and npm. It installs
+      rustup now — not the archive's rustc, which on core22 is older than the
+      1.75 the crate requires. The snap's version is taken from
+      `package.json` too, so the two cannot drift, and the snap is gated on a
+      new version like the GitHub release: it was pushing a revision to the
+      stable channel on every commit as well.*
+
 ---
 
 ## 0. Round 48
