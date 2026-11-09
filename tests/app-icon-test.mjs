@@ -232,6 +232,59 @@ check("where the same shift done in HSL flattens it",
   okRange(inHsl, gemOnly) < drawnRange - 0.06, true,
   `${okRange(inHsl, gemOnly).toFixed(3)} against the artwork's ${drawnRange.toFixed(3)}`);
 
+// ── every part of it is the colour that was asked for ──
+//
+// Turning each pixel's hue by the same amount sounds right and is not: the
+// hue circle is not evenly divided between the colours anybody can name. The
+// gem's body sits at hue 25 and its lit facets at 35 to 40 -- warmer, which
+// in red reads as orange, the colour a lit red stone is. Carry that offset
+// round to blue and the body lands on 251, which is blue, while the facets
+// land on 266 to 271, which is indigo: the lightest parts of a blue gem came
+// out a different colour from the rest of it.
+const hueRange = (data, mask) => {
+  let min = 400, max = -1;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    if (!mask[p] || data[i + 3] < 200) continue;
+    const [, C, h] = icon.rgbToOklch(data[i], data[i + 1], data[i + 2]);
+    if (C < 0.01) continue;              // grey has no hue to speak of
+    if (h < min) min = h;
+    if (h > max) max = h;
+  }
+  return { min, max, spread: max - min };
+};
+const askedFor = icon.oklchOf("#4d9bff")[2];
+const blueHue = hueRange(blueGem.data, gemOnly);
+check("every part of a gem turned blue is the blue that was asked for",
+  [Math.abs(blueHue.min - askedFor) < 8, Math.abs(blueHue.max - askedFor) < 8], [true, true],
+  `hue ${blueHue.min.toFixed(0)}-${blueHue.max.toFixed(0)} against the ${askedFor.toFixed(0)} asked for`);
+
+// What turning each pixel's own hue by the same amount would have given.
+const rotated = (() => {
+  const a = icon.oklchOf(DEFAULT_SECOND), f = icon.oklchOf("#4d9bff");
+  const out = Buffer.from(asShipped.data);
+  for (let i = 0, p = 0; i < out.length; i += 4, p++) {
+    if (!gemOnly[p]) continue;
+    const [L, C, h] = icon.rgbToOklch(out[i], out[i + 1], out[i + 2]);
+    const [r, g, b] = icon.oklchToRgb(
+      Math.max(0, Math.min(1, L + f[0] - a[0])),
+      Math.max(0, C + f[1] - a[1]),
+      (((h + f[2] - a[2]) % 360) + 360) % 360);
+    out[i] = r; out[i + 1] = g; out[i + 2] = b;
+  }
+  return out;
+})();
+const rotatedHue = hueRange(rotated, gemOnly);
+check("where turning each pixel's own hue sent the lit facets into indigo",
+  rotatedHue.max - askedFor > 10, true,
+  `up to hue ${rotatedHue.max.toFixed(0)}, ${(rotatedHue.max - askedFor).toFixed(0)} past the blue asked for`);
+
+// And it is still a gem rather than a flat shape: the lightness and the
+// colourfulness are what tell its facets apart, and both survive.
+check("and it is still lit, and still has facets",
+  [okRange(blueGem.data, gemOnly) > 0.3,
+    satSpread(blueGem.data, gemOnly) > 0.05], [true, true],
+  `${okRange(blueGem.data, gemOnly).toFixed(2)} of light across it, saturation spread ${satSpread(blueGem.data, gemOnly).toFixed(3)}`);
+
 // ── a green theme ──
 const green = await build({
   background: { kind: "color", hex: "#2ecc40" },

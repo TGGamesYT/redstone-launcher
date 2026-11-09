@@ -23,6 +23,20 @@ started.
       space and is not taken in; the edge stops, and the readout says which.
       The drag carries on from there rather than ending, so the line between
       the halves can be moved in the same gesture.*
+- [x] **The blue gem's lighter parts come out reddish or indigo.** — *Each
+      pixel's own hue was being turned by the same amount, which sounds right
+      and is not: the hue circle is not evenly divided between the colours
+      anybody can name. Measured, the gem's body sits at hue 25 and its lit
+      facets at 35 to 40 -- ten to fifteen degrees warmer, which in red reads
+      as orange, the colour a lit red stone is. Carried round to blue, the
+      body landed on 251, which is blue, and the facets on 266 to 271, which
+      is indigo: the lightest parts of the gem came out a different colour
+      from the rest of it. The hue is simply the one asked for now, flat, and
+      the lightness and the colourfulness carry each pixel's own distance
+      from the colour the layer was drawn for -- a highlight does not need a
+      hue of its own to read as one. A gem turned blue now spans hue 255 to
+      258 against the 256 asked for, and still has 0.42 of light across it
+      and its facets' spread of colour.*
 - [x] **A lighter, slightly orange part of the gem comes out as a flat dark
       blue.** — *The shifts were being measured in HSL, whose "lightness" is
       the midpoint of the largest and smallest channel -- which puts yellow

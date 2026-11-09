@@ -290,11 +290,27 @@ export async function shadeLayer(layerPng, fill, size, opts = {}) {
       // come out in the arithmetic, because "the launcher's own colours give
       // the artwork back" should be exact and not nearly.
       if (Math.abs(dL) < 1e-6 && Math.abs(dC) < 1e-6 && Math.abs(dh) < 1e-6) continue;
-      const [L, C, h] = rgbToOklch(out[i], out[i + 1], out[i + 2]);
+      // The hue is the fill's, flat. The lightness and the chroma keep each
+      // pixel's own distance from the colour the layer was drawn for.
+      //
+      // Turning every pixel's hue by the same amount sounds right and is
+      // not, because the hue circle is not evenly divided between colours
+      // anybody can name. The gem's body sits at hue 25 and its lit facets
+      // at 35 to 40 -- ten to fifteen degrees warmer, which in red reads as
+      // orange, the colour a lit red stone is. Carry that same offset round
+      // to blue and the body lands on 251, which is blue, while the facets
+      // land on 266 to 271, which is indigo: the lightest parts of a blue
+      // gem came out a different colour from the rest of it.
+      //
+      // A highlight does not need a hue of its own to read as one. It is
+      // lighter and it is less colourful, and both of those travel to any
+      // colour without turning into something else -- so they are what is
+      // carried, and the hue is simply the one that was asked for.
+      const [L, C] = rgbToOklch(out[i], out[i + 1], out[i + 2]);
       [r, g, b] = oklchToRgb(
         Math.max(0, Math.min(1, L + dL)),
         Math.max(0, C + dC),
-        (((h + dh) % 360) + 360) % 360,
+        fh,
       );
     } else {
       const l = rgbToHsl(out[i], out[i + 1], out[i + 2])[2];
