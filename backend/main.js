@@ -1823,8 +1823,8 @@ async function refreshPlayer(player, opts = {}) {
       if (player.needsReauth) { delete player.needsReauth; persistPlayer(player); }
       return player;
     } catch (err) {
-      const msg = String(err && (err.message ?? err));
-      const rateLimited = err?.response?.status === 429 || msg.includes("429");
+      const msg = authErrorText(err);
+      const rateLimited = err?.response?.status === 429 || /\b429\b/.test(msg);
       // Some failures are temporary (rate limits, no network). These are not:
       // the grant is gone and no amount of retrying brings it back, so say so
       // instead of quietly carrying on with a dead token and letting every
@@ -1838,7 +1838,13 @@ async function refreshPlayer(player, opts = {}) {
         notifyReauthNeeded(player);
       }
       _refreshCooldown.set(key, Date.now() + (rateLimited ? REFRESH_RATELIMIT_GAP : REFRESH_RETRY_GAP));
-      devtoolsLog("Failed to refresh player:", err);
+      // Named, and in words. "Failed to refresh player" and then the raw
+      // object said neither WHICH account nor what went wrong -- and the
+      // account it is about is very often not the one being played, which
+      // is the whole of why it reads as something being broken when
+      // nothing is.
+      devtoolsLog(`Could not refresh the sign-in for ${player.username || player.auth?.name || "an account"}: ${describeAuthError(err)}`
+        + (dead ? " — it will have to be signed in again." : " — it will be tried again."));
       throw err;
     } finally {
       _refreshInFlight.delete(key);
@@ -1846,6 +1852,51 @@ async function refreshPlayer(player, opts = {}) {
   })();
   _refreshInFlight.set(key, run);
   return run;
+}
+
+/**
+ * What an auth failure actually says.
+ *
+ * msmc does not throw Errors. It throws a plain object -- { ts, response } --
+ * whose `ts` names the step that failed, with no message on it at all. So
+ * `err.message` is undefined and `String(err)` is "[object Object]", which is
+ * exactly what the two places that report one were printing: one the literal
+ * word "undefined", the other the raw object. The `ts` is the useful part and
+ * it was the one thing nothing looked at.
+ */
+const AUTH_STEPS = {
+  "error.auth.microsoft.token": "Microsoft would not renew the sign-in",
+  "error.auth.xbox.token": "Xbox Live would not issue a token",
+  "error.auth.xbox.userHash": "Xbox Live did not answer with an account",
+  "error.auth.xsts.token": "Xbox Live would not authorise this account",
+  "error.auth.minecraft.login": "Minecraft's own login did not answer",
+  "error.auth.minecraft.profile": "Minecraft has no profile on this account",
+  "error.gui.closed": "the sign-in window was closed",
+};
+/** Everything an auth error has to say, as one string, for matching against. */
+function authErrorText(err) {
+  if (!err) return "";
+  const bits = [err.ts, err.message, err.errorMessage, err.error_description];
+  try { bits.push(JSON.stringify(err)); } catch { bits.push(String(err)); }
+  return bits.filter(Boolean).join(" ");
+}
+/** The same thing in words, for a human reading the log. */
+function describeAuthError(err) {
+  if (!err) return "no reason given";
+  if (typeof err === "string") return err;
+  const said = [];
+  if (err.ts) said.push(AUTH_STEPS[err.ts] || err.ts);
+  const msg = err.message || err.errorMessage || err.error_description;
+  if (msg && msg !== err.ts) said.push(msg);
+  const r = err.response || {};
+  const status = r.status || r.statusCode;
+  if (status) said.push(`it answered ${status}`);
+  // msmc reports an empty body as size 0, which is what a request that never
+  // got through looks like -- and is the usual reason for this to happen to
+  // an account that is otherwise working perfectly well.
+  else if (r.size === 0) said.push("it sent nothing back, so this is a hiccup rather than a problem with the account");
+  if (!said.length) said.push(authErrorText(err) || String(err));
+  return said.join(" — ");
 }
 
 // Write a changed account back to disk without disturbing the others.
@@ -6155,7 +6206,11 @@ async function accountCredsByIdFresh(accountId) {
     await refreshPlayer(p);
     savePlayers(players);
   } catch (err) {
-    console.warn("[Relay] token refresh failed, trying existing token:", err.message);
+    // Not a failure as far as anything that can be seen goes: the token
+    // already in hand is used and the share works. It said "undefined"
+    // because an msmc error has no message on it.
+    console.warn("[Relay] could not renew the sign-in, carrying on with the token already in hand:",
+      describeAuthError(err));
   }
   return p.auth ? { accessToken: p.auth.access_token, uuid: p.auth.uuid, name: p.auth.name || p.username } : null;
 }

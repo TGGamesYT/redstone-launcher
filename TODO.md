@@ -90,10 +90,21 @@ started.
       band now, columns 4 to 8 and rows 0 to 4, which is the rectangle the
       game's own piston head takes its arm from, at its own size and tiled
       along however far it reaches.*
-- [ ] **`Failed to refresh player: error.auth.minecraft.login`** — in
+- [x] **`Failed to refresh player: error.auth.minecraft.login`** — in
       Electron's log while signed in fine, with
       `[Relay] token refresh failed, trying existing token: undefined` after
-      it.
+      it. *Both lines are the same mistake. msmc does not throw Errors — it
+      throws a plain object whose `ts` names the step that failed, with no
+      message on it at all. So `err.message` was undefined, which the relay
+      printed literally, and `String(err)` is `[object Object]`, so the other
+      printed the raw object instead. Neither said which account it was about
+      or what had gone wrong. And nothing had: `error.auth.minecraft.login`
+      with `size: 0` is an empty answer from Minecraft's login, which is
+      retried a moment later — it is not the signed-in account failing, and
+      very often not even that account. The matching that decides whether a
+      grant is dead or rate limited was looking at `err.message` too, so for
+      an msmc error it was matching against nothing. There is a
+      `describeAuthError` now, used by both, and the account is named.*
 - [x] **The home page is still a rowed system.** — Resizing into another row
       moves that row down rather than sharing the space, and two segments
       still cannot sit side by side across what used to be two rows. The row
