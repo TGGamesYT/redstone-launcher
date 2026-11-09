@@ -433,5 +433,86 @@ check("the build is told where the icon is now",
   ["png", "ico", "icns"].map(e => JSON.stringify(JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).build).includes(`frontend/assets/icon/redstone_logo.${e}`)),
   [true, true, true]);
 
+// ── framing the background picture inside the icon ──────────────────────
+//
+// The backing is a circle 256 pixels across and a wallpaper is a couple of
+// thousand, so the whole of one squeezed into it is the picture seen from
+// much too far away: whatever it is OF ends up a few pixels in the middle.
+// It goes through the same cropper an instance's icon uses, and what comes
+// back is a finished 256-pixel square the icon wears as it is.
+//
+// The real backgroundAsFill out of the main process, with the two things it
+// reaches for stubbed: the settings it reads and the files it opens.
+const mainSrc = fs.readFileSync(path.join(ROOT, "backend/main.js"), "utf8");
+const cutFill = (() => {
+  const i = mainSrc.indexOf("function backgroundAsFill() {");
+  const j = mainSrc.indexOf("// What each layer is filled with", i);
+  return i < 0 || j < 0 ? null : mainSrc.slice(i, j);
+})();
+check("backgroundAsFill is where it was", !!cutFill, true);
+
+const WALL = path.join(OUT, "wallpaper.png");
+await sharp({ create: { width: 40, height: 20, channels: 4, background: { r: 10, g: 120, b: 200, alpha: 1 } } })
+  .png().toFile(WALL);
+const CROP = "data:image/png;base64," + (await sharp({
+  create: { width: 8, height: 8, channels: 4, background: { r: 200, g: 40, b: 40, alpha: 1 } },
+}).png().toBuffer()).toString("base64");
+
+const fillWith = (store) => new Function("settings", "fs", "fromDataUrl", `
+  ${cutFill}
+  return backgroundAsFill();
+`)(
+  { get: (k, d) => (k in store ? store[k] : d) },
+  fs,
+  (u) => Buffer.from(String(u).replace(/^data:image\/[\w+.-]+;base64,/, ""), "base64"),
+);
+
+const bgPicture = { mode: "image", image: { file: WALL } };
+const whole = fillWith({ background: bgPicture, appIcon: { kind: "theme" } });
+check("with no framing the icon wears the whole picture",
+  [whole.kind, whole.png.length === fs.readFileSync(WALL).length], ["texture", true]);
+
+const framed = fillWith({
+  background: bgPicture,
+  appIcon: { kind: "theme", backCrop: CROP, backCropOf: WALL },
+});
+check("and with a framing it wears that instead",
+  [framed.kind, framed.png.length === fs.readFileSync(WALL).length], ["texture", false],
+  "the crop is its own picture, not the wallpaper again");
+
+// A framing belongs to the picture it was made from. Choosing another
+// background and finding the icon still wearing a crop of the old one is
+// worse than finding it wearing none.
+const stale = fillWith({
+  background: { mode: "image", image: { file: WALL } },
+  appIcon: { kind: "theme", backCrop: CROP, backCropOf: path.join(OUT, "some-other.png") },
+});
+check("a framing of a picture that is no longer set is dropped",
+  stale.png.length, fs.readFileSync(WALL).length,
+  "the whole picture comes back rather than a crop of a wallpaper nobody has any more");
+
+// And it only applies to a picture: a tiled block or a gradient has nothing
+// to frame, so a leftover crop must not be worn by one.
+check("a tiled block is not given the picture's framing",
+  fillWith({
+    background: { mode: "block", block: { url: CROP } },
+    appIcon: { kind: "theme", backCrop: CROP, backCropOf: WALL },
+  }).pixelated, true);
+check("and a gradient is still a gradient",
+  fillWith({
+    background: { mode: "gradient", gradient: { colors: ["#111", "#222"], angle: 10 } },
+    appIcon: { kind: "theme", backCrop: CROP, backCropOf: WALL },
+  }).kind, "gradient");
+check("and the app's own panel has nothing to take",
+  fillWith({ background: { mode: "theme" }, appIcon: { kind: "theme", backCrop: CROP } }), null);
+
+// The settings page opens the same cropper an instance's icon gets, rather
+// than a second one that could drift from it.
+const setSrc = fs.readFileSync(path.join(ROOT, "frontend/settings.html"), "utf8");
+check("the settings page uses the icon picker's own cropper",
+  /IconPicker\.__crop\(/.test(setSrc), true);
+check("and stores what it gives back",
+  /icon:setBackCrop/.test(setSrc) && /icon:setBackCrop/.test(mainSrc), true);
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);

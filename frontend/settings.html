@@ -777,6 +777,14 @@
             data-tip="Go back to the launcher's own icon, which is tinted to the base colour and follows it from then on.">Back to the launcher's icon</button>
           <label class="setting-toggle" style="margin-top:4px;"
             data-tip="The launcher's icon is drawn in layers: the round backing takes your base colour, the gem your second colour, and the cog is left as it is. Tick this and the backing becomes whatever is behind the launcher instead — your block, your picture or your gradient — with the icon still on top of it."><input type="checkbox" id="app-icon-merge"> Show the background through it</label>
+          <!-- A whole wallpaper squashed into a 256-pixel circle is the
+               picture seen from much too far away, so it can be framed:
+               the same zoom, placing and rounding an instance's icon gets.
+               Only worth offering when the backing IS a picture. -->
+          <div id="app-icon-crop-row" style="display:none; margin-top:8px;">
+            <button type="button" id="app-icon-crop" class="bg-btn">Frame the picture…</button>
+            <button type="button" id="app-icon-crop-clear" class="bg-btn" style="margin-left:8px;">Use the whole picture</button>
+          </div>
         </div>
       </div>
 
@@ -2029,12 +2037,59 @@
       });
 
       const iconMerge = document.getElementById('app-icon-merge');
+      // ── framing the picture inside the icon ──
+      //
+      // The backing is a circle 256 pixels across and a wallpaper is a
+      // couple of thousand, so the whole of one squeezed into it is the
+      // picture seen from much too far away: whatever it is OF ends up a
+      // few pixels in the middle. It goes through the same cropper an
+      // instance's icon does -- drag to frame, scroll to zoom, a slider for
+      // the corners -- and what comes back is a finished 256-pixel square
+      // the icon wears as it is.
+      const iconCropRow = document.getElementById('app-icon-crop-row');
+      let iconHasCrop = false;
+      const showIconCrop = () => {
+        // Only when the backing really is a picture: a tiled block or a
+        // gradient has nothing to frame.
+        const canFrame = iconMerge.checked && bg.mode === 'image'
+          && !!(bg.image && (bg.image.file || bg.image.url));
+        iconCropRow.style.display = canFrame ? 'block' : 'none';
+        const clear = document.getElementById('app-icon-crop-clear');
+        if (clear) clear.style.display = iconHasCrop ? '' : 'none';
+      };
       ipcRenderer.invoke('icon:app').then((r) => {
-        iconMerge.checked = !!((r && r.icon) || {}).mergeBlock;
+        const icon = (r && r.icon) || {};
+        iconMerge.checked = !!icon.mergeBlock;
+        iconHasCrop = !!icon.backCrop;
+        showIconCrop();
       }).catch(() => { });
       iconMerge.addEventListener('change', async () => {
         const r = await ipcRenderer.invoke('icon:setMergeBlock', { on: iconMerge.checked });
         if (r && r.success && r.dataUrl) iconPreview.src = r.dataUrl;
+        showIconCrop();
+      });
+      // Kept in step with the background, since choosing a picture -- or
+      // switching away from one -- changes whether there is anything to
+      // frame at all.
+      window.__iconCropRowRefresh = showIconCrop;
+      document.getElementById('app-icon-crop').addEventListener('click', () => {
+        const im = bg.image || {};
+        const url = im.url
+          || ('file:///' + String(im.file || '').replace(/\\/g, '/').replace(/^\/+/, ''));
+        if (!url || !window.IconPicker) return;
+        window.IconPicker.__crop(url, async (dataUrl) => {
+          if (!dataUrl) return;                      // cancelled
+          const r = await ipcRenderer.invoke('icon:setBackCrop', { crop: dataUrl });
+          if (r && r.success && r.dataUrl) iconPreview.src = r.dataUrl;
+          iconHasCrop = true;
+          showIconCrop();
+        });
+      });
+      document.getElementById('app-icon-crop-clear').addEventListener('click', async () => {
+        const r = await ipcRenderer.invoke('icon:setBackCrop', { crop: null });
+        if (r && r.success && r.dataUrl) iconPreview.src = r.dataUrl;
+        iconHasCrop = false;
+        showIconCrop();
       });
       // Changing the base colour re-tints the preview, since that is the
       // colour the icon's coloured parts follow -- unless a picture of your
@@ -2186,6 +2241,9 @@
         b.addEventListener('click', () => {
           bg.mode = b.dataset.mode;
           showBgPanels(); paintBackground(); saveBackground();
+          // Whether there is a picture to frame inside the icon changes with
+          // which background is in use.
+          if (window.__iconCropRowRefresh) window.__iconCropRowRefresh();
           // "Take the theme from the background" is about the background,
           // whichever one it is -- so changing which one it is takes the
           // theme from the new one. It used to leave the colours of the
@@ -2390,6 +2448,7 @@
         bg.mode = 'image';
         renderImageList(); showBgPanels(); paintBackground(); saveBackground();
         if (window.__followBackgroundColours) window.__followBackgroundColours();
+        if (window.__iconCropRowRefresh) window.__iconCropRowRefresh();
       });
 
       // ── a block, tiled ──

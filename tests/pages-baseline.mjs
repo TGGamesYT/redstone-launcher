@@ -194,9 +194,15 @@ if (errors.length) {
   // A page that throws is not necessarily broken here -- the stubs are not the
   // real main process -- but it has to throw the SAME way before and after.
   const errPath = path.join(BASE, "errors.json");
-  if (SAVE) {
+  // One file for every page, so only a run of every page may write it.
+  // `--save --only=settings` used to rewrite it with settings' one error
+  // and throw the other five away, which then read as five pages that had
+  // stopped throwing rather than as a baseline that had been truncated.
+  if (SAVE && !ONLY) {
     fs.writeFileSync(errPath, JSON.stringify(errors.sort(), null, 1));
     ok("page errors recorded", `${errors.length} of them, which must not change`);
+  } else if (SAVE) {
+    ok("page errors left alone", `--only is one page; the list is for all of them`);
   } else if (fs.existsSync(errPath)) {
     const was = JSON.parse(fs.readFileSync(errPath, "utf8"));
     const now = errors.sort();

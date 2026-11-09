@@ -48,8 +48,18 @@ started.
       layer being made a COLOUR wants. A block's texture, or the very picture
       the launcher is wearing, is not a colour: it has its own light and
       shade already. A texture is only cut to the shape of the layer now.*
-- [ ] **A cropping step for the launcher's icon when its back is a picture.**
+- [x] **A cropping step for the launcher's icon when its back is a picture.**
       — Zoom, framing and rounding, the way an instance's icon is cropped.
+      *The backing is a circle 256 pixels across and a wallpaper is a couple
+      of thousand, so the whole of one squeezed into it is the picture seen
+      from much too far away — whatever it is OF ends up a few pixels in the
+      middle. "Frame the picture…" under the icon opens the same cropper an
+      instance's icon gets (`IconPicker.__crop`), and what comes back is a
+      finished 256-pixel square the backing wears as it is. It is remembered
+      against the picture it was made from, so choosing another background
+      drops it rather than leaving the icon wearing a crop of a wallpaper
+      nobody has any more, and it is only offered when the backing really is
+      a picture.*
 - [x] **Several images stacked as the background.** — Each showing through
       where the one over it is transparent, and a fitted image showing the
       background where it does not reach. *A CSS background is already a

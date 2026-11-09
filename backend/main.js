@@ -6676,6 +6676,23 @@ function backgroundAsFill() {
   const bg = settings.get("background", null) || {};
   const mode = String(bg.mode || "theme");
   if (mode === "image" && bg.image && bg.image.file) {
+    // How the picture is framed inside the icon, if it has been framed.
+    //
+    // The whole picture squashed into a 256-pixel circle is a wallpaper seen
+    // from too far away: whatever it is OF ends up a few pixels across in
+    // the middle of it. `backCrop` is the picture put through the same
+    // cropper an instance's icon uses -- zoom, where it sits, and how round
+    // -- and is a finished 256-pixel square, so it is used as it is.
+    const icon = settings.get("appIcon", null) || {};
+    if (icon.backCrop && String(icon.backCrop).startsWith("data:image/")) {
+      // Only while it still belongs to the picture that is actually set:
+      // choosing another background leaves a crop of the old one behind, and
+      // an icon wearing the last wallpaper is worse than one wearing none.
+      if (!icon.backCropOf || icon.backCropOf === bg.image.file) {
+        try { return { kind: "texture", png: fromDataUrl(icon.backCrop), pixelated: false }; }
+        catch { /* fall through to the picture itself */ }
+      }
+    }
     try { return { kind: "texture", png: fs.readFileSync(bg.image.file), pixelated: false }; }
     catch { return null; }
   }
@@ -6806,6 +6823,26 @@ ipcMain.handle("icon:setApp", async (event, { icon } = {}) => applyAppIcon(icon)
 // Whether the launcher's background shows through the icon -- its backing
 // becomes the block, picture or gradient behind the launcher, and the cog
 // still sits over the top of it.
+// How the background picture is framed inside the icon. `crop` is a finished
+// 256-pixel square out of the same cropper an instance's icon uses, or null
+// to go back to the whole picture.
+ipcMain.handle("icon:setBackCrop", async (event, { crop } = {}) => {
+  const icon = settings.get("appIcon", null) || { kind: "theme" };
+  const bg = settings.get("background", null) || {};
+  const next = { ...icon };
+  if (crop && String(crop).startsWith("data:image/")) {
+    next.backCrop = String(crop);
+    // Which picture it is a crop OF, so it is dropped rather than worn by
+    // the next one.
+    next.backCropOf = (bg.image && bg.image.file) || null;
+  } else {
+    delete next.backCrop;
+    delete next.backCropOf;
+  }
+  settings.set("appIcon", next);
+  if (next.kind === "image") return { success: true, dataUrl: next.dataUrl || null };
+  return applyAppIcon(next);
+});
 ipcMain.handle("icon:setMergeBlock", async (event, { on } = {}) => {
   const icon = settings.get("appIcon", null) || { kind: "theme" };
   settings.set("appIcon", { ...icon, mergeBlock: !!on });
