@@ -147,26 +147,49 @@ check("the head is the collar off the top of the texture, not the body's pattern
   apart(colours.head, colours.body) > 25, true,
   `head ${colours.head} against body ${colours.body}`);
 
-// And the arm is WOOD, all the way along it.
+// And the arm is ONE piece of the texture, cut to how far it has come out.
 //
-// piston_side holds both: the top four rows are the wooden band the arm and
-// the collar are cut from, and the twelve below are the stone body. Taking
-// the arm from the body's rows made it the body's grey, which is the same
-// thing as not drawing an arm -- it is the colour of the block it comes out
-// of. Taking the whole strip and stretching it, which is what it was before
-// that, gave an arm that was the head's colour at one end and the body's at
-// the other and no rod in between.
-const wood = (c) => c[0] - c[2] > 40;
-check("the arm is wood, which is what a piston's arm is made of",
-  [wood(colours.head), wood(colours.armNearHead), wood(colours.armNearBody)],
-  [true, true, true],
-  `head ${colours.head}, arm ${colours.armNearHead} and ${colours.armNearBody}`);
-check("and it is not the grey of the body it comes out of",
-  apart(colours.armNearBody, colours.body) > 60, true,
-  `arm ${colours.armNearBody} against body ${colours.body}`);
-check("and it is the same thing at both ends of itself",
-  apart(colours.armNearHead, colours.armNearBody) < 140, true,
-  "one rod, not a gradient from the head's colour to the body's");
+// The game's piston head is a single object -- a plate with a rod behind it
+// -- and extending slides the whole thing forward, so what changes is how
+// much of the rod is out of the hole. The rod is never stretched to length,
+// never taken from the body's rows, and never repeated.
+//
+// All three of those were tried. The telling one is the repeat: the strip
+// is wood for its first four rows and shaft for the rest, so a rod drawn
+// ONCE has exactly one run of wood in it, at the head end, and a rod made of
+// a four-row band laid four times has four.
+const armDown = await page.evaluate(() => {
+  const cx = window.__cx;
+  const TEX = window.Loading.TEX;
+  cx.clearRect(0, 0, 64, 64);
+  window.Loading.frame(cx, 0.45);
+  // Straight down the middle of the arm, across the space it spans.
+  const d = cx.getImageData(TEX / 2, TEX + 12, 1, TEX).data;
+  const out = [];
+  for (let i = 0; i < d.length; i += 4) {
+    out.push(d[i + 3] < 20 ? "." : (d[i] - d[i + 2] > 40 ? "w" : "s"));
+  }
+  return out.join("");
+});
+const runs = (s, ch) => (s.match(new RegExp(ch + "+", "g")) || []).length;
+check("the arm is drawn once, not the same inch of it over and over",
+  runs(armDown, "w"), 1,
+  `${armDown} — w is wood, s is shaft; four runs of w is the band repeated`);
+check("and the wood is the end of it that meets the head",
+  armDown.lastIndexOf("s") < armDown.indexOf("w"), true,
+  "the rod comes out wood first, which is the end the plate is on");
+check("with nothing missing out of the middle of it",
+  /^[ws]+$/.test(armDown), true,
+  `${armDown} — a gap in here would be a rod with a hole in it`);
+
+// And it is not the grey of the body at the end you can see it against.
+const apart2 = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+check("the arm where it meets the head is not the body's colour",
+  apart2(colours.armNearHead, colours.body) > 60, true,
+  `arm ${colours.armNearHead} against body ${colours.body}`);
+check("and it is the same wood the head is",
+  apart2(colours.armNearHead, colours.head) < 60, true,
+  `arm ${colours.armNearHead} against head ${colours.head}`);
 
 // The two textures that cannot be seen from the side are not even loaded.
 const src = fs.readFileSync(path.join(FE, "loading.js"), "utf8");

@@ -101,6 +101,19 @@ started.
       band now, columns 4 to 8 and rows 0 to 4, which is the rectangle the
       game's own piston head takes its arm from, at its own size and tiled
       along however far it reaches.*
+- [x] **The arm is just the end of it looped four times, which is not what a
+      piston head does.** — *No, and tiling was the wrong shape of answer
+      altogether. The game's piston head is ONE object — a plate with a rod
+      behind it — and extending slides the whole thing forward, so what
+      changes is how much of the rod is out of the hole, not how many copies
+      of it there are. The arm is one draw of columns 4 to 8 of
+      `piston_side`, cut to exactly how far it has come out, one pixel per
+      pixel: wood for its first four rows, which is the end the plate is on,
+      and shaft behind that. Nothing has to be invented to fill any length,
+      because the furthest a piston reaches is one block and the strip is one
+      block long — which is why all three of the earlier answers (squash it,
+      move it to the body's rows, repeat it) were solving a problem that was
+      not there.*
 - [x] **`Failed to refresh player: error.auth.minecraft.login`** — in
       Electron's log while signed in fine, with
       `[Relay] token refresh failed, trying existing token: undefined` after

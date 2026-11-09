@@ -160,28 +160,32 @@
         [0, FACE, TEX, TEX - FACE], [0, FACE, TEX, TEX - FACE]);
       // The arm, from the body's face out to the back of the head.
       //
-      // A piston's arm is WOOD, and piston_side has both in it: the top four
-      // rows are the wooden band the arm and the head's collar are cut from,
-      // and the twelve below are the stone body. Taking the arm from the
-      // body's rows made it the body's grey, which is the same thing as not
-      // drawing an arm at all -- it is the colour of the block it comes out
-      // of. Taking the WHOLE strip and stretching it to length, which is
-      // what it was before that, was worse again: the top of it is the
-      // collar, so the arm was the head's colour where it met the head and
-      // the body's where it met the body, and there was no rod between them.
+      // The arm is ONE piece, sliding out of the hole.
       //
-      // So: columns 4 to 8, rows 0 to 4 -- which is the rectangle the game's
-      // own piston head takes its arm from -- at its own size, tiled along
-      // however far the arm has to reach. Laid from the head END backwards,
-      // so the seams do not travel while the piston does.
+      // The game's piston head is a single object: a plate with a rod four
+      // across behind it, and extending slides the whole thing forward so
+      // that more and more of the rod comes out of the body. The rod is
+      // never redrawn, stretched or repeated -- what changes is how much of
+      // it there is to see.
+      //
+      // So the arm is one draw of columns 4 to 8 of piston_side, which is
+      // the strip the game's own model takes it from, cut to exactly as far
+      // as it has come out and drawn at one pixel per pixel. The head end of
+      // the rod is the top of that strip and the rest follows it out of the
+      // hole, which is why nothing has to be invented to fill any length:
+      // the furthest a piston reaches is one block, and the strip is one
+      // block long.
+      //
+      // Three wrong answers got here, each the whole strip used some other
+      // way: squashed to the length (so the arm was the head's colour at one
+      // end and the body's at the other and there was no rod between them),
+      // then cut from the body's rows (so the arm was the colour of the
+      // block it comes out of), then four rows of it repeated (so the arm
+      // was the same inch of wood over and over, which is not what a rod
+      // looks like).
       if (reach > 0) {
-        let left = reach, at = FACE - reach;
-        while (left > 0) {
-          const n = Math.min(left, FACE);
-          drawLocal(cx, images.side, bpx, bpy, p.d,
-            [ARM, 0, ARM, n], [(TEX - ARM) / 2, at, ARM, n]);
-          at += n; left -= n;
-        }
+        drawLocal(cx, images.side, bpx, bpy, p.d,
+          [ARM, 0, ARM, reach], [(TEX - ARM) / 2, FACE - reach, ARM, reach]);
       }
       // The head: the collar, which is the top four pixels of the texture.
       drawLocal(cx, images.side, bpx, bpy, p.d,
