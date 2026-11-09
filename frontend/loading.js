@@ -158,11 +158,31 @@
       // The body: the part of the block that does not travel.
       drawLocal(cx, images.side, bpx, bpy, p.d,
         [0, FACE, TEX, TEX - FACE], [0, FACE, TEX, TEX - FACE]);
-      // The arm, from the body's face out to the back of the head. The strip
-      // it is cut from is the one the game's own piston head uses.
+      // The arm, from the body's face out to the back of the head.
+      //
+      // One to one, and from the SHAFT of the texture -- rows 4 down, the
+      // grey stone -- rather than the whole strip stretched to length. Both
+      // of those were wrong and in the same direction. The strip x4..8 of
+      // piston_side is the head's tan collar for its first four rows and the
+      // body's grey for the rest, so stretching the whole of it to fit gave
+      // an arm that was the head's colour where it met the head and the
+      // body's colour where it met the body: the two ends simply blended
+      // into the things they touched and there was no rod to see between
+      // them. The game's own arm is 4 across and 12 long, drawn at its own
+      // size and never stretched, which is why it reads as a rod.
+      //
+      // Tiled, because a reach of a whole block is sixteen and the shaft is
+      // twelve. Laid from the head END backwards, so the join never moves
+      // while the piston is travelling.
       if (reach > 0) {
-        drawLocal(cx, images.side, bpx, bpy, p.d,
-          [ARM, 0, ARM, TEX], [(TEX - ARM) / 2, FACE - reach, ARM, reach]);
+        const SHAFT = TEX - FACE;
+        let left = reach, at = FACE - reach;
+        while (left > 0) {
+          const n = Math.min(left, SHAFT);
+          drawLocal(cx, images.side, bpx, bpy, p.d,
+            [ARM, FACE, ARM, n], [(TEX - ARM) / 2, at, ARM, n]);
+          at += n; left -= n;
+        }
       }
       // The head: the collar, which is the top four pixels of the texture.
       drawLocal(cx, images.side, bpx, bpy, p.d,

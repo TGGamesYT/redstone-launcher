@@ -69,6 +69,17 @@ started.
       the reach is nothing and the three reconstruct the whole texture, so
       there is no separate case for it. `tests/piston-test.mjs` reads the
       canvas back and pins the shape.*
+- [x] **The piston's neck is still the base and the head next to each other,
+      not a neck.** — *Two things, both in the same direction. The arm was
+      the whole strip x4..8 of `piston_side` STRETCHED to whatever length it
+      needed, and that strip is the head's tan collar for its first four rows
+      and the body's grey for the rest — so the arm came out the colour of
+      the head where it met the head and the colour of the body where it met
+      the body, and there was nothing between them to read as a rod. The
+      game's own arm is four across and twelve long, drawn at its own size
+      and never stretched, off the SHAFT of the texture. It is now drawn one
+      to one from row four down, tiled where the reach is longer than the
+      twelve rows of shaft there are.*
 - [ ] **`Failed to refresh player: error.auth.minecraft.login`** — in
       Electron's log while signed in fine, with
       `[Relay] token refresh failed, trying existing token: undefined` after

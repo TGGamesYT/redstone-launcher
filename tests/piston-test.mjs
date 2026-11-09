@@ -135,12 +135,33 @@ const colours = await page.evaluate(([x]) => {
   cx.clearRect(0, 0, 64, 64);
   window.Loading.frame(cx, 0.45);
   const px = (ax, ay) => { const d = cx.getImageData(ax, ay, 1, 1).data; return [d[0], d[1], d[2]]; };
-  return { body: px(x, TEX + 6), head: px(x, TEX * 2 + 14), collar: px(x, 2) };
+  return {
+    body: px(x, TEX + 6), head: px(x, TEX * 2 + 14), collar: px(x, 2),
+    // Down the middle, in the gap: the arm. Near the head and near the body.
+    armNearHead: px(TEX / 2, TEX * 2 + 10),
+    armNearBody: px(TEX / 2, TEX + 14),
+  };
 }, [COL]);
 const apart = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
 check("the head is the collar off the top of the texture, not the body's pattern",
   apart(colours.head, colours.body) > 25, true,
   `head ${colours.head} against body ${colours.body}`);
+
+// And the arm is the shaft all the way along it.
+//
+// It used to be the whole strip stretched to length, and the strip is the
+// head's tan collar at one end and the body's grey at the other -- so the
+// arm came out the colour of the head where it met the head and the colour
+// of the body where it met the body, and there was no rod to see between
+// them. The shaft is grey; the collar is not.
+const tan = (c) => c[0] - c[2] > 40;
+check("the arm is the shaft, not the head's collar stretched out",
+  [tan(colours.head), tan(colours.armNearHead), tan(colours.armNearBody)],
+  [true, false, false],
+  `head ${colours.head}, arm ${colours.armNearHead} and ${colours.armNearBody}`);
+check("and it is the same kind of thing at both ends of itself",
+  apart(colours.armNearHead, colours.armNearBody) < 140, true,
+  "one rod, not a gradient from the head's colour to the body's");
 
 // The two textures that cannot be seen from the side are not even loaded.
 const src = fs.readFileSync(path.join(FE, "loading.js"), "utf8");
