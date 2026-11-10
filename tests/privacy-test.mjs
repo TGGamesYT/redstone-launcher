@@ -114,7 +114,7 @@ const url = (/published at <([^>]+)>/.exec(policy) || [])[1];
 // file -- not a link into a code host. A GitHub blob is a perfectly working
 // link and a poor front door for a legal document.
 check("it says where it is published, and that is the website",
-  url, "https://redstone-launcher.com/privacy.html");
+  url, "https://redstone-launcher.com/privacy");
 check("and it still says where the source is, so the two are not confused",
   /blob\/main\/PRIVACY\.md/.test(policy) && fs.existsSync(path.join(ROOT, "PRIVACY.md")), true);
 // Against the remote this is actually pushed to, rather than against a
