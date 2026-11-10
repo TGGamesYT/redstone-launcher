@@ -628,7 +628,17 @@ function _showOverlay(text) {
   // rather than putting up its own: two of them, one over the other and not
   // in quite the same place, is what made the animation jump as the shell's
   // faded and the page's showed through.
-  tellShell('loading', { text: text || '' });
+  //
+  // Straight to the shell where that is possible, because postMessage is
+  // delivered in a later task and this function's caller goes on to change
+  // the page in THIS one -- so the change could be on screen before the
+  // curtain was. The message is the fallback, not the usual path.
+  let raised = false;
+  try {
+    const up = window.parent && window.parent !== window && window.parent.__shellLoadingUp;
+    if (typeof up === 'function') { up(text || ''); raised = true; }
+  } catch { /* not reachable from here; the message will do it */ }
+  if (!raised) tellShell('loading', { text: text || '' });
   const overlay = document.getElementById('loading-overlay');
   if (!overlay) return;
   overlay.classList.remove('fade-out');

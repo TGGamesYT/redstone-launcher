@@ -2,6 +2,7 @@
 // itself. Both are things an outside service decides, and both broke because
 // what the service answers changed under us.
 import fs from "fs";
+import os from "os";
 import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
@@ -71,6 +72,62 @@ if (LIVE) {
     [/no builds for 9\.9\.9/.test(why || ""), /iterable/.test(why || "")], [true, false]);
 } else {
   console.log("ok   (the live checks were skipped: OFFLINE=1)");
+}
+
+// ── what the Console tab shows when nothing is running ──
+//
+// An instance's Logs tab falls back to the game's own latest.log, so it is a
+// record of what happened. A server's showed an empty box: the only source
+// was the in-memory buffer of the running process, so a stopped server, or
+// any server at all after the launcher restarted, had nothing to show.
+//
+// The page joins what it gets with NOTHING between the entries, because the
+// live ones carry their own newline. Lines read from a file have to do the
+// same or they arrive as one very long line, so that is checked here rather
+// than left to be noticed on screen.
+{
+  const sliced = cut("const CONSOLE_TAIL =", "// --- Delete a server");
+  const modFile = path.join(scratch, "serverconsole.mjs");
+  fs.writeFileSync(modFile,
+    `import fs from "fs";\nimport path from "path";\n`
+    + `export let serversDir = "";\nexport const setDir = (d) => { serversDir = d; };\n`
+    + `const servers = new Map();\nexport const setLive = (n, logs) => servers.set(n, { logs });\n`
+    + sliced.replace(/^function getConsole/m, "export function getConsole"));
+  const { getConsole, setDir, setLive } = await import("file://" + modFile + "?v=" + Date.now());
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "srvconsole-"));
+  setDir(dir);
+
+  check("a server with no log and nothing running shows nothing",
+    getConsole("ghost"), []);
+
+  fs.mkdirSync(path.join(dir, "Survival", "logs"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "Survival", "logs", "latest.log"),
+    "[12:00:00] Starting minecraft server\n[12:00:02] Done (2.1s)!\n");
+
+  const got = getConsole("Survival");
+  check("a stopped server shows its own latest.log",
+    got, ["[Loaded from latest.log]\n", "[12:00:00] Starting minecraft server\n", "[12:00:02] Done (2.1s)!\n"],
+    "an empty Console tab for a server that has been running all week is not a console");
+  check("and every entry carries its newline, as the live ones do",
+    got.join("").split("\n").filter(Boolean),
+    ["[Loaded from latest.log]", "[12:00:00] Starting minecraft server", "[12:00:02] Done (2.1s)!"],
+    "the page joins them with nothing between, so one without a newline is a line glued to the next");
+  check("the trailing blank line a file ends with is not one of them",
+    got[got.length - 1], "[12:00:02] Done (2.1s)!\n");
+
+  // A running server's own lines are the truth; the file is only the fallback.
+  setLive("Survival", ["[12:05:00] <TGdoesCode> hi\n"]);
+  check("a running server shows what it is saying now, not the file",
+    getConsole("Survival"), ["[12:05:00] <TGdoesCode> hi\n"],
+    "the file on disk lags behind by however long the server buffers it");
+
+  // An empty live buffer is not an answer, it is the absence of one.
+  setLive("Survival", []);
+  check("and an empty buffer still falls back",
+    getConsole("Survival")[0], "[Loaded from latest.log]\n");
+
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

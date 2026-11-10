@@ -78,6 +78,19 @@
     }, left);
   }
 
+  // Raising the loading screen, reachable from the page itself.
+  //
+  // A page asks for it with postMessage, which is delivered in a LATER task
+  // -- and the page carries on and changes what it is showing in this one.
+  // So the change could be painted before the curtain was over it, which is
+  // the whole complaint. Called straight, it is up before the page's next
+  // line runs. The message is still listened for, for anything that cannot
+  // reach us directly.
+  //
+  // Underscored so it is plainly not part of any page's API, and so the
+  // command mirroring below leaves it alone.
+  window.__shellLoadingUp = loadingUp;
+
   /** Show a page in the frame. */
   function navigate(href) {
     const page = ourPage(href);

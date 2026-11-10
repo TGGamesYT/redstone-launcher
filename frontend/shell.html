@@ -78,7 +78,16 @@
          page's own, which stops at the two bars rather than covering them. */
       z-index: 9000;
       opacity: 0;
-      transition: opacity 0.18s ease;
+      /* No fade on the way IN, and said explicitly rather than by leaving it
+         out: .loading-overlay in server.css carries a 0.5s one that would
+         otherwise apply here and be four times worse.
+
+         It used to fade in over 0.18s, and a page that raises the loading
+         screen changes what is underneath it straight afterwards -- so for
+         those 0.18s you watched the instance list become an instance through
+         a half-transparent curtain, which is the one thing a loading screen
+         is for. It is either covering what is happening or it is not. */
+      transition: none;
     }
 
     #shell-loading.on {

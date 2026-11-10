@@ -714,8 +714,40 @@ function getServers() {
   return list;
 }
 
+/**
+ * What the console should show.
+ *
+ * The lines this run has produced, if there are any. If there are not -- the
+ * server is stopped, or the launcher has been restarted since it ran -- the
+ * server's own latest.log, so the Console tab is a record of what happened
+ * rather than an empty box. An instance's Logs tab has always done this; a
+ * server's showed nothing at all until something new was printed.
+ *
+ * The tail only: a server that has been up for a week has a log nobody wants
+ * sent to a renderer in one piece.
+ */
+const CONSOLE_TAIL = 1500;
+
 function getConsole(name) {
   const server = servers.get(name);
+  if (server && server.logs && server.logs.length) return server.logs;
+
+  try {
+    const logPath = path.join(serversDir, String(name), "logs", "latest.log");
+    if (fs.existsSync(logPath)) {
+      const lines = fs.readFileSync(logPath, "utf-8").split(/\r?\n/);
+      // A trailing newline leaves an empty last line, which reads as the
+      // console having a blank line at the bottom for no reason.
+      while (lines.length && lines[lines.length - 1] === "") lines.pop();
+      // Each entry carries its own newline, the way the live ones do: the
+      // page joins them with nothing between, so lines without one would
+      // arrive as a single very long line.
+      if (lines.length) {
+        return ["[Loaded from latest.log]\n", ...lines.slice(-CONSOLE_TAIL).map(l => l + "\n")];
+      }
+    }
+  } catch { /* no log to fall back on, which is the same as having none */ }
+
   return server ? server.logs : [];
 }
 
