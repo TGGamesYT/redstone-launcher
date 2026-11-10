@@ -7253,6 +7253,53 @@ ipcMain.handle("admin:open", async (event, { password, panel } = {}) => {
   return { ok: true, panels: (r.panels || []).length };
 });
 
+// The website's news admin, which is somebody else's web page.
+//
+// It used to be an iframe inside the admin panel -- a window with Node
+// integration on -- held back only by a sandbox attribute that Electron
+// itself warns about: allow-scripts together with allow-same-origin "can
+// escape its sandboxing". A remote page one attribute away from Node is not
+// a trade worth making for an embedded pane.
+//
+// It also left the panel with a frame that had no Node in it, and every IPC
+// message the main process delivered into that frame put
+// "Attempted to get the 'ipcNative' object but it was missing" in the
+// console -- which is what somebody saw every time they opened the panel.
+//
+// So: its own window, no Node, context isolated, sandboxed, and nothing of
+// ours reachable from it.
+const NEWS_ADMIN_URL = "https://rlscapi.muaves.com/admin";
+let newsAdminWindow = null;
+ipcMain.on("admin:openApi", (event) => {
+  if (newsAdminWindow && !newsAdminWindow.isDestroyed()) {
+    newsAdminWindow.focus();
+    return;
+  }
+  const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+  const win = new BrowserWindow({
+    width: 1100, height: 800, minWidth: 700, minHeight: 500,
+    parent, icon: path.join(iconPath),
+    title: "Website News Admin",
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      // No preload, so the page is handed nothing of ours at all.
+    },
+  });
+  newsAdminWindow = win;
+  win.on("closed", () => { newsAdminWindow = null; });
+  // It is one page. Anything it tries to open goes to the real browser,
+  // where the person can see the address they are on.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => { /* nothing to do */ });
+    return { action: "deny" };
+  });
+  win.loadURL(NEWS_ADMIN_URL).catch((err) => {
+    devtoolsLog("news admin failed to load: " + (err && err.message || err));
+  });
+});
+
 // The admin window's own titlebar buttons. It is not the main window, so
 // close-app/min-app/max-app would be the wrong thing: act on the sender's.
 ipcMain.on("admin:window", (event, what) => {
