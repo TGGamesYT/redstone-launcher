@@ -310,9 +310,11 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
   async function pushWorld(instanceId, worldName) {
     if (!content.worldDir) throw new Error("Worlds are not available here.");
     const dir = content.worldDir(instanceId, worldName);
+    // A real zip, so it can be downloaded from the Drive and dropped into
+    // saves/ by hand -- or handed to any other launcher.
     const w = cloudPack.packWorld({ dir, name: worldName });
     const key = `${instanceId}:${worldName}`;
-    return push("worlds", key, Buffer.from(JSON.stringify(w)), { name: worldName });
+    return push("worlds", key, w.bytes, { name: worldName });
   }
 
   async function pullWorld(instanceId, worldName) {
@@ -320,7 +322,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     const r = await pull("worlds", key);
     if (!r.ok) return r;
     return cloudPack.unpackWorld({
-      world: JSON.parse(r.bytes.toString("utf8")),
+      bytes: r.bytes,
       dir: content.worldDir(instanceId, worldName),
     });
   }

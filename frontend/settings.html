@@ -709,7 +709,7 @@
       <div id="cloud-box" style="margin-bottom:50px;">
         <div id="cloud-signed-out">
           <button type="button" id="cloud-signin" class="bg-btn"
-            data-tip="Keeps your settings, themes, instances and worlds in your own Google Drive, so they follow you to another computer. The launcher can only see the folder it makes — it asks for access to files it created and nothing wider — and everything in that folder is encrypted with a key in two halves: one kept in the folder, one the relay works out from your Minecraft account and only hands over after Mojang has verified it. Neither half opens anything on its own.">Sign in with Google…</button>
+            data-tip="Keeps your settings, themes, instances and worlds in your own Google Drive, so they follow you to another computer. The launcher can only see the folder it makes — it asks for access to files it created and nothing wider — and the folder is ordinary files you can open and download — worlds as .zip, the rest as .json. The one exception is your signed-in accounts, which are encrypted with a key in two halves: one kept in the folder, one the relay works out from your Minecraft account and only hands over after Mojang has verified it. Neither half opens it on its own.">Sign in with Google…</button>
           <span id="cloud-signin-state" class="bg-hint" style="margin-left:10px;"></span>
         </div>
         <div id="cloud-signed-in" style="display:none;">
@@ -725,8 +725,8 @@
           <label class="setting-toggle" data-tip="The themes you have made or installed."><input type="checkbox" class="cloud-kind" data-kind="themes"> Themes</label>
           <label class="setting-toggle" data-tip="Your saved multiplayer servers."><input type="checkbox" class="cloud-kind" data-kind="servers"> Server list</label>
           <label class="setting-toggle" data-tip="Your instances, as a pack: the version, the loader, the mods and where each came from, and the resource packs. Mods are recorded rather than uploaded wherever they can be fetched again, so an instance is small."><input type="checkbox" class="cloud-kind" data-kind="instances"> Instances</label>
-          <label class="setting-toggle" data-tip="Your worlds. A world that is open in a game on one computer is marked as such, so another computer warns you rather than letting two of you edit it at once."><input type="checkbox" class="cloud-kind" data-kind="worlds"> Worlds</label>
-          <label class="setting-toggle" data-tip="The accounts you are signed in with. Encrypted with both halves of the key, so the Drive file is of no use without the Minecraft account it belongs to — and the relay cannot read it either."><input type="checkbox" class="cloud-kind" data-kind="accounts"> Signed-in accounts</label>
+          <label class="setting-toggle" data-tip="Your worlds, each as an ordinary .zip you can download from Drive and use anywhere. A world open in a game on one computer is marked as such, so another computer warns you rather than letting two of you edit it at once."><input type="checkbox" class="cloud-kind" data-kind="worlds"> Worlds</label>
+          <label class="setting-toggle" data-tip="The accounts you are signed in with. The only thing that is encrypted: a Microsoft token is not a password that can be changed afterwards, it is the account. It takes both halves of the key, so the Drive file is no use without the Minecraft account it belongs to — and the relay cannot read it either."><input type="checkbox" class="cloud-kind" data-kind="accounts"> Signed-in accounts</label>
           <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;">
             <button type="button" id="cloud-sync" class="bg-btn"
               data-tip="Sends what has changed here and takes what has changed elsewhere. Anything that changed in both places is shown rather than decided for you.">Sync now</button>

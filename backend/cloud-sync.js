@@ -5,19 +5,38 @@
 // are all the same kind of thing with different contents -- rather than six
 // syncs that each went their own way.
 //
-// What is in the Drive folder:
+// What is in the Drive folder, and the rule about which parts are readable:
 //
-//   key.json          the Drive's half of the key. NOT encrypted, because it
-//                     is half a key -- see cloud-crypto.js for why that is
-//                     the point rather than an oversight.
-//   manifest.rlc      what is synced, which version of each, and which
-//                     computer wrote it last
-//   <kind>.rlc        one file per whole-launcher thing: settings, themes,
-//                     servers, accounts
-//   <kind>/<id>.rlc   one file each for the many: instances, worlds
+//   manifest.json       what is synced, which version of each, and which
+//                       computer wrote it last
+//   settings.json       }
+//   themes.json         }  plain, readable, downloadable
+//   servers.json        }
+//   instances/<n>.json  }
+//   worlds/<n>.zip      a REAL zip -- download it, drop it in saves/
+//   accounts.rlc        encrypted, and the only thing that is
+//   key.json            the Drive's half of the key, for that one file
 //
-// Everything but key.json is encrypted with both halves, so the folder is of
-// no use to anybody who only has the Google account.
+// It is a folder of files, not a launcher's private store. Somebody who
+// wants their world back should be able to download a zip and use it, and
+// somebody who wants to see what their settings are should be able to open
+// the JSON -- without this launcher, and without this launcher still
+// existing. Encrypting the lot would have made the folder useless for
+// anything but feeding back into the program that wrote it.
+//
+// The accounts file is the exception because it is the one that is worth
+// stealing: a Microsoft refresh token is not a password that can be changed
+// afterwards, it IS the account. That one is encrypted with the two halves
+// (see cloud-crypto.js), and the rest of the folder is not.
+//
+// The trade, said plainly: the folder discloses what you own -- your world
+// names, your instance names, your settings -- to anybody who can see it.
+// Which is you, and Google, and anybody you share it with. That is the cost
+// of the files being usable, and it is deliberate.
+//
+// One good thing falls out of it: everything except the accounts file works
+// with no relay at all, because nothing else needs the half the relay
+// derives.
 //
 // ── versions, and not losing things ──
 //
@@ -38,7 +57,7 @@
 import crypto from "crypto";
 import cc from "./cloud-crypto.js";
 
-export const MANIFEST = "manifest.rlc";
+export const MANIFEST = "manifest.json";
 export const KEY_FILE = "key.json";
 
 /** Things there is one of for the whole launcher. */
@@ -47,8 +66,39 @@ export const SINGLE = ["settings", "themes", "servers", "accounts"];
 export const MANY = ["instances", "worlds"];
 export const KINDS = [...SINGLE, ...MANY];
 
+/**
+ * The only thing that is encrypted.
+ *
+ * Deliberately a list of one rather than a flag, so that adding a kind that
+ * needs it is a decision somebody makes here rather than something that
+ * happens by default -- and so that the answer to "what is encrypted" is
+ * one line long.
+ */
+export const SECRET_KINDS = ["accounts"];
+const isSecret = (kind) => SECRET_KINDS.includes(kind);
+
+/** What a kind's file is called, so the folder reads as a folder. */
+export const extFor = (kind) => (isSecret(kind) ? ".rlc" : kind === "worlds" ? ".zip" : ".json");
+
 const isSingle = (kind) => SINGLE.includes(kind);
-const pathFor = (kind, id) => (isSingle(kind) ? `${kind}.rlc` : `${kind}/${id}.rlc`);
+
+/**
+ * A name for a file in the Drive that a person can read.
+ *
+ * Ids are what the launcher thinks in and are meaningless in a folder
+ * listing, so the NAME is used where there is one -- "My Base.zip" rather
+ * than "1739...:My Base.zip". Where two things would be called the same, the
+ * id is put back on the end of the second one; the manifest records which
+ * file each item actually went to, so nothing has to guess afterwards.
+ */
+export function readableName(kind, id, name) {
+  const base = String(name || id || kind)
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || String(id || kind);
+  return base + extFor(kind);
+}
 
 /**
  * A sync, for one Google account and one Minecraft account.
@@ -107,11 +157,22 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
 
   const keys = async () => ({ relayHalf: await relayHalf(), driveHalf: await driveHalf() });
 
+  const asBytes = (v) => (Buffer.isBuffer(v) ? v : Buffer.from(JSON.stringify(v, null, 2)));
+
+  /**
+   * On its way into the Drive.
+   *
+   * Only the accounts file is encrypted. Everything else goes as itself, so
+   * the folder is a folder of files somebody can download and use rather
+   * than a private store that only this program can read.
+   */
   async function seal(kind, value) {
+    if (!isSecret(kind)) return asBytes(value);
     const k = await keys();
-    return cc.seal({ ...k, kind, plaintext: Buffer.isBuffer(value) ? value : Buffer.from(JSON.stringify(value)) });
+    return cc.seal({ ...k, kind, plaintext: asBytes(value) });
   }
   async function open(kind, bytes) {
+    if (!isSecret(kind)) return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
     const k = await keys();
     return cc.open({ ...k, kind, sealed: bytes });
   }
@@ -218,13 +279,37 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
     }
 
     const folder = await folderFor(kind);
-    await drive.put(folder, isSingle(kind) ? pathFor(kind, id) : `${id}.rlc`,
-      await seal(kind, body),
+    // A readable name, and not the same one as something else already in
+    // there. The manifest records which file this went to, so a rename
+    // later does not orphan it.
+    const taken = new Set(Object.entries(m.items)
+      .filter(([other]) => other !== k)
+      .map(([, v]) => v.file).filter(Boolean));
+    let file = isSingle(kind) ? `${kind}${extFor(kind)}` : readableName(kind, id, name);
+    if (taken.has(file)) {
+      // The way a file manager does it, because the alternative -- a slice
+      // of the id on the end -- produced "My Base (y Base).zip", which
+      // disambiguates nothing and reads like a mistake.
+      const ext = extFor(kind);
+      const stem = file.slice(0, -ext.length);
+      let n = 2;
+      while (taken.has(`${stem} (${n})${ext}`)) n++;
+      file = `${stem} (${n})${ext}`;
+    }
+    // What it used to be called, if it has been renamed since.
+    const was = theirs && theirs.file;
+
+    await drive.put(folder, file, await seal(kind, body),
       { props: { kind, device: deviceId, version: String(next) } });
+    if (was && was !== file) {
+      const old = await drive.find(folder, was);
+      if (old) await drive.remove(old.id).catch(() => { /* leave it rather than fail the push */ });
+    }
 
     m.items[k] = {
       kind, id: id || kind, version: next, hash, size: body.length,
       name: name || id || kind,
+      file,
       at: Date.now(), deviceId, deviceName: deviceName || deviceId,
     };
     await writeManifest(m);
@@ -238,7 +323,7 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
     const theirs = m.items[k];
     if (!theirs) return { ok: false, missing: true };
     const folder = await folderFor(kind);
-    const f = await drive.find(folder, isSingle(kind) ? pathFor(kind, id) : `${id}.rlc`);
+    const f = await drive.find(folder, theirs.file || readableName(kind, id, theirs.name));
     if (!f) {
       // The manifest says it is there and it is not. Say so rather than
       // pretending the item never existed: somebody deleted it by hand.
@@ -269,7 +354,7 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
     const k = keyOf(kind, id);
     if (!m.items[k]) return { ok: true, already: true };
     const folder = await folderFor(kind);
-    const f = await drive.find(folder, isSingle(kind) ? pathFor(kind, id) : `${id}.rlc`);
+    const f = await drive.find(folder, m.items[k].file || readableName(kind, id, m.items[k].name));
     if (f) await drive.remove(f.id);
     delete m.items[k];
     await writeManifest(m);

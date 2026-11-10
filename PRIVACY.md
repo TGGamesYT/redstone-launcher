@@ -59,27 +59,45 @@ Each is a separate switch and all of them start off:
   CurseForge on the other computer, and only the part that is yours (the
   config, your options) is actually uploaded. Other people's mod files are
   not put in your Drive.
-- **Worlds** — each one sent by name. A world is the opposite case: every
-  byte of it is yours and none of it can be fetched from anywhere, so all of
-  it goes, compressed.
+- **Worlds** — each one sent by name, as an ordinary `.zip` you can download
+  and use anywhere. A world is the opposite case to an instance: every byte
+  of it is yours and none of it can be fetched from anywhere, so all of it
+  goes.
 - **Signed-in Minecraft accounts**, including the tokens that keep them
   signed in.
 
 When you play a synced world, the launcher also writes a small note into the
 folder saying that this computer has it open, so that another computer is
 warned before you both edit the same world. The note holds the world's name
-and the name of this computer, is encrypted like everything else, is renewed
-while the game runs, and is removed when it closes. A note nobody has renewed
-for ten minutes is ignored.
+and the name of this computer, is renewed while the game runs, and is removed
+when it closes. A note nobody has renewed for ten minutes is ignored.
 
-**Everything in that folder except one file is encrypted on your computer
-before it is uploaded**, using AES-256-GCM. Google receives only ciphertext
-and cannot read any of it. The file listing what you have synced is encrypted
-too, so the folder does not disclose what you own even to someone who can see
-it.
+### What is encrypted, and what is not
 
-The single exception is a small file named `key.json`, which holds *one half*
-of the encryption key and is of no use by itself — see the next section.
+The folder is a folder of ordinary files, on purpose. Your worlds are stored
+as real `.zip` files and everything else as `.json`, so you can open the
+folder in Drive, download a world, and drop it into your `saves/` directory
+by hand — without this launcher, and without this launcher still existing.
+Locking your own data inside a format only one program can read is not a
+service we are willing to do you.
+
+**The one exception is the file holding your signed-in Minecraft accounts**
+(`accounts.rlc`). That one is encrypted on your computer before it is
+uploaded, using AES-256-GCM, because it is the one piece that is worth
+stealing: a Microsoft refresh token is not a password that can be changed
+afterwards — it *is* the account. Google receives only ciphertext for that
+file and cannot read it.
+
+The small file named `key.json` holds *one half* of the key that file is
+encrypted with, and is of no use by itself — see the next section.
+
+**The trade, said plainly:** because the rest is readable, the folder
+discloses *what you have* — your world names, your instance names, your
+settings — to anyone who can see it. That is you, Google, and anyone you
+choose to share the folder with. Nothing in it can be used to sign in as
+you, and nothing in it is read by us. If you would rather not have that
+visible, leave the switches off for the kinds you care about; each is
+separate.
 
 ---
 

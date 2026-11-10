@@ -103,17 +103,60 @@ const computer = (impl, id, name) => cloudSync.sync({
     /Deleting this makes everything in this folder unreadable/.test(said.note), true);
 }
 
-// ── nothing readable is left lying in the folder ──
+// ── a folder of files, not a private store ──
+//
+// Somebody who wants their world back should be able to download a zip and
+// use it, and somebody who wants to see their settings should be able to
+// open the JSON -- without this launcher, and without it still existing. So
+// only the one file that is worth stealing is encrypted.
 {
   const { impl, files } = sharedDrive();
   const pc = computer(impl, "a".repeat(32), "Desktop");
-  await pc.push("settings", null, { theme: "red", secretish: "my-server-password" }, { name: "Settings" });
-  const bodies = [...files.values()].map(f => (f.body || Buffer.alloc(0)).toString("latin1")).join("");
-  check("what is written to Drive is not readable",
-    [/my-server-password/.test(bodies), /"theme"/.test(bodies)], [false, false]);
-  const manifest = [...files.values()].find(f => f.name === "manifest.rlc");
-  check("including the manifest, which would otherwise list what somebody has",
-    cc.peek(manifest.body), { scheme: cc.SCHEME, kind: "manifest" });
+  await pc.push("settings", null, { theme: "red" }, { name: "Settings" });
+  await pc.push("accounts", null, { tokens: ["a-microsoft-refresh-token"] }, { name: "Accounts" });
+
+  const named = (n) => [...files.values()].find(f => f.name === n);
+  check("the settings are there as readable JSON, under a readable name",
+    JSON.parse(named("settings.json").body.toString()).theme, "red",
+    "openable in a browser, a text editor, or anything at all");
+  check("and so is the manifest, so the folder says what is in it",
+    typeof JSON.parse(named("manifest.json").body.toString()).items, "object");
+
+  check("the accounts file is the one that is encrypted",
+    [named("accounts.rlc").body.toString("latin1").includes("a-microsoft-refresh-token"),
+      cc.peek(named("accounts.rlc").body)],
+    [false, { scheme: cc.SCHEME, kind: "accounts" }],
+    "a Microsoft refresh token is not a password that can be changed afterwards; it IS the account");
+
+  check("and it is the ONLY one",
+    [...files.values()].filter(f => f.body && f.body.length && cc.peek(f.body)
+      && cc.peek(f.body).scheme === cc.SCHEME).map(f => f.name),
+    ["accounts.rlc"],
+    "adding a kind that needs encrypting should be a decision, not a default");
+}
+
+// ── readable names ──
+{
+  const { impl, files } = sharedDrive();
+  const pc = computer(impl, "a".repeat(32), "Desktop");
+  await pc.push("worlds", "173999:My Base", Buffer.from("PK zip"), { name: "My Base" });
+  check("a world is filed under its own name, not its id",
+    [...files.values()].some(f => f.name === "My Base.zip"), true,
+    '"My Base.zip" in a folder listing; "173999:My Base.rlc" is not something anybody can use');
+
+  await pc.push("worlds", "222:My Base", Buffer.from("PK other"), { name: "My Base" });
+  const names = [...files.values()].filter(f => f.name.endsWith(".zip")).map(f => f.name).sort();
+  check("and two worlds of the same name do not become one file",
+    [names.length, names.sort()], [2, ["My Base (2).zip", "My Base.zip"]],
+    "the manifest records which file each went to, so nothing has to guess");
+
+  check("a name that cannot be a filename is made into one",
+    (await (async () => {
+      await pc.push("worlds", "9:x", Buffer.from("PK"), { name: 'He said "hi"/<there>' });
+      return [...files.values()].map(f => f.name).filter(n => n.startsWith("He said"));
+    })()),
+    ["He said hi there.zip"],
+    "the characters a filename cannot hold are taken out, rather than the name being given up on and replaced by an id");
 }
 
 // ── there and back ──
@@ -199,8 +242,9 @@ const computer = (impl, id, name) => cloudSync.sync({
   const pc = computer(impl, "a".repeat(32), "Desktop");
   await pc.push("worlds", "w1", Buffer.from("a world"), { name: "My Base" });
 
-  // Somebody deleted the file by hand and left the manifest alone.
-  const f = [...files.values()].find(x => x.name === "w1.rlc");
+  // Somebody deleted the file by hand and left the manifest alone -- which
+  // is a thing that can happen now that the folder is meant to be opened.
+  const f = [...files.values()].find(x => x.name === "My Base.zip");
   files.delete(f.id);
   const got = await pc.pull("worlds", "w1");
   check("a file the manifest promises and the Drive does not have says so",
@@ -214,9 +258,9 @@ const computer = (impl, id, name) => cloudSync.sync({
   // Something else of ours, moved into its place.
   const other = await (async () => {
     await pc.push("worlds", "w2", Buffer.from("a different world"), { name: "Other" });
-    return [...files.values()].find(x => x.name === "w2.rlc");
+    return [...files.values()].find(x => x.name === "Other.zip");
   })();
-  const target = [...files.values()].find(x => x.name === "w1.rlc");
+  const target = [...files.values()].find(x => x.name === "My Base.zip");
   files.set(target.id, { ...target, body: other.body });
   check("a file swapped for another is caught by its hash",
     /is not what the manifest says it is/.test(await threw(() => pc.pull("worlds", "w1")) || ""), true);
@@ -248,7 +292,7 @@ const computer = (impl, id, name) => cloudSync.sync({
 
   await pc.unsync("worlds", "w1");
   check("unsyncing one takes it out of the Drive",
-    [...files.values()].some(f => f.name === "w1.rlc"), false);
+    [...files.values()].some(f => f.name === "One.zip"), false);
   check("and leaves the others alone",
     (await pc.list()).map(i => i.key), ["worlds/w2"]);
 

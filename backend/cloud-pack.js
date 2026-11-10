@@ -31,6 +31,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
+import AdmZip from "adm-zip";
 import { fingerprintOf } from "./cf-fingerprint.js";
 
 export const PACK_VERSION = 1;
@@ -226,37 +227,77 @@ export async function unpackInstance({ pack, dir, fetchFile, onProgress }) {
 // ── worlds ────────────────────────────────────────────────────────────────
 //
 // A world is the other kind of thing entirely: every byte of it is yours and
-// none of it can be fetched from anywhere, so all of it goes. Compressed,
-// because a Minecraft region file is mostly air.
+// none of it can be fetched from anywhere, so all of it goes.
+//
+// As a real .zip, not as a format of ours. Somebody who wants their world
+// back should be able to open the Drive folder, download "My Base.zip" and
+// drop it into saves/ -- without this launcher, and without this launcher
+// still existing. It is also exactly what the launcher's own "Import .zip"
+// already takes, and what every other launcher takes, so a world that has
+// been synced is a world that can go anywhere.
 
-/** A world folder, as one compressed blob. */
+/** A world folder, as a zip of it. */
 export function packWorld({ dir, name }) {
-  const files = walk(dir);
-  const parts = [];
+  const zip = new AdmZip();
   let raw = 0;
-  for (const rel of files) {
+  for (const rel of walk(dir)) {
     const bytes = fs.readFileSync(path.join(dir, rel));
     raw += bytes.length;
-    parts.push({ path: rel, size: bytes.length, gzip: zlib.gzipSync(bytes).toString("base64") });
+    // The world's own folder name at the top, which is what a Minecraft
+    // world zip looks like and what an importer expects to find.
+    zip.addFile(`${name}/${rel}`, bytes);
   }
-  return { pack: PACK_VERSION, kind: "world", name: name || path.basename(dir), at: Date.now(), raw, files: parts };
+  return { bytes: zip.toBuffer(), raw, files: walk(dir).length, name };
 }
 
-export function unpackWorld({ world, dir }) {
-  if (!world || world.pack !== PACK_VERSION || world.kind !== "world") {
-    throw new Error("That is not a world made by this launcher.");
+/**
+ * A world zip, written out.
+ *
+ * Takes the launcher's own zips and anybody else's: a world zip in the wild
+ * is sometimes the folder (`My Base/level.dat`) and sometimes the contents
+ * (`level.dat`), and refusing one of those would make "download it and put
+ * it back" fail for no reason a person could act on.
+ */
+export function unpackWorld({ bytes, dir }) {
+  const zip = new AdmZip(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes));
+  const entries = zip.getEntries().filter(e => !e.isDirectory);
+  if (!entries.length) throw new Error("That zip has nothing in it.");
+
+  // Refused before anything is worked out from the names, not after. A path
+  // with a `..` in it would otherwise reach the folder-stripping below,
+  // which can turn "../escaped.txt" into "escaped.txt" and quietly put it
+  // somewhere harmless -- safe by accident, which is not the same as safe,
+  // and not what somebody reading this should have to reason about.
+  for (const e of entries) {
+    const name = e.entryName.replace(/\\/g, "/");
+    if (name.startsWith("/") || /(^|\/)\.\.(\/|$)/.test(name) || /^[a-zA-Z]:/.test(name)) {
+      throw new Error(`This world tries to write outside its folder (${e.entryName}).`);
+    }
   }
+
+  // If every path starts with the same folder, that folder IS the world and
+  // is stripped; otherwise the zip is the world's contents already.
+  const tops = new Set(entries.map(e => e.entryName.split("/")[0]));
+  const strip = tops.size === 1 && entries.some(e => e.entryName.includes("/"))
+    ? [...tops][0] + "/" : "";
+
   fs.mkdirSync(dir, { recursive: true });
   const root = path.resolve(dir);
-  for (const f of world.files) {
-    const full = path.resolve(path.join(dir, f.path));
+  let wrote = 0;
+  for (const e of entries) {
+    const rel = strip && e.entryName.startsWith(strip) ? e.entryName.slice(strip.length) : e.entryName;
+    if (!rel) continue;
+    // A path out of a zip decides where bytes land, and a zip can come from
+    // anywhere -- including a Drive folder somebody else can write to.
+    const full = path.resolve(path.join(dir, rel));
     if (full !== root && !full.startsWith(root + path.sep)) {
-      throw new Error(`This world tries to write outside its folder (${f.path}).`);
+      throw new Error(`This world tries to write outside its folder (${e.entryName}).`);
     }
     fs.mkdirSync(path.dirname(full), { recursive: true });
-    fs.writeFileSync(full, zlib.gunzipSync(Buffer.from(f.gzip, "base64")));
+    fs.writeFileSync(full, e.getData());
+    wrote++;
   }
-  return { ok: true, wrote: world.files.length };
+  return { ok: true, wrote };
 }
 
 export default {

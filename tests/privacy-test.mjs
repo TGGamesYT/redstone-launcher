@@ -45,12 +45,26 @@ check("the cipher named is the one used",
   [policy.includes("AES-256-GCM"), src("backend/cloud-crypto.js").includes("aes-256-gcm")],
   [true, true]);
 
-// ── the file it says is not encrypted ──
-check("the one unencrypted file is named, and is the only one",
-  [policy.includes("key.json"),
-    /drive\.put\(root, KEY_FILE, Buffer\.from\(JSON\.stringify/.test(src("backend/cloud-sync.js"))],
-  [true, true],
-  "every other write goes through seal()");
+// ── what it says is encrypted is what is encrypted ──
+//
+// The policy used to say everything but one file was. It now says the
+// opposite -- one file is, and the rest is readable on purpose -- and
+// getting that backwards in either direction is the kind of mistake that
+// matters most in a document somebody relies on.
+const sync = await import("../backend/cloud-sync.js");
+check("exactly one kind is encrypted, and it is the accounts",
+  sync.SECRET_KINDS, ["accounts"]);
+check("the policy names that file and no other as encrypted",
+  [policy.includes("accounts.rlc"), /except one file is encrypted/.test(policy)],
+  [true, false],
+  "it used to claim the whole folder was");
+check("and it says the rest is readable, which is the thing people rely on",
+  /real `?\.zip`? files|download a world/.test(policy), true);
+check("key.json is still named as the half-key it is",
+  policy.includes("key.json"), true);
+check("and the policy admits what being readable costs",
+  /discloses \*what you have\*|discloses what you have/.test(policy), true,
+  "a policy that lists only the reassuring half is not a policy");
 
 // ── the Google token really is excluded ──
 check("the claim that Google tokens are never synced holds",

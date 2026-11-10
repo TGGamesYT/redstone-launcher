@@ -16,6 +16,7 @@ import os from "os";
 import path from "path";
 import crypto from "crypto";
 import zlib from "zlib";
+import AdmZip from "adm-zip";
 import pack from "../backend/cloud-pack.js";
 import { fingerprintOf } from "../backend/cf-fingerprint.js";
 
@@ -217,13 +218,18 @@ const PROFILE = { name: "1.21 Fabric", version: "1.21", loader: "fabric", loader
   });
   const w = pack.packWorld({ dir, name: "My Base" });
   check("every byte of a world goes, because none of it can be fetched",
-    w.files.map(f => f.path).sort(), ["level.dat", "playerdata/uuid.dat", "region/r.0.0.mca"]);
-  const size = w.files.reduce((n, f) => n + Buffer.from(f.gzip, "base64").length, 0);
-  check("and it is compressed, because a region file is mostly air",
-    size < w.raw / 4, true, `${w.raw} bytes down to ${size}`);
+    [w.files, w.bytes.subarray(0, 2).toString("latin1")], [3, "PK"],
+    "and as a REAL zip, so it can be downloaded from the Drive and used by hand");
+  check("it is compressed, because a region file is mostly air",
+    w.bytes.length < w.raw / 4, true, `${w.raw} bytes down to ${w.bytes.length}`);
+
+  const names = new AdmZip(w.bytes).getEntries().map(e => e.entryName).sort();
+  check("with the world's own folder at the top, as a world zip has",
+    names, ["My Base/level.dat", "My Base/playerdata/uuid.dat", "My Base/region/r.0.0.mca"],
+    "which is what every launcher's import expects to find");
 
   const to = fs.mkdtempSync(path.join(os.tmpdir(), "world-"));
-  pack.unpackWorld({ world: w, dir: to });
+  pack.unpackWorld({ bytes: w.bytes, dir: to });
   check("and it comes back exactly",
     [fs.readFileSync(path.join(to, "level.dat"), "utf8"),
       fs.readFileSync(path.join(to, "region/r.0.0.mca")).length],
@@ -232,12 +238,59 @@ const PROFILE = { name: "1.21 Fabric", version: "1.21", loader: "fabric", loader
   fs.rmSync(to, { recursive: true, force: true });
 }
 {
+  // A world zip in the wild is sometimes the folder and sometimes the
+  // contents. Refusing one of those would make "download it and put it
+  // back" fail for no reason a person could act on.
+  const flat = new AdmZip();
+  flat.addFile("level.dat", Buffer.from("LEVEL"));
+  flat.addFile("region/r.0.0.mca", Buffer.from("REGION"));
   const to = fs.mkdtempSync(path.join(os.tmpdir(), "world-"));
-  check("and a world cannot write outside its folder either",
-    /writes? outside its folder/.test(await threw(() => pack.unpackWorld({
-      world: { pack: pack.PACK_VERSION, kind: "world", files: [{ path: "../escaped", gzip: zlib.gzipSync(Buffer.from("x")).toString("base64") }] },
-      dir: to,
-    })) || ""), true);
+  pack.unpackWorld({ bytes: flat.toBuffer(), dir: to });
+  check("a zip of the contents rather than the folder works too",
+    fs.readFileSync(path.join(to, "level.dat"), "utf8"), "LEVEL");
+  fs.rmSync(to, { recursive: true, force: true });
+}
+{
+  // A zip with a path that climbs out of the folder. Built byte by byte,
+  // because AdmZip quietly strips "../" when it WRITES one -- so a zip made
+  // with it could never carry the attack, and a test that used one would be
+  // testing the library rather than this code. An attacker writes the bytes.
+  const storedZip = (name, body) => {
+    const n = Buffer.from(name), d = Buffer.from(body);
+    const crcTable = [...Array(256)].map((_, i) => {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+      return c >>> 0;
+    });
+    let crc = 0xFFFFFFFF;
+    for (const b of d) crc = crcTable[(crc ^ b) & 0xFF] ^ (crc >>> 8);
+    crc = (crc ^ 0xFFFFFFFF) >>> 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14); local.writeUInt32LE(d.length, 18);
+    local.writeUInt32LE(d.length, 22); local.writeUInt16LE(n.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(crc, 16); central.writeUInt32LE(d.length, 20);
+    central.writeUInt32LE(d.length, 24); central.writeUInt16LE(n.length, 28);
+    const head = Buffer.concat([local, n, d]);
+    const dir = Buffer.concat([central, n]);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10);
+    end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(head.length, 16);
+    return Buffer.concat([head, dir, end]);
+  };
+
+  const to = fs.mkdtempSync(path.join(os.tmpdir(), "world-"));
+  for (const name of ["../escaped.txt", "a/../../escaped.txt", "/etc/escaped.txt", "..\\escaped.txt"]) {
+    check(`a world zip holding ${JSON.stringify(name)} is refused`,
+      /writes? outside its folder/.test(await threw(() => pack.unpackWorld({
+        bytes: storedZip(name, "got out"), dir: to,
+      })) || ""), true,
+      "a zip can come from anywhere, including a Drive folder somebody else can write to");
+  }
+  check("and nothing was written when one was",
+    fs.readdirSync(to), []);
   fs.rmSync(to, { recursive: true, force: true });
 }
 
