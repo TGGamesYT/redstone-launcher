@@ -8969,7 +8969,11 @@ function startDiscordPresence() {
   });
 
   client.on('disconnected', () => {
-    if (rpc === client) { rpc = null; rpcConnected = false; }
+    if (rpc === client) {
+      rpc = null;
+      rpcConnected = false;
+      if (shouldconnect) scheduleDiscordRetry();
+    }
   });
 
   client.login({ clientId }).catch(err => {

@@ -684,6 +684,14 @@
         <label class="setting-toggle" data-tip="Downloads and installs a new version of the launcher itself when one is out."><input type="checkbox" id="auto-updates"> Auto launcher updates</label>
         <label class="setting-toggle" data-tip="Shows what you are playing on your Discord profile."><input type="checkbox" id="discord-presence"> Discord presence</label>
         <label class="setting-toggle" data-tip="Lays the instances out as tiles instead of a list."><input type="checkbox" id="grid-view"> Grid view</label>
+        <details style="margin:12px 0 0 24px;font-size:12px;opacity:0.85;">
+          <summary style="cursor:pointer;">Discord presence not showing?</summary>
+          <ol style="padding-left:20px;line-height:1.6;">
+            <li>Use the Discord desktop app, not Discord in a browser, and make sure you are signed in and not set to Invisible.</li>
+            <li>Leave Discord running and make sure Discord presence is enabled above. Restart Discord, then restart the launcher.</li>
+            <li>If either app is installed as a Flatpak or Snap, its sandbox may block the local Discord connection. Check that both apps can access Discord's IPC socket.</li>
+          </ol>
+        </details>
       </div>
 
       <h3>Syncing</h3>
@@ -740,6 +748,13 @@
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:50px;">
         <button id="runTourBtn" data-tip="The tour that runs the first time you open the launcher.">Run the tour again</button>
         <button id="runImportBtn" data-tip="Brings in instances, accounts and skins from other launchers on this computer.">Import instances, accounts &amp; skins…</button>
+      </div>
+
+      <h3>Contact &amp; support</h3>
+      <p style="font-size:13px;opacity:0.8;">Need help or want to get in touch? Reach us on Discord or by email.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:30px;">
+        <a href="https://discord.gg/S9H2Z6SuEA" id="settings-contact-discord" style="color:var(--text-color);">Discord</a>
+        <a href="mailto:contact@redstone-launcher.com" id="settings-contact-email" style="color:var(--text-color);">Email: contact@redstone-launcher.com</a>
       </div>
     </div>
 
@@ -1088,7 +1103,16 @@
   </style>
   <script src="nouislider.min.js"></script>
   <script>
-    const { ipcRenderer } = require('electron');
+    const { ipcRenderer, shell } = require('electron');
+
+    document.querySelectorAll('#settings-contact-discord, #settings-contact-email').forEach((link) => {
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
+        shell.openExternal(link.href).catch((err) => {
+          console.error('Could not open contact link:', err);
+        });
+      });
+    });
 
     // The overlay used to wait for window.load, which waits for EVERY subresource
     // -- including remote icons from the mod-site CDNs. On a cold boot, with DNS
