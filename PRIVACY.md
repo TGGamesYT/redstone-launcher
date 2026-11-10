@@ -1,12 +1,6 @@
 # Redstone Launcher — Privacy Policy
 
-**Last updated: 9 November 2026**
-
-> **Before submitting this to Google, fill in the two placeholders below:**
-> `[CONTACT EMAIL]` and `[POLICY URL]`. Google's OAuth consent screen requires
-> a contact address and a publicly reachable URL for this document. Everything
-> else here describes what the launcher actually does and should not need
-> changing.
+**Last updated: 10 November 2026**
 
 Redstone Launcher is a desktop application for managing and playing Minecraft.
 It runs on your own computer. This policy covers the optional **Cloud syncing**
@@ -26,7 +20,7 @@ including every line described here, is published at
 <https://github.com/TGGamesYT/redstone-launcher> and can be inspected and
 verified by anyone.
 
-Contact: `[CONTACT EMAIL]`
+Contact: <contact@redstone-launcher.com>
 
 ---
 
@@ -198,7 +192,7 @@ versions remain visible in the project's public commit history at
 ## 11. Contact
 
 Questions about this policy, or about what the launcher does with your data:
-`[CONTACT EMAIL]`, or open an issue at
+<contact@redstone-launcher.com>, or open an issue at
 <https://github.com/TGGamesYT/redstone-launcher/issues>.
 
-This document is published at `[POLICY URL]`.
+This document is published at <https://github.com/TGGamesYT/redstone-launcher/blob/main/PRIVACY.md>.

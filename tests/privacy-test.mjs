@@ -8,6 +8,7 @@
 // and the ones that cannot are the ones worth re-reading by hand.
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import google from "../backend/cloud-google.js";
 import drive from "../backend/cloud-drive.js";
@@ -79,15 +80,39 @@ for (const absent of ["analytics", "advertis", "telemetry", "we store", "our ser
       || /do not|does not|never|no /i.test(policy), true);
 }
 
-// ── the placeholders are still marked, so they cannot be submitted by accident ──
-const left = (policy.match(/\[(CONTACT EMAIL|POLICY URL)\]/g) || []).length;
-console.log(left
-  ? `ok   ${left} placeholder(s) still marked  — fill these in before submitting`
-  : "ok   no placeholders left");
+// ── it is ready to be submitted ──
+//
+// Google's consent screen wants a contact address and a publicly reachable
+// URL. These were placeholders while the feature was being written; a
+// placeholder that reaches the submission is a support address nobody reads
+// and a policy link that 404s.
+check("no placeholder is left in it",
+  (policy.match(/\[(CONTACT EMAIL|POLICY URL)\]/g) || []), []);
+check("there is a contact address, and it is one address throughout",
+  [...new Set(policy.match(/[\w.+-]+@[\w-]+\.[\w.-]+/g) || [])],
+  ["contact@redstone-launcher.com"],
+  "two different addresses in one policy is the one somebody writes to being the wrong one");
 
-// ── and it is reachable where the policy says it is ──
-check("the policy is at the path it says it is",
-  fs.existsSync(path.join(ROOT, "PRIVACY.md")), true);
+// The URL it claims to be published at has to be where this file actually
+// is -- on the default branch, since that is what the link resolves to.
+const url = (/published at <([^>]+)>/.exec(policy) || [])[1];
+check("it says where it is published",
+  url, "https://github.com/TGGamesYT/redstone-launcher/blob/main/PRIVACY.md");
+check("and that link points at this file, on the branch it is pushed to",
+  [url.endsWith("/PRIVACY.md"), url.includes("/blob/main/"),
+    fs.existsSync(path.join(ROOT, "PRIVACY.md"))],
+  [true, true, true]);
+// Against the remote this is actually pushed to, rather than against a
+// string written twice -- a link to somebody else's repository would still
+// have resolved.
+const remote = execSync("git remote get-url origin", { cwd: ROOT }).toString().trim();
+const slug = (/github\.com[/:]([^/]+\/[^/.]+)/.exec(remote) || [])[1];
+check("the repository in the link is the one this is pushed to",
+  [slug, url.includes(slug)], [slug, true], remote);
+
+// Dates: the "last updated" has to be a real date, not a leftover.
+check("the date on it parses",
+  !Number.isNaN(Date.parse((/Last updated: ([^*]+)\*\*/.exec(policy) || [])[1])), true);
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);
