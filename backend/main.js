@@ -4016,8 +4016,15 @@ function launchViaWorker(profileId, cfg, run = null) {
           // A synced world being played is said out loud, and kept said
           // while the game runs, so another computer is warned rather than
           // both of them building in the same chunk.
-          if (quickPlay && quickPlay.type === "singleplayer" && quickPlay.identifier) {
-            keepWorldClaimed(profileId, m.pid, String(quickPlay.identifier));
+          // `cfg.quickPlay`, not `quickPlay`: this is launchViaWorker, and the
+          // bare name belongs to launchProfileCore's parameter list, two
+          // functions away. Reading it here threw ReferenceError the moment
+          // the game came up -- the one line in the whole launch that runs
+          // only on success, so the launch worked and the launcher fell over
+          // telling itself about it.
+          const quick = cfg && cfg.quickPlay;
+          if (quick && quick.type === "singleplayer" && quick.identifier) {
+            keepWorldClaimed(profileId, m.pid, String(quick.identifier));
           }
           runStarted(profileId, run, m.pid);
           updateGamePresence();
