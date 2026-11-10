@@ -96,15 +96,49 @@ async function freshConfig({ files = {}, env = {} } = {}) {
   c.done();
 }
 
+// ── the Cloudflare token, misnamed ────────────────────────────────────────
+//
+// CF_API_TOKEN is Cloudflare's and always was; it was written into this file
+// as "curseforgeToken". A relay given the token through the admin panel in
+// the meantime has it under that name, and losing it turns direct
+// connections off without saying anything.
+{
+  const c = await freshConfig({
+    files: { "config.json": JSON.stringify({ curseforgeToken: "cf-token" }) },
+  });
+  check("a token stored under the old name is carried across, not dropped",
+    [c.mod.get("cloudflareToken"), "curseforgeToken" in c.read()], ["cf-token", false],
+    "it is the one thing that makes a direct connection possible");
+  c.done();
+}
+{
+  const c = await freshConfig({
+    files: { "config.json": JSON.stringify({ curseforgeToken: "old", cloudflareToken: "new" }) },
+  });
+  check("and never over one already set under the right name",
+    [c.mod.get("cloudflareToken"), "curseforgeToken" in c.read()], ["new", false]);
+  c.done();
+}
+{
+  const c = await freshConfig({ files: { "config.json": JSON.stringify({ cloudflareToken: "tok" }) } });
+  check("the setting is named after what it talks to",
+    c.mod.describe().find(f => f.id === "cloudflareToken").label, "Cloudflare API token",
+    "a panel that calls it a CurseForge token is a panel that gets a CurseForge token pasted into it");
+  check("and there is no CurseForge setting at all",
+    c.mod.describe().some(f => /curseforge/i.test(f.id) || /curseforge/i.test(f.label)), false,
+    "CurseForge lookups go through a worker and need nothing on the relay");
+  c.done();
+}
+
 // ── the environment still wins ────────────────────────────────────────────
 {
   const c = await freshConfig({
-    files: { "config.json": JSON.stringify({ curseforgeToken: "from-file" }) },
+    files: { "config.json": JSON.stringify({ cloudflareToken: "from-file" }) },
     env: { CF_API_TOKEN: "from-env" },
   });
-  check("an environment variable beats the file", c.mod.get("curseforgeToken"), "from-env",
+  check("an environment variable beats the file", c.mod.get("cloudflareToken"), "from-env",
     "every relay running today is configured that way, and this must not change what any of them does");
-  const row = c.mod.describe().find(f => f.id === "curseforgeToken");
+  const row = c.mod.describe().find(f => f.id === "cloudflareToken");
   check("and the panel says so rather than letting it look ignored",
     [row.source, row.locked], ["environment", true],
     '"I changed it and nothing happened" is otherwise a mystery');
@@ -126,7 +160,7 @@ async function freshConfig({ files = {}, env = {} } = {}) {
   const c = await freshConfig({
     files: {
       "config.json": JSON.stringify({
-        curseforgeToken: "cf-secret-value",
+        cloudflareToken: "cf-secret-value",
         googleClientSecret: "google-secret-value",
         adminPasswordSha256: sha256("pw"),
       }),
@@ -137,10 +171,10 @@ async function freshConfig({ files = {}, env = {} } = {}) {
     ["cf-secret-value", "google-secret-value", sha256("pw")].map(v => shown.includes(v)),
     [false, false, false]);
   check("only whether each is set",
-    ["adminPasswordSha256", "curseforgeToken", "googleClientSecret"]
+    ["adminPasswordSha256", "cloudflareToken", "googleClientSecret"]
       .map(id => c.mod.describe().find(f => f.id === id))
       .map(f => [f.id, f.set, "value" in f]),
-    [["adminPasswordSha256", true, false], ["curseforgeToken", true, false],
+    [["adminPasswordSha256", true, false], ["cloudflareToken", true, false],
       ["googleClientSecret", true, false]]);
   check("and no secret carries a value at all, whatever it is called",
     c.mod.describe().filter(f => f.set !== undefined).every(f => !("value" in f)), true,
@@ -194,13 +228,13 @@ async function freshConfig({ files = {}, env = {} } = {}) {
   check("and it is the password from then on",
     c.mod.adminPasswordOk("a new password"), true);
 
-  c.mod.set({ curseforgeToken: "tok" });
+  c.mod.set({ cloudflareToken: "tok" });
   check("one field at a time leaves the others alone",
-    [c.mod.get("curseforgeToken"), c.mod.adminPasswordOk("a new password")], ["tok", true]);
+    [c.mod.get("cloudflareToken"), c.mod.adminPasswordOk("a new password")], ["tok", true]);
 
-  c.mod.set({ curseforgeToken: "" });
+  c.mod.set({ cloudflareToken: "" });
   check("clearing one puts it back to its default rather than leaving it empty",
-    [c.mod.get("curseforgeToken"), "curseforgeToken" in c.read()], ["", false]);
+    [c.mod.get("cloudflareToken"), "cloudflareToken" in c.read()], ["", false]);
 
   let said = null;
   try { c.mod.set({ notASetting: "x" }); } catch (e) { said = e.message; }

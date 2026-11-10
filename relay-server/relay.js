@@ -26,7 +26,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Everything about this relay that is not in the repository: the admin
-// password, the CurseForge token, who may change them. It used to be
+// password, the Cloudflare token, who may change them. It used to be
 // scattered across environment variables, admin-password.txt and the
 // defaults baked in below; config.js holds it in one file now and brings
 // what was already on disk in by itself. Environment variables still win,
@@ -68,7 +68,7 @@ const packRoutes = new Map();
 const CF = {
   // Read each time rather than captured at start, so setting it in the admin
   // panel takes effect on a relay that is already running.
-  get token() { return config.get("curseforgeToken") || ""; },
+  get token() { return config.get("cloudflareToken") || ""; },
   get enabled() { return !!this.token; },
 };
 function cfRequest(method, apiPath, body) {

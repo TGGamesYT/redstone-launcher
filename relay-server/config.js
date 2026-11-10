@@ -80,10 +80,13 @@ const FIELDS = [
       + " for anybody with the password.",
   },
   {
-    id: "curseforgeToken", kind: "secret", label: "CurseForge API token",
+    id: "cloudflareToken", kind: "secret", label: "Cloudflare API token",
     env: "CF_API_TOKEN",
-    help: "Lets the relay look up CurseForge projects. Without one those"
-      + " lookups are simply off.",
+    help: "Lets the relay point a host's subdomain straight at that host's IP"
+      + " when their router supports UPnP, so players connect directly instead"
+      + " of through the relay. Needs Zone:Read and Zone\u2192DNS:Edit on the"
+      + " domains above. Without one, every connection goes through the relay,"
+      + " which works and is only slower.",
   },
   {
     id: "googleClientId", kind: "text", label: "Google OAuth client ID",
@@ -161,6 +164,22 @@ function migrate() {
   const next = { ...now };
   let moved = [];
 
+  // CF_API_TOKEN is Cloudflare's, and is used for exactly one thing: pointing
+  // a host's subdomain at that host's IP. It was written here under the name
+  // "curseforgeToken", which it never was -- CurseForge lookups go through a
+  // worker and need no token on the relay. A relay that was given the token
+  // through the admin panel in the meantime has it stored under the wrong
+  // name, and silently losing it would turn direct connections off, so it is
+  // carried across rather than left behind.
+  if (!next.cloudflareToken && next.curseforgeToken) {
+    next.cloudflareToken = next.curseforgeToken;
+    delete next.curseforgeToken;
+    moved.push("the Cloudflare API token, which was stored under the wrong name");
+  } else if (next.curseforgeToken !== undefined) {
+    delete next.curseforgeToken;
+    moved.push("a leftover curseforgeToken, which nothing reads");
+  }
+
   if (!next.adminPasswordSha256) {
     try {
       const raw = fs.readFileSync(OLD_PASSWORD_FILE, "utf8").trim();
@@ -236,7 +255,7 @@ function isOwner(uuid) {
  * Every setting, with the secrets left out.
  *
  * A secret comes back as whether it is set, never as itself, so the panel can
- * show that there IS a CurseForge token without putting it on a screen -- and
+ * show that there IS a Cloudflare token without putting it on a screen -- and
  * setting a new one has never needed reading the old one.
  */
 function describe() {

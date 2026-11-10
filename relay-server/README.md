@@ -100,7 +100,7 @@ password set, the admin panel is simply closed to everybody.
 ## Settings
 
 `config.json` holds everything about this relay that is not in the repository:
-the admin password's hash, the CurseForge token, the Google OAuth client for
+the admin password's hash, the Cloudflare token, the Google OAuth client for
 Drive syncing, the base domain, and the list of accounts allowed to change any
 of it. It is created on first use, is `chmod 600`, and is in `.gitignore`.
 
@@ -124,6 +124,22 @@ emptied from the panel: there would be nobody left who could put somebody back.
 it is, and setting a new one has never needed reading the old one. A value
 that an environment variable is overriding is shown as such, so "I changed it
 and nothing happened" is not a mystery.
+
+**The keys**, for editing the file directly. It is one flat JSON object, and
+anything not listed here is refused by the panel and ignored on read.
+
+| Key | What it is | Environment variable |
+|---|---|---|
+| `adminPasswordSha256` | sha256 of the admin panel password | — |
+| `ownerUuids`          | array of Minecraft UUIDs allowed to change these | — |
+| `cloudflareToken`     | Cloudflare API token, for pointing a subdomain at a host's own IP | `CF_API_TOKEN` |
+| `googleClientId`      | OAuth client ID for Drive syncing | `RELAY_GOOGLE_CLIENT_ID` |
+| `googleClientSecret`  | the secret that goes with it | `RELAY_GOOGLE_CLIENT_SECRET` |
+| `cloudKey`            | this relay's half of the cloud sync key; made by the relay | — |
+| `domain`              | the base domain subdomains are handed out under | `RELAY_DOMAIN` |
+
+Where an environment variable is set it wins, and editing the file does
+nothing for that one.
 
 Then, in the launcher (with **Developer mode** on), open devtools on any page
 and type:
