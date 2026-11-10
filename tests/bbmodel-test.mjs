@@ -126,18 +126,37 @@ const waist = rig("waist.bbmodel", ["wave", "lean"], { pivot: [0, 12, 0] });
     "a mistyped name must not empty the file");
 }
 
-// ── handedness travels with the clip ──
+// ── which way a rig faces travels with the clip ──
 //
 // One rig may be authored the Bedrock way and the next not, so a set built
 // out of several cannot have one answer for all of them.
 {
-  run("export", shoulder, "point", "-o", OUT);
-  run("export", waist, "lean", "--flip", "-o", OUT);
+  run("export", shoulder, "point", "--no-flip", "-o", OUT);
+  run("export", waist, "lean", "-o", OUT);
   const now = read();
-  check("each clip records how its rig was authored",
-    [now.clips.point.flipYZ, now.clips.lean.flipYZ], [false, true]);
+  check("each clip records which way its rig faced",
+    [now.clips.point.turned, now.clips.lean.turned], [false, true]);
+  check("and the one that said nothing is the turned one",
+    now.clips.lean.turned, true,
+    "every rig that has come through here has been a Bedrock-style one, so remembering a flag for it was a nuisance to forget");
   check("and the renderer reads it per clip",
     /flipFor\(clip\)/.test(fs.readFileSync(path.join(ROOT, "frontend/skin-animations.js"), "utf8")), true);
+}
+
+// ── turning a rig is half a turn about Y, not a mirror of Y and Z ──
+//
+// It used to negate Y and Z, which was wrong in both halves: an arm reaching
+// forward reached backwards, and a head looking left then right looked right
+// then left. Facing the other way negates X and Z and leaves Y alone.
+{
+  const anim = fs.readFileSync(path.join(ROOT, "frontend/skin-animations.js"), "utf8");
+  check("X is the one that changes sign with Z",
+    /const sx = f \? -1 : 1, sz = f \? -1 : 1;/.test(anim), true);
+  check("and Y is left alone", /\bconst sy\b/.test(anim), false,
+    "negating Y is what made a head look the wrong way round");
+  check("a file written before the rename still says which way its rig faced",
+    /data\.flipYZ/.test(anim), true,
+    "the key was called flipYZ when it meant something else, and those files still exist");
 }
 
 // ── the whole file, which is what the plain command does ──

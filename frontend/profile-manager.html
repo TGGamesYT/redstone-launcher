@@ -50,6 +50,18 @@
          starts -- guessing it as 100vh minus the title bar was wrong as soon
          as anything else sat above it. */
       overflow-y: auto;
+      /* The scrollbar's room is always kept, whether or not it is there.
+         Without this the cards were laid out against the full width, the
+         list grew past the bottom, the scrollbar appeared and took about
+         fifteen pixels of it -- and the row that had just fitted no longer
+         did. The right-hand card ended up under the scrollbar and a
+         horizontal one appeared at the bottom to reach it, until the window
+         was dragged far enough to drop a whole column and break the loop. */
+      scrollbar-gutter: stable;
+      /* A grid of fixed tracks cannot shrink, so if it ever does not fit it
+         must not drag the page sideways with it. */
+      overflow-x: hidden;
+      min-width: 0;
     }
 
     /* Group label (Skins / Capes headers) — sticks to the top while scrolling */

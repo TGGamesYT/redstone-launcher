@@ -24,7 +24,7 @@
 //   playerRenderAnimPlay("idle2")       play one now, once
 //   playerRenderAnimPlay("idle2", true) play it on a loop
 //   playerRenderAnimPlay(null)          back to the resting idle
-//   playerRenderAnimFlip()              flip the Y/Z rotation convention
+//   playerRenderAnimFlip()              treat the rig as facing the other way
 (function () {
   if (typeof skinview3d === 'undefined') return;
 
@@ -37,7 +37,10 @@
     rightLeg: (p) => p.skin.rightLeg,
     leftLeg: (p) => p.skin.leftLeg,
     cape: (p) => p.cape,
-    // A waist/root bone drives the whole figure.
+    // Everything above the hips, legs left standing. See makeWaist below.
+    waist: (p) => makeWaist(p),
+    // The root is the whole figure, legs and all -- which is what a root
+    // bone is for, and what the waist was wrongly doing.
     root: (p) => p.skin,
   };
   const DEG = Math.PI / 180;
@@ -81,12 +84,97 @@
     } catch { /* leave it where skinview3d put it */ }
   }
 
+  // ── The waist ────────────────────────────────────────────────────────────
+  //
+  // A waist bone turns everything above the hips and leaves the legs standing
+  // where they are: that is what the word means in every rig that has one.
+  // It used to be an alias for the root, which drives the WHOLE figure --
+  // legs included -- so a clip that turned the waist turned the model on the
+  // spot instead of twisting it, and a clip that did both fought itself.
+  //
+  // skinview3d has no such bone, so there is one here: a group between the
+  // skin and the parts above the waist. The legs stay where they were, as
+  // children of the skin, and are untouched by it.
+  //
+  // It sits on the hip line, because that is what it has to turn about --
+  // measured rather than assumed: the body's box runs from the neck at y=0
+  // down to y=-12, and both legs pivot at y=-12, so y=-12 is where the legs
+  // meet the body.
+  const WAIST_Y = -12;
+  const ABOVE_THE_WAIST = ["head", "body", "rightArm", "leftArm"];
+
+  /**
+   * An empty container, from whatever three.js the viewer is already using.
+   *
+   * There is no THREE on the page to ask -- skinview3d brings its own, in a
+   * bundle -- so the class is found by walking up from something that is
+   * already in the scene. `skin.constructor` itself is no good: building one
+   * of those builds a whole second player. Its parent class is the plain
+   * group this wants, and it is recognised by BEING empty rather than by its
+   * name, which a minifier is free to change.
+   */
+  function emptyGroupLike(obj) {
+    let C = obj && obj.constructor;
+    for (let i = 0; i < 6 && typeof C === "function"; i++) {
+      try {
+        const made = new C();
+        if (made && made.isObject3D && made.children && made.children.length === 0) return made;
+      } catch { /* not constructible without arguments; try its parent */ }
+      C = Object.getPrototypeOf(C);
+    }
+    return null;
+  }
+
+  //
+  // Two groups, not one. The waist sits on the hip line so that it turns
+  // about it, and a second group inside it puts that offset straight back --
+  // so every part keeps the local position skinview3d gave it.
+  //
+  //   skin
+  //    +- waist      y = -12   <- what a clip rotates
+  //    |   +- inner  y = +12
+  //    |       +- head, body, rightArm, leftArm   (positions untouched)
+  //    +- rightLeg, leftLeg                       (never moved)
+  //
+  // Taking the offset off the parts instead would have been one group fewer
+  // and wrong: resetJoints() writes each part's default position back, and
+  // those defaults are relative to the skin. The upper half dropped twelve
+  // units the first time a rest pose was taken. Leaving the parts alone means
+  // there is nothing for resetJoints to disagree with.
+  function makeWaist(player) {
+    const skin = player && player.skin;
+    if (!skin) return null;
+    if (skin.__waist && skin.__waist.parent === skin) return skin.__waist;
+    try {
+      const group = emptyGroupLike(skin);
+      const inner = emptyGroupLike(skin);
+      if (!group || !inner) return null;
+      group.name = "waist";
+      inner.name = "waistInner";
+      group.position.set(0, WAIST_Y, 0);
+      inner.position.set(0, -WAIST_Y, 0);
+      group.add(inner);
+      skin.add(group);
+      for (const name of ABOVE_THE_WAIST) {
+        const part = skin[name];
+        if (!part || part.parent === inner) continue;
+        inner.add(part);
+      }
+      skin.__waist = group;
+      return group;
+    } catch { return null; }
+  }
+
   function restPose(player) {
     if (player.__restPose) return player.__restPose;
     // PlayerObject.resetJoints() puts the whole rig back to its defaults,
     // cape included. Without it a reload mid-animation would bake the current
     // pose in as "rest".
     try { player.resetJoints(); } catch { /* older build: read as-is */ }
+    // Both of these move parts between parents, so they happen BEFORE the
+    // rest pose is read -- what is recorded has to be where things actually
+    // are, or every frame would put them back somewhere else.
+    makeWaist(player);
     capeToBody(player);
     const pose = [];
     for (const [name, get] of Object.entries(BONES)) {
@@ -105,6 +193,9 @@
   }
 
   function resetToRest(player) {
+    // resetJoints() may have been called in between and put the parts back
+    // under the skin; remaking the waist is a no-op when it has not.
+    makeWaist(player);
     for (const r of restPose(player)) {
       r.part.position.set(r.position[0], r.position[1], r.position[2]);
       r.part.rotation.set(r.rotation[0], r.rotation[1], r.rotation[2]);
@@ -135,17 +226,26 @@
   }
 
   // Blockbench's "free" model format uses the same handedness as three.js, so
-  // rotations map across unchanged. Some rigs are authored the Bedrock way,
-  // where Y and Z are mirrored; playerRenderAnimFlip() switches between the two
-  // so it can be settled by looking rather than by argument.
-  let flipYZ = false;
-  // A clip says which handedness it was authored in, because a set of them
-  // can be built up out of several rigs -- one authored the Bedrock way and
-  // the next not. The file-wide flag is what a clip that does not say falls
-  // back to, and playerRenderAnimFlip() overrides both so the question can
-  // still be settled by looking.
+  // rotations map across unchanged. A rig authored the Bedrock way faces the
+  // other direction, and turning a rig half a turn about Y negates its X and
+  // Z rotations and leaves Y alone -- so that is what this does.
+  //
+  // It used to negate Y and Z, which was wrong in both halves and showed as
+  // exactly that: an arm reaching forward reached backwards (X never
+  // negated, and it had to be), and a head looking left then right looked
+  // right then left (Y negated, and it must not be).
+  let turned = false;
+  // A clip says which way its rig faced, because a set of them can be built
+  // up out of several rigs. The file-wide flag is what a clip that does not
+  // say falls back to, and playerRenderAnimFlip() overrides both so the
+  // question can still be settled by looking.
   let flipForced = false;
-  const flipFor = (clip) => (flipForced || !clip || clip.flipYZ === undefined) ? flipYZ : !!clip.flipYZ;
+  // `flipYZ` is what the key was called when it meant something else; a file
+  // written before this still says which way its rig faced, so it is still
+  // read.
+  const saysTurned = (c) => (c.turned === undefined ? c.flipYZ : c.turned);
+  const flipFor = (clip) => (flipForced || !clip || saysTurned(clip) === undefined)
+    ? turned : !!saysTurned(clip);
 
   // clip: { length, loop, degrees, bones: { <bone>: { rotation: [...],
   //                                         position: [...], scale: [...] } } }
@@ -164,7 +264,8 @@
         const pose = restPose(player);
         const k = degrees ? DEG : 1;
         const f = flipFor(clip);
-        const sy = f ? -1 : 1, sz = f ? -1 : 1;
+        // Half a turn about Y: X and Z change sign, Y does not.
+        const sx = f ? -1 : 1, sz = f ? -1 : 1;
         let t = this.progress;
         if (clip.length) t = loops ? t % clip.length : Math.min(t, clip.length);
 
@@ -174,8 +275,8 @@
 
           const rot = tracks && sampleTrack(tracks.rotation, t);
           part.rotation.set(
-            r.rotation[0] + (rot ? rot[0] * k : 0),
-            r.rotation[1] + (rot ? rot[1] * k * sy : 0),
+            r.rotation[0] + (rot ? rot[0] * k * sx : 0),
+            r.rotation[1] + (rot ? rot[1] * k : 0),
             r.rotation[2] + (rot ? rot[2] * k * sz : 0),
           );
 
@@ -250,15 +351,16 @@
     const pose = blankPose(rest);
     const k = clip.degrees !== false ? DEG : 1;
     const f = flipFor(clip);
-    const sy = f ? -1 : 1, sz = f ? -1 : 1;
+    // Half a turn about Y: X and Z change sign, Y does not.
+    const sx = f ? -1 : 1, sz = f ? -1 : 1;
     rest.forEach((r, idx) => {
       const tracks = (clip.bones || {})[r.name];
       if (!tracks) return;
       const e = pose[idx];
       const rot = sampleTrack(tracks.rotation, t);
       if (rot) {
-        e.r[0] = r.rotation[0] + rot[0] * k;
-        e.r[1] = r.rotation[1] + rot[1] * k * sy;
+        e.r[0] = r.rotation[0] + rot[0] * k * sx;
+        e.r[1] = r.rotation[1] + rot[1] * k;
         e.r[2] = r.rotation[2] + rot[2] * k * sz;
       }
       const pos = sampleTrack(tracks.position, t);
@@ -1030,22 +1132,23 @@
     return true;
   };
 
-  // Whether Y/Z rotation is mirrored is a property of how the rig was authored,
-  // and the only honest way to settle it is to watch the model. Flip it, watch,
-  // and re-export whichever way round turns out to be right.
+  // Which way the rig faces is a property of how it was authored, and the
+  // only honest way to settle it is to watch the model. Turn it, watch, and
+  // re-export whichever way round turns out to be right.
   window.playerRenderAnimFlip = function () {
     // Asked for by hand, so it wins over what each clip says about itself --
     // the point of it is to try the other way round and look.
     flipForced = true;
-    flipYZ = !flipYZ;
-    console.log(`Y/Z rotation is now ${flipYZ ? 'MIRRORED' : 'as authored'}.`
+    turned = !turned;
+    console.log(`The rig is treated as facing ${turned ? 'THE OTHER WAY' : 'the way it was authored'}.`
       + ' If this is the right way round, re-export with: node bbmodelconvert.js <file>'
-      + (flipYZ ? '' : ' --no-flip') + '  (mirrored is the default)');
+      + (turned ? '' : ' --no-flip') + '  (turned is the default)');
     const p = playerOf(viewer());
     if (p) { try { resetToRest(p); } catch { /* next frame will */ } }
-    return flipYZ;
+    return turned;
   };
 
-  // Set from the converted file, so the export's choice is honoured without a devtools call.
-  if (data && data.flipYZ) flipYZ = true;
+  // Set from the converted file, so the export's choice is honoured without a
+  // devtools call. `flipYZ` is the old spelling of the same flag.
+  if (data && (data.turned !== undefined ? data.turned : data.flipYZ)) turned = true;
 })();

@@ -777,8 +777,8 @@
     "display": "flex",
     "position": "static",
     "boxSizing": "border-box",
-    "overflow": "auto",
-    "overflowX": "auto",
+    "overflow": "hidden auto",
+    "overflowX": "hidden",
     "overflowY": "auto",
     "flexDirection": "column",
     "justifyContent": "normal",
@@ -1810,7 +1810,7 @@
    "box": [
     410,
     38,
-    870,
+    860,
     102
    ],
    "style": {

@@ -19,16 +19,17 @@
 //
 // Options:
 //   -o, --out <file>   where to write (default: frontend/skin-clips.json)
-//   --no-flip          keep Y/Z rotation as authored
-//                      (it is mirrored by default, for Bedrock-style rigs)
+//   --no-flip          the rig faces the same way the viewer does
+//                      (by default it is taken to face the other way, which
+//                       is how a Bedrock-style rig is authored)
 //   --list             print what's in the file and write nothing
 //
-// Blockbench's "free" model format uses the same handedness as three.js, so
-// rotations from one of those could be written out unchanged. Rigs authored
-// the Bedrock way mirror Y and Z, and in practice that is what every rig here
-// has been -- so mirroring is what happens unless --no-flip says otherwise.
-// In the app, playerRenderAnimFlip() in devtools switches between the two so
-// you can see which is right before committing.
+// A rig authored the Bedrock way faces the opposite direction from the one
+// the viewer shows, which is half a turn about Y -- and half a turn about Y
+// negates a rotation's X and Z and leaves its Y alone. In practice that is
+// what every rig here has been, so it is what happens unless --no-flip says
+// otherwise. In the app, playerRenderAnimFlip() in devtools switches between
+// the two so you can see which is right before committing.
 // The package is ESM ("type": "module" in package.json), so this is too.
 import fs from 'fs';
 import path from 'path';
@@ -55,9 +56,11 @@ const BONE_ALIASES = {
   leftleg: 'leftLeg',
   legleft: 'leftLeg',
   cape: 'cape',
-  // The rig's root group. skinview3d has no waist, so it drives the whole
-  // player -- which is what a waist bone does anyway.
-  waist: 'root',
+  // A waist turns everything above the hips and leaves the legs standing.
+  // skinview3d has no such bone, so skin-animations.js makes one; it used to
+  // be an alias for the root, which drives the WHOLE figure, legs included.
+  waist: 'waist',
+  hips: 'waist',
   root: 'root',
   player: 'root',
 };
@@ -147,7 +150,7 @@ function convert(model, { flip = true } = {}) {
       // share it, but a set built up out of several rigs need not -- one may
       // have been authored the Bedrock way and the next not -- so it travels
       // with the clip rather than with the file.
-      flipYZ: !!flip,
+      turned: !!flip,
       length: Number(anim.length) || 0,
       // Recorded, but the launcher plays everything once at random intervals;
       // this flag is about previewing in Blockbench.
@@ -193,7 +196,7 @@ function writeOut(out, clips, sources, flip) {
     sources,
     generated: new Date().toISOString(),
     // How the rig was authored, not a per-clip property.
-    flipYZ: !!flip,
+    turned: !!flip,
     clips,
   }, null, 2) + '\n');
 }
@@ -218,13 +221,13 @@ function main(argv) {
     console.log('  so the same animation can be taken from two rigs with different pivots.');
     console.log('');
     console.log('  -o, --out <file>   where to write (default: ' + DEFAULT_OUT + ')');
-    console.log('      --no-flip      keep Y/Z rotation as authored (mirrored by default, for Bedrock-style rigs)');
+    console.log('      --no-flip      the rig faces the same way the viewer does (by default it is taken to face the other way)');
     console.log('      --list         print what is in the file and write nothing');
     return 0;
   }
 
-  // Mirrored by default. Every rig that has come through here has been a
-  // Bedrock-style one, so --flip was something to remember on every single
+  // Turned by default. Every rig that has come through here has been a
+  // Bedrock-style one, so the flag was something to remember on every single
   // export and nothing but a nuisance to forget; --no-flip is there for the
   // day a Blockbench "free" rig turns up.
   const flip = !args.includes('--no-flip');
@@ -249,7 +252,7 @@ function main(argv) {
     if (!gone) return 1;
     const sources = { ...(had.sources || {}) };
     for (const n of names) delete sources[n];
-    writeOut(out, had.clips, sources, had.flipYZ);
+    writeOut(out, had.clips, sources, had.turned !== undefined ? had.turned : had.flipYZ);
     console.log(`Took ${gone} out of ${out}; ${Object.keys(had.clips).length} left.`);
     return 0;
   }
@@ -308,10 +311,10 @@ function main(argv) {
       }
       if (into[name] && !to) console.log(`  replacing the ${name} that was there`);
       into[name] = clips[from];
-      sources[name] = { file: path.basename(input), animation: from, flipYZ: !!flip };
+      sources[name] = { file: path.basename(input), animation: from, turned: !!flip };
       taken.push(name);
     }
-    writeOut(out, into, sources, had ? had.flipYZ : flip);
+    writeOut(out, into, sources, had ? (had.turned !== undefined ? had.turned : had.flipYZ) : flip);
     console.log(`Added ${taken.join(', ')} to ${out}.`);
     console.log(`It now holds ${Object.keys(into).length}: ${Object.keys(into).join(', ')}`);
     return 0;
@@ -320,7 +323,7 @@ function main(argv) {
   // ── all of them, replacing what is there ──
   describe(clips);
   const sources = {};
-  for (const n of names) sources[n] = { file: path.basename(input), animation: n, flipYZ: !!flip };
+  for (const n of names) sources[n] = { file: path.basename(input), animation: n, turned: !!flip };
   writeOut(out, clips, sources, flip);
   console.log(`\nWrote ${names.length} animation${names.length === 1 ? '' : 's'} to ${out}`);
   console.log('The skins page picks these up on its next load. In devtools:');
