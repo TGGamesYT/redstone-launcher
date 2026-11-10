@@ -37,6 +37,45 @@ check("and it names no scope the launcher does not ask for",
   "a policy that claims a narrower scope than the app requests is the bad direction");
 check("there are only two of them", google.SCOPES.length, 2);
 
+// ── what a switch sweeps up, and what it does not ──
+//
+// The policy now says two different things about two different sets: the
+// switched kinds are kept in step on every sync, and instances and worlds go
+// one at a time when asked for. If a switch for either ever comes back, that
+// sentence stops being true, and it is the kind of claim somebody relies on.
+{
+  const cloud = src("backend/cloud.js");
+  const sweep = [...cloud.matchAll(/^    (\w+): \{\n      name: "/gm)].map(m => m[1]);
+  check("the kinds a sync sweeps up are the four the policy lists as switches",
+    sweep.sort(), ["accounts", "servers", "settings", "themes"],
+    "an instance or a world in here would be sent by ticking a box, which the policy says cannot happen");
+  const page = src("frontend/settings.html");
+  check("and the settings page offers a switch for exactly those",
+    [...page.matchAll(/class="cloud-kind" data-kind="(\w+)"/g)].map(m => m[1]).sort(),
+    ["accounts", "servers", "settings", "themes"],
+    "a switch for instances or worlds is a promise the policy does not make");
+  check("the policy says instances and worlds are asked for one at a time",
+    /one at a time, when you ask for that one/i.test(policy), true);
+}
+
+// ── carrying a file nothing can fetch is the person's choice ──
+//
+// The policy says other people's mod files are not put in your Drive, with
+// one exception the person ticks themselves. That exception has to BE a
+// choice in the code, not a default.
+{
+  const cloud = src("backend/cloud.js");
+  check("nothing is carried unless the call asked for it",
+    /pushInstance\(id, \{ worlds = \[\], loose = false \} = \{\}\)/.test(cloud), true,
+    "a default of true would make the policy's exception the ordinary case");
+  const pack = src("backend/cloud-pack.js");
+  check("and the packer carries nothing by default either",
+    /carry = \(\) => false/.test(pack), true);
+  check("the policy admits the exception rather than only the reassuring half",
+    /with one exception you choose yourself/i.test(policy), true,
+    "a policy that lists only what is comfortable is the kind nobody can rely on");
+}
+
 // ── the folder it names ──
 check("the folder name is right", policy.includes(drive.ROOT_FOLDER), true);
 

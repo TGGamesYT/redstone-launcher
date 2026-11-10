@@ -304,5 +304,62 @@ const PROFILE = { name: "1.21 Fabric", version: "1.21", loader: "fabric", loader
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// ── the two things a person is asked about ──
+//
+// An instance used to go to the cloud one way: every mod recorded by hash,
+// nothing else. Both of these cost Drive space, so neither happens unless
+// somebody asks for it -- but when they do ask, it has to actually happen.
+{
+  const dir = instance({
+    "mods/sodium.jar": "ON MODRINTH",
+    "mods/my-private-build.jar": "ON NOBODY",
+    "config/a.json": "{}",
+  });
+  // Nothing can fetch the private one, so its bytes come along.
+  const p = pack.packInstance({
+    profile: PROFILE, dir,
+    carry: (entry) => entry.path === "mods/my-private-build.jar",
+  });
+  check("a file nothing can fetch is carried, not recorded",
+    [p.files.map(f => f.path), p.carried.map(c => c.path).sort()],
+    [["mods/sodium.jar"], ["config/a.json", "mods/my-private-build.jar"]],
+    "recording a hash that resolves to nothing is how a mod is lost");
+  check("and it comes back out as what went in",
+    zlib.gunzipSync(Buffer.from(p.carried.find(c => c.path === "mods/my-private-build.jar").gzip, "base64")).toString(),
+    "ON NOBODY");
+
+  // A mod jar is bigger than CARRY_LIMIT, which exists to stop a big file
+  // being carried when recording it would have done. Here it would not have.
+  const big = instance({ "mods/huge.jar": Buffer.alloc(pack.CARRY_LIMIT + 1024, 7) });
+  const q = pack.packInstance({ profile: PROFILE, dir: big, carry: () => true });
+  check("and the carry limit does not apply to one",
+    [q.carried.map(c => c.path), q.skipped.length], [["mods/huge.jar"], 0],
+    "it is there to prefer recording over carrying, and there is no recording this one");
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(big, { recursive: true, force: true });
+}
+{
+  const dir = instance({ "mods/a.jar": "A", "saves/My Base/level.dat": "W" });
+  const p = pack.packInstance({ profile: PROFILE, dir, worlds: ["My Base", "My Base", "Other"] });
+  check("the worlds that go with an instance are named, not packed",
+    [p.worlds, p.carried.some(c => c.path.startsWith("saves/"))],
+    [["My Base", "Other"], false],
+    "each is its own .zip in the Drive, so it stays a world somebody can download and use");
+  check("and the description says so before anything is sent",
+    pack.describePack(p).worlds, ["My Base", "Other"]);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+{
+  // Default is the old behaviour exactly: nothing carried that was not
+  // carried before, no worlds claimed that were not asked for.
+  const dir = instance({ "mods/a.jar": "A", "config/a.json": "{}", "saves/W/level.dat": "W" });
+  const p = pack.packInstance({ profile: PROFILE, dir });
+  check("and asking for neither sends neither",
+    [p.files.map(f => f.path), p.carried.map(c => c.path), p.worlds],
+    [["mods/a.jar"], ["config/a.json"], []],
+    "a call that did not ask for any of this must send exactly what it used to");
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);

@@ -275,36 +275,135 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
   // whole instance list to the cloud because they ticked a box is not what
   // ticking a box should mean.
 
-  /** Describe an instance without sending it, so the page can say what will go. */
-  function previewInstance(id) {
+  function profileOf(id) {
     if (!content.instanceDir || !content.readProfiles) throw new Error("Instances are not available here.");
     const profile = (content.readProfiles() || []).find(p => String(p.id) === String(id));
     if (!profile) throw new Error("No such instance.");
+    return profile;
+  }
+
+  /**
+   * What could go with this instance, before anything is sent.
+   *
+   * Two questions a person is asked rather than having answered for them:
+   * which of its worlds come along, and whether the files nothing can fetch
+   * again should be carried. The second needs the network -- "is this jar
+   * on Modrinth or CurseForge" is not a question a hash answers by itself --
+   * so it is asked here, once, in bulk, and the answer is handed to the
+   * page so it can say what each choice costs.
+   */
+  async function instanceParts(id) {
+    const profile = profileOf(id);
+    const plain = cloudPack.packInstance({
+      profile, dir: content.instanceDir(id), known: content.knownFile || (() => null),
+    });
+    const worlds = (content.listWorlds ? content.listWorlds(id) : []) || [];
+    let loose = [];
+    if (content.knowsFiles && plain.files.length) {
+      let answers = [];
+      try { answers = await content.knowsFiles(plain.files); } catch { answers = []; }
+      // No answer means no answer, and the safe reading of that is that the
+      // file cannot be fetched: carrying a jar nothing needed carried wastes
+      // room, recording one that resolves to nothing loses it.
+      loose = plain.files.filter((_, i) => !answers[i]);
+    }
+    return {
+      name: profile.name,
+      describe: cloudPack.describePack(plain),
+      worlds,
+      loose: loose.map(f => ({ path: f.path, size: f.size })),
+      looseBytes: loose.reduce((n, f) => n + (f.size || 0), 0),
+    };
+  }
+
+  /** Describe an instance without sending it, so the page can say what will go. */
+  function previewInstance(id) {
+    const profile = profileOf(id);
     return cloudPack.describePack(cloudPack.packInstance({
       profile, dir: content.instanceDir(id),
       known: content.knownFile || (() => null),
     }));
   }
 
-  async function pushInstance(id) {
-    const profile = (content.readProfiles() || []).find(p => String(p.id) === String(id));
-    if (!profile) throw new Error("No such instance.");
-    const p = cloudPack.packInstance({
-      profile, dir: content.instanceDir(id), known: content.knownFile || (() => null),
-    });
+  /**
+   * Send one instance.
+   *
+   * `worlds` are the names to send with it, each as its own .zip; `loose`
+   * asks for the files nothing can fetch again to be carried rather than
+   * recorded. Both default off, so the plain call sends what it always did.
+   *
+   * The pack goes first. A world that fails to upload leaves an instance
+   * that is in the cloud and names a world that is not yet, which the other
+   * side reports as a world it could not find -- where sending the worlds
+   * first and failing on the pack would leave worlds belonging to nothing.
+   */
+  async function pushInstance(id, { worlds = [], loose = false } = {}) {
+    const profile = profileOf(id);
+    const dir = content.instanceDir(id);
+    const known = content.knownFile || (() => null);
+
+    let carry = () => false;
+    if (loose) {
+      const plain = cloudPack.packInstance({ profile, dir, known });
+      const cannot = new Set();
+      if (content.knowsFiles && plain.files.length) {
+        let answers = [];
+        try { answers = await content.knowsFiles(plain.files); } catch { answers = []; }
+        plain.files.forEach((f, i) => { if (!answers[i]) cannot.add(f.path); });
+      }
+      carry = (entry) => cannot.has(entry.path);
+    }
+
+    const p = cloudPack.packInstance({ profile, dir, known, carry, worlds });
     const r = await push("instances", String(id), Buffer.from(JSON.stringify(p)), { name: profile.name });
-    return { ...r, describe: cloudPack.describePack(p) };
+    if (!r.ok) return { ...r, describe: cloudPack.describePack(p) };
+
+    const sent = [];
+    const failed = [];
+    for (const world of p.worlds) {
+      try {
+        const w = await pushWorld(id, world);
+        (w && w.ok ? sent : failed).push({ world, why: w && (w.why || w.error) });
+      } catch (e) {
+        failed.push({ world, why: String(e && e.message || e) });
+      }
+    }
+    return { ...r, describe: cloudPack.describePack(p), worlds: { sent: sent.map(s => s.world), failed } };
   }
 
-  async function pullInstance(id, { into } = {}) {
+  /**
+   * Bring an instance here.
+   *
+   * `into` is a directory, for putting a cloud instance into one that
+   * already exists here rather than over the one it came from -- which is
+   * what taking somebody's instance to a second computer actually is.
+   * `worlds` chooses which of its worlds come too; leaving it out takes
+   * them all, since they were sent on purpose.
+   */
+  async function pullInstance(id, { into, intoId, worlds } = {}) {
     const r = await pull("instances", String(id));
     if (!r.ok) return r;
     const p = JSON.parse(r.bytes.toString("utf8"));
-    return cloudPack.unpackInstance({
+    const target = intoId === undefined || intoId === null ? id : intoId;
+    const out = await cloudPack.unpackInstance({
       pack: p,
-      dir: into || content.instanceDir(id),
+      dir: into || content.instanceDir(target),
       fetchFile: content.fetchFile || (async () => null),
     });
+    if (!out.ok) return out;
+
+    const want = worlds === undefined ? (p.worlds || []) : (worlds || []);
+    const got = [];
+    const missing = [];
+    for (const world of want) {
+      try {
+        const w = await pullWorld(id, world, { intoId: target });
+        (w && w.ok !== false ? got : missing).push({ world, why: w && w.why });
+      } catch (e) {
+        missing.push({ world, why: String(e && e.message || e) });
+      }
+    }
+    return { ...out, worlds: { got: got.map(g => g.world), missing } };
   }
 
   async function pushWorld(instanceId, worldName) {
@@ -317,14 +416,51 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     return push("worlds", key, w.bytes, { name: worldName });
   }
 
-  async function pullWorld(instanceId, worldName) {
+  /**
+   * Bring a world here.
+   *
+   * `intoId` is the instance it lands in, which is not always the one it was
+   * sent from: a world synced from a modded instance on one computer is
+   * often wanted in a differently-numbered instance on another, and taking
+   * it is the whole point of it being in the cloud.
+   */
+  async function pullWorld(instanceId, worldName, { intoId, as } = {}) {
     const key = `${instanceId}:${worldName}`;
     const r = await pull("worlds", key);
     if (!r.ok) return r;
+    const where = intoId === undefined || intoId === null ? instanceId : intoId;
     return cloudPack.unpackWorld({
       bytes: r.bytes,
-      dir: content.worldDir(instanceId, worldName),
+      dir: content.worldDir(where, as || worldName),
     });
+  }
+
+  /**
+   * Every world in the Drive, whichever instance and computer it came from.
+   *
+   * The manifest keys worlds as "<instance id>:<name>", and that instance id
+   * is the one on the computer that sent it, which means nothing here. So
+   * the id is kept for fetching and the name is what a person picks from.
+   */
+  async function cloudWorlds() {
+    const items = await syncer().list();
+    return items
+      .filter(it => String(it.key || "").startsWith("worlds/"))
+      .map((it) => {
+        const rest = String(it.key).slice("worlds/".length);
+        const cut = rest.indexOf(":");
+        return {
+          key: it.key,
+          instanceId: cut < 0 ? "" : rest.slice(0, cut),
+          world: cut < 0 ? rest : rest.slice(cut + 1),
+          name: it.name || null,
+          size: it.size || 0,
+          at: it.at || 0,
+          deviceName: it.deviceName || null,
+          deviceId: it.deviceId || null,
+        };
+      })
+      .sort((a, b) => (b.at || 0) - (a.at || 0));
   }
 
   /**
@@ -429,8 +565,8 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
   return {
     client, status, signIn, signOut,
     syncNow, takeTheirs, keepMine, WHAT,
-    previewInstance, pushInstance, pullInstance,
-    pushWorld, pullWorld,
+    previewInstance, instanceParts, pushInstance, pullInstance,
+    pushWorld, pullWorld, cloudWorlds,
     openingWorld, stillPlaying, closedWorld, whoHasWorlds,
     plan: planFor, push, pull, pushOver, unsync,
     list: () => syncer().list(),

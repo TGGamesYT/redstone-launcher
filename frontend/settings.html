@@ -709,7 +709,7 @@
       <div id="cloud-box" style="margin-bottom:50px;">
         <div id="cloud-signed-out">
           <button type="button" id="cloud-signin" class="bg-btn"
-            data-tip="Keeps your settings, themes, instances and worlds in your own Google Drive, so they follow you to another computer. The launcher can only see the folder it makes — it asks for access to files it created and nothing wider — and the folder is ordinary files you can open and download — worlds as .zip, the rest as .json. The one exception is your signed-in accounts, which are encrypted with a key in two halves: one kept in the folder, one the relay works out from your Minecraft account and only hands over after Mojang has verified it. Neither half opens it on its own.">Sign in with Google…</button>
+            data-tip="Keeps your settings, themes, server list and signed-in accounts in your own Google Drive, so they follow you to another computer. Instances and worlds are not swept up by this — each is sent from its own menu, one at a time, when you ask for it. The launcher can only see the folder it makes — it asks for access to files it created and nothing wider — and the folder is ordinary files you can open and download — worlds as .zip, the rest as .json. The one exception is your signed-in accounts, which are encrypted with a key in two halves: one kept in the folder, one the relay works out from your Minecraft account and only hands over after Mojang has verified it. Neither half opens it on its own.">Sign in with Google…</button>
           <span id="cloud-signin-state" class="bg-hint" style="margin-left:10px;"></span>
         </div>
         <div id="cloud-signed-in" style="display:none;">
@@ -724,8 +724,6 @@
           <label class="setting-toggle" data-tip="Your launcher settings: the theme, the colours, the background, and everything on this page that is not about this computer in particular."><input type="checkbox" class="cloud-kind" data-kind="settings"> Settings</label>
           <label class="setting-toggle" data-tip="The themes you have made or installed."><input type="checkbox" class="cloud-kind" data-kind="themes"> Themes</label>
           <label class="setting-toggle" data-tip="Your saved multiplayer servers."><input type="checkbox" class="cloud-kind" data-kind="servers"> Server list</label>
-          <label class="setting-toggle" data-tip="Your instances, as a pack: the version, the loader, the mods and where each came from, and the resource packs. Mods are recorded rather than uploaded wherever they can be fetched again, so an instance is small."><input type="checkbox" class="cloud-kind" data-kind="instances"> Instances</label>
-          <label class="setting-toggle" data-tip="Your worlds, each as an ordinary .zip you can download from Drive and use anywhere. A world open in a game on one computer is marked as such, so another computer warns you rather than letting two of you edit it at once."><input type="checkbox" class="cloud-kind" data-kind="worlds"> Worlds</label>
           <label class="setting-toggle" data-tip="The accounts you are signed in with. The only thing that is encrypted: a Microsoft token is not a password that can be changed afterwards, it is the account. It takes both halves of the key, so the Drive file is no use without the Minecraft account it belongs to — and the relay cannot read it either."><input type="checkbox" class="cloud-kind" data-kind="accounts"> Signed-in accounts</label>
           <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;">
             <button type="button" id="cloud-sync" class="bg-btn"
@@ -733,7 +731,6 @@
             <span id="cloud-sync-state" class="bg-hint"></span>
           </div>
           <div id="cloud-conflicts" style="margin-top:12px;"></div>
-          <div id="cloud-instances" style="margin-top:14px;"></div>
           <div id="cloud-items" style="margin-top:14px;"></div>
           <div id="cloud-error" class="bg-hint" style="margin-top:10px;color:var(--base-color);"></div>
         </div>
@@ -2302,82 +2299,6 @@
           for (const b of document.querySelectorAll('.cloud-kind')) {
             b.checked = !!kinds[b.dataset.kind];
           }
-          // The instances, each with its own button. Not swept up by "sync
-          // everything": sending somebody's whole instance list to the cloud
-          // because they ticked a box is not what ticking a box means.
-          const insts = document.getElementById('cloud-instances');
-          insts.innerHTML = '';
-          if (kinds.instances) {
-            const r2 = await ipcRenderer.invoke('cloud:instances').catch(() => null);
-            for (const p of ((r2 && r2.instances) || [])) {
-              const row = document.createElement('div');
-              row.className = 'bg-img-row';
-              const who = document.createElement('div');
-              who.className = 'who';
-              who.textContent = `${p.name} · ${p.version || '?'} ${p.loader || ''}`;
-              const state = document.createElement('div');
-              state.className = 'who';
-              state.style.cssText = 'flex:0 0 auto;opacity:0.7;';
-              state.textContent = p.synced ? `in the cloud, from ${p.synced.deviceName}` : 'not synced';
-              const ord = document.createElement('div');
-              ord.className = 'ord';
-              const send = document.createElement('button');
-              send.type = 'button';
-              send.textContent = p.synced ? 'Send this copy' : 'Sync';
-              send.title = 'Records the mods rather than uploading them, and carries the config.';
-              send.onclick = async () => {
-                send.disabled = true;
-                const got = await ipcRenderer.invoke('cloud:pushInstance', { id: p.id });
-                send.disabled = false;
-                if (got && got.conflict) {
-                  alert(`${p.name} also changed on ${(got.theirs && got.theirs.deviceName) || 'another computer'}.`
-                    + ' Nothing has been overwritten.');
-                } else if (got && !got.ok) {
-                  alert(got.error || 'Could not sync that instance.');
-                } else if (got && got.describe && got.describe.skipped.length) {
-                  alert(`${p.name} is synced, but ${got.describe.skipped.length} file(s) could not come with it:\n\n`
-                    + got.describe.skipped.slice(0, 8).map(x => `${x.path} — ${x.why}`).join('\n'));
-                }
-                paint();
-              };
-              ord.appendChild(send);
-              row.append(who, state, ord);
-              insts.appendChild(row);
-            }
-            for (const i of ((r2 && r2.elsewhere) || [])) {
-              const row = document.createElement('div');
-              row.className = 'bg-img-row';
-              const who = document.createElement('div');
-              who.className = 'who';
-              who.textContent = i.name;
-              const state = document.createElement('div');
-              state.className = 'who';
-              state.style.cssText = 'flex:0 0 auto;opacity:0.7;';
-              state.textContent = `in the cloud, from ${i.deviceName}`;
-              const ord = document.createElement('div');
-              ord.className = 'ord';
-              const get = document.createElement('button');
-              get.type = 'button';
-              get.textContent = 'Bring it here';
-              get.title = 'Fetches the mods again and writes the config. Nothing is written until every file is found.';
-              get.onclick = async () => {
-                get.disabled = true;
-                const got = await ipcRenderer.invoke('cloud:pullInstance', { id: i.id });
-                get.disabled = false;
-                if (got && !got.ok) {
-                  alert(got.missing
-                    ? `${got.missing.length} file(s) could not be found, so nothing was written:\n\n`
-                      + got.missing.slice(0, 8).map(x => x.path).join('\n')
-                    : (got.error || 'Could not bring that instance here.'));
-                }
-                paint();
-              };
-              ord.appendChild(get);
-              row.append(who, state, ord);
-              insts.appendChild(row);
-            }
-          }
-
           // What is actually up there, and where each came from -- which is
           // the only way to tell a sync that is working from one that looks
           // like it is.

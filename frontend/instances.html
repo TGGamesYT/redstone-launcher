@@ -2525,12 +2525,24 @@
     <div class="menu-item" data-action="shortcut">Desktop shortcut</div>
     <div class="menu-item" data-action="share" style="display:none;">Share over internet</div>
     <div class="menu-item" data-action="export">Export…</div>
+    <div class="menu-item" data-action="cloud-save" style="display:none;">Save to cloud…</div>
+    <div class="menu-item" data-action="cloud-get" style="display:none;">Get from cloud…</div>
     <div class="menu-item" data-action="delete">Delete</div>
 `; //ASDASDASD
         document.body.appendChild(menu);
         // The share-over-internet entry is only for relay admins (they can share a
         // not-yet-running instance and type in the port).
         isAnyRelayAdmin().then(ok => { if (ok) { const si = menu.querySelector('[data-action="share"]'); if (si) si.style.display = ''; } });
+        // And the cloud entries only once there is a cloud to save to. An
+        // instance is sent one at a time, from here, because it is asked for
+        // -- there is no switch anywhere that sends all of them.
+        ipcRenderer.invoke("cloud:status").then((r) => {
+          if (!r || !r.ok || !r.signedIn) return;
+          for (const act of ["cloud-save", "cloud-get"]) {
+            const el = menu.querySelector(`[data-action="${act}"]`);
+            if (el) el.style.display = '';
+          }
+        }).catch(() => { /* no cloud, no entries */ });
 
         let menuVisible = false;
         let ignoreNextClick = false;
@@ -2635,6 +2647,8 @@
             if (item.dataset.action === "shortcut") openShortcutModal(profile);
             if (item.dataset.action === "share") openInstanceShareModal({ localPort: 0, relayKey: `instance-${profile.id}`, defaultSub: (profile.name || "instance"), onShared: (address) => { if (window.notify) window.notify("Shared at " + address, "success"); } });
             if (item.dataset.action === "export") openExportModal(profile);
+            if (item.dataset.action === "cloud-save") openCloudSaveModal(profile);
+            if (item.dataset.action === "cloud-get") openCloudGetModal(profile);
 
             menu.style.display = "none";
             menuVisible = false;
@@ -3819,6 +3833,278 @@
         // Export an instance. Everything the export needs is asked for up front:
         // which pack format, what to put in it, and where to write it -- the old
         // flyout just wrote a .mrpack straight into the launcher's data folder.
+        // ── this instance, to and from the cloud ─────────────────────────
+        //
+        // One instance at a time, from its own menu, because somebody asked
+        // for it. There used to be a switch in settings called "Instances"
+        // that implied all of them went; it did nothing at all, which was
+        // the only mercy about it.
+        //
+        // Two questions are put to the person rather than decided for them,
+        // because both cost Drive space and neither has an answer that is
+        // right for everybody: which worlds come along, and whether the
+        // files nothing can fetch again are carried as bytes.
+
+        const sizeOf = (n) => {
+          if (!n) return "0 B";
+          const u = ["B", "KB", "MB", "GB"];
+          let i = 0, v = Number(n);
+          while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+          return `${v < 10 && i ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
+        };
+
+        // Any world in the Drive, into this instance.
+        //
+        // The manifest keys a world by the instance it was sent from, and
+        // that id belongs to the computer that sent it -- so on a second
+        // computer none of them match anything, and without this there is no
+        // way to get at a world that was synced from a differently-numbered
+        // instance. Which is most of them.
+        async function openCloudWorldModal(profile, onDone) {
+          const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+
+          const overlay = document.createElement("div");
+          overlay.className = "modal-overlay active";
+          overlay.style.zIndex = 5000;
+          overlay.innerHTML = `
+            <div class="modal-content" style="max-width:520px;">
+              <div class="modal-header"><h2>Import cloud world</h2><button class="modal-close" id="cwClose">✕</button></div>
+              <p style="font-size:12px;opacity:0.8;margin:0 0 10px;">
+                Writes the chosen world into <b>${esc(profile.name)}</b>'s saves folder.
+              </p>
+              <div id="cwBody" style="font-size:13px;opacity:0.85;">Looking in the cloud…</div>
+              <div class="modal-actions">
+                <button id="cwGo" disabled>Import</button>
+                <button id="cwCancel">Cancel</button>
+              </div>
+            </div>`;
+          document.body.appendChild(overlay);
+          const $q = (sel) => overlay.querySelector(sel);
+          const close = () => overlay.remove();
+          $q("#cwClose").onclick = close;
+          $q("#cwCancel").onclick = close;
+          overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+          const r = await ipcRenderer.invoke("cloud:worlds").catch(e => ({ error: String(e) }));
+          if (!r || !r.ok) { $q("#cwBody").textContent = (r && r.error) || "Could not reach the cloud."; return; }
+          const list = r.worlds || [];
+          if (!list.length) {
+            $q("#cwBody").textContent = "No world has been synced to the cloud yet.";
+            return;
+          }
+          $q("#cwBody").innerHTML = `
+            <div style="max-height:40vh;overflow-y:auto;display:grid;gap:4px;">
+              ${list.map((w, i) => `<label class="inline-check"><input type="radio" name="cwPick" value="${i}"${i ? "" : " checked"}>
+                ${esc(w.name || w.world)} <span style="opacity:0.6;">· ${esc(sizeOf(w.size))} · from ${esc(w.deviceName || "another computer")}${String(w.instanceId) === String(profile.id) ? " · this instance" : ""}</span></label>`).join("")}
+            </div>`;
+
+          const go = $q("#cwGo");
+          go.disabled = false;
+          go.onclick = async () => {
+            const picked = overlay.querySelector('input[name="cwPick"]:checked');
+            if (!picked) return;
+            const w = list[Number(picked.value)];
+            // A world folder that already exists would be written into, and a
+            // half-overwritten world is somebody's save game.
+            const here = (await ipcRenderer.invoke("get-instance-worlds", { profileId: profile.id }).catch(() => [])) || [];
+            if (here.some(x => String(x.folder) === String(w.world))) {
+              if (!await uiConfirm(
+                `"${w.world}" already exists in ${profile.name}. Importing writes the cloud copy over it, and what is here now cannot be got back.`,
+                { title: "Import cloud world", ok: "Overwrite", danger: true })) return;
+            }
+            go.disabled = true;
+            go.textContent = "Fetching…";
+            const got = await ipcRenderer.invoke("cloud:pullWorld", {
+              instanceId: w.instanceId, world: w.world, intoId: profile.id,
+            }).catch(e => ({ error: String(e) }));
+            go.disabled = false;
+            go.textContent = "Import";
+            if (!got || got.ok === false) {
+              alert((got && (got.error || got.why)) || "Could not bring that world down.");
+              return;
+            }
+            close();
+            if (window.notify) window.notify(`"${w.world}" imported into ${profile.name}`, "success");
+            if (onDone) onDone();
+          };
+        }
+
+        async function openCloudSaveModal(profile) {
+          const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+
+          const overlay = document.createElement("div");
+          overlay.className = "modal-overlay active";
+          overlay.style.zIndex = 5000;
+          overlay.innerHTML = `
+            <div class="modal-content" style="max-width:520px;">
+              <div class="modal-header"><h2>Save to cloud</h2><button class="modal-close" id="csClose">✕</button></div>
+              <div id="csBody" style="font-size:13px;opacity:0.85;padding:8px 0;">Looking at what would go…</div>
+              <div class="modal-actions">
+                <button id="csGo" disabled>Save to cloud</button>
+                <button id="csCancel">Cancel</button>
+              </div>
+            </div>`;
+          document.body.appendChild(overlay);
+          const $q = (sel) => overlay.querySelector(sel);
+          const close = () => overlay.remove();
+          $q("#csClose").onclick = close;
+          $q("#csCancel").onclick = close;
+          overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+          const r = await ipcRenderer.invoke("cloud:instanceParts", { id: profile.id }).catch(e => ({ error: String(e) }));
+          if (!r || !r.ok) {
+            $q("#csBody").textContent = (r && r.error) || "Could not look at this instance.";
+            return;
+          }
+          const parts = r.parts;
+          const d = parts.describe || {};
+
+          $q("#csBody").innerHTML = `
+            <p style="margin:0 0 10px;">
+              <b>${esc(parts.name)}</b> — ${d.files || 0} file(s) recorded by hash and fetched again on the
+              other computer, ${d.carried || 0} carried (${esc(sizeOf(d.carriedBytes || 0))}).
+              Mods are not uploaded where anything can fetch them, so this stays small.
+            </p>
+            ${parts.loose.length ? `
+              <label class="inline-check" style="display:block;margin:8px 0;">
+                <input type="checkbox" id="csLoose">
+                Also send the ${parts.loose.length} file(s) that are on neither Modrinth nor CurseForge
+                (${esc(sizeOf(parts.looseBytes))})
+              </label>
+              <div style="font-size:12px;opacity:0.7;margin:0 0 10px 22px;">
+                ${parts.loose.slice(0, 6).map(x => esc(x.path)).join("<br>")}
+                ${parts.loose.length > 6 ? `<br>and ${parts.loose.length - 6} more` : ""}
+                <br><i>Without this they are recorded but cannot be found again, and bringing the
+                instance to another computer will say so rather than build it half-finished.</i>
+              </div>` : `
+              <p style="font-size:12px;opacity:0.7;margin:0 0 10px;">
+                Everything in this instance can be fetched again, so nothing has to be carried.
+              </p>`}
+            ${parts.worlds.length ? `
+              <label style="display:block;margin:10px 0 4px;">Worlds to send with it</label>
+              <div id="csWorlds" style="max-height:30vh;overflow-y:auto;display:grid;gap:4px;">
+                ${parts.worlds.map(w => `<label class="inline-check"><input type="checkbox" class="cs-world" value="${esc(w)}"> ${esc(w)}</label>`).join("")}
+              </div>
+              <div style="font-size:12px;opacity:0.7;margin:6px 0 0;">
+                Each goes as an ordinary .zip you can download from Drive and use anywhere.
+                A world is every byte of it, so these are the big ones.
+              </div>` : `
+              <p style="font-size:12px;opacity:0.7;margin:10px 0 0;">This instance has no worlds yet.</p>`}
+          `;
+
+          const go = $q("#csGo");
+          go.disabled = false;
+          go.onclick = async () => {
+            go.disabled = true;
+            go.textContent = "Saving…";
+            const worlds = [...overlay.querySelectorAll(".cs-world")].filter(c => c.checked).map(c => c.value);
+            const loose = !!($q("#csLoose") && $q("#csLoose").checked);
+            const got = await ipcRenderer.invoke("cloud:pushInstance", { id: profile.id, worlds, loose })
+              .catch(e => ({ error: String(e) }));
+            go.disabled = false;
+            go.textContent = "Save to cloud";
+            if (got && got.conflict) {
+              alert(`"${profile.name}" also changed on ${(got.theirs && got.theirs.deviceName) || "another computer"}.`
+                + " Nothing has been overwritten.");
+              return;
+            }
+            if (!got || !got.ok) { alert((got && got.error) || "Could not save that instance."); return; }
+
+            const notes = [];
+            if (got.describe && got.describe.skipped.length) {
+              notes.push(`${got.describe.skipped.length} file(s) could not come with it:\n`
+                + got.describe.skipped.slice(0, 6).map(x => `  ${x.path} — ${x.why}`).join("\n"));
+            }
+            if (got.worlds && got.worlds.failed.length) {
+              notes.push(`${got.worlds.failed.length} world(s) did not go:\n`
+                + got.worlds.failed.slice(0, 6).map(x => `  ${x.world}${x.why ? " — " + x.why : ""}`).join("\n"));
+            }
+            close();
+            if (notes.length) alert(`"${profile.name}" is in the cloud.\n\n` + notes.join("\n\n"));
+            else if (window.notify) window.notify(`"${profile.name}" is in the cloud`, "success");
+          };
+        }
+
+        // Taking a cloud instance into THIS one, which is what moving to a
+        // second computer actually is: the instance ids do not line up, so
+        // "pull the one with my id" would only ever work on the machine it
+        // was sent from.
+        async function openCloudGetModal(profile) {
+          const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+
+          const overlay = document.createElement("div");
+          overlay.className = "modal-overlay active";
+          overlay.style.zIndex = 5000;
+          overlay.innerHTML = `
+            <div class="modal-content" style="max-width:520px;">
+              <div class="modal-header"><h2>Get from cloud</h2><button class="modal-close" id="cgClose">✕</button></div>
+              <p style="font-size:12px;opacity:0.8;margin:0 0 10px;">
+                Writes the chosen instance into <b>${esc(profile.name)}</b>, fetching its mods again.
+                Nothing is written until every file has been found.
+              </p>
+              <div id="cgBody" style="font-size:13px;opacity:0.85;">Looking in the cloud…</div>
+              <div class="modal-actions">
+                <button id="cgGo" disabled>Bring it here</button>
+                <button id="cgCancel">Cancel</button>
+              </div>
+            </div>`;
+          document.body.appendChild(overlay);
+          const $q = (sel) => overlay.querySelector(sel);
+          const close = () => overlay.remove();
+          $q("#cgClose").onclick = close;
+          $q("#cgCancel").onclick = close;
+          overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+          const r = await ipcRenderer.invoke("cloud:status").catch(e => ({ error: String(e) }));
+          if (!r || !r.ok) { $q("#cgBody").textContent = (r && r.error) || "Could not reach the cloud."; return; }
+          const list = (r.items || []).filter(it => it.kind === "instances");
+          if (!list.length) {
+            $q("#cgBody").textContent = "No instance has been saved to the cloud yet.";
+            return;
+          }
+          $q("#cgBody").innerHTML = `
+            <div style="max-height:40vh;overflow-y:auto;display:grid;gap:4px;">
+              ${list.map((it, i) => `<label class="inline-check"><input type="radio" name="cgPick" value="${i}"${i ? "" : " checked"}>
+                ${esc(it.name || it.id)} <span style="opacity:0.6;">· from ${esc(it.deviceName || "another computer")} · ${esc(new Date(it.at || 0).toLocaleString())}</span></label>`).join("")}
+            </div>
+            <label class="inline-check" style="display:block;margin-top:10px;">
+              <input type="checkbox" id="cgWorlds" checked> Bring its worlds too, if it was saved with any
+            </label>`;
+
+          const go = $q("#cgGo");
+          go.disabled = false;
+          go.onclick = async () => {
+            const picked = overlay.querySelector('input[name="cgPick"]:checked');
+            if (!picked) return;
+            const it = list[Number(picked.value)];
+            if (!await uiConfirm(
+              `Write "${it.name || it.id}" into "${profile.name}"? Files already in this instance with the same names are replaced.`,
+              { title: "Get from cloud", ok: "Bring it here" })) return;
+            go.disabled = true;
+            go.textContent = "Fetching…";
+            const got = await ipcRenderer.invoke("cloud:pullInstance", {
+              id: it.id, intoId: profile.id, ...(($q("#cgWorlds") || {}).checked ? {} : { worlds: [] }),
+            }).catch(e => ({ error: String(e) }));
+            go.disabled = false;
+            go.textContent = "Bring it here";
+            if (!got || !got.ok) {
+              alert(got && got.missing
+                ? `${got.missing.length} file(s) could not be found, so nothing was written:\n\n`
+                  + got.missing.slice(0, 8).map(x => x.path).join("\n")
+                : ((got && got.error) || "Could not bring that instance here."));
+              return;
+            }
+            const late = (got.worlds && got.worlds.missing) || [];
+            close();
+            if (late.length) {
+              alert(`"${it.name || it.id}" is here, but ${late.length} world(s) could not be fetched:\n\n`
+                + late.slice(0, 6).map(x => x.world).join("\n"));
+            } else if (window.notify) {
+              window.notify(`"${it.name || it.id}" written into ${profile.name}`, "success");
+            }
+          };
+        }
+
         async function openExportModal(profile) {
           const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
           const parts = await ipcRenderer.invoke("export:parts").catch(() => []);
@@ -4449,7 +4735,11 @@
                 // computer. Both are "if syncing is on" -- neither failing
                 // may stop the worlds list from being drawn.
                 const cloud = await ipcRenderer.invoke("cloud:status").catch(() => null);
-                const cloudOn = !!(cloud && cloud.ok && cloud.signedIn && (cloud.kinds || {}).worlds);
+                // Signed in is the whole condition. There used to be a
+                // "Worlds" switch in settings that this also asked about; it
+                // gated nothing on the way out, so it only ever hid these
+                // buttons from somebody whose worlds were syncing fine.
+                const cloudOn = !!(cloud && cloud.ok && cloud.signedIn);
                 const synced = new Map();
                 const openNow = new Map();
                 if (cloudOn) {
@@ -4490,6 +4780,18 @@
                 };
                 bar.appendChild(mkImport("Import .zip", "zip"));
                 bar.appendChild(mkImport("Import folder", "folder"));
+                // A world from any instance, on any computer. The rows
+                // below already offer the ones this instance sent, but a
+                // world synced from a different instance -- which is what it
+                // is as soon as a second computer is involved, since the ids
+                // are that computer's -- is only reachable from here.
+                if (cloudOn) {
+                  const fromCloud = document.createElement("button");
+                  fromCloud.className = "tab-install-btn secondary";
+                  fromCloud.textContent = "Import cloud world";
+                  fromCloud.onclick = () => openCloudWorldModal(profile, renderWorlds);
+                  bar.appendChild(fromCloud);
+                }
                 const openSaves = document.createElement("button");
                 openSaves.className = "tab-install-btn secondary";
                 openSaves.textContent = "Open Saves Folder";

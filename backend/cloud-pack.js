@@ -77,8 +77,23 @@ const topOf = (rel) => rel.split("/")[0];
  * are. `known(rel, hashes)` may say what a file is -- the launcher has a
  * cache of hash lookups already, and using it saves asking the internet
  * about files it has asked about before.
+ *
+ * Two things are asked for rather than assumed, because both cost somebody
+ * their Drive space and neither should happen because a box was ticked
+ * once in a settings page:
+ *
+ *   carry(entry)  this file is in a by-hash folder but nothing can fetch it
+ *                 again -- a jar from a Discord server, a private build --
+ *                 so carry the bytes instead of recording a hash that will
+ *                 resolve to nothing on the other computer. Whether anything
+ *                 can fetch a file is a question for the network, so it is
+ *                 answered outside this file and handed in.
+ *   worlds        the names of the worlds that belong with this instance.
+ *                 Only the names: a world goes to the Drive as its own
+ *                 ordinary .zip, so that it stays downloadable by hand, and
+ *                 a 2 GB world inside a pack would be neither.
  */
-export function packInstance({ profile, dir, known = () => null }) {
+export function packInstance({ profile, dir, known = () => null, carry = () => false, worlds = [] }) {
   const pack = {
     pack: PACK_VERSION,
     name: profile.name || "Instance",
@@ -91,6 +106,7 @@ export function packInstance({ profile, dir, known = () => null }) {
     files: [],        // recorded, fetched again on the other side
     carried: [],      // { path, gzip: base64 }
     skipped: [],      // { path, size, why } -- said out loud, never silent
+    worlds: [...new Set((worlds || []).map(String))].sort(),
   };
 
   let carriedBytes = 0;
@@ -113,7 +129,7 @@ export function packInstance({ profile, dir, known = () => null }) {
       const bytes = fs.readFileSync(full);
       const hashes = { sha1: sha1(bytes), sha512: sha512(bytes), fingerprint: fingerprintOf(bytes) };
       const said = known(rel, hashes) || {};
-      pack.files.push({
+      const entry = {
         path: rel, size: st.size, ...hashes,
         // Where it can be got from, if anything knows. Both are optional:
         // the hashes alone are enough to ask Modrinth and CurseForge on the
@@ -123,7 +139,27 @@ export function packInstance({ profile, dir, known = () => null }) {
         ...(said.curseforge ? { curseforge: said.curseforge } : {}),
         // A mod turned off is part of how the instance is set up.
         ...(rel.endsWith(".disabled") ? { disabled: true } : {}),
-      });
+      };
+
+      // Nothing can fetch this one again and it was asked for, so it comes
+      // as bytes. CARRY_LIMIT does not apply: it exists to stop a big file
+      // being carried when recording it would have done, and here recording
+      // it would not have done. The pack's own ceiling still applies.
+      if (carry(entry)) {
+        const gz = zlib.gzipSync(bytes);
+        if (carriedBytes + gz.length > PACK_LIMIT) {
+          pack.skipped.push({
+            path: rel, size: st.size,
+            why: "nothing can fetch it again and the pack was already as large as it may get",
+          });
+          continue;
+        }
+        carriedBytes += gz.length;
+        pack.carried.push({ path: rel, gzip: gz.toString("base64") });
+        continue;
+      }
+
+      pack.files.push(entry);
       continue;
     }
 
@@ -158,6 +194,9 @@ export function describePack(pack) {
     carriedBytes: pack.carried.reduce((n, c) => n + Buffer.from(c.gzip, "base64").length, 0),
     recordedBytes: pack.files.reduce((n, f) => n + (f.size || 0), 0),
     skipped: pack.skipped,
+    // The worlds that go with it. Their bytes are not in here -- each is its
+    // own .zip in the Drive -- so this is what to fetch, not what was sent.
+    worlds: pack.worlds || [],
   };
 }
 
@@ -221,6 +260,8 @@ export async function unpackInstance({ pack, dir, fetchFile, onProgress }) {
       icon: pack.icon || null,
     },
     skipped: pack.skipped || [],
+    // Named so the caller can fetch them; they are not part of the pack.
+    worlds: pack.worlds || [],
   };
 }
 

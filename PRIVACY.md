@@ -44,8 +44,11 @@ We request no other Google scopes, and we use no other Google services.
 
 ## 3. What is stored in your Drive
 
-Only inside the folder the launcher creates, and only the kinds you switch on.
-Each is a separate switch and all of them start off:
+Only inside the folder the launcher creates. Nothing goes without being asked
+for, in one of two ways.
+
+**Switched on in *Settings → Cloud syncing*.** Each is a separate switch and
+all of them start off. Once on, these are kept in step every time you sync:
 
 - **Settings** — theme, colours, layout and similar preferences. Settings that
   belong to the computer rather than to you — where Java is, how much memory
@@ -54,17 +57,28 @@ Each is a separate switch and all of them start off:
 - **Themes** you have made or installed.
 - **Server list** — your saved multiplayer servers, as entries, so two
   computers' lists merge rather than one replacing the other.
-- **Instances** — each one sent by name, as a *description* rather than a
-  copy: the mods are recorded by hash and fetched again from Modrinth or
-  CurseForge on the other computer, and only the part that is yours (the
-  config, your options) is actually uploaded. Other people's mod files are
-  not put in your Drive.
-- **Worlds** — each one sent by name, as an ordinary `.zip` you can download
-  and use anywhere. A world is the opposite case to an instance: every byte
-  of it is yours and none of it can be fetched from anywhere, so all of it
-  goes.
 - **Signed-in Minecraft accounts**, including the tokens that keep them
   signed in.
+
+**Sent one at a time, when you ask for that one.** There is no switch for
+these and no sweep that collects them: an instance goes when you choose *Save
+to cloud* on that instance, and a world goes when you send that world.
+
+- **Instances** — sent as a *description* rather than a copy: the mods are
+  recorded by hash and fetched again from Modrinth or CurseForge on the other
+  computer, and only the part that is yours (the config, your options) is
+  actually uploaded. Other people's mod files are not put in your Drive —
+  with one exception you choose yourself. When an instance holds a file that
+  neither Modrinth nor CurseForge knows, it cannot be fetched again, so the
+  launcher offers to carry its bytes instead; it names those files and their
+  size, and it is off unless you tick it. Declining is a real option: the
+  file is then recorded but not stored, and the other computer says it could
+  not be found rather than building the instance without it.
+- **Worlds** — each sent as an ordinary `.zip` you can download and use
+  anywhere, either on its own or alongside the instance it belongs to, which
+  asks you which of its worlds should come. A world is the opposite case to
+  an instance: every byte of it is yours and none of it can be fetched from
+  anywhere, so all of it goes.
 
 When you play a synced world, the launcher also writes a small note into the
 folder saying that this computer has it open, so that another computer is

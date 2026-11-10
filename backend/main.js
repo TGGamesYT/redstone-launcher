@@ -6228,6 +6228,66 @@ ipcMain.handle("relay:accounts", () => premiumAccounts());
  * back is checked against the hash by the unpacker, so a mirror handing over
  * something else does not become a problem on launch.
  */
+/**
+ * For each recorded file: can anything fetch it again?
+ *
+ * Asked in two requests rather than two per file, because an instance with
+ * 200 mods would otherwise be 400 round trips before a dialog could open.
+ * Nothing is downloaded -- the question is only whether a hash resolves.
+ *
+ * An error, a timeout or an answer that cannot be read all come back as
+ * "no". That is the safe direction: a "no" that was wrong carries a jar
+ * nothing needed carried, which wastes room, while a "yes" that was wrong
+ * records a hash that resolves to nothing on the other computer, which
+ * loses the file.
+ */
+async function cloudKnowsFiles(entries) {
+  const out = new Array(entries.length).fill(false);
+  const ask = [];
+  entries.forEach((e, i) => {
+    if (e && (e.url || e.modrinth || e.curseforge)) out[i] = true;
+    else ask.push(i);
+  });
+
+  const bySha = ask.filter(i => entries[i] && entries[i].sha1);
+  if (bySha.length) {
+    try {
+      const r = await fetch("https://api.modrinth.com/v2/version_files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hashes: bySha.map(i => entries[i].sha1), algorithm: "sha1" }),
+      });
+      if (r.ok) {
+        const found = await r.json();
+        for (const i of bySha) if (found && found[entries[i].sha1]) out[i] = true;
+      }
+    } catch { /* on to CurseForge */ }
+  }
+
+  const byPrint = ask.filter(i => !out[i] && entries[i] && entries[i].fingerprint);
+  if (byPrint.length) {
+    try {
+      const r = await fetch(`${WORKER_URL}/fingerprints`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprints: byPrint.map(i => entries[i].fingerprint) }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        const hit = new Set();
+        for (const m of (data?.data?.exactMatches || [])) {
+          // The field has been spelled both ways by CurseForge; a match that
+          // is not recognised simply leaves the file counted as unfetchable.
+          const fp = m?.file?.fileFingerprint ?? m?.file?.fingerprint;
+          if (fp !== undefined && fp !== null) hit.add(Number(fp));
+        }
+        for (const i of byPrint) if (hit.has(Number(entries[i].fingerprint))) out[i] = true;
+      }
+    } catch { /* nothing else to try */ }
+  }
+  return out;
+}
+
 async function cloudFetchFile(entry) {
   const tryUrl = async (url) => {
     if (!url) return null;
@@ -6323,6 +6383,18 @@ function cloudService() {
       },
       instanceDir: (id) => path.join(dataDir, "client", String(id)),
       worldDir: (id, name) => path.join(dataDir, "client", String(id), "saves", String(name)),
+      // The worlds an instance actually has, so the page can offer them
+      // rather than asking somebody to type a name.
+      listWorlds: (id) => {
+        try {
+          return fs.readdirSync(path.join(dataDir, "client", String(id), "saves"), { withFileTypes: true })
+            .filter(e => e.isDirectory()
+              && fs.existsSync(path.join(dataDir, "client", String(id), "saves", e.name, "level.dat")))
+            .map(e => e.name)
+            .sort((a, b) => a.localeCompare(b));
+        } catch { return []; }
+      },
+      knowsFiles: (entries) => cloudKnowsFiles(entries),
       // Nothing is passed for `knownFile`: the hashes a pack records are
       // enough to ask Modrinth and CurseForge on the other side, and the
       // launcher's own lookup cache is keyed per instance and per tab in a
@@ -6402,20 +6474,32 @@ ipcMain.handle("cloud:previewInstance", async (event, { id } = {}) => {
   try { return { ok: true, pack: cloudService().previewInstance(id) }; }
   catch (e) { return cloudSaid(e); }
 });
-ipcMain.handle("cloud:pushInstance", async (event, { id } = {}) => {
-  try { return await cloudService().pushInstance(id); }
+// What an instance could send: its worlds, and the files nothing can fetch
+// again. Asked before the dialog opens so it can say what each choice costs.
+ipcMain.handle("cloud:instanceParts", async (event, { id } = {}) => {
+  try { return { ok: true, parts: await cloudService().instanceParts(id) }; }
   catch (e) { return cloudSaid(e); }
 });
-ipcMain.handle("cloud:pullInstance", async (event, { id } = {}) => {
-  try { return await cloudService().pullInstance(id); }
+ipcMain.handle("cloud:pushInstance", async (event, { id, worlds, loose } = {}) => {
+  try { return await cloudService().pushInstance(id, { worlds: worlds || [], loose: !!loose }); }
+  catch (e) { return cloudSaid(e); }
+});
+ipcMain.handle("cloud:pullInstance", async (event, { id, intoId, worlds } = {}) => {
+  try { return await cloudService().pullInstance(id, { intoId, worlds }); }
   catch (e) { return cloudSaid(e); }
 });
 ipcMain.handle("cloud:pushWorld", async (event, { instanceId, world } = {}) => {
   try { return await cloudService().pushWorld(instanceId, world); }
   catch (e) { return cloudSaid(e); }
 });
-ipcMain.handle("cloud:pullWorld", async (event, { instanceId, world } = {}) => {
-  try { return await cloudService().pullWorld(instanceId, world); }
+ipcMain.handle("cloud:pullWorld", async (event, { instanceId, world, intoId, as } = {}) => {
+  try { return await cloudService().pullWorld(instanceId, world, { intoId, as }); }
+  catch (e) { return cloudSaid(e); }
+});
+// Every world in the Drive, whichever instance or computer sent it, so one
+// can be imported into an instance here.
+ipcMain.handle("cloud:worlds", async () => {
+  try { return { ok: true, worlds: await cloudService().cloudWorlds() }; }
   catch (e) { return cloudSaid(e); }
 });
 // Who has a world open. Asked before a game starts, and shown in the worlds

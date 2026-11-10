@@ -8,7 +8,30 @@
 // The case this exists for is the second half: both computers change the
 // same thing, and neither is allowed to quietly win.
 import crypto from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { cloud as makeCloud } from "../backend/cloud.js";
+
+/**
+ * Stand-in for Modrinth and CurseForge: the files the world knows about,
+ * by sha1, which is how the real lookup answers too.
+ */
+const FETCHABLE = new Map();
+const publish = (body) => {
+  FETCHABLE.set(crypto.createHash("sha1").update(body).digest("hex"), Buffer.from(body));
+  return body;
+};
+
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "cloudrun-"));
+function put(root, files) {
+  for (const [rel, body] of Object.entries(files)) {
+    const full = path.join(root, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, body);
+  }
+  return root;
+}
 
 let bad = 0;
 const ok = (what, note) => console.log(`ok   ${what}${note ? "  — " + note : ""}`);
@@ -75,15 +98,15 @@ function sharedDrive() {
   };
 }
 
-/** One launcher: its own settings store, themes and accounts. */
-function launcher(impl, { name, settings = {}, themes = [], players = [] } = {}) {
+/** One launcher: its own settings store, themes, accounts and files on disk. */
+function launcher(impl, { name, settings = {}, themes = [], players = [], profiles = [], root = null } = {}) {
   const store = { ...settings, cloudGoogle: { refreshToken: "rt", email: "me@example.com" } };
   const s = {
     store,
     get: (k, d) => (k in store ? store[k] : d),
     set: (k, v) => { store[k] = v; },
   };
-  const state = { themes: [...themes], players: [...players] };
+  const state = { themes: [...themes], players: [...players], profiles: [...profiles] };
   const c = makeCloud({
     settings: s,
     relayCall: async (req) => (req.op === "secret"
@@ -95,6 +118,17 @@ function launcher(impl, { name, settings = {}, themes = [], players = [] } = {})
       writeThemes: (l) => { state.themes = l; },
       readPlayers: () => state.players,
       writePlayers: (l) => { state.players = l; },
+      readProfiles: () => state.profiles,
+      instanceDir: (id) => path.join(root, String(id)),
+      worldDir: (id, world) => path.join(root, String(id), "saves", String(world)),
+      listWorlds: (id) => {
+        try {
+          return fs.readdirSync(path.join(root, String(id), "saves"), { withFileTypes: true })
+            .filter(e => e.isDirectory()).map(e => e.name).sort();
+        } catch { return []; }
+      },
+      knowsFiles: async (entries) => entries.map(e => FETCHABLE.has(e.sha1)),
+      fetchFile: async (entry) => FETCHABLE.get(entry.sha1) || null,
     },
   });
   s.set("cloudDeviceName", name);
@@ -226,6 +260,105 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
   check("and the Minecraft token, which IS synced, is not sent readable",
     all.includes("minecraft-token"), false,
     "it is in there, encrypted with both halves");
+}
+
+// ── one instance, sent on purpose, and taken on another computer ──
+//
+// The case the whole per-instance design exists for. The two computers
+// number their instances differently -- they always do -- so "pull the one
+// with my id" is exactly what must NOT be how this works.
+{
+  const impl = sharedDrive();
+
+  const pcRoot = tmp();
+  put(pcRoot, {
+    "7/mods/sodium.jar": publish("SODIUM-BYTES"),
+    "7/mods/private.jar": "NOBODY HAS THIS",
+    "7/config/sodium.json": '{"q":"high"}',
+    "7/saves/My Base/level.dat": "A WHOLE WORLD",
+    "7/saves/Spare/level.dat": "ANOTHER",
+  });
+  const pc = launcher(impl, {
+    name: "Desktop", root: pcRoot,
+    profiles: [{ id: 7, name: "1.21 Fabric", version: "1.21", loader: "fabric" }],
+  });
+
+  const parts = await pc.c.instanceParts(7);
+  check("the page is told which files nothing can fetch, before anything goes",
+    parts.loose.map(f => f.path), ["mods/private.jar"],
+    "so the choice to carry them is somebody's, made knowing what it costs");
+  check("and which worlds there are to choose from", parts.worlds, ["My Base", "Spare"]);
+
+  // Send it: one world, and the file nothing can fetch.
+  const up = await pc.c.pushInstance(7, { worlds: ["My Base"], loose: true });
+  check("sending one instance sends it", up.ok, true);
+  check("the world went with it, and only the one asked for",
+    [up.worlds.sent, up.worlds.failed], [["My Base"], []]);
+  check("and the unfetchable file was carried rather than recorded",
+    [up.describe.files, up.describe.carried], [1, 2],
+    "sodium recorded; the private jar and the config carried");
+
+  // Another computer. Same instance, different number.
+  const lapRoot = tmp();
+  const laptop = launcher(impl, {
+    name: "Laptop", root: lapRoot,
+    profiles: [{ id: 31, name: "Empty", version: "1.21", loader: "fabric" }],
+  });
+  const down = await laptop.c.pullInstance(7, { intoId: 31 });
+  check("it can be written into a differently-numbered instance", down.ok, true,
+    "two computers never agree on an instance id, so pulling by id alone would never work twice");
+  check("the mod that could be fetched was fetched",
+    fs.readFileSync(path.join(lapRoot, "31/mods/sodium.jar"), "utf8"), "SODIUM-BYTES");
+  check("the one that could not was carried, so it is here too",
+    fs.readFileSync(path.join(lapRoot, "31/mods/private.jar"), "utf8"), "NOBODY HAS THIS");
+  check("the config came", fs.readFileSync(path.join(lapRoot, "31/config/sodium.json"), "utf8"), '{"q":"high"}');
+  check("and the world landed in THIS instance's saves",
+    [fs.readFileSync(path.join(lapRoot, "31/saves/My Base/level.dat"), "utf8"),
+      fs.existsSync(path.join(lapRoot, "31/saves/Spare"))],
+    ["A WHOLE WORLD", false],
+    "the world that was not chosen was never sent, so it cannot arrive");
+}
+
+// ── a world on its own, into any instance ──
+{
+  const impl = sharedDrive();
+  const pcRoot = tmp();
+  put(pcRoot, { "7/saves/My Base/level.dat": "A WHOLE WORLD" });
+  const pc = launcher(impl, { name: "Desktop", root: pcRoot, profiles: [{ id: 7, name: "A" }] });
+  await pc.c.pushWorld(7, "My Base");
+
+  const lapRoot = tmp();
+  const laptop = launcher(impl, { name: "Laptop", root: lapRoot, profiles: [{ id: 31, name: "B" }] });
+  const seen = await laptop.c.cloudWorlds();
+  check("a synced world is findable without knowing whose instance it was",
+    seen.map(w => [w.instanceId, w.world]), [["7", "My Base"]],
+    "the id in the key is the SENDING computer's, so it means nothing here");
+
+  await laptop.c.pullWorld("7", "My Base", { intoId: 31 });
+  check("and it can be imported into an instance here",
+    fs.readFileSync(path.join(lapRoot, "31/saves/My Base/level.dat"), "utf8"), "A WHOLE WORLD");
+}
+
+// ── and none of this is swept up by "sync everything" ──
+{
+  const impl = sharedDrive();
+  const root = tmp();
+  put(root, { "7/mods/a.jar": "A", "7/saves/W/level.dat": "W" });
+  const pc = launcher(impl, {
+    name: "Desktop", root, settings: { baseColor: "#111111" },
+    profiles: [{ id: 7, name: "A", version: "1.21" }],
+  });
+  for (const k of ["settings", "themes", "accounts", "servers"]) pc.c.setKind(k, true);
+  // The switches that used to exist for these, set as high as they go.
+  pc.c.setKind("instances", true);
+  pc.c.setKind("worlds", true);
+  const r = await pc.c.syncNow();
+  check("no instance or world is sent by syncing everything",
+    r.results.map(x => x.kind).filter(k => k === "instances" || k === "worlds"), [],
+    "sending somebody's instances because a box was ticked is not what ticking a box means");
+  const items = await pc.c.list();
+  check("and nothing of the sort reached the Drive",
+    items.filter(i => i.kind === "instances" || i.kind === "worlds").length, 0);
 }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
