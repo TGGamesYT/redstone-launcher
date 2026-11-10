@@ -19,13 +19,16 @@
 //
 // Options:
 //   -o, --out <file>   where to write (default: frontend/skin-clips.json)
-//   --flip             mirror Y/Z rotation (for Bedrock-style rigs)
+//   --no-flip          keep Y/Z rotation as authored
+//                      (it is mirrored by default, for Bedrock-style rigs)
 //   --list             print what's in the file and write nothing
 //
 // Blockbench's "free" model format uses the same handedness as three.js, so
-// rotations are written out unchanged. Rigs authored the Bedrock way mirror Y
-// and Z; pass --flip for those. In the app, playerRenderAnimFlip() in devtools
-// switches between the two so you can see which is right before committing.
+// rotations from one of those could be written out unchanged. Rigs authored
+// the Bedrock way mirror Y and Z, and in practice that is what every rig here
+// has been -- so mirroring is what happens unless --no-flip says otherwise.
+// In the app, playerRenderAnimFlip() in devtools switches between the two so
+// you can see which is right before committing.
 // The package is ESM ("type": "module" in package.json), so this is too.
 import fs from 'fs';
 import path from 'path';
@@ -215,12 +218,16 @@ function main(argv) {
     console.log('  so the same animation can be taken from two rigs with different pivots.');
     console.log('');
     console.log('  -o, --out <file>   where to write (default: ' + DEFAULT_OUT + ')');
-    console.log('      --flip         mirror Y/Z rotation, for Bedrock-style rigs');
+    console.log('      --no-flip      keep Y/Z rotation as authored (mirrored by default, for Bedrock-style rigs)');
     console.log('      --list         print what is in the file and write nothing');
     return 0;
   }
 
-  const flip = args.includes('--flip');
+  // Mirrored by default. Every rig that has come through here has been a
+  // Bedrock-style one, so --flip was something to remember on every single
+  // export and nothing but a nuisance to forget; --no-flip is there for the
+  // day a Blockbench "free" rig turns up.
+  const flip = !args.includes('--no-flip');
   const listOnly = args.includes('--list');
   const outIdx = Math.max(args.indexOf('-o'), args.indexOf('--out'));
   const out = outIdx >= 0 ? args[outIdx + 1] : DEFAULT_OUT;

@@ -204,6 +204,102 @@
     if (m.rsShell === "leaving" && overlay && !overlay.classList.contains("on")) loadingUp();
   });
 
+  // ── the page's console commands, from the shell's console ────────────────
+  //
+  // The launcher is one window with the page in a frame, so devtools opens on
+  // the shell -- and every helper a page defines for the console
+  // (playerRenderAnimPlay, viewAdmin, and the rest) lives one frame down.
+  // Typing one gave "undefined", which is true and useless: you were on the
+  // skins page, just not in the frame the skins page is in.
+  //
+  // So whatever the page puts on its own window is mirrored here, as a
+  // forwarder, for as long as that page is the one open. `page` is the same
+  // thing without the guesswork: page.whatever(...) always reaches the frame.
+  const mirrored = new Set();
+
+  function dropMirrors() {
+    for (const name of mirrored) {
+      try { delete window[name]; } catch { /* not ours to remove after all */ }
+    }
+    mirrored.clear();
+  }
+
+  /** The frame's window, or null when it cannot be reached. */
+  function frameWindow() {
+    try {
+      const w = frame.contentWindow;
+      // Touching a property is the only way to find out whether it is
+      // reachable; a page from somewhere else throws here.
+      return w && w.document ? w : null;
+    } catch { return null; }
+  }
+
+  // Anything a page would not have meant as a command. The page's own
+  // globals are what is wanted; the ones every document has are not.
+  const NOT_COMMANDS = new Set([
+    "window", "self", "document", "location", "history", "navigator", "parent",
+    "top", "frames", "length", "opener", "closed", "name", "status", "console",
+    "require", "module", "exports", "process", "global", "Buffer", "__dirname",
+    "__filename", "onload", "onerror", "onmessage", "alert", "confirm", "prompt",
+    "fetch", "localStorage", "sessionStorage", "crypto", "performance",
+  ]);
+
+  function mirrorCommands() {
+    dropMirrors();
+    const w = frameWindow();
+    if (!w) return;
+    let names = [];
+    try { names = Object.keys(w); } catch { return; }
+    for (const name of names) {
+      if (NOT_COMMANDS.has(name) || name.startsWith("_")) continue;
+      // Never shadow something the shell has of its own: the shell's copy is
+      // the one that works on the shell.
+      if (Object.prototype.hasOwnProperty.call(window, name)) continue;
+      let value;
+      try { value = w[name]; } catch { continue; }
+      if (typeof value !== "function") continue;
+      try {
+        Object.defineProperty(window, name, {
+          configurable: true,
+          // Looked up at call time rather than captured, so a page that
+          // replaces one of its own functions is still the one that runs.
+          value: function (...args) {
+            const live = frameWindow();
+            const fn = live && live[name];
+            if (typeof fn !== "function") {
+              throw new Error(`${name}() belongs to the page in the frame, and that page has gone.`);
+            }
+            return fn.apply(live, args);
+          },
+        });
+        mirrored.add(name);
+      } catch { /* a name that will not take a definition is not worth one */ }
+    }
+  }
+
+  // Everything the page has, under one name, whether or not it was mirrored.
+  try {
+    Object.defineProperty(window, "page", {
+      configurable: true,
+      get() {
+        const w = frameWindow();
+        if (!w) return null;
+        return new Proxy(w, {
+          get(target, prop) {
+            const v = target[prop];
+            return typeof v === "function" ? v.bind(target) : v;
+          },
+          set(target, prop, v) { target[prop] = v; return true; },
+          has(target, prop) { return prop in target; },
+        });
+      },
+    });
+  } catch { /* something already owns `page`; the mirrors still work */ }
+
+  frame.addEventListener("load", mirrorCommands);
+  // The frame may already be up by the time this runs.
+  mirrorCommands();
+
   markCurrent();
 
   // ── Being told to show something ──────────────────────────────────────────

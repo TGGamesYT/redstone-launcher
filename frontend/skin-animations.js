@@ -1032,19 +1032,20 @@
 
   // Whether Y/Z rotation is mirrored is a property of how the rig was authored,
   // and the only honest way to settle it is to watch the model. Flip it, watch,
-  // and if the flipped version is right, re-run bbmodelconvert.js with --flip.
+  // and re-export whichever way round turns out to be right.
   window.playerRenderAnimFlip = function () {
     // Asked for by hand, so it wins over what each clip says about itself --
     // the point of it is to try the other way round and look.
     flipForced = true;
     flipYZ = !flipYZ;
     console.log(`Y/Z rotation is now ${flipYZ ? 'MIRRORED' : 'as authored'}.`
-      + (flipYZ ? ' If this is the right way round, re-run: node bbmodelconvert.js <file> --flip' : ''));
+      + ' If this is the right way round, re-export with: node bbmodelconvert.js <file>'
+      + (flipYZ ? '' : ' --no-flip') + '  (mirrored is the default)');
     const p = playerOf(viewer());
     if (p) { try { resetToRest(p); } catch { /* next frame will */ } }
     return flipYZ;
   };
 
-  // Set from the converted file, so --flip is honoured without a devtools call.
+  // Set from the converted file, so the export's choice is honoured without a devtools call.
   if (data && data.flipYZ) flipYZ = true;
 })();
