@@ -382,9 +382,16 @@ async function updateLoginIcon() {
   // (id can be a number or string depending on how it was created/edited.)
   const player = players.find(p => String(p.id) === String(selectedPlayerId));
 
-  // Avoid pointless DOM churn if nothing changed.
-  if (li.dataset.renderedFor === String(player ? player.id : 'none')) return;
-  li.dataset.renderedFor = String(player ? player.id : 'none');
+  // Avoid pointless DOM churn if nothing changed -- but "nothing changed"
+  // has to mean everything the head is drawn FROM, not just which account it
+  // is. Keyed on the id alone, a skin change on the account already shown
+  // redrew nothing, because the id had not moved.
+  const drawnFrom = JSON.stringify(player
+    ? [player.id, player.type, player.auth?.uuid || player.uuid || null,
+      player.auth?.name ?? player.username ?? null, player.skin || null, player.cape || null]
+    : ['none']);
+  if (li.dataset.renderedFor === drawnFrom) return;
+  li.dataset.renderedFor = drawnFrom;
 
   li.innerHTML = '';
 
@@ -723,6 +730,13 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
   ipcRenderer.send("get-players");
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });
   ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });
+  // Which account is picked, which is not a change to the LIST of them, so
+  // players-updated never carried it. The head is drawn from the picked one.
+  ipcRenderer.on("selected-player-changed", (event, id) => {
+    selectedPlayerId = id;
+    updateLoginIcon();
+  });
+
 
 
   document.addEventListener("DOMContentLoaded", async () => {

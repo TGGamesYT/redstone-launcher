@@ -1604,10 +1604,23 @@ ipcMain.on('go-forward', () => {
 ipcMain.handle("get-selected-player", () => storage.get("selectedPlayerId", null));
 ipcMain.on("set-selected-player", (event, id) => {
   storage.set("selectedPlayerId", id);
+  // Said out loud, because the head in the sidebar is drawn from it and the
+  // sidebar is the shell's now. It used to be the page's and was rebuilt on
+  // every page change, so picking an account and then going anywhere made it
+  // right by accident; the shell's does not go away, so nothing ever told it
+  // and the head stayed whoever it was before.
+  broadcastSelectedPlayer(id);
 });
+
+function broadcastSelectedPlayer(id) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("selected-player-changed", id); } catch { /* gone */ }
+  }
+}
 
 function setSelectedPlayer(id) {
   storage.set("selectedPlayerId", id);
+  broadcastSelectedPlayer(id);
 }
 
 
@@ -2314,7 +2327,7 @@ ipcMain.on('create-profile', async (event, profile) => {
   profiles.push(newProfile);
   saveProfiles(profiles);
 
-  event.reply('profiles-updated', profiles);
+  broadcastProfiles(profiles);
   event.reply('profile-created', newProfile);
 });
 
@@ -2411,7 +2424,7 @@ ipcMain.on('edit-profile', async (event, updatedProfile) => {
     raw[index] = after;
 
     saveProfiles(raw);
-    event.reply('profiles-updated', await loadProfiles());
+    broadcastProfiles(await loadProfiles());
   } catch (err) {
     devtoolsLog('Failed to load profiles for edit:', err);
     event.reply('edit-profile-error', 'Failed to load profiles');
@@ -2467,7 +2480,7 @@ ipcMain.on("delete-profile", async (event, profileId) => {
   forgetInstanceState(id);
 
   saveProfiles(newProfiles);
-  event.reply("profiles-updated", newProfiles);
+  broadcastProfiles(newProfiles);
 });
 
 ipcMain.on("close-app", () => {
@@ -3076,7 +3089,7 @@ ipcMain.handle("apply-modpack-update", async (event, { profileId, decisions }) =
       if (loaderVersion) profiles[idx].loaderVersion = loaderVersion;
       profiles[idx].modpack = true;
       saveProfiles(profiles);
-      event.reply?.("profiles-updated", profiles);
+      broadcastProfiles(profiles);
     }
     return { success: true };
   } catch (err) {
@@ -3709,6 +3722,10 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     }
     profile.lastUsed = Date.now();
     saveProfiles(profiles);
+    // Which changes the order under a last-used sort, and the sidebar draws
+    // the first three. It was written and never mentioned, so the list only
+    // caught up the next time something else happened to broadcast.
+    broadcastProfilesNow();
 
     const player = players.find(p => p.id === playerId);
     if (!player) {
@@ -8209,7 +8226,7 @@ ipcMain.handle("setup-server-instance", async (event, { projectId, name, address
       saveProfiles(profiles);
     }
     broadcastProgress(SETUP_ID, { done: true, label: "Ready" });
-    try { event.sender.send("profiles-updated", profiles); } catch { /* ignore */ }
+    try { broadcastProfiles(profiles); } catch { /* ignore */ }
     return { success: true, profileId, existed: false };
   } catch (err) {
     broadcastProgress("server-setup", { done: true });
@@ -12213,7 +12230,7 @@ ipcMain.handle("join:make", async (event, { name, instanceName } = {}) => {
     });
     saveProfiles(profiles);
     const { copied, failed } = copyServerJars(name, id, plan.mods);
-    try { event.sender.send("profiles-updated", await loadProfiles()); } catch { /* ignore */ }
+    try { broadcastProfiles(await loadProfiles()); } catch { /* ignore */ }
     return { success: true, profileId: id, copied: copied.length, failed };
   } catch (err) {
     return { success: false, error: String(err && err.message || err) };
@@ -14236,10 +14253,30 @@ async function getVersionManifest() {
   return _mcManifestCache;
 }
 
-function broadcastProfiles(profiles) {
+/**
+ * Every frame of every window, not just the main one.
+ *
+ * webContents.send() reaches a window's MAIN frame, and the launcher is one
+ * shell with the page you are on in a frame underneath it. So a broadcast
+ * reached the shell and not the page, and event.reply() -- which several of
+ * these paths used instead -- reached the page and not the shell. The
+ * sidebar is the shell's, which is why an instance's icon could be changed
+ * on the instances page and the sidebar went on showing the old one.
+ */
+function sendEverywhere(channel, ...args) {
   for (const w of BrowserWindow.getAllWindows()) {
-    try { if (!w.isDestroyed()) w.webContents.send("profiles-updated", profiles); } catch { /* ignore */ }
+    if (w.isDestroyed()) continue;
+    try {
+      const root = w.webContents.mainFrame;
+      const frames = root && root.framesInSubtree ? root.framesInSubtree : [];
+      if (frames.length) for (const f of frames) { try { f.send(channel, ...args); } catch { /* a frame on its way out */ } }
+      else w.webContents.send(channel, ...args);
+    } catch { /* gone */ }
   }
+}
+
+function broadcastProfiles(profiles) {
+  sendEverywhere("profiles-updated", profiles);
 }
 
 let _autoUpdatingVersions = false;
@@ -14332,7 +14369,6 @@ ipcMain.handle("change-instance-version", async (event, { profileId, newVersion 
     saveProfiles(raw);
     const report = await migrateContentToVersion(profileId, newVersion, loader);
     const sorted = await loadProfiles();
-    event.reply?.("profiles-updated", sorted);
     broadcastProfiles(sorted);                 // the toggle moved; every window needs to see it
     return { success: true, report, stoppedTracking };
   } catch (err) {
