@@ -168,7 +168,11 @@
   </ul>
 </div>
 
-  <h1 style="margin-left:0;">Servers</h1>
+  <!-- The list's heading, hidden while a server's own page is open: the
+       detail view has the server's name and icon at the top of it, so a
+       "Servers" above that is a heading for something nobody is looking at.
+       The instances page has always done this. -->
+  <h1 id="serversHeading" style="margin-left:0;">Servers</h1>
   <div class="promain">
     <!-- LIST VIEW -->
     <div id="serverListView" data-fit-height>
@@ -611,6 +615,7 @@
         location.pathname + '?srv=' + encodeURIComponent(server.name) + (tab ? '&tab=' + encodeURIComponent(tab) : ''));
       $('serverListView').style.display = 'none';
       $('serverDetail').style.display = 'flex';
+      { const h = $('serversHeading'); if (h) h.style.display = 'none'; }
       if (window.instanceIconInto) window.instanceIconInto($('srvDetailIcon'), server);
       else $('srvDetailIcon').src = instanceIcon(server.icon);
       $('srvDetailName').textContent = server.name;
@@ -661,6 +666,7 @@
       $('dMenu').classList.remove('open');
       $('serverDetail').style.display = 'none';
       $('serverListView').style.display = '';
+      { const h = $('serversHeading'); if (h) h.style.display = ''; }
       loadServers();
     }
 
