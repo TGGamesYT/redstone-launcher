@@ -110,19 +110,20 @@ check("there is a contact address, and it is one address throughout",
 // The URL it claims to be published at has to be where this file actually
 // is -- on the default branch, since that is what the link resolves to.
 const url = (/published at <([^>]+)>/.exec(policy) || [])[1];
-check("it says where it is published",
-  url, "https://github.com/TGGamesYT/redstone-launcher/blob/main/PRIVACY.md");
-check("and that link points at this file, on the branch it is pushed to",
-  [url.endsWith("/PRIVACY.md"), url.includes("/blob/main/"),
-    fs.existsSync(path.join(ROOT, "PRIVACY.md"))],
-  [true, true, true]);
+// The address given to Google is the site's own page, which renders this
+// file -- not a link into a code host. A GitHub blob is a perfectly working
+// link and a poor front door for a legal document.
+check("it says where it is published, and that is the website",
+  url, "https://redstone-launcher.com/privacy.html");
+check("and it still says where the source is, so the two are not confused",
+  /blob\/main\/PRIVACY\.md/.test(policy) && fs.existsSync(path.join(ROOT, "PRIVACY.md")), true);
 // Against the remote this is actually pushed to, rather than against a
 // string written twice -- a link to somebody else's repository would still
 // have resolved.
 const remote = execSync("git remote get-url origin", { cwd: ROOT }).toString().trim();
 const slug = (/github\.com[/:]([^/]+\/[^/.]+)/.exec(remote) || [])[1];
-check("the repository in the link is the one this is pushed to",
-  [slug, url.includes(slug)], [slug, true], remote);
+check("the source link names the repository this is pushed to",
+  [slug, policy.includes(slug)], [slug, true], remote);
 
 // Dates: the "last updated" has to be a real date, not a leftover.
 check("the date on it parses",

@@ -213,4 +213,6 @@ Questions about this policy, or about what the launcher does with your data:
 <contact@redstone-launcher.com>, or open an issue at
 <https://github.com/TGGamesYT/redstone-launcher/issues>.
 
-This document is published at <https://github.com/TGGamesYT/redstone-launcher/blob/main/PRIVACY.md>.
+This document is published at <https://redstone-launcher.com/privacy.html>, which
+renders this file. Its source, and every earlier version of it, is at
+<https://github.com/TGGamesYT/redstone-launcher/blob/main/PRIVACY.md>.
