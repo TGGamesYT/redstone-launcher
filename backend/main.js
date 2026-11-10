@@ -44,6 +44,12 @@ import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { screenSkinPixels } from './skinFilter.js';
 import * as iconModels from './icon-models.js';
+// cachedJarPath says where the client jar for a version is kept. The default
+// skins are cut out of that jar, and buildDefaultSkins() called it without it
+// ever having been imported -- so every run threw ReferenceError, landed in
+// the catch, and logged "Failed to get default skins", which read like Mojang
+// being unreachable. It was this line missing.
+import { cachedJarPath } from './model-assets.js';
 import { cloud as makeCloud } from './cloud.js';
 // CurseForge's file fingerprint, moved out so the pack format can name a
 // CurseForge file without loading the whole launcher.
@@ -7167,18 +7173,44 @@ ipcMain.handle("icon:previewApp", async (event, { color, mergeBlock } = {}) => {
 //
 // The password is never stored — it is typed, passed through to the relay with
 // every call, and held only in the admin window's memory while it is open.
+//
+// One connection for the whole panel, not one per click. Every call used to
+// open its own: a new TLS connection, a new Mojang join, a new hasJoined --
+// per tab. Mojang rate-limits joins, so switching tabs quickly ended in
+// "Could not verify your Minecraft account", which was true of the asking
+// and not at all true of the account.
+//
+// The session is dropped when the window closes or the account changes, so
+// nothing stays verified for longer than somebody is looking at it.
+let adminSession = null;
+let adminSessionFor = null;    // the uuid it was opened for
+
+function endAdminSession() {
+  if (adminSession) { try { adminSession.close(); } catch { /* already gone */ } }
+  adminSession = null;
+  adminSessionFor = null;
+}
+
 async function adminCall(req) {
   const account = await relayAccountForSync();
   if (!account) {
+    endAdminSession();
     return { ok: false, error: "Sign in with a Microsoft account first." };
   }
-  const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
-  try {
-    return await relayClient.adminRelay({
+  if (adminSession && adminSessionFor !== account.uuid) endAdminSession();
+  if (!adminSession) {
+    adminSession = relayClient.relaySession({
       host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
-      account, rejectUnauthorized, req,
+      account, rejectUnauthorized: settings.get("relayVerifyTls", true) !== false,
     });
+    adminSessionFor = account.uuid;
+  }
+  try {
+    return await adminSession.admin(req);
   } catch (err) {
+    // A session that failed is not reused: whatever went wrong with it, the
+    // next ask should get a fresh connection rather than the same error.
+    endAdminSession();
     return { ok: false, error: String(err && err.message || err) };
   }
 }
@@ -7206,7 +7238,7 @@ ipcMain.handle("admin:open", async (event, { password, panel } = {}) => {
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
   adminPanelWindow = win;
-  win.on("closed", () => { adminPanelWindow = null; });
+  win.on("closed", () => { adminPanelWindow = null; endAdminSession(); });
   win.webContents.on("before-input-event", (e, input) => {
     if (input.type === "keyDown" && (input.key === "F12"
       || (input.control && input.shift && String(input.key).toLowerCase() === "i"))) {

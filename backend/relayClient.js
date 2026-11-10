@@ -182,6 +182,182 @@ function askRelay({ host, controlPort, account, req, ask, reply, rejectUnauthori
 }
 
 /**
+ * One verified connection, asked many things.
+ *
+ * askRelay above connects, proves the account with Mojang, asks one thing
+ * and hangs up. That is right for something asked once. The admin panel is
+ * not that: it asks on every tab, and each ask was a fresh connection and so
+ * a fresh Mojang join -- which Mojang rate-limits, so switching tabs quickly
+ * ended in "Could not verify your Minecraft account". The account had not
+ * stopped being valid; it had been asked about too often.
+ *
+ * So: connect once, verify once, and keep the connection while the panel is
+ * open. The relay already works this way -- an authenticated sync connection
+ * answers any number of frames -- it was only this side that hung up.
+ *
+ * Requests are run one at a time. A reply is matched by its frame type and
+ * carries no request id, so two of the same kind in flight could not be told
+ * apart; a queue is both correct and plenty for a panel somebody is clicking
+ * around in.
+ */
+export function relaySession({
+  host, controlPort, account, rejectUnauthorized = true, idleMs = 150000,
+  // The one call being rate-limited, handed in so a test can count it.
+  join = mojangJoin,
+}) {
+  let sock = null;
+  let ready = null;        // the connect-and-verify promise, while it holds
+  let inFlight = null;     // { reply, resolve, reject, timer }
+  let queue = Promise.resolve();
+  let idle = null;
+  let closed = false;
+
+  const stopIdle = () => { if (idle) { clearInterval(idle); idle = null; } };
+
+  /**
+   * Tear the connection down; the next ask builds a new one.
+   *
+   * `only` names the socket this is about. A socket that has already been
+   * replaced still emits its close event, and without this that stale event
+   * would destroy the connection that replaced it -- which looked, from the
+   * outside, exactly like the relay hanging up at random.
+   */
+  function drop(err, only) {
+    if (only && sock !== only) return;
+    stopIdle();
+    const s = sock;
+    sock = null;
+    ready = null;
+    if (s) { try { s.destroy(); } catch { /* already gone */ } }
+    if (inFlight) {
+      const p = inFlight;
+      inFlight = null;
+      clearTimeout(p.timer);
+      p.reject(err || new Error("The relay connection closed"));
+    }
+  }
+
+  function connect() {
+    if (ready) return ready;
+    ready = new Promise((resolve, reject) => {
+      let settled = false;
+      const s = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () => {
+        try { s.write(encodeFrame(T.HELLO, 0, Buffer.from(JSON.stringify({ sync: true })))); }
+        catch (e) { fail(e); }
+      });
+      sock = s;
+      const fail = (e) => {
+        if (settled && sock !== s) return;      // a socket we have already replaced
+        const err = e instanceof Error ? e : new Error(String(e && e.message || e || "relay error"));
+        if (!settled) { settled = true; reject(err); }
+        drop(err, s);
+      };
+      const decode = createDecoder(async (type, streamId, payload) => {
+        if (type === T.CHALLENGE) {
+          let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+          let ok = false;
+          try { ok = await join(account.accessToken, account.uuid, info.serverId); } catch { ok = false; }
+          if (!ok) return fail(new Error("Could not verify your Minecraft account"));
+          try { s.write(encodeFrame(T.AUTH, 0, Buffer.from(JSON.stringify({ username: account.name })))); }
+          catch (e) { fail(e); }
+          return;
+        }
+        if (type === T.WELCOME) {
+          if (!settled) { settled = true; resolve(); }
+          // Something has to cross the wire now and then, or a middlebox
+          // between here and the relay decides nothing is happening.
+          stopIdle();
+          idle = setInterval(() => {
+            try { s.write(encodeFrame(T.PING, 0, null)); } catch { /* the next ask reconnects */ }
+          }, idleMs);
+          if (idle.unref) idle.unref();
+          return;
+        }
+        if (type === T.PONG) return;
+        if (inFlight && type === inFlight.reply) {
+          let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+          const p = inFlight;
+          inFlight = null;
+          clearTimeout(p.timer);
+          p.resolve(info);
+          return;
+        }
+        if (type === T.ERROR) {
+          let m = "relay error"; try { m = JSON.parse(payload.toString()).message; } catch { /* ignore */ }
+          // An error answering a request is that request's answer; the
+          // connection is still good and the next tab must not have to
+          // verify all over again.
+          if (inFlight) {
+            const p = inFlight;
+            inFlight = null;
+            clearTimeout(p.timer);
+            // Marked, so ask() rethrows it rather than deciding the
+            // connection is broken and verifying all over again. Getting a
+            // password wrong must not cost a trip to Mojang.
+            const e = new Error(m);
+            e.fromRelay = true;
+            p.reject(e);
+            return;
+          }
+          fail(new Error(m));
+        }
+      });
+      s.on("data", decode);
+      s.on("error", fail);
+      s.on("close", () => {
+        if (!settled) fail(new Error("The relay closed the connection"));
+        else drop(new Error("The relay closed the connection"), s);
+      });
+    });
+    // A failed connect must not be remembered as the connection.
+    ready.catch(() => { });
+    return ready;
+  }
+
+  /** Ask one thing, waiting for anything already asked. */
+  function ask(askType, replyType, req) {
+    const run = async () => {
+      if (closed) throw new Error("This relay session has been closed.");
+      // One retry, and only for a connection that was already up: a socket
+      // that died while nobody was using it is the ordinary case, and making
+      // somebody see an error for it would be the same bug in a new place.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const had = !!sock;
+        try {
+          await connect();
+          return await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              if (inFlight && inFlight.timer === timer) drop(new Error("Relay timed out"));
+            }, 30000);
+            inFlight = { reply: replyType, resolve, reject, timer };
+            try { sock.write(encodeFrame(askType, 0, Buffer.from(JSON.stringify(req || {})))); }
+            catch (e) { clearTimeout(timer); inFlight = null; drop(e); reject(e); }
+          });
+        } catch (e) {
+          // The relay answering "no" is the answer. Only a connection that
+          // actually failed is worth dropping and trying again.
+          if (e && e.fromRelay) throw e;
+          drop();
+          if (attempt || !had) throw e;
+        }
+      }
+      throw new Error("Could not reach the relay.");
+    };
+    const mine = queue.then(run, run);
+    queue = mine.catch(() => { });
+    return mine;
+  }
+
+  return {
+    ask,
+    admin: (req) => ask(T.ADMIN, T.ADMIN_DATA, req),
+    cloud: (req) => ask(T.CLOUD, T.CLOUD_DATA, req),
+    get open() { return !!sock && !closed; },
+    close() { closed = true; drop(new Error("This relay session has been closed.")); },
+  };
+}
+
+/**
  * Suggestions: { op: 'submit', title, body } or { op: 'mine' }.
  *
  * Needs a premium account, which this connection proves, so a suggestion
@@ -320,4 +496,4 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
 // exporting a theme died on "relayClient.themeRelay is not a function" even
 // though the function was right there -- main.js reaches these through the
 // default import.
-export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, themeRelay, aliasRelay, adminRelay, cloudRelay };
+export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, themeRelay, aliasRelay, adminRelay, cloudRelay, relaySession };
