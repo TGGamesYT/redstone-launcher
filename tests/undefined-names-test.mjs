@@ -35,7 +35,14 @@ try {
     + "\n       it rides on a transitive dependency; make it a devDependency to pin it");
   process.exit(1);
 }
-const DIRS = ["backend", "scripts"];
+// The main process and the tools beside it run in Node; the frontend's own
+// scripts run in a renderer with the browser's globals as well. Both get
+// looked at, because the slip is the same slip either side -- skin-animations
+// lost a `const rot` line to an edit and node --check was perfectly happy.
+const AREAS = [
+  { dirs: ["backend", "scripts"], browser: false },
+  { dirs: ["frontend"], browser: true },
+];
 
 let bad = 0;
 const check = (what, got, want, note) => {
@@ -48,6 +55,42 @@ const check = (what, got, want, note) => {
 // What a module may use without declaring it: Node's globals, the web ones
 // Electron's main process also has, and the CommonJS names, since not every
 // file here is ESM.
+const BROWSER = {};
+for (const name of [
+  "window", "document", "location", "history", "navigator", "localStorage",
+  "innerWidth", "innerHeight", "outerWidth", "outerHeight", "scrollX", "scrollY",
+  "HTMLElement", "HTMLImageElement", "HTMLCanvasElement", "HTMLInputElement",
+  "ImageBitmap", "VideoFrame", "ReadableStream", "WritableStream", "ProgressEvent",
+  "XRWebGLLayer", "XRWebGLBinding", "self", "top", "parent", "frames", "close",
+  "sessionStorage", "alert", "confirm", "prompt", "getComputedStyle", "matchMedia",
+  "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback",
+  "XMLHttpRequest", "Image", "Audio", "FileReader", "DOMParser", "XPathResult",
+  "CustomEvent", "MutationObserver", "ResizeObserver", "IntersectionObserver",
+  "HTMLElement", "Element", "Node", "NodeList", "DocumentFragment", "Range",
+  "CanvasRenderingContext2D", "WebGLRenderingContext", "ImageData", "OffscreenCanvas",
+  "createImageBitmap", "devicePixelRatio", "screen", "visualViewport", "scrollTo",
+  "getSelection", "ClipboardItem", "Notification", "Worker", "SharedWorker",
+  "Intl", "WebSocket", "EventSource", "Option", "FontFace", "CSS",
+  // Things a page's own <script> declares before the files below are
+  // loaded. Classic scripts share one scope, so these really are in scope
+  // for every file on the page -- a per-file lint simply cannot see it.
+  // Each one is listed because it IS declared somewhere, not to quieten a
+  // finding: shell.html and index.html open with
+  //   const { ipcRenderer, shell } = require('electron')
+  // and uimodal.js, notifications.js and defaults.js put the rest up.
+  "ipcRenderer", "shell",
+  // The host page declares these and sidebar.js fills them in. It cannot
+  // declare them itself: shell.html and players.html already do, in the same
+  // shared scope, so a second `let` would stop the file parsing at all.
+  "selectedPlayerId", "players",
+  "uiAlert", "uiConfirm", "uiPrompt", "notify",
+  "PlayerHead", "setPlayerHead", "LauncherBackground", "LauncherCustomCss",
+  "VersionIcon", "ModelPicker", "IconPicker", "BlockRender", "PixelArt",
+  "pageLoading", "tellShell", "applyTheme", "getMiddleColor",
+  // Libraries the pages load from their own <script> tags.
+  "skinview3d", "THREE", "JSZip", "marked", "Chart", "Sortable",
+]) BROWSER[name] = "readonly";
+
 const GLOBALS = {};
 for (const name of [
   "globalThis", "global", "console", "process", "Buffer", "URL", "URLSearchParams",
@@ -61,13 +104,14 @@ for (const name of [
 
 const linter = new Linter();
 
-function look(file) {
+function look(file, browser) {
   const text = fs.readFileSync(file, "utf8");
+  const globals = browser ? { ...GLOBALS, ...BROWSER } : GLOBALS;
   const run = (sourceType) => linter.verify(text, {
     languageOptions: {
       ecmaVersion: "latest",
       sourceType,
-      globals: GLOBALS,
+      globals,
     },
     rules: { "no-undef": "error" },
   });
@@ -86,17 +130,25 @@ function look(file) {
   }));
 }
 
+// Somebody else's code, vendored in. It is loaded, not maintained here, and
+// three.js alone would otherwise report a worker global and two strings a
+// minifier left looking like identifiers.
+const NOT_OURS = /(\.min\.js|\.bundle\.js|^three\.module\.js$|^three\.)/i;
+
 const files = [];
-for (const dir of DIRS) {
-  const full = path.join(ROOT, dir);
-  if (!fs.existsSync(full)) continue;
-  for (const name of fs.readdirSync(full).sort()) {
-    if (name.endsWith(".js") || name.endsWith(".mjs")) files.push(path.join(full, name));
+for (const { dirs, browser } of AREAS) {
+  for (const dir of dirs) {
+    const full = path.join(ROOT, dir);
+    if (!fs.existsSync(full)) continue;
+    for (const name of fs.readdirSync(full).sort()) {
+      if (!/\.(js|mjs)$/.test(name) || NOT_OURS.test(name)) continue;
+      files.push({ file: path.join(full, name), browser });
+    }
   }
 }
 
-const offenders = files.flatMap(look);
-check("every name the backend uses is one its own scope can see",
+const offenders = files.flatMap(({ file, browser }) => look(file, browser));
+check("every name the launcher uses is one its own scope can see",
   offenders, [],
   "node --check cannot see this: the file parses, and the line only fails when it runs");
 

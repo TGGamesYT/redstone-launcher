@@ -247,6 +247,108 @@
   const flipFor = (clip) => (flipForced || !clip || saysTurned(clip) === undefined)
     ? turned : !!saysTurned(clip);
 
+  // ── Turning somewhere other than where the part turns ────────────────────
+  //
+  // A rig's bone has an origin, and a wave wants the arm's at the shoulder
+  // while a lean wants it at the waist -- which is two models of the same
+  // player, and is exactly why a clip may be taken from a second rig. The
+  // converter has always said this was the point of the thing; nothing ever
+  // did it, so a clip from a rig with a moved pivot turned about the pivot
+  // skinview3d gives the part and looked wrong.
+  //
+  // The file records where each bone turns on the rig most of the clips came
+  // from, and a clip from elsewhere records its own. The difference is how
+  // far the pivot moved, and it is put back by hanging the part off a group
+  // that far away and turning THAT.
+  //
+  //   parent
+  //    +- pivot   at p + shift      <- the clip's rotation goes here
+  //        +- back at -(p + shift)
+  //            +- part  (its own position, untouched)
+  //
+  // Two groups for the same reason the waist has two: resetJoints() writes a
+  // part's own position back, so a part whose position had been adjusted
+  // would be put somewhere else on the next rest pose.
+  // Read when it is asked for, not now: `data` is declared further down this
+  // file, so reading it here is reading a let before it exists -- which is
+  // not a slow failure, it throws every time an animation plays.
+  const basePivots = () => ((data && data.pivots) || {});
+
+  /** How far this clip's bone turns from where the part normally turns. */
+  function pivotShift(clip, bone, sx, sz) {
+    const mine = clip && clip.bones && clip.bones[bone] && clip.bones[bone].pivot;
+    const base = basePivots()[bone];
+    if (!mine || !base) return null;
+    const dx = Number(mine[0]) - Number(base[0]);
+    const dy = Number(mine[1]) - Number(base[1]);
+    const dz = Number(mine[2]) - Number(base[2]);
+    if (!dx && !dy && !dz) return null;
+    if (![dx, dy, dz].every(Number.isFinite)) return null;
+    // A pivot is a point in the same space the rotations are in, so a rig
+    // that faces the other way moves it the same way: X and Z change sign.
+    return [dx * sx, dy, dz * sz];
+  }
+
+  /** The group a part is turned by, given a shift. Built once per part. */
+  function pivotGroupFor(part, shift) {
+    if (!part || !shift) return null;
+    const key = shift.join(",");
+    if (part.__pivotKey === key && part.__pivotGroup && part.__pivotGroup.parent) {
+      return part.__pivotGroup;
+    }
+    try {
+      const home = part.__pivotHome || part.parent;
+      if (!home) return null;
+      part.__pivotHome = home;
+      // A shift that changed: take the old rigging out before building new.
+      if (part.__pivotGroup && part.__pivotGroup.parent) {
+        home.add(part);
+        part.__pivotGroup.parent.remove(part.__pivotGroup);
+      }
+      const outer = emptyGroupLike(part);
+      const back = emptyGroupLike(part);
+      if (!outer || !back) return null;
+      outer.name = "pivot";
+      back.name = "pivotBack";
+      const p = part.position;
+      outer.position.set(p.x + shift[0], p.y + shift[1], p.z + shift[2]);
+      back.position.set(-(p.x + shift[0]), -(p.y + shift[1]), -(p.z + shift[2]));
+      outer.add(back);
+      back.add(part);
+      home.add(outer);
+      part.__pivotGroup = outer;
+      part.__pivotKey = key;
+      return outer;
+    } catch { return null; }
+  }
+
+  /** Put a part back under its own parent, turning where it normally turns. */
+  function clearPivotGroup(part) {
+    if (!part || !part.__pivotGroup) return;
+    try {
+      const outer = part.__pivotGroup;
+      if (part.__pivotHome) part.__pivotHome.add(part);
+      if (outer.parent) outer.parent.remove(outer);
+    } catch { /* already taken apart */ }
+    part.__pivotGroup = null;
+    part.__pivotKey = null;
+  }
+
+  /**
+   * Where this bone's rotation should be written, and what to reset.
+   *
+   * Returns the object the angles go on. When there is no shift that is the
+   * part itself, which is what every clip did before any of this.
+   */
+  function turnerFor(part, shift) {
+    if (!shift) { clearPivotGroup(part); return part; }
+    const g = pivotGroupFor(part, shift);
+    if (!g) return part;
+    // The part keeps the rest pose's own rotation; the clip's goes on the
+    // group, so the two compose rather than one replacing the other.
+    return g;
+  }
+
   // clip: { length, loop, degrees, bones: { <bone>: { rotation: [...],
   //                                         position: [...], scale: [...] } } }
   // opts.loop overrides the clip's own flag — the page plays everything once.
@@ -274,11 +376,26 @@
           const part = r.part;
 
           const rot = tracks && sampleTrack(tracks.rotation, t);
-          part.rotation.set(
-            r.rotation[0] + (rot ? rot[0] * k * sx : 0),
-            r.rotation[1] + (rot ? rot[1] * k : 0),
-            r.rotation[2] + (rot ? rot[2] * k * sz : 0),
-          );
+          // Where this bone turns. A clip from a rig whose pivot was moved
+          // turns about a group that far away instead of about the part.
+          const shift = pivotShift(clip, r.name, sx, sz);
+          const turner = turnerFor(part, shift);
+          if (turner !== part) {
+            // The part keeps its rest rotation and the clip's goes on the
+            // group, so the pivot moves without the pose being replaced.
+            part.rotation.set(r.rotation[0], r.rotation[1], r.rotation[2]);
+            turner.rotation.set(
+              (rot ? rot[0] * k * sx : 0),
+              (rot ? rot[1] * k : 0),
+              (rot ? rot[2] * k * sz : 0),
+            );
+          } else {
+            part.rotation.set(
+              r.rotation[0] + (rot ? rot[0] * k * sx : 0),
+              r.rotation[1] + (rot ? rot[1] * k : 0),
+              r.rotation[2] + (rot ? rot[2] * k * sz : 0),
+            );
+          }
 
           // Model units, not angles — an offset from where the part lives.
           const pos = tracks && sampleTrack(tracks.position, t);

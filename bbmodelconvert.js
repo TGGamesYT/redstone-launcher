@@ -113,7 +113,23 @@ function convert(model, { flip = true } = {}) {
   const clips = {};
   // Group uuid -> name, for animators that don't carry their own name.
   const groupNames = {};
-  for (const g of model.groups || []) if (g && g.uuid) groupNames[g.uuid] = g.name;
+  // And where each bone turns, which is the whole reason a second rig exists:
+  // a wave wants the arm's pivot at the shoulder and a lean wants it at the
+  // waist, and that is two models of the same player. Blockbench calls it the
+  // group's origin.
+  const groupPivots = {};
+  const walkGroups = (list) => {
+    for (const g of list || []) {
+      if (!g || typeof g !== "object") continue;
+      if (g.uuid) groupNames[g.uuid] = g.name;
+      if (g.uuid && Array.isArray(g.origin) && g.origin.length === 3) {
+        groupPivots[g.uuid] = g.origin.map(Number);
+      }
+      // A rig can nest groups, and a nested one is still a bone.
+      if (Array.isArray(g.children)) walkGroups(g.children);
+    }
+  };
+  walkGroups(model.groups);
 
   for (const anim of model.animations || []) {
     const bones = {};
@@ -129,10 +145,24 @@ function convert(model, { flip = true } = {}) {
       }
       const tracks = convertAnimator(animator, warnings, anim.name);
       if (!Object.keys(tracks).length) continue;
+      const pivot = groupPivots[uuid];
+      if (pivot) tracks.pivot = pivot;
       // Two Blockbench groups can map to the same part (a rig may split the
       // body); merge rather than letting the second silently win.
       if (bones[bone]) {
         for (const [ch, list] of Object.entries(tracks)) {
+          // The pivot is a point, not a list of keyframes. The first group
+          // to claim a part decides where it turns; a second one saying
+          // somewhere else is a rig this cannot honour, and saying so is
+          // better than averaging two answers into a third.
+          if (ch === "pivot") {
+            const had = bones[bone].pivot;
+            if (had && String(had) !== String(list)) {
+              warnings.push(`${anim.name}: "${rawName}" turns somewhere else than the first group`
+                + ` mapped to ${bone}; the first one is kept`);
+            } else if (!had) bones[bone].pivot = list;
+            continue;
+          }
           bones[bone][ch] = (bones[bone][ch] || []).concat(list).sort((a, b) => a.time - b.time);
         }
       } else {
@@ -159,7 +189,15 @@ function convert(model, { flip = true } = {}) {
       bones,
     };
   }
-  return { clips, warnings };
+  // The whole rig's pivots, keyed by the part they drive, so the file can
+  // keep a baseline to measure a later rig's moved pivot against.
+  const pivots = {};
+  for (const clip of Object.values(clips)) {
+    for (const [bone, tracks] of Object.entries(clip.bones || {})) {
+      if (tracks.pivot && !pivots[bone]) pivots[bone] = tracks.pivot;
+    }
+  }
+  return { clips, warnings, pivots };
 }
 
 /** Read a .bbmodel, or say why not. Returns null after printing the reason. */
@@ -187,7 +225,7 @@ function readExisting(out) {
   return null;
 }
 
-function writeOut(out, clips, sources, flip) {
+function writeOut(out, clips, sources, flip, pivots) {
   fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   fs.writeFileSync(out, JSON.stringify({
     // Which rig each clip came from, because they no longer all come from
@@ -197,6 +235,13 @@ function writeOut(out, clips, sources, flip) {
     generated: new Date().toISOString(),
     // How the rig was authored, not a per-clip property.
     turned: !!flip,
+    // Where each bone turns on the rig these clips were MOSTLY made from.
+    // A clip taken from another rig carries its own pivot per bone, and the
+    // launcher turns that bone about the difference between the two -- which
+    // is what "a wave wants the shoulder and a lean wants the waist" needs.
+    // Without a baseline there is nothing to take a difference from, so this
+    // is what makes a moved pivot mean anything.
+    pivots: pivots || {},
     clips,
   }, null, 2) + '\n');
 }
@@ -252,7 +297,7 @@ function main(argv) {
     if (!gone) return 1;
     const sources = { ...(had.sources || {}) };
     for (const n of names) delete sources[n];
-    writeOut(out, had.clips, sources, had.turned !== undefined ? had.turned : had.flipYZ);
+    writeOut(out, had.clips, sources, had.turned !== undefined ? had.turned : had.flipYZ, had.pivots);
     console.log(`Took ${gone} out of ${out}; ${Object.keys(had.clips).length} left.`);
     return 0;
   }
@@ -268,7 +313,7 @@ function main(argv) {
   if (!model) return 1;
   if (!named) console.log(`Reading ${DEFAULT_IN}`);
 
-  const { clips, warnings } = convert(model, { flip });
+  const { clips, warnings, pivots } = convert(model, { flip });
   const names = Object.keys(clips);
   if (!names.length) { console.error('None of the animations use bones the player render has.'); return 1; }
   for (const w of warnings) console.warn('note: ' + w);
@@ -314,7 +359,13 @@ function main(argv) {
       sources[name] = { file: path.basename(input), animation: from, turned: !!flip };
       taken.push(name);
     }
-    writeOut(out, into, sources, had ? (had.turned !== undefined ? had.turned : had.flipYZ) : flip);
+    // The baseline stays whatever the file already had: these clips are the
+    // ones being measured AGAINST it, so letting them replace it would make
+    // every moved pivot measure zero. A file with no baseline yet takes this
+    // rig's, since it is the only rig there is.
+    writeOut(out, into, sources,
+      had ? (had.turned !== undefined ? had.turned : had.flipYZ) : flip,
+      (had && had.pivots && Object.keys(had.pivots).length) ? had.pivots : pivots);
     console.log(`Added ${taken.join(', ')} to ${out}.`);
     console.log(`It now holds ${Object.keys(into).length}: ${Object.keys(into).join(', ')}`);
     return 0;
@@ -324,7 +375,7 @@ function main(argv) {
   describe(clips);
   const sources = {};
   for (const n of names) sources[n] = { file: path.basename(input), animation: n, turned: !!flip };
-  writeOut(out, clips, sources, flip);
+  writeOut(out, clips, sources, flip, pivots);
   console.log(`\nWrote ${names.length} animation${names.length === 1 ? '' : 's'} to ${out}`);
   console.log('The skins page picks these up on its next load. In devtools:');
   console.log('  playerRenderAnimList()             list them');

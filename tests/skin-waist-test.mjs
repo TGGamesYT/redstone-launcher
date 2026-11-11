@@ -35,7 +35,7 @@ const cut = (a, b) => {
   return src.slice(i, j);
 };
 
-const code = cut("  const WAIST_Y =", "  function restPose(");
+const code = cut("  const WAIST_Y =", "  // clip: { length, loop, degrees");
 if (!/function makeWaist/.test(code) || !/function emptyGroupLike/.test(code)) {
   console.log("FAIL could not slice makeWaist out of skin-animations.js");
   process.exit(1);
@@ -44,12 +44,20 @@ const scratch = path.join(ROOT, "node_modules", ".cache");
 fs.mkdirSync(scratch, { recursive: true });
 const modFile = path.join(scratch, "skinwaist.mjs");
 fs.writeFileSync(modFile,
-  code.replace(/^ {2}/gm, "")
+  // `data` is the converted clips file, declared further down the real file;
+  // the slice reads it through basePivots(), so it is supplied here.
+  "let data = null;\nexport const setData = (d) => { data = d; };\n"
+  + code.replace(/^ {2}/gm, "")
     .replace(/^const WAIST_Y/m, "export const WAIST_Y")
     .replace(/^const ABOVE_THE_WAIST/m, "export const ABOVE_THE_WAIST")
     .replace(/^function makeWaist/m, "export function makeWaist")
-    .replace(/^function emptyGroupLike/m, "export function emptyGroupLike"));
-const { makeWaist, WAIST_Y, ABOVE_THE_WAIST } = await import("file://" + modFile + "?v=" + Date.now());
+    .replace(/^function emptyGroupLike/m, "export function emptyGroupLike")
+    .replace(/^function pivotShift/m, "export function pivotShift")
+    .replace(/^function turnerFor/m, "export function turnerFor")
+    .replace(/^function pivotGroupFor/m, "export function pivotGroupFor")
+    .replace(/^function clearPivotGroup/m, "export function clearPivotGroup"));
+const mod = await import("file://" + modFile + "?v=" + Date.now());
+const { makeWaist, WAIST_Y, ABOVE_THE_WAIST, pivotShift, turnerFor, setData } = mod;
 
 // ── a stand-in for three.js, as far as this function uses it ──
 //
@@ -153,6 +161,58 @@ const offsetToSkin = (part, skin) => {
   check("no skin, no waist", makeWaist({}), null);
   check("and nothing thrown for it", makeWaist(null), null,
     "a rig this cannot build is a clip that does nothing, not a page that stops");
+}
+
+// ── a clip from a rig whose pivot was moved ──
+//
+// The converter has always said this was the point of taking a clip from a
+// second rig: a wave wants the arm's pivot at the shoulder and a lean wants
+// it at the waist. Nothing ever did it, so such a clip turned about the
+// pivot skinview3d gives the part and looked wrong.
+{
+  setData({ pivots: { rightArm: [-5, 22, 0] } });
+
+  check("a clip from the same rig has nothing to put back",
+    pivotShift({ bones: { rightArm: { pivot: [-5, 22, 0] } } }, "rightArm", 1, 1), null,
+    "every clip carries its pivot, so most of them have to cost nothing");
+  check("a clip with no pivot at all is left alone",
+    pivotShift({ bones: { rightArm: {} } }, "rightArm", 1, 1), null,
+    "which is every clip exported before the converter recorded one");
+  check("a moved pivot is the difference between the two",
+    pivotShift({ bones: { rightArm: { pivot: [-5, 12, 0] } } }, "rightArm", 1, 1), [0, -10, 0],
+    "ten down the arm, which is the difference between a shoulder and a waist");
+  check("and it is turned with the rig, like everything else",
+    pivotShift({ bones: { rightArm: { pivot: [-2, 22, 3] } } }, "rightArm", -1, -1), [-3, 0, -3],
+    "a pivot is a point in the same space the rotations are in");
+
+  // And the rigging it builds.
+  const skin = new Skin();
+  const arm = skin.rightArm;
+  const home = arm.parent;
+  const shift = [0, -10, 0];
+  const turner = turnerFor(arm, shift);
+
+  check("the part is turned by a group, not by itself", turner !== arm, true);
+  check("which sits where the clip says the bone turns",
+    turner.position.toArray(), [-5, -12, 0],
+    "the part's own place plus the shift: an arm at -2 with its pivot ten lower");
+  check("and the part has not moved a millimetre",
+    offsetToSkin(arm, skin), [-5, -2, 0],
+    "putting a pivot back must not reposition the limb it belongs to");
+  check("its own position is untouched too",
+    arm.position.toArray(), PARTS.rightArm,
+    "resetJoints() writes this back, so anything else would be undone");
+
+  check("asking twice gives the same rigging", turnerFor(arm, [0, -10, 0]) === turner, true);
+  const other = turnerFor(arm, [0, -4, 0]);
+  check("a different shift is rebuilt rather than added to",
+    [other !== turner, offsetToSkin(arm, skin)], [true, [-5, -2, 0]],
+    "two clips with two pivots must not stack their groups on each other");
+
+  check("and a clip with no shift puts the part back where it was",
+    [turnerFor(arm, null) === arm, arm.parent === home, offsetToSkin(arm, skin)],
+    [true, true, [-5, -2, 0]],
+    "the next clip is usually an ordinary one, and it turns about the part");
 }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

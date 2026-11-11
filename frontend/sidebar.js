@@ -357,15 +357,22 @@ ipcRenderer.invoke('get-settings').then(settings => {
 }).catch(e => console.warn('get-settings failed', e));
 
 
+// Deliberately assigned rather than declared.
+//
+// The page that hosts the sidebar declares selectedPlayerId -- shell.html
+// does, right above the <script> that loads this -- and classic scripts
+// share one scope, so a `let` here would be a second declaration of the same
+// name and the whole file would fail to parse. players is the same shape on
+// the players page. They are the host's; this fills them in.
 players = [];
 selectedPlayerId = null;
 document.getElementById("min-btn").onclick = () => minApp();
 document.getElementById("max-btn").onclick = () => maxApp();
 document.getElementById("close-btn").onclick = () => closeApp();
-
-document.getElementById("close-btn").addEventListener("click", () => {
-  win.close();
-});
+// There was a second handler on the same button calling win.close(). There
+// is no `win` in a renderer, so it threw on every click -- the window shut
+// anyway, because the line above had already asked the main process to shut
+// it, and the exception went to a console nobody had open.
 
 function setSelectedPlayer(id) {ipcRenderer.send('set-selected-player', id)}
 async function getSelectedPlayer() {return await ipcRenderer.invoke('get-selected-player')}
@@ -454,7 +461,9 @@ function renderInstances(instances) {
   ul.dataset.renderedFor = want;
 
   ul.innerHTML = ""; // clear placeholder items
-  num = 0;
+  // Declared. It was an implicit global, so two sidebars rendering at once --
+  // the shell's and a framed page's -- counted against the same number.
+  let num = 0;
 
   // Add each instance
   instances.forEach(instance => {
@@ -1200,16 +1209,12 @@ if (title && Math.random() < 0.1) {
     shell.openExternal("https://youtu.be/XOq97dxiAfE");
   };
 }
-let settings;
-let third;
-async () => {
-  settings = await ipcRenderer.invoke('get-settings')
-  third = getSetting('thirdColor') || getMiddleColor(base, secondary);
-};
-
-function getSetting(key) {
-  return settings[key] ?? defaultSettings[key];
-}
+// An `async () => { ... }` that was written and never called, and a
+// getSetting() whose only caller was inside it. Between them they named
+// four things that do not exist in this file -- base, secondary,
+// defaultSettings, and a settings that was never filled -- so calling
+// either would have thrown. The third colour is worked out in applyTheme
+// above, which is where it is actually used.
 
 // The running-instances pill belongs to the title bar, and the title bar
 // belongs to the shell. A framed page has one in its markup too -- every page
