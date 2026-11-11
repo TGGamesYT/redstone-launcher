@@ -9,6 +9,110 @@ started.
 
 ---
 
+## 0. Round 53
+
+- [x] **An instance made from a mod project.** — With developer mode on, a new
+      instance can be a Gradle mod project: the project's own run folder is
+      the instance's game folder, launching it runs the project's `runClient`,
+      and the project shows up in the instance's mods. *Nothing here was
+      broken; it did not exist. Two things had to be true for it to. The
+      first is that an instance's files are somewhere else: forty-three
+      places spelt `<data>/client/<id>` out for themselves, and every one of
+      them would have read the wrong folder, so they all ask `instanceRoot()`
+      now and a test fails the build if a forty-fourth appears. The second is
+      that Gradle is the launcher for this kind of instance -- it compiles
+      what has changed, works out the classpath and starts the game -- so
+      there is no version to download, no loader to install and no Java of
+      the game's to choose: the project says which Java it wants and that is
+      the one Gradle gets. What the project says about itself (loader,
+      Minecraft version, run folder, mod id, Java) is read off the files
+      every mod template has, which is what fills the last page of the
+      creator in. The account is handed to the game as `--username/--uuid/
+      --accessToken` unless the project passes a username of its own, because
+      Minecraft refuses an option given twice and would be gone before it
+      drew anything. Stopping it kills the process GROUP: the game is
+      Gradle's child, and signalling Gradle alone would leave the game
+      running with nothing tracking it. Deleting the instance does not delete
+      the folder, because that folder is somebody's project.*
+- [ ] **The theme of the main page content is reset by a cloud import** —
+      and the left and top bars keep the old one, which is the odd part.
+- [ ] **The notch still blinks out, sometimes.** Reported again after
+      Round 49.
+- [ ] **The app icon section does not update to what it is supposed to be.**
+- [ ] **The desktop and taskbar icon updates before it is finished** — e.g.
+      with the background showing through it.
+- [ ] **The Windows accent colour is sometimes not set** during a reload and
+      theme sync.
+- [ ] **"Frame the picture…" only offers the top picture** of the stack.
+
+---
+
+## 0. Round 52
+
+- [x] **Cloud syncing can keep itself in step.** — A toggle to sync when an
+      update is detected rather than only when asked. *Added as
+      `cloudAutoSync`, off by default: a five-minute check, the first one
+      twenty seconds after start-up, and each instance is only mentioned once
+      so a conflict does not become a notification every five minutes.*
+- [x] **A clip from a rig with a moved pivot turns about that pivot.** —
+      *The converter always said this was the point of taking a clip from a
+      second rig, and nothing ever did it: the pivot was recorded and
+      ignored, so a wave exported with the arm's pivot at the waist turned
+      about the shoulder.*
+- [x] **Two uploaded pictures, and the first one disappears on a page
+      change.** — *`bg:pickImage` deleted every other wallpaper it found,
+      which was right when there could only be one.*
+- [x] **A saved theme with a picture does not set the picture properly.** —
+      *The copy was put at the BOTTOM of the stack instead of the top, so
+      whatever was already there covered it.*
+- [x] **Applying a saved theme reloads the page to do it.** — *It called
+      `location.reload()`, which in the shell is a page change, which is the
+      loading screen. The settings page adopts the new settings in place
+      now.*
+
+---
+
+## 0. Round 51
+
+- [x] **Quick-play crashed the launcher the moment the game came up.** —
+      *`launchViaWorker` read `quickPlay`, a parameter of `launchProfileCore`
+      two functions away. The one line of the launch that runs only on
+      success.*
+- [x] **The sidebar's instance icons and the head icon stopped updating.** —
+      *`webContents.send()` reaches the main frame, which since the shell
+      refactor is the shell and not the page -- so the page heard everything
+      and the shell heard nothing. `sendEverywhere()` walks the frames.*
+- [x] **The skins page's console commands do nothing from the console.** —
+      *The console is the shell's, and the skins page is a frame inside it.
+      The shell mirrors the page's commands now.*
+- [x] **The flip is the default, not something to ask for.** — *`--no-flip`
+      turns it off; a turned rig negates X and Z, which is half a turn about
+      Y. It used to negate Y and Z, which is neither.*
+- [x] **The loading screen covers the change it is there to cover.** —
+      *It faded IN over 0.18s, so you watched the page change through a
+      half-transparent curtain.*
+
+---
+
+## 0. Round 50
+
+- [x] **The admin panel re-verified the account on every tab.** — *Each
+      request opened its own relay connection and did its own Mojang join.
+      One session now, kept open.*
+- [x] **`Attempted to get the 'ipcNative' object but it was missing`.** —
+      *The news admin was an iframe with no Node in it, and the main process
+      was sending IPC into it.*
+- [x] **A server's detail page shows the "Servers" heading.** — *The
+      instance's does not; now neither does it.*
+- [x] **`CF_API_TOKEN` is Cloudflare's, not CurseForge's.** — *It was named
+      `curseforgeToken` in the relay's config, which is simply wrong.*
+- [x] **Per-instance cloud syncing, not everything at once.** — *"Save to
+      cloud" and "Get from cloud" on an instance's menu, with a choice of
+      worlds and of the files no public site knows about, and importing a
+      cloud world into any instance.*
+
+---
+
 ## 0. Round 49
 
 - [x] **The skins page's render stopped settling back to the middle.** — *My

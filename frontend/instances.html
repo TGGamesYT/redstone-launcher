@@ -3605,6 +3605,45 @@
         // tab, inside the tab's own builder, and this function lives outside
         // that scope -- so reaching for it was a ReferenceError that took the
         // whole content tab down with it.
+        // The mod project a dev instance is, as a card in its own mods list.
+        // Nothing here comes off the disk: the project IS the instance, so
+        // what there is to say is where it lives and what starts it, and what
+        // there is to do with it is open it or open its folder.
+        function projectCard(project) {
+          const li = document.createElement("li");
+          li.className = "profile-item";
+          li.style.borderColor = "var(--accent)";
+
+          const img = document.createElement("img");
+          img.alt = "";
+          img.style.background = "var(--menu-bg)";
+          img.src = DEFAULT_ICON;
+          li.appendChild(img);
+
+          const info = document.createElement("div");
+          info.className = "profile-info";
+          const name = document.createElement("div");
+          name.className = "profile-name";
+          name.textContent = (project.modId || project.root.split(/[\\/]/).filter(Boolean).pop())
+            + "  (this instance’s project)";
+          const details = document.createElement("div");
+          details.className = "profile-details";
+          details.textContent = `Built and run by Gradle — ${project.task || "runClient"} in ${project.root}`;
+          info.append(name, details);
+          li.appendChild(info);
+
+          const actions = document.createElement("div");
+          actions.className = "card-actions";
+          const open = document.createElement("button");
+          open.className = "card-action-btn";
+          open.innerHTML = `<i class="material-icons">folder_open</i>`;
+          open.title = "Open the project folder";
+          open.onclick = (e) => { e.stopPropagation(); ipcRenderer.send("open-folder-path", { pather: project.root }); };
+          actions.appendChild(open);
+          li.appendChild(actions);
+          return li;
+        }
+
         function createContentCard(p, tabName, refresh, running, devMods, devOn, genPacks) {
           const li = document.createElement("li");
           li.className = "profile-item";
@@ -4696,6 +4735,17 @@
                   tabContent.appendChild(buildBar());
                   const ul = document.createElement("ul");
                   ul.className = "profile-list";
+                  // A dev instance's own project, at the top of its mods.
+                  //
+                  // It is a mod of this instance in every sense except the one
+                  // the rest of this list is built on: there is no jar in the
+                  // mods folder, because Gradle compiles the project into the
+                  // run it starts and a jar of it here as well would be the
+                  // same mod loaded twice. So the card is built from the
+                  // instance itself rather than from a file.
+                  if (tabName === "mods" && profile.project && profile.project.root) {
+                    ul.appendChild(projectCard(profile.project));
+                  }
                   // Registered dev mods are surfaced ON their real mod card (not as a
                   // separate row): the card whose file is <modId>-dev.jar is tagged
                   // "(devmod)" and gets the change-folder / change-version controls.

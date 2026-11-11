@@ -660,6 +660,25 @@
           buildFlow(opts, reopen, null);
         },
       });
+      // ── A mod project ──
+      //
+      // Developer mode only, and last, because it is for one person in a
+      // hundred: an instance that IS a Gradle mod project. Added when the
+      // setting comes back rather than before -- the list is already on
+      // screen by then, and a row appearing at the bottom of it is better
+      // than the whole chooser waiting on a disk read.
+      if (!server) {
+        ipcRenderer.invoke('get-setting', 'devMode').then((devOn) => {
+          if (!devOn || !list.isConnected) return;
+          row(list, {
+            icon: 'code',
+            title: 'A mod project',
+            desc: 'A Gradle mod project on this computer. The instance is its run folder, and playing it runs the project.',
+            tag: 'Developer',
+            onClick: () => { close(); openProject(opts, reopen); },
+          });
+        }).catch(() => { });
+      }
     },
     pickVersion,
     pickLoader,
@@ -1141,6 +1160,9 @@
     const loaderArt = (LOADERS.find(l => l.id === loader) || {}).icon;
     chip('Loader', loaderName, loaderArt,
       !opts.pack && opts.onChangeLoader ? () => opts.onChangeLoader(state()) : null);
+    // A project decides its own loader and its own folder, so these are a
+    // statement of what the instance will be rather than a way back.
+    if (opts.project) chip('Project', opts.projectInfo && opts.projectInfo.name || 'Gradle', null, null);
 
     const chipWrap = document.createElement('div');
     const chipLabel = document.createElement('label');
@@ -1210,6 +1232,24 @@
         showNote('This pack brings no files of its own.');
       }).catch(() => { if (contents.isConnected) showNote('Its mod list could not be read before installing.'); });
       fields.appendChild(contents);
+    } else if (opts.project) {
+      // What a dev instance actually is, said plainly before it is made:
+      // where the game will run, what starts it and on which Java. None of
+      // it is a choice on this page -- it is the project's own answer -- but
+      // it is the part that is different from every other instance, so it is
+      // the part worth showing.
+      const p = opts.projectInfo || {};
+      contentsLabel.textContent = 'How it runs';
+      const say = [
+        `Gradle runs ${p.task || 'runClient'} in ${p.root}`,
+        `The game's folder is ${opts.project.dir}`,
+        `On Java ${p.java}${p.wrapper ? ', through the project’s own gradlew' : ', with the gradle on your PATH'}`,
+      ];
+      if (!p.knownLoader) say.push('The project does not say which loader it is for; ' + loaderName + ' is a guess.');
+      if (p.setsUsername) say.push('It passes a username of its own, so the account you pick is left out of it.');
+      showNote(say.join('\n'));
+      contentsNote.style.whiteSpace = 'pre-line';
+      fields.appendChild(contents);
     } else if (pre.projectTitle) {
       contentsLabel.textContent = 'What it installs';
       // The mod's own picture: it is what the instance is being given as an
@@ -1223,7 +1263,10 @@
     // ── the buttons ──
     const actions = card.querySelector('.ni-actions');
     // A pack brings its own settings; there is no creator behind it to open.
-    const more = opts.pack ? null : document.createElement('button');
+    // Neither is there for a project: the old creator knows nothing about
+    // one, and it is what SENDS the instance, so going through it would make
+    // an ordinary instance and quietly drop the project.
+    const more = (opts.pack || opts.project) ? null : document.createElement('button');
     if (more) {
       more.textContent = 'More settings…';
       more.onclick = () => opts.onMore && opts.onMore({
@@ -1245,11 +1288,51 @@
         version, loader,
         loaderVersion: '',
         icon: finalIcon || null,
+        // Only a dev instance has one, and it is what makes it one.
+        ...(opts.project ? { project: opts.project } : {}),
       }, pre);
     };
     if (more) actions.appendChild(more);
     actions.appendChild(make);
     setTimeout(() => name.focus(), 0);
+  }
+
+  // ── An instance that is a mod project ─────────────────────────────────────
+  //
+  // The folder is picked in the OS's own dialog, so there is no modal to put
+  // a Back button on: cancelling it comes back to the chooser. What the
+  // project says about itself fills the last page in, and the one thing it
+  // may not say -- which Minecraft version it builds against -- is asked for
+  // in the ordinary way.
+  async function openProject(opts, back) {
+    let info;
+    try { info = await ipcRenderer.invoke('project:pick'); }
+    catch (e) { return uiAlert('That folder could not be read: ' + e.message, 'Mod project'); }
+    if (!info || info.canceled) return back && back();
+    if (!info.success) {
+      await uiAlert(info.error || 'That folder is not a Gradle project.', 'Mod project');
+      return openProject(opts, back);
+    }
+    const project = { root: info.root, dir: info.dir, task: info.task, modId: info.modId };
+    const finish = (version) => pickFinalize({
+      version,
+      loader: info.loader,
+      project, projectInfo: info,
+      prefill: { name: info.modId || info.name },
+      onBack: back,
+      onChangeVersion: () => pickVersion({
+        onBack: () => finish(version),
+        onPick: (v) => finish(v),
+      }),
+      onCreate: (profile) => {
+        window.NewInstance.closeAll();
+        opts.onCreate
+          ? opts.onCreate(profile, {})
+          : (opts.onCustom && opts.onCustom(profile, back));
+      },
+    });
+    if (info.version) return finish(info.version);
+    pickVersion({ onBack: back, onPick: (v) => finish(v) });
   }
 
   // ── Picking a loader ──────────────────────────────────────────────────────

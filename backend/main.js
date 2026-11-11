@@ -651,7 +651,7 @@ function reportInstanceCrash(profileId, cfg, code) {
   if (code === 0 || code === null || code === undefined) return;
   if (code === 1 || code === 143 || code === 130) return;
   try {
-    const dir = path.join(dataDir, "client", String(profileId));
+    const dir = instanceRoot(profileId);
     // broadcastLog keys by whatever it was handed, which isn't always a string.
     const lines = instanceLogs.get(profileId) || instanceLogs.get(String(profileId)) || [];
     const tail = lines.slice(-400);
@@ -856,7 +856,7 @@ ipcMain.handle('get-instance-logs', (event, profileId, run) => {
   // No in-memory logs (game already exited, or the launcher was restarted):
   // fall back to the game's own latest.log so the console isn't blank.
   try {
-    const logPath = path.join(dataDir, 'client', String(profileId), 'logs', 'latest.log');
+    const logPath = path.join(instanceRoot(profileId), 'logs', 'latest.log');
     if (fs.existsSync(logPath)) {
       const lines = fs.readFileSync(logPath, 'utf-8').split(/\r?\n/);
       // keep the tail so huge logs don't bog the renderer down
@@ -873,7 +873,12 @@ function stopByPid(pid) {
   for (const [key, data] of runningInstances.entries()) {
     if (data.pid === pid) {
       try {
-        process.kill(pid);
+        // A dev instance's process is Gradle, and the game is its child --
+        // on Windows its grandchild, through cmd.exe. Signalling Gradle
+        // alone would leave the game running with nothing tracking it, so
+        // the run says how it is to be ended and that is used instead.
+        const killer = instanceKillers.get(pid);
+        if (killer) killer(); else process.kill(pid);
         runningInstances.delete(key);
         if (data.startTime) addPlaytime(data.id, Date.now() - data.startTime);
         persistRunningInstances();
@@ -1129,6 +1134,55 @@ function loadProfiles() {
   return applySort(profiles, sortMode, customOrder);
 }
 function saveProfiles(p) { fs.writeFileSync(profilesPath, JSON.stringify(p, null, 2)); }
+
+// ── Where an instance's files are ───────────────────────────────────────────
+//
+// Normally <data>/client/<id>, which is what every one of the forty-odd
+// places that reads or writes an instance's files used to spell out for
+// itself.
+//
+// A DEV instance does not live there. It is a mod project somebody is
+// working on, and its game folder is the project's OWN run folder -- the one
+// `gradle runClient` starts the game in -- because the whole point is that
+// the game being debugged is the one the project builds, in the state the
+// project leaves it in. So the instance IS that folder rather than a copy of
+// it, and everything that asks where an instance's files are asks here.
+//
+// Read straight off the profiles file and cached against its modification
+// time: this is called many times per launch and from synchronous code, so
+// it cannot await loadProfiles() -- and the file changing is the only thing
+// that can change the answer.
+let _projectDirsAt = -1;
+let _projectDirs = new Map();
+function projectDirs() {
+  let st = null;
+  try { st = fs.statSync(profilesPath); } catch { return _projectDirs; }
+  if (st.mtimeMs === _projectDirsAt) return _projectDirs;
+  const map = new Map();
+  try {
+    const arr = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
+    if (Array.isArray(arr)) {
+      for (const p of arr) {
+        if (p && p.project && p.project.dir) map.set(String(p.id), String(p.project.dir));
+      }
+    }
+  } catch { /* an unreadable file means no dev instances, which is the safe answer */ }
+  _projectDirsAt = st.mtimeMs;
+  _projectDirs = map;
+  return map;
+}
+function instanceRoot(profileId) {
+  return projectDirs().get(String(profileId))
+    || path.join(dataDir, "client", String(profileId));
+}
+// The project behind a dev instance, or null for an ordinary one.
+function instanceProject(profileId) {
+  try {
+    const arr = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
+    const p = Array.isArray(arr) ? arr.find(x => String(x.id) === String(profileId)) : null;
+    return (p && p.project && p.project.root) ? p.project : null;
+  } catch { return null; }
+}
 
 // Helper to fetch Piston meta versions
 let minecraftVersionsCache;
@@ -1968,6 +2022,15 @@ function getUniqueFolderName(baseName) {
   const existingFolders = fs.readdirSync(clientDir).filter(f =>
     fs.statSync(path.join(clientDir, f)).isDirectory()
   );
+  // The ids already handed out, which is not the same list as the folders
+  // here: a dev instance's files are its project's run folder, so it makes
+  // no folder of ours at all. Two of them with the same name would both have
+  // been given the same id -- one instance, as far as everything that looks
+  // an instance up by id is concerned.
+  try {
+    const arr = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
+    if (Array.isArray(arr)) for (const p of arr) if (p && p.id) existingFolders.push(String(p.id));
+  } catch { /* no profiles yet */ }
 
   const safe = safeFolderName(baseName);
   let uniqueName = safe;
@@ -2323,6 +2386,26 @@ ipcMain.on('create-profile', async (event, profile) => {
     lastUsed: Date.now()
   };
 
+  // ── A dev instance ──
+  //
+  // The mod project this instance IS. `dir` is the project's own run folder
+  // and becomes the instance's game folder (see instanceRoot), `root` is
+  // where Gradle runs, and `task` is what launching it runs. Nothing else
+  // about the instance is different, which is the point.
+  const project = profile.project && profile.project.root
+    ? {
+      root: String(profile.project.root),
+      dir: String(profile.project.dir || path.join(profile.project.root, "run")),
+      task: String(profile.project.task || "runClient"),
+      modId: profile.project.modId || null,
+    }
+    : null;
+  if (project) {
+    newProfile.project = project;
+    try { fs.mkdirSync(project.dir, { recursive: true }); }
+    catch (e) { devtoolsLog("Could not make the project's run folder:", e.message); }
+  }
+
   profiles.push(newProfile);
   saveProfiles(profiles);
 
@@ -2446,6 +2529,20 @@ function forgetInstanceState(id) {
   } catch (err) {
     devtoolsLog("Failed to clear instance metadata:", err);
   }
+  // And which projects were being hot-swapped into it, which lives in a file
+  // of its own. An id is made from the instance's NAME, so a new instance
+  // called the same thing would otherwise inherit the old one's dev mods --
+  // and go looking for folders on disk because of it.
+  try {
+    stopDevWatch("instance", key);
+    const store = loadDevModsStore();
+    if (store[devModKey("instance", key)]) {
+      delete store[devModKey("instance", key)];
+      saveDevModsStore(store);
+    }
+  } catch (err) {
+    devtoolsLog("Failed to clear the instance's dev mods:", err);
+  }
 }
 
 ipcMain.on("delete-profile", async (event, profileId) => {
@@ -2461,9 +2558,15 @@ ipcMain.on("delete-profile", async (event, profileId) => {
   }
 
   // Delete folder: datadir/client/PROFILEID
-  const profilePath = path.join(dataDir, "client", String(id));
+  //
+  // Except a dev instance's, which is not ours: it is the run folder inside
+  // somebody's project, beside their source. Removing the instance removes
+  // the launcher's knowledge of it and leaves the project exactly as it was.
+  const gone = profiles.find(p => String(p.id) === String(id));
+  const isProject = !!(gone && gone.project && gone.project.root);
+  const profilePath = instanceRoot(id);
   try {
-    if (fs.existsSync(profilePath)) {
+    if (!isProject && fs.existsSync(profilePath)) {
       fs.rmSync(profilePath, { recursive: true, force: true });
     }
   } catch (err) {
@@ -2608,7 +2711,7 @@ ipcMain.handle("handle-mrpack-quickplay", async (event, { accountId, serverIp, m
     // args (see launchProfileCore) rather than the library's quickPlay path.
     const legacyServer = quickplaybool ? quickplayip : null;
 
-    const rootDir = path.join(dataDir, 'client', String(profile.id));
+    const rootDir = instanceRoot(profile.id);
     fs.mkdirSync(rootDir, { recursive: true });
 
     const launcher = new Client();
@@ -2978,7 +3081,7 @@ ipcMain.handle("prepare-modpack-update", async (event, { profileId }) => {
     if (canceled || !filePaths.length) return { success: false, error: "No file selected" };
     const newZipPath = filePaths[0];
 
-    const profileFolder = path.join(dataDir, "client", String(profileId));
+    const profileFolder = instanceRoot(profileId);
     const oldMeta = readModpackMeta(profileFolder);
     const oldFiles = oldMeta?.files || {};              // rel -> sha1
     const newPlan = readMrpackPlan(newZipPath);
@@ -3036,7 +3139,7 @@ ipcMain.handle("apply-modpack-update", async (event, { profileId, decisions }) =
     const stash = pendingModpackUpdates.get(String(profileId));
     if (!stash) return { success: false, error: "No prepared update — please start again." };
     const { newZipPath, newPlan, plan } = stash;
-    const profileFolder = path.join(dataDir, "client", String(profileId));
+    const profileFolder = instanceRoot(profileId);
     const zip = new AdmZip(newZipPath);
 
     decisions = decisions || {};
@@ -3755,8 +3858,27 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
       legacyServer = quickplayip;
     }
 
-    const rootDir = path.join(dataDir, 'client', String(profile.id));
+    const rootDir = instanceRoot(profile.id);
     fs.mkdirSync(rootDir, { recursive: true });
+
+    // ── A dev instance ──
+    //
+    // The project's own Gradle is the launcher: it compiles what has
+    // changed, works out the classpath and starts the game. So none of what
+    // follows applies -- there is no version to download, no loader to
+    // install and no Java of the game's to pick, because the project says
+    // which Java it wants and Gradle uses it.
+    if (profile.project && profile.project.root) {
+      const { pid } = await launchViaGradle(profileId, {
+        project: profile.project, name: profile.name, auth,
+        gameVersion: profile.version,
+        customArgs: (profileForRam.launchArgs || "").trim()
+          ? (profileForRam.launchArgs || "").trim().split(/\s+/).filter(Boolean) : [],
+      }, run);
+      launchingProfiles.delete(profileId);
+      return { pid, run };
+    }
+
     const javaPath = await getJavaForMinecraft(profile.version);
     devtoolsLog("Java ready at:", javaPath);
 
@@ -3937,7 +4059,7 @@ function instanceLinkTargets(root) {
 }
 
 function writeAllowedSymlinks(profileId) {
-  const root = path.join(dataDir, "client", String(profileId));
+  const root = instanceRoot(profileId);
   const file = path.join(root, "allowed_symlinks.txt");
   const targets = instanceLinkTargets(root);
 
@@ -4581,7 +4703,7 @@ ipcMain.handle("save-server-properties", (event, id, text) => {
 // File-manager roots. Servers live under servers/<name>, instances under
 // client/<id>. Both browsers share fileManager (zip/gz aware).
 const serverRoot = (name) => path.join(dataDir, "servers", String(name));
-const clientRoot = (id) => path.join(dataDir, "client", String(id));
+const clientRoot = (id) => instanceRoot(id);
 
 ipcMain.handle("server-fs:list", (event, { name, path: rel }) => fileManager.listFiles(serverRoot(name), rel));
 ipcMain.handle("server-fs:read", (event, { name, path: rel }) => fileManager.readFile(serverRoot(name), rel));
@@ -4681,7 +4803,7 @@ const remodDir = (ticket) => {
 function contentPath(type, id, tab, filename) {
   const dir = type === "server"
     ? path.join(dataDir, "servers", String(id), tab || "mods")
-    : path.join(dataDir, "client", String(id), tab || "mods");
+    : path.join(instanceRoot(id), tab || "mods");
   const full = path.join(dir, filename || "");
   // A crafted filename must not reach out of the folder.
   if (!filename || path.dirname(full) !== dir) return null;
@@ -5859,7 +5981,7 @@ ipcMain.handle("content:addFiles", async (event, { type, id, tab } = {}) => {
 
     const base = type === "server"
       ? path.join(dataDir, "servers", String(id), tab === "datapacks" ? path.join("world", "datapacks") : tab)
-      : path.join(dataDir, "client", String(id), tab);
+      : path.join(instanceRoot(id), tab);
     fs.mkdirSync(base, { recursive: true });
 
     const added = [], failed = [];
@@ -6403,15 +6525,15 @@ function cloudService() {
           writeServersTo(sharedCfgPath("servers.dat"), [...by.values()]);
         } catch { /* a server list that will not merge is not worth failing a sync over */ }
       },
-      instanceDir: (id) => path.join(dataDir, "client", String(id)),
-      worldDir: (id, name) => path.join(dataDir, "client", String(id), "saves", String(name)),
+      instanceDir: (id) => instanceRoot(id),
+      worldDir: (id, name) => path.join(instanceRoot(id), "saves", String(name)),
       // The worlds an instance actually has, so the page can offer them
       // rather than asking somebody to type a name.
       listWorlds: (id) => {
         try {
-          return fs.readdirSync(path.join(dataDir, "client", String(id), "saves"), { withFileTypes: true })
+          return fs.readdirSync(path.join(instanceRoot(id), "saves"), { withFileTypes: true })
             .filter(e => e.isDirectory()
-              && fs.existsSync(path.join(dataDir, "client", String(id), "saves", e.name, "level.dat")))
+              && fs.existsSync(path.join(instanceRoot(id), "saves", e.name, "level.dat")))
             .map(e => e.name)
             .sort((a, b) => a.localeCompare(b));
         } catch { return []; }
@@ -7951,7 +8073,7 @@ ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType 
   try {
     const baseDir = server
       ? path.join(dataDir, "servers", String(id))
-      : path.join(dataDir, "client", String(id));
+      : instanceRoot(id);
 
     const typeFolder = getTypeFolder(projectType);
     const targetDir = path.join(baseDir, typeFolder);
@@ -8319,7 +8441,7 @@ ipcMain.handle("setup-server-instance", async (event, { projectId, name, address
     } else {
       // Vanilla-kind server: a plain instance to join from.
       profileId = getUniqueFolderName(name || "Server");
-      const folder = path.join(dataDir, "client", String(profileId));
+      const folder = instanceRoot(profileId);
       fs.mkdirSync(folder, { recursive: true });
       profiles = await loadProfiles();
       profiles.push({
@@ -8917,7 +9039,7 @@ ipcMain.handle("export-instance", async (event, opts) => {
     const profile = profiles.find(p => String(p.id) === String(profileId));
     if (!profile) throw new Error("Profile not found");
 
-    const instanceFolder = path.join(dataDir, "client", String(profile.id));
+    const instanceFolder = instanceRoot(profile.id);
     if (!fs.existsSync(instanceFolder)) throw new Error("Instance folder not found");
 
     // Default to Downloads rather than dropping the file inside the launcher's
@@ -9384,7 +9506,7 @@ ipcMain.on('open-folder', (event, { id, isClient, sub }) => {
 // Open a specific subfolder of an instance (mods, resourcepacks, saves, …).
 ipcMain.on("open-instance-folder", (event, { profileId, sub }) => {
   try {
-    const folderPath = path.join(dataDir, 'client', String(profileId), sub || "");
+    const folderPath = path.join(instanceRoot(profileId), sub || "");
     fs.mkdirSync(folderPath, { recursive: true });
     shell.openPath(folderPath);
   } catch (err) {
@@ -9441,14 +9563,14 @@ function migrateMeta(oldPath, newPath) {
 }
 
 ipcMain.handle("check-instance-tab", async (event, { profileId, tab }) => {
-  const basePath = path.join(dataDir, 'client', profileId.toString(), tab);
+  const basePath = path.join(instanceRoot(profileId), tab);
   if (!fs.existsSync(basePath)) return false;
   return tab === "servers" || fs.readdirSync(basePath).length > 0;
 });
 
 // get files
 ipcMain.handle("get-instance-tab-files", async (event, { profileId, tab }) => {
-  const basePath = path.join(dataDir, "client", profileId.toString(), tab);
+  const basePath = path.join(instanceRoot(profileId), tab);
   if (!fs.existsSync(basePath)) return [];
 
   return fs
@@ -9458,7 +9580,7 @@ ipcMain.handle("get-instance-tab-files", async (event, { profileId, tab }) => {
 
 // get file info for mods/resourcepacks/shaders
 ipcMain.handle("get-instance-tab-file-info", async (event, { profileId, tab, filename }) => {
-  const basePath = path.join(dataDir, "client", profileId.toString(), tab);
+  const basePath = path.join(instanceRoot(profileId), tab);
   const fullPath = path.join(basePath, filename);
   const cacheFile = tabMetaFile("client", profileId, tab, "mods.json");
   migrateMeta(path.join(basePath, "mods.json"), cacheFile);
@@ -10977,7 +11099,7 @@ ipcMain.handle("import:instance", async (event, { entry }) => {
     if (!entry || !entry.gameDir) return { success: false, error: "incomplete instance" };
     if (!entry.version) return { success: false, error: "this instance doesn't say which Minecraft version it is — set one and try again" };
     const profileId = getUniqueFolderName(entry.name || "Imported");
-    const dest = path.join(dataDir, "client", String(profileId));
+    const dest = instanceRoot(profileId);
     fs.mkdirSync(dest, { recursive: true });
 
     // Only what belongs to an instance — not the shared caches, which are big
@@ -11459,7 +11581,7 @@ function packFolderSignature(root) {
 
 ipcMain.handle("icon:packPanoramas", async (event, { profileId } = {}) => {
   if (profileId == null) return { panoramas: [] };
-  const root = path.join(dataDir, "client", String(profileId));
+  const root = instanceRoot(profileId);
   const sig = packFolderSignature(root);
   const seen = _packPanoMemo.get(String(profileId));
   if (seen && seen.sig === sig) return seen.value;
@@ -11713,7 +11835,7 @@ iconModels.configure({
     } catch { /* nothing downloaded yet */ }
     return [...seen];
   },
-  instanceRoot: (profileId) => path.join(dataDir, "client", String(profileId)),
+  instanceRoot: (profileId) => instanceRoot(profileId),
   enabledResourcePacks: readEnabledResourcePacks,
   // How colourful a texture is, which is what decides whether a face with a
   // `tintindex` really wants tinting. See model-assets.js.
@@ -12366,7 +12488,7 @@ ipcMain.handle("join:addMods", async (event, { name, profileId, filenames } = {}
 });
 
 ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
-  const basePath = path.join(dataDir, "client", profileId.toString(), tab);
+  const basePath = path.join(instanceRoot(profileId), tab);
   if (!fs.existsSync(basePath)) return [];
 
   // Instance loader/version drive update checks.
@@ -12680,7 +12802,7 @@ ipcMain.handle("get-instance-mods", async (event, { profileId, tab }) => {
 // structure and read it back defensively.
 
 const serversDatPath = (profileId) =>
-  path.join(dataDir, 'client', profileId.toString(), 'servers.dat');
+  path.join(instanceRoot(profileId), 'servers.dat');
 
 // The smallest servers.dat there can be is nineteen bytes: a compound holding
 // an empty list. Anything shorter is not a short server list, it is a file that
@@ -12761,7 +12883,7 @@ async function writeServersList(profileId, serversList) {
 // their own entries away.
 const sharedCfgDir = () => path.join(dataDir, "shared-config");
 const sharedCfgPath = (file) => path.join(sharedCfgDir(), file);
-const instanceFile = (profileId, file) => path.join(dataDir, "client", String(profileId), file);
+const instanceFile = (profileId, file) => path.join(instanceRoot(profileId), file);
 
 function syncEnabled(kind) { return !!settings.get(kind === "servers" ? "syncServers" : "syncOptions"); }
 
@@ -13120,7 +13242,7 @@ ipcMain.handle("get-instance-servers", async (event, { profileId }) => {
     ip: s.ip || "",
     icon: s.icon || null,
     acceptTextures: s.acceptTextures ?? 0,
-    folder: path.join(dataDir, 'client', profileId.toString())
+    folder: instanceRoot(profileId)
   }));
 });
 
@@ -13357,7 +13479,7 @@ function findLevelDatDir(root, depth = 0) {
 }
 
 ipcMain.handle("get-instance-worlds", async (event, { profileId }) => {
-  const savesDir = path.join(dataDir, "client", String(profileId), "saves");
+  const savesDir = path.join(instanceRoot(profileId), "saves");
   if (!fs.existsSync(savesDir)) return [];
   const out = [];
   for (const folder of fs.readdirSync(savesDir)) {
@@ -13402,7 +13524,7 @@ ipcMain.handle("import-world", async (event, { profileId, mode }) => {
   if (result.canceled || !result.filePaths.length) return { success: false, cancelled: true };
 
   const src = result.filePaths[0];
-  const savesDir = path.join(dataDir, "client", String(profileId), "saves");
+  const savesDir = path.join(instanceRoot(profileId), "saves");
   fs.mkdirSync(savesDir, { recursive: true });
 
   let worldDir = null;
@@ -13442,7 +13564,7 @@ ipcMain.handle("import-world", async (event, { profileId, mode }) => {
 /* ─────────────── enable/disable content ─────────────── */
 // Mods & shaders toggle by adding/removing a ".disabled" suffix.
 ipcMain.handle("set-mod-enabled", async (event, { profileId, tab, filename, enabled }) => {
-  const dir = path.join(dataDir, "client", String(profileId), tab);
+  const dir = path.join(instanceRoot(profileId), tab);
   const full = path.join(dir, filename);
   if (!fs.existsSync(full)) return { success: false, error: "File not found" };
   try {
@@ -13464,7 +13586,7 @@ ipcMain.handle("set-mod-enabled", async (event, { profileId, tab, filename, enab
 // Resource packs are enabled via options.txt (resourcePacks:[...]) rather than
 // a file suffix, mirroring how Minecraft itself tracks them.
 function readEnabledResourcePacks(profileId) {
-  const optionsPath = path.join(dataDir, "client", String(profileId), "options.txt");
+  const optionsPath = path.join(instanceRoot(profileId), "options.txt");
   if (!fs.existsSync(optionsPath)) return [];
   try {
     const line = fs.readFileSync(optionsPath, "utf-8").split(/\r?\n/).find(l => l.startsWith("resourcePacks:"));
@@ -13475,7 +13597,7 @@ function readEnabledResourcePacks(profileId) {
 }
 
 function writeEnabledResourcePacks(profileId, packs) {
-  const optionsPath = path.join(dataDir, "client", String(profileId), "options.txt");
+  const optionsPath = path.join(instanceRoot(profileId), "options.txt");
   let lines = [];
   if (fs.existsSync(optionsPath)) lines = fs.readFileSync(optionsPath, "utf-8").split(/\r?\n/);
   const serialized = "resourcePacks:" + JSON.stringify(packs);
@@ -13528,7 +13650,7 @@ ipcMain.handle("modrinth:changelog", async (event, { versionId }) => {
 // Update a mod/pack in place: download the new file, then remove the old one.
 ipcMain.handle("update-instance-mod", async (event, { profileId, tab, oldFilename, fileUrl }) => {
   try {
-    const dir = path.join(dataDir, "client", String(profileId), tab);
+    const dir = path.join(instanceRoot(profileId), tab);
     fs.mkdirSync(dir, { recursive: true });
     const newName = decodeURIComponent(path.basename(new URL(fileUrl).pathname));
     const dest = path.join(dir, newName);
@@ -13556,7 +13678,7 @@ ipcMain.handle("update-instance-mod", async (event, { profileId, tab, oldFilenam
 // if it's an enabled resource pack).
 ipcMain.handle("delete-instance-mod", async (event, { profileId, tab, filename }) => {
   try {
-    const dir = path.join(dataDir, "client", String(profileId), tab);
+    const dir = path.join(instanceRoot(profileId), tab);
     const full = path.join(dir, filename);
     // Guard against path traversal via a crafted filename.
     if (path.dirname(full) !== dir) return { success: false, error: "Invalid filename" };
@@ -13596,7 +13718,7 @@ function devModTarget(type, id) {
   // (returns a Promise), so .find on it would throw. Order doesn't matter here.
   let p = null;
   try { const arr = JSON.parse(fs.readFileSync(profilesPath, "utf8")); if (Array.isArray(arr)) p = arr.find(x => String(x.id) === String(id)); } catch { /* ignore */ }
-  return { modsDir: path.join(dataDir, "client", String(id), "mods"), loader: String((p && p.loader) || "").toLowerCase() };
+  return { modsDir: path.join(instanceRoot(id), "mods"), loader: String((p && p.loader) || "").toLowerCase() };
 }
 
 // A jar's declared mod id + loader(s), read from its manifest (Fabric/Quilt/
@@ -13891,6 +14013,296 @@ async function buildDevMod({ type, id, folder, root, onLine }) {
   return { ...out, lines, java: major, root: projectRoot };
 }
 
+// ── A mod project AS an instance ────────────────────────────────────────────
+//
+// A dev mod is a project whose built jar is copied into an ordinary
+// instance. This is the other way round: the instance IS the project. Its
+// game folder is the project's own run folder -- the one `gradle runClient`
+// starts the game in -- and launching it runs that task, so the game that
+// comes up is the one Gradle has just compiled, with the mod on the
+// classpath rather than in a mods folder. That is how the loaders' own dev
+// environments work, and it is the difference between testing the mod and
+// testing the last jar somebody remembered to build.
+//
+// What can be read off a project without running Gradle: which loader it is
+// for, which Minecraft version it builds against, what the mod is called and
+// which Java it wants. All four are in files every mod template has.
+
+// A project file, or "" if it is not there.
+function projectText(root, ...rel) {
+  try { return fs.readFileSync(path.join(root, ...rel), "utf8"); } catch { return ""; }
+}
+// Every build script of the project, as one piece of text to match against.
+function projectScripts(root) {
+  return projectText(root, "build.gradle") + "\n" + projectText(root, "build.gradle.kts")
+    + "\n" + projectText(root, "settings.gradle") + "\n" + projectText(root, "settings.gradle.kts");
+}
+// What `key = value` says in gradle.properties, by any of several spellings.
+function gradleProp(root, names) {
+  const props = projectText(root, "gradle.properties");
+  for (const n of names) {
+    const m = new RegExp(`^[ \\t]*${n}[ \\t]*[=:][ \\t]*(.+?)[ \\t]*$`, "mi").exec(props);
+    if (m && m[1]) return m[1].trim();
+  }
+  return null;
+}
+
+// Which loader the project is for. The mod's own metadata file is the
+// decisive statement of it -- a project that ships a fabric.mod.json builds
+// a Fabric mod whatever else is in the tree -- so that is looked at first,
+// and the Gradle plugin only when there is no metadata yet.
+const PROJECT_META = [
+  ["quilt", ["src", "main", "resources", "quilt.mod.json"]],
+  ["fabric", ["src", "main", "resources", "fabric.mod.json"]],
+  ["neoforge", ["src", "main", "resources", "META-INF", "neoforge.mods.toml"]],
+  ["forge", ["src", "main", "resources", "META-INF", "mods.toml"]],
+];
+const PROJECT_PLUGINS = [
+  // Quilt before Fabric: a Quilt project's build script mentions both.
+  ["quilt", /org\.quiltmc[.\w]*loom|quilt-loom/i],
+  ["neoforge", /net\.neoforged|neogradle|moddev(gradle)?|userdev/i],
+  ["forge", /net\.minecraftforge\.gradle|ForgeGradle/i],
+  ["fabric", /fabric-loom|net\.fabricmc/i],
+];
+function projectLoader(root) {
+  for (const [loader, rel] of PROJECT_META) {
+    if (fs.existsSync(path.join(root, ...rel))) return loader;
+  }
+  const scripts = projectScripts(root);
+  for (const [loader, re] of PROJECT_PLUGINS) if (re.test(scripts)) return loader;
+  return null;
+}
+
+// Which Minecraft version it builds against. Every template puts it in
+// gradle.properties; the dependency line is the fallback for one that does
+// not.
+function projectVersion(root) {
+  const prop = gradleProp(root, ["minecraft_version", "minecraftVersion", "mc_version", "minecraft"]);
+  // "1.21.1" and not "com.mojang:minecraft:1.21.1", which some projects put
+  // in the property whole.
+  if (prop) {
+    const m = /(\d+\.\d+(?:\.\d+)?(?:-\w+)?)\s*$/.exec(prop);
+    if (m) return m[1];
+  }
+  const scripts = projectScripts(root);
+  let m = /com\.mojang:minecraft:([\w.\-+]+)/.exec(scripts);
+  if (m) return m[1];
+  m = /net\.minecraftforge:forge:([\d.]+?)-/.exec(scripts)
+    || /mappings\s+channel:[^\n]*version:\s*["']([\d.]+)["']/.exec(scripts);
+  if (m) return m[1];
+  // NeoForge never writes the game's version down: it names its OWN, and
+  // 21.1.80 is NeoForge for 1.21.1. Matched narrowly, off the version it
+  // declares in its own block or as a dependency -- `id
+  // 'net.neoforged.moddev' version '1.0.21'` is the plugin's version and
+  // would read as 1.1.0.
+  m = /neoForge\s*(?:\{|\()[^})]*version\s*[=(]\s*["']v?(\d+)\.(\d+)\./i.exec(scripts)
+    || /net\.neoforged:neoforge:(\d+)\.(\d+)\./i.exec(scripts);
+  if (m) return `1.${m[1]}.${m[2]}`;
+  return null;
+}
+
+// Where the game runs. `run` is the default for Loom, ForgeGradle,
+// NeoGradle, ModDevGradle and Architectury alike, and a project that moved
+// it says so in its run configuration.
+function projectRunDir(root) {
+  const scripts = projectScripts(root);
+  const m = /runDir[\s=(]+["']([^"']+)["']/.exec(scripts)
+    || /workingDirectory[\s=(]+(?:project\.file\()?["']([^"']+)["']/.exec(scripts);
+  const rel = (m && m[1]) || "run";
+  return path.resolve(root, rel);
+}
+
+// Whether the project hands the game a username of its own. It matters
+// because Minecraft's own argument parser refuses an option given twice --
+// `Found multiple arguments for option username` and the game is gone before
+// a window appears -- so the launcher's account is only passed to a project
+// that is not already passing one.
+function projectSetsUsername(root) {
+  return /--username/.test(projectScripts(root));
+}
+
+// Everything a picked folder says about the project in it. Accepts the
+// project root, its `build` folder or `build/libs`, the same three a dev
+// mod's folder can be, because that is what people have to hand.
+function modProjectInfo(picked) {
+  if (!picked) return { success: false, error: "No folder" };
+  const root = gradleRootFor(picked) || (isGradleProject(picked) ? path.resolve(picked) : null);
+  if (!root) {
+    return { success: false, picked, error: "There is no Gradle project there. Pick the folder with build.gradle and gradlew in it." };
+  }
+  const wrapper = fs.existsSync(path.join(root, "gradlew")) || fs.existsSync(path.join(root, "gradlew.bat"));
+  const loader = projectLoader(root);
+  return {
+    success: true,
+    picked: path.resolve(picked),
+    root,
+    name: path.basename(root),
+    dir: projectRunDir(root),
+    task: "runClient",
+    loader: loader || "fabric",
+    knownLoader: !!loader,
+    version: projectVersion(root),
+    loaderVersion: gradleProp(root, ["loader_version", "fabric_loader_version", "neoforge_version", "forge_version"]) || "",
+    modId: gradleProp(root, ["mod_id", "modid", "archives_base_name", "mod_name"])
+      || (() => { try { return JSON.parse(projectText(root, "src", "main", "resources", "fabric.mod.json")).id || null; } catch { return null; } })(),
+    java: requiredJavaForProject(root),
+    wrapper,
+    setsUsername: projectSetsUsername(root),
+  };
+}
+
+ipcMain.handle("project:inspect", (event, { folder } = {}) => modProjectInfo(folder));
+ipcMain.handle("project:pick", async () => {
+  const r = await dialog.showOpenDialog({
+    title: "Select the mod project's folder",
+    properties: ["openDirectory"],
+  });
+  if (r.canceled || !r.filePaths.length) return { canceled: true };
+  return modProjectInfo(r.filePaths[0]);
+});
+
+// ── Launching one ───────────────────────────────────────────────────────────
+//
+// Gradle is the launcher here: it compiles whatever has changed, works out
+// the classpath and starts the game itself. So this is not launchViaWorker
+// with a different command -- there is nothing to download, no loader to
+// install and no version json to read -- but it reports the same things, so
+// an instance running this way is a running instance like any other: it is
+// in the running list, the Stop button stops it, its output is its log and
+// its playtime is counted.
+//
+// How to stop one: killing Gradle does not kill the game, which is its
+// child (and on Windows its grandchild, through cmd.exe running gradlew.bat).
+// So each run registers how to end itself, and stopping goes through that
+// rather than through a bare process.kill -- which would leave the game
+// running with nothing tracking it.
+const instanceKillers = new Map();   // pid -> () => void
+
+function killTree(pid) {
+  if (process.platform === "win32") {
+    try { spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { windowsHide: true }); return; }
+    catch { /* fall through to the single process */ }
+  } else {
+    // Started detached, so the whole group goes at once.
+    try { process.kill(-pid, "SIGTERM"); return; } catch { /* no group, or already gone */ }
+  }
+  try { process.kill(pid); } catch { /* already gone */ }
+}
+
+async function launchViaGradle(profileId, cfg, run = null) {
+  const { project, name, auth } = cfg;
+  const root = project.root;
+  if (!fs.existsSync(root)) throw new Error(`The project folder is gone: ${root}`);
+
+  const major = requiredJavaForProject(root);
+  let javaBin;
+  try { javaBin = await getJavaByMajor(major, { needJdk: true, label: `running ${path.basename(root)}` }); }
+  catch (e) { throw new Error(`Java ${major} is needed to run this project and could not be prepared: ${e.message}`); }
+  const home = javaHomeOf(javaBin);
+
+  const isWin = process.platform === "win32";
+  const wrapper = path.join(root, isWin ? "gradlew.bat" : "gradlew");
+  let cmd;
+  if (fs.existsSync(wrapper)) {
+    if (!isWin) { try { fs.chmodSync(wrapper, 0o755); } catch { /* it may not be ours */ } }
+    cmd = wrapper;
+  } else {
+    cmd = isWin ? "gradle.bat" : "gradle";
+  }
+
+  const task = project.task || "runClient";
+  const args = [task, `-Dorg.gradle.java.home=${home}`, "--console=plain"];
+  // The account, as the game's own arguments -- which is what makes a dev
+  // client the launcher's instance rather than Player347. Skipped for a
+  // project that passes a username itself, because the game refuses an
+  // option twice over and dies before it draws anything.
+  const gameArgs = [];
+  if (auth && auth.name && !projectSetsUsername(root)) {
+    gameArgs.push("--username", auth.name);
+    if (auth.uuid && auth.uuid !== "0") gameArgs.push("--uuid", String(auth.uuid).replace(/-/g, ""));
+    if (auth.access_token && auth.access_token !== "0") gameArgs.push("--accessToken", auth.access_token);
+  }
+  if (gameArgs.length) args.push(`--args=${gameArgs.join(" ")}`);
+  if (Array.isArray(cfg.customArgs) && cfg.customArgs.length) args.push(...cfg.customArgs);
+
+  // Said out loud, with the token taken out of it: this line is written into
+  // the instance's log, which is a file on disk and is what people paste
+  // into a bug report.
+  const spoken = args.map(a => a.startsWith("--args=")
+    ? "--args=" + gameArgs.map((g, i) => (gameArgs[i - 1] === "--accessToken" ? "<token>" : g)).join(" ")
+    : a);
+  broadcastLog(profileId, `[INFO] ${path.basename(cmd)} ${spoken.join(" ")}`, run);
+  broadcastLog(profileId, `[INFO] in ${root}, on Java ${major}`, run);
+  broadcastLog(profileId, `[INFO] The game runs in ${project.dir}`, run);
+  if (auth && auth.name && projectSetsUsername(root)) {
+    broadcastLog(profileId, "[INFO] The project sets its own --username, so the launcher's account is left out of it.", run);
+  }
+  fs.mkdirSync(project.dir, { recursive: true });
+
+  broadcastProgress(profileId, { label: "Gradle is building the project" });
+
+  return await new Promise((resolve, reject) => {
+    let child, settled = false;
+    try {
+      child = spawn(cmd, args, {
+        cwd: root,
+        env: { ...process.env, JAVA_HOME: home, GRADLE_OPTS: "-Dorg.gradle.daemon=false" },
+        windowsHide: true,
+        shell: isWin,                  // gradlew.bat is a batch file
+        detached: !isWin,              // its own process group, so stopping it stops the game
+      });
+    } catch (e) { reject(e); return; }
+
+    const pid = child.pid;
+    instanceKillers.set(pid, () => killTree(pid));
+    instanceMeta.set(profileId, { name, version: cfg.gameVersion || "" });
+    startInstance(profileId, pid);
+    runStarted(profileId, run, pid);
+    updateGamePresence();
+    broadcastProgress(profileId, { done: true, label: "Gradle is running the game" });
+    broadcastLog(profileId, `[INFO] Launched ${name} through Gradle (PID ${pid})`, run);
+
+    let rest = "";
+    const feed = (buf) => {
+      rest += buf.toString();
+      const parts = rest.split(/\r?\n/);
+      rest = parts.pop();
+      for (const line of parts) broadcastLog(profileId, line, run);
+    };
+    child.stdout && child.stdout.on("data", feed);
+    child.stderr && child.stderr.on("data", feed);
+
+    const done = (code) => {
+      if (settled) return;
+      settled = true;
+      instanceKillers.delete(pid);
+      stopInstance(profileId, pid);
+      runEnded(profileId, run);
+      onInstanceExited(profileId);
+      broadcastProgress(profileId, { done: true });
+      if (rest) broadcastLog(profileId, rest, run);
+      broadcastLog(profileId, `[INFO] Gradle exited with code ${code}`, run);
+      updateGamePresence();
+    };
+    child.on("error", (e) => {
+      broadcastLog(profileId, "[ERROR] " + (e.code === "ENOENT"
+        ? "No gradlew in the project and no gradle on the PATH"
+        : e.message), run);
+      done(-1);
+    });
+    child.on("close", (code) => {
+      // A build that fails never starts a game, and saying what went wrong
+      // beats leaving the last Gradle line to speak for itself.
+      if (code !== 0) broadcastLog(profileId, "[ERROR] Gradle did not finish. The lines above are its own.", run);
+      done(code);
+    });
+    // Gradle is up, and from here the log is the whole story: a build can
+    // take minutes and the game comes up at the end of it, so there is
+    // nothing to wait for before calling the launch started.
+    resolve({ pid });
+  });
+}
+
 const devWatchers = new Map(); // key -> [ { watcher, timer } ]
 function stopDevWatch(type, id) {
   const k = devModKey(type, id);
@@ -13903,6 +14315,10 @@ function startDevWatch(type, id) {
   if (!entry || !entry.enabled || !Array.isArray(entry.mods)) return;
   const ws = [];
   entry.mods.forEach(m => {
+    // The project a dev INSTANCE is has nothing to swap: Gradle compiles it
+    // into the run it starts. Watching its jars and copying one into the
+    // mods folder would load the mod a second time.
+    if (m.self) return;
     if (!m.folder || !fs.existsSync(m.folder)) return;
     const w = { watcher: null, timer: null };
     try {
@@ -13955,6 +14371,7 @@ async function syncDevMods(type, id) {
   const entry = loadDevModsStore()[devModKey(type, id)];
   if (!entry || !entry.enabled || !Array.isArray(entry.mods)) return;
   for (const m of entry.mods) {
+    if (m.self) continue;              // see startDevWatch: there is nothing to copy
     if (!m.folder || !m.modId) continue;
     try {
       // The catch-up runs at startup AND before every launch, and it used to
@@ -14291,7 +14708,7 @@ async function requiredDepsSatisfiable(dependencies, gameVersion, loader, requir
 async function migrateContentToVersion(profileId, gameVersion, loader) {
   const report = { updated: [], deferred: [], unchanged: [] };
   for (const tab of VERSIONED_TABS) {
-    const dir = path.join(dataDir, "client", String(profileId), tab);
+    const dir = path.join(instanceRoot(profileId), tab);
     if (!fs.existsSync(dir)) continue;
     const requireLoader = tab === "mods";
     let files = [];
@@ -14328,7 +14745,7 @@ async function migrateContentToVersion(profileId, gameVersion, loader) {
 async function scanToUpdate(profileId, gameVersion, loader) {
   const report = { installed: [], stillWaiting: [] };
   for (const tab of VERSIONED_TABS) {
-    const dir = path.join(dataDir, "client", String(profileId), tab);
+    const dir = path.join(instanceRoot(profileId), tab);
     if (!fs.existsSync(dir)) continue;
     const requireLoader = tab === "mods";
     let files = [];
@@ -14508,7 +14925,7 @@ ipcMain.handle("scan-instance-toupdate", async (event, { profileId }) => {
 
 // screenshots
 ipcMain.handle("get-instance-screenshots", async (event, { profileId }) => {
-  const folder = path.join(dataDir, "client", profileId.toString(), "screenshots");
+  const folder = path.join(instanceRoot(profileId), "screenshots");
 
   if (!fs.existsSync(folder)) return [];
 
@@ -16038,7 +16455,7 @@ const LEGACY_STEVE = "assets/minecraft/textures/entity/steve.png";
 const LEGACY_ALEX = "assets/minecraft/textures/entity/alex.png";
 
 function instanceClientJar(profileId, version) {
-  return path.join(dataDir, "client", String(profileId), "versions", String(version), `${version}.jar`);
+  return path.join(instanceRoot(profileId), "versions", String(version), `${version}.jar`);
 }
 
 // Resource pack_format for versions whose client jar has NO version.json (1.12.2
@@ -16104,7 +16521,7 @@ function readPackInfoFromJar(jarPath) {
 const CRACKED_PACK_NAME = "redstone-skin";
 const CRACKED_PACK_ENTRY = "file/" + CRACKED_PACK_NAME;
 const crackedPackDir = (profileId) =>
-  path.join(dataDir, "client", String(profileId), "resourcepacks", CRACKED_PACK_NAME);
+  path.join(instanceRoot(profileId), "resourcepacks", CRACKED_PACK_NAME);
 
 // Build (or refresh) the offline-skin resource pack for an instance and enable it.
 // Every default skin name is overridden, in BOTH the wide and slim folders, so the
