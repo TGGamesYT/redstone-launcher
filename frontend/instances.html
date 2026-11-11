@@ -3617,7 +3617,11 @@
           const img = document.createElement("img");
           img.alt = "";
           img.style.background = "var(--menu-bg)";
-          img.src = DEFAULT_ICON;
+          // The instance's icon IS the mod's icon -- it is read out of the
+          // project when the instance is made -- so the card shows the mod
+          // rather than the launcher's stand-in.
+          img.src = profile.icon || DEFAULT_ICON;
+          img.onerror = () => { img.src = DEFAULT_ICON; };
           li.appendChild(img);
 
           const info = document.createElement("div");

@@ -412,7 +412,13 @@
         // block/cross and block/tinted_cross both turn it off on the element,
         // which is why every plant and sapling came out two shades too dark
         // when only the face was looked at. A face may still override it.
-        const shadeOff = face.shade === false || (face.shade === undefined && el.shade === false);
+        // `shade: false` on the whole render is a picture that is not of a
+        // block in a world: a background tile is a WALL, and a wall whose
+        // top face is bright and whose sides are at 60% reads as a pile of
+        // boxes rather than as the material. Every face at full brightness
+        // is what the texture itself looks like.
+        const shadeOff = opts.shade === false
+          || face.shade === false || (face.shade === undefined && el.shade === false);
         // A model can also name the direction its shading should be taken
         // from, whatever way its faces actually point. Every cross -- grass,
         // saplings, mushrooms, the plant in a flower pot -- says "up", which

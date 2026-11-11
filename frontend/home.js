@@ -296,6 +296,13 @@
       .hs-player canvas {
         flex: 0 0 auto;
         max-width: 100%;
+        /* Both limits, which this always said and only half did. With only
+           the width capped, a canvas too big for its segment was squeezed
+           narrower and left at its full height -- so while the window was
+           being dragged the figure sat in the middle of a tall thin box
+           instead of where the segment's own alignment puts it, and jumped
+           back when the drag stopped. */
+        max-height: 100%;
         /* skinview3d sets the canvas size inline, so these cannot set it --
            they only stop it being squashed. The segment's own measurement
            does the sizing (see the player segment); object-fit means that
@@ -303,6 +310,17 @@
            drawn is letterboxed rather than stretched. */
         object-fit: contain;
       }
+      /* And the drawing inside it hugs the same edge the segment does, so a
+         render asked to sit on the left stays on the left while it is being
+         resized rather than drifting to the middle of its own box. */
+      .hs-player.left canvas { object-position: left center; }
+      .hs-player.right canvas { object-position: right center; }
+      .hs[data-va="top"] .hs-player canvas { object-position: center top; }
+      .hs[data-va="bottom"] .hs-player canvas { object-position: center bottom; }
+      .hs[data-va="top"] .hs-player.left canvas { object-position: left top; }
+      .hs[data-va="top"] .hs-player.right canvas { object-position: right top; }
+      .hs[data-va="bottom"] .hs-player.left canvas { object-position: left bottom; }
+      .hs[data-va="bottom"] .hs-player.right canvas { object-position: right bottom; }
       .hs > h2, .hs > h3 { margin:0 0 10px; }
       .hs-body { min-height:0; flex:1; overflow:auto; }
       .hs-empty { opacity:0.6; font-size:13px; }

@@ -92,13 +92,28 @@
     return '#' + [0, 1, 2].map(i => Math.round((x[i] + y[i]) / 2).toString(16).padStart(2, '0')).join('');
   };
 
+  // How bright the theme is: 0..100 with the middle meaning "as picked".
+  // The same multiplier applyTheme uses (see brightnessOf in sidebar.js),
+  // because this paints the page before that runs and the two disagreeing
+  // is a flash of the wrong colours on every page.
+  const by = (() => {
+    const n = Number(cached.themeBrightness);
+    if (!isFinite(n)) return 1;
+    return 0.5 + (Math.max(0, Math.min(100, n)) / 100);
+  })();
+  const dim = (h) => {
+    const c = hex(h);
+    if (!c || by === 1) return h;
+    return '#' + c.map(v => Math.max(0, Math.min(255, Math.round(v * by))).toString(16).padStart(2, '0')).join('');
+  };
+
   if (cached.baseColor) {
-    set('--base-color', cached.baseColor);
-    set('--secondary-color', cached.secondaryColor);
+    set('--base-color', dim(cached.baseColor));
+    set('--secondary-color', dim(cached.secondaryColor));
     // The third colour is derived unless it was explicitly set by hand.
     set('--third-color', (cached.autoThird === false && cached.thirdColor)
-      ? cached.thirdColor
-      : middle(cached.baseColor, cached.secondaryColor));
+      ? dim(cached.thirdColor)
+      : middle(dim(cached.baseColor), dim(cached.secondaryColor)));
     set('--text-color', cached.textColor);
     // The outline behind text sitting straight on a custom background: a dark
     // edge under light text, a light one under dark text.

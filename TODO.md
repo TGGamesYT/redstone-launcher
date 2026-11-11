@@ -9,6 +9,97 @@ started.
 
 ---
 
+## 0. Round 56
+
+- [x] **A mod project instance assumed Java 21 and a Gradle on the PATH.** —
+      *Three things were wrong at once. The toolchain was only read in its
+      literal form, so `JavaLanguageVersion.of(java_version)` -- which is how
+      half the templates write it -- was missed and the fallback used
+      instead. Nothing checked what the project's OWN Gradle can run on, and
+      Gradle refuses a JDK newer than it knows, so a toolchain of 21 on a
+      7.x wrapper was a build that stopped before it started. And a project
+      that pins `org.gradle.java.home` had ours forced over it. All three
+      now: the property is followed up, the answer is brought back to what
+      the wrapper's Gradle can run, and a pinned JDK is left alone.*
+- [x] **And on Windows it could not run the wrapper at all.** — *`gradlew.bat`
+      is a batch file, which Node will not run without a shell -- and
+      `shell: true` on Windows pastes the command and its arguments into one
+      string and quotes nothing. A project under "My Mods" was a command
+      cmd.exe could not find, and `--args=--username Some Name` was three
+      arguments. cmd.exe is handed the file and the arguments separately
+      now, which Node quotes properly.*
+- [x] **A mod project's own icon is the instance's icon.** — *Every loader's
+      metadata names one -- `icon` in fabric.mod.json, `logoFile` in the
+      toml -- and the file is sitting in src/main/resources while the
+      project is being worked on. The instance wears it from the moment it
+      is made, and so does its card in the Mods tab.*
+- [x] **Opening a dev instance's folder opened the launcher's.** — *Two
+      "open folder" paths were still spelling `<data>/client/<id>` out for
+      themselves, in the one shape a search for the first spelling does not
+      find: `isClient ? 'client' : 'servers'`. The guard looks for that too
+      now.*
+- [x] **The block picker was a list, not a grid.** — *Its styles are the
+      model picker's own and nothing had put them up: the icon picker calls
+      `ensureStyle()` itself, and mounting the grid anywhere else got no
+      styles at all. It puts its own up now.*
+- [x] **And the thumbnails were isometric icons.** — *The picture a wall is
+      made of is the one it will BE: straight on from the north, framed by
+      the block. For a full cube that comes out as exactly its side texture,
+      which is what the old list showed.*
+- [x] **Drawn without lighting.** — *The shading table is about a block
+      sitting in a world with the sun overhead. A wall of them with every
+      top bright and every side at 60% reads as a pile of boxes rather than
+      as the material.*
+- [x] **The picker jumped in height on every refresh, and the switches sat
+      above their words.** — *The grid had a maximum height rather than a
+      height, so emptying it collapsed the dialog and refilling it grew it
+      again. And the settings page styles checkboxes as switches, half of
+      which was leaking into a plain one -- they are told to be plain
+      checkboxes inside the picker.*
+- [x] **The skin render resized about its own middle.** — *The rule said
+      both limits were maxima and only the width was; with the height left
+      at its full size, a canvas too big for its segment sat in the middle
+      of a tall thin box instead of where the segment's alignment puts it.
+      The drawing hugs the same edge the segment does now.*
+- [x] **The app icon could not be the background alone, or a picture with the
+      mark on it.** — *The section asked the wrong question: it was a choice
+      between "the launcher's icon" and "a picture", with a toggle bolted on
+      the side. It is two questions now -- what is behind it, and whether the
+      gem and the cog are over that -- which is four icons rather than two,
+      and four controls in a column rather than five in a row.*
+- [x] **The bars' theme lagged behind the page.** — *The settings page paints
+      itself as a colour is picked and the bars waited for the save to reach
+      the main process and come back, which is a round trip and a 120ms
+      settle. They are one frame up in the same process, so they are told
+      directly, on the next animation frame.*
+- [x] **A brightness slider for every theme.** — *It multiplies the theme's
+      own colours rather than putting a filter over the window: a filter
+      would dim the picture and the block wall behind the launcher too, and
+      would make <html> a containing block, which the fixed bars and the
+      fixed background are both built on. The text colour is left where it
+      is. 0..100 with the middle meaning the theme as it was picked.*
+- [x] **The automatic third colour did not follow a saved theme.** — *A theme
+      carries whatever its third colour was when it was saved; while it is
+      automatic it has to be worked out again from the pair that just
+      arrived.*
+- [x] **The icon showed a 4x4 grid of EVERY block.** — *Cutting the tile at
+      the size the window draws it is right for a patch of randomly turned
+      cells, which is what it was written for, and wrong for a plain tile:
+      the backing is a circle a quarter of an inch wide and one block is a
+      block. One block fills it unless the tile really is a patch.*
+- [ ] **A NeoForge 26.3 instance does not start.** — The log ends in a
+      NullPointerException inside FML's own error display. *What that means
+      is that NeoForge hit a fatal error before the window opened and its
+      error window crashed while reporting it, so the reason never reached
+      the launcher. Two things were in the way of seeing it: exit code 1 was
+      treated as Minecraft's own "stop and restart" and reported nothing at
+      all, and nothing read the game's own logs/latest.log, which is where
+      FML had written it. Both fixed, with a note saying that
+      -Dfml.earlyprogresswindow=false makes the next run print the reason in
+      the console. Still open until the real error is known.*
+
+---
+
 ## 0. Round 55
 
 - [x] **Undo and redo of a theme still refreshed the page.** — *The reload was

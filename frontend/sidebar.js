@@ -66,7 +66,7 @@ function error(text, duration = 3000) {
 const THEME_FALLBACK = {
   baseColor: '#b30c0c', secondaryColor: '#ff4d4d', thirdColor: '#d92d2d',
   textColor: '#ffffff', font: 'Pixel', borderRadius: 25, gradientAngle: 180,
-  fontSmoothing: 'sharp',
+  fontSmoothing: 'sharp', themeBrightness: 50,
 };
 
 function hexToRgb(hex, fallback = '#000000') {
@@ -304,18 +304,45 @@ function outlineFor(textColor) {
   return lum > 0.5 ? 'rgba(0, 0, 0, 0.85)' : 'rgba(255, 255, 255, 0.85)';
 }
 
+// How bright the theme is, as a multiplier on its colours.
+//
+// The slider is 0..100 with 50 in the middle, and the middle is the theme as
+// it was picked: below it the launcher's own panels and accents go darker,
+// above it lighter. It is applied to the COLOURS rather than as a filter
+// over the window, because a filter would dim the pictures and the block
+// textures behind it as well -- and would make <html> a containing block,
+// which the fixed bars and the fixed background are both built on.
+//
+// The text colour is left alone: this is about how loud the launcher is, and
+// dimming the words is just making them harder to read.
+const BRIGHTNESS_RANGE = [0.5, 1.5];
+function brightnessOf(settings) {
+  const n = Number(settings && settings.themeBrightness);
+  if (!isFinite(n)) return 1;
+  const at = Math.max(0, Math.min(100, n)) / 100;
+  const [lo, hi] = BRIGHTNESS_RANGE;
+  return lo + (hi - lo) * at;
+}
+function dimmed(hex, by) {
+  if (by === 1) return hex;
+  const [r, g, b] = hexToRgb(hex, '#000000');
+  const one = (v) => Math.max(0, Math.min(255, Math.round(v * by)));
+  return rgbToHex(one(r), one(g), one(b));
+}
+
 function applyTheme(settings) {
   settings = { ...THEME_FALLBACK, ...(settings || {}) };
   const textColor = settings.textColor;
   const textFont = settings.font;
-  const base = settings.baseColor;
-  const secondary = settings.secondaryColor;
+  const by = brightnessOf(settings);
+  const base = dimmed(settings.baseColor, by);
+  const secondary = dimmed(settings.secondaryColor, by);
   // Derive the third colour from base+secondary unless the user explicitly
   // turned OFF auto-third and picked a manual one. Presets/older saves left a
   // stale red thirdColor behind, which is why sidebar hovers, tooltips, install
   // buttons and pagination stayed red regardless of the theme.
   const mid = (settings.autoThird === false && settings.thirdColor)
-    ? settings.thirdColor
+    ? dimmed(settings.thirdColor, by)
     : getMiddleColor(base, secondary);
   document.documentElement.style.setProperty('--base-color', base);
   document.documentElement.style.setProperty('--secondary-color', secondary);

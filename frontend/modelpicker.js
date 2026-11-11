@@ -36,6 +36,9 @@
     it.kind, it.id, state || '',
     (ctx && ctx.version) || '-',
     (ctx && ctx.overrides) ? `i${ctx.instanceId ?? '-'}` : '-',
+    // A straight-on unlit view is a different picture of the same block, so
+    // it cannot share the icon's cache entry.
+    (ctx && ctx.view) ? `v${ctx.view}` : '-',
   ].join('|');
 
   // One drawing queue. Two WebGL contexts racing makes both slower, and
@@ -86,9 +89,13 @@
     const p = (async () => {
       const desc = await describe(it, ctx, state);
       if (!desc || desc.error) return null;
-      const url = await enqueue(() => window.BlockRender.render(desc, {
-        size: CELL_PX, rotX: desc.rotX || 0, rotY: desc.rotY || 0, uvlock: !!desc.uvlock,
-      }));
+      // The usual thumbnail is the isometric icon. A host that is choosing
+      // a WALL asks for the view it will actually get: straight on from one
+      // side, framed by the block, and unlit -- which for a full cube comes
+      // out as exactly its side texture.
+      const url = await enqueue(() => window.BlockRender.render(desc, ctx.view
+        ? { size: CELL_PX, view: ctx.view, span: 16, shade: false }
+        : { size: CELL_PX, rotX: desc.rotX || 0, rotY: desc.rotY || 0, uvlock: !!desc.uvlock }));
       if (url) ipcRenderer.invoke('model:thumbPut', { key, dataUrl: url }).catch(() => { });
       return url;
     })();
@@ -166,6 +173,10 @@
   }
 
   function mount(container, opts) {
+    // Its own styles, rather than relying on whoever mounted it having put
+    // the icon picker's up: without them the grid is not a grid at all and
+    // the cells come out as a list down the page.
+    ensureStyle();
     const ctx = {
       instanceId: opts.instanceId ?? null,
       version: opts.version || null,
@@ -175,6 +186,9 @@
       vanilla: true,
       modded: true,
       overrides: false,
+      // Which way the thumbnails are drawn, when the host wants the picture
+      // it is going to use rather than an icon.
+      view: opts.view || null,
       onPick: opts.onPick || (() => { }),
     };
     // The source switches only make sense for an instance: a bare version has
@@ -363,12 +377,28 @@
       .mp-kinds { display:flex; gap:10px; font-size:12px; opacity:0.85; }
       .mp-sources { margin-top:-2px; }
       .mp-kinds label { display:flex; align-items:center; gap:4px; }
-      .mp-kinds input { width:auto; margin:0; }
+      /* A plain checkbox, whatever the page around it does to its own.
+         The settings page styles checkboxes as switches, and an unstyled
+         one picking up half of that came out as a raised block sitting
+         above the words. */
+      .mp-kinds input[type="checkbox"] {
+        appearance:auto; -webkit-appearance:checkbox;
+        width:13px; height:13px; min-width:0; min-height:0; flex:0 0 auto;
+        margin:0; padding:0; border:0; border-radius:0; background:none;
+        box-shadow:none; transform:none; position:static; inset:auto;
+        vertical-align:middle; accent-color:var(--base-color,#b30c0c);
+      }
+      .mp-kinds input[type="checkbox"]::before,
+      .mp-kinds input[type="checkbox"]::after { content:none; display:none; }
       /* The picker's own .ip-grid rules cover this when it is mounted there,
          but repeating the essentials means the grid is not at the mercy of
          load order, or of being mounted anywhere else. */
+      /* A fixed height, not a maximum: the grid is emptied and refilled
+         whenever a switch is changed or a search is typed, and with a
+         maximum the whole dialog jumped shorter and then taller again as
+         the cells came back. */
       .mp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(56px,1fr)); gap:8px;
-                 max-height:300px; overflow-y:auto; padding:4px; }
+                 height:300px; align-content:start; overflow-y:auto; padding:4px; }
       .mp-grid .ip-cell { width:56px; height:56px; border:2px solid var(--border-dark,#444);
                  border-radius:var(--border-radius,6px); cursor:pointer; display:flex;
                  align-items:center; justify-content:center; background:var(--menu-bg,#222); overflow:hidden; }

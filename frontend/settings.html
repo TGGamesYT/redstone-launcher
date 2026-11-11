@@ -405,11 +405,29 @@
       flex: 0 0 auto;
     }
 
+    /* Down the column rather than along a row: there are two questions
+       here and the answers to each belong together. Side by side they read
+       as five unrelated buttons. */
     .appicon-btns {
       display: flex;
-      gap: 8px;
-      margin-top: 8px;
-      flex-wrap: wrap;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .appicon-label {
+      font-size: 12px;
+      opacity: 0.7;
+    }
+
+    .appicon-backs {
+      margin: 0;
+    }
+
+    .appicon-row .appicon-parts {
+      margin: 2px 0 0;
     }
 
     /* ── Background ── */
@@ -420,7 +438,8 @@
       margin: 10px 0 14px;
     }
 
-    .bg-mode {
+    .bg-mode,
+    .appicon-back {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -432,7 +451,10 @@
       font-size: 13px;
     }
 
-    .bg-mode.on {
+    .appicon-backs { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .bg-mode.on,
+    .appicon-back.on {
       border-color: var(--base-color);
       background: var(--third-color);
     }
@@ -822,21 +844,31 @@
       </div>
 
       <h4 style="margin-top: 30px;">App icon</h4>
+      <!-- Two questions, which is what the icon actually is: what is behind,
+           and whether the launcher's own mark is over it. They used to be a
+           row of four buttons and a toggle side by side, which said neither
+           and could not express "the background, without the mark" or "my
+           picture, with it". -->
       <div class="appicon-row">
         <img id="app-icon-preview" alt="">
         <div class="appicon-btns">
-          <button type="button" id="app-icon-choose"
-            data-tip="The same icons an instance can have: a block, an item, a mob render, a block's face, or a picture of your own.">Choose an icon…</button>
-          <button type="button" id="app-icon-theme" style="display:none;"
-            data-tip="Go back to the launcher's own icon, which is tinted to the base colour and follows it from then on.">Back to the launcher's icon</button>
-          <label class="setting-toggle" style="margin-top:4px;"
-            data-tip="The launcher's icon is drawn in layers: the round backing takes your base colour, the gem your second colour, and the cog is left as it is. Tick this and the backing becomes whatever is behind the launcher instead — your block, your picture or your gradient — with the icon still on top of it."><input type="checkbox" id="app-icon-merge"> Show the background through it</label>
+          <div class="appicon-label">Behind it</div>
+          <div class="appicon-backs">
+            <button type="button" class="appicon-back" data-back="theme"
+              data-tip="The launcher's own backing, in your base colour.">Your colour</button>
+            <button type="button" class="appicon-back" data-back="merge"
+              data-tip="Whatever is behind the launcher — your picture, your block, your gradient.">The background</button>
+            <button type="button" class="appicon-back" data-back="image"
+              data-tip="A block, an item, a mob render, a block's face, or a picture of your own.">A picture…</button>
+          </div>
+          <label class="setting-toggle appicon-parts"
+            data-tip="The gem and the cog, drawn over whatever is behind them. Off leaves what is behind as the whole icon."><input type="checkbox" id="app-icon-parts"> The gem and the cog over it</label>
           <!-- A whole wallpaper squashed into a 256-pixel circle is the
                picture seen from much too far away, so it can be framed:
                the same zoom, placing and rounding an instance's icon gets.
                Only worth offering when the backing IS a picture. -->
-          <div id="app-icon-crop-row" style="display:none; margin-top:8px;">
-            <button type="button" id="app-icon-crop" class="bg-btn">Frame the picture…</button>
+          <div id="app-icon-crop-row" style="display:none;">
+            <button type="button" id="app-icon-crop" class="bg-btn">Frame it…</button>
             <button type="button" id="app-icon-crop-clear" class="bg-btn" style="margin-left:8px;">Use the whole picture</button>
           </div>
         </div>
@@ -903,6 +935,17 @@
       <br>
       <input type="range" id="border-radius" min="0" max="25" step="0.2" style="width: 200px;">
       <span class="slider-value" id="border-radius-value"></span>
+
+      <br>
+      <!-- Every theme can be turned down. It multiplies the theme's own
+           colours rather than putting a filter over the window: a filter
+           would dim the picture and the block wall behind the launcher as
+           well, which is not what "a darker theme" means. The text colour
+           is left where it is. -->
+      <label data-tip="How bright this theme is. The middle is the theme as it was picked; below it the panels and accents go darker, above it lighter. Your pictures and your text are left alone.">Theme brightness:</label>
+      <br>
+      <input type="range" id="theme-brightness" min="0" max="100" step="1" style="width: 200px;">
+      <span class="slider-value" id="theme-brightness-value"></span>
 
       <h4 style="margin-top: 40px;">Background</h4>
       <div class="bg-modes" id="bg-modes">
@@ -1194,6 +1237,28 @@
     //
     // Kept in sessionStorage rather than a variable: the reload is part of
     // the undo, so a stack in memory would not survive its own use.
+    // What the two bars are drawn from. A save carrying any of these is a
+    // save they have to follow.
+    const THEME_KEYS = [
+      'baseColor', 'secondaryColor', 'thirdColor', 'autoThird', 'textColor',
+      'font', 'fontSmoothing', 'borderRadius', 'themeBrightness', 'background',
+      'customCss', 'devMode',
+    ];
+    let _barsSoon = null;
+    function paintTheBarsNow() {
+      // On the next frame, so a drag that saves twenty times in a second
+      // repaints them once per frame rather than twenty times.
+      if (_barsSoon) return;
+      _barsSoon = requestAnimationFrame(() => {
+        _barsSoon = null;
+        try {
+          const top = window.parent;
+          if (!top || top === window || typeof top.applyTheme !== 'function') return;
+          top.applyTheme({ ...known });
+        } catch { /* the shell is not ours to touch, which is fine */ }
+      });
+    }
+
     const UNDO_KEY = 'settingsUndo', REDO_KEY = 'settingsRedo', UNDO_MAX = 40;
     const readStack = (k) => { try { return JSON.parse(sessionStorage.getItem(k) || '[]') || []; } catch { return []; } };
     const writeStack = (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v.slice(-UNDO_MAX))); } catch { /* private window */ } };
@@ -1227,6 +1292,16 @@
           }
         }
         Object.assign(known, payload);
+        // The bars repaint NOW, not when the main process gets round to
+        // telling them.
+        //
+        // The settings page paints itself as a colour is picked, and the
+        // bars waited for save-settings to reach the main process and come
+        // back as settings-updated -- which is a round trip and a 120ms
+        // settle, so the page you were on changed colour and the bars
+        // followed a moment later. They are in the same process as this
+        // page, one frame up, so they can simply be told.
+        if (THEME_KEYS.some(k => k in payload)) paintTheBarsNow();
       }
       return rawSend(channel, payload, ...rest);
     };
@@ -1861,6 +1936,33 @@
         localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
       });
 
+      // How bright this theme is. The slider is 0..100 with the middle
+      // meaning "as it was picked"; what it actually does to the colours is
+      // in applyTheme (see brightnessOf in sidebar.js), so the page, the
+      // bars and the boot script all agree.
+      const brightness = document.getElementById('theme-brightness');
+      const brightnessValue = document.getElementById('theme-brightness-value');
+      const sayBrightness = () => {
+        const n = Number(brightness.value);
+        brightnessValue.innerText = n === 50 ? 'as picked' : (n > 50 ? `+${n - 50}%` : `${n - 50}%`);
+      };
+      if (brightness) {
+        brightness.value = getSetting('themeBrightness') ?? 50;
+        sayBrightness();
+        brightness.addEventListener('input', () => {
+          sayBrightness();
+          const updateObj = { themeBrightness: parseInt(brightness.value, 10) };
+          // Painted here as well as saved, so the page you are looking at
+          // moves with the slider rather than after it.
+          if (window.applyTheme) {
+            try { window.applyTheme({ ...known, ...updateObj }); } catch { /* the save will do it */ }
+          }
+          ipcRenderer.send('save-settings', updateObj);
+          const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+          localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
+        });
+      }
+
       // ── What a setting does, on hover ──
       //
       // Each group used to carry a paragraph above it explaining several
@@ -2147,20 +2249,28 @@
       });
 
       // ── the app's own icon ──
+      //
+      // Two questions. What is BEHIND it -- your colour, whatever is behind
+      // the launcher, or a picture of your own -- and whether the launcher's
+      // own mark, the gem and the cog, is drawn over that. Every combination
+      // of the two is an icon somebody has asked for, including the two that
+      // could not be said before: the background with no mark on it, and a
+      // picture of your own WITH the mark.
       const iconPreview = document.getElementById('app-icon-preview');
+      const iconParts = document.getElementById('app-icon-parts');
       const showAppIcon = async (color) => {
         const r = await ipcRenderer.invoke('icon:previewApp', { color });
         if (r && r.success) iconPreview.src = r.dataUrl;
       };
-      // There is no button for following the theme, because following the
-      // theme is not a choice to make -- it is simply what the launcher's own
-      // icon does. The only thing to decide is whether a picture of your own
-      // is being used instead, so the second button exists only to undo that.
-      const iconBack = document.getElementById('app-icon-theme');
+      // Which of the three backings is in use, from the stored icon.
+      const backingOf = (icon) => (icon && icon.kind === 'image' && icon.dataUrl)
+        ? 'image' : (icon && icon.mergeBlock ? 'merge' : 'theme');
       let iconIsPicture = false;
-      const showIconMode = (isPicture) => {
-        iconIsPicture = isPicture;
-        iconBack.style.display = isPicture ? '' : 'none';
+      const showBacking = (which) => {
+        iconIsPicture = which === 'image';
+        for (const b of document.querySelectorAll('.appicon-back')) {
+          b.classList.toggle('on', b.dataset.back === which);
+        }
       };
       // What the section shows, worked out from scratch: which icon is in
       // use, and then what that icon actually looks like right now. Used on
@@ -2171,35 +2281,55 @@
         let r = null;
         try { r = await ipcRenderer.invoke('icon:app'); } catch { return; }
         const icon = (r && r.icon) || { kind: 'theme' };
-        if (icon.kind === 'image' && icon.dataUrl) { iconPreview.src = icon.dataUrl; showIconMode(true); }
-        else { showIconMode(false); await showAppIcon(); }
-        if (iconMerge) iconMerge.checked = !!icon.mergeBlock;
+        showBacking(backingOf(icon));
+        // The picture is the backing now, so even a chosen one is drawn
+        // rather than shown as it came in -- the mark may be over it.
+        await showAppIcon();
+        if (iconParts) {
+          iconParts.checked = typeof icon.parts === 'boolean'
+            ? icon.parts : !(icon.kind === 'image' && icon.dataUrl);
+        }
         iconHasCrop = !!icon.backCrop;
         if (window.__iconCropRowRefresh) window.__iconCropRowRefresh();
       };
       window.__refreshAppIcon = refreshAppIcon;
 
-      iconBack.addEventListener('click', async () => {
-        const r = await ipcRenderer.invoke('icon:setApp', { icon: { kind: 'theme' } });
-        if (r && r.success) { iconPreview.src = r.dataUrl; showIconMode(false); if (window.notify) notify('Back to the launcher\'s icon', 'success'); }
-        else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
-      });
-      // The same picker an instance's icon uses -- the bundled blocks, a
-      // rendered item, block or mob, a block's face, or a picture of your
-      // own. It used to be a file dialog and nothing else.
-      document.getElementById('app-icon-choose').addEventListener('click', () => {
-        if (!window.IconPicker) return;
-        window.IconPicker.open({
-          onPick: async (dataUrl) => {
-            if (!dataUrl) return;
-            const r = await ipcRenderer.invoke('icon:setApp', { icon: { kind: 'image', dataUrl } });
-            if (r && r.success) { iconPreview.src = r.dataUrl; showIconMode(true); if (window.notify) notify('Icon changed', 'success'); }
-            else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
-          },
-        });
-      });
+      const setIcon = async (icon, said) => {
+        const r = await ipcRenderer.invoke('icon:setApp', { icon });
+        if (r && r.success) {
+          await refreshAppIcon();
+          if (said && window.notify) notify(said, 'success');
+        } else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
+      };
 
-      const iconMerge = document.getElementById('app-icon-merge');
+      for (const b of document.querySelectorAll('.appicon-back')) {
+        b.addEventListener('click', async () => {
+          const want = b.dataset.back;
+          const now = await ipcRenderer.invoke('icon:app').catch(() => null);
+          const icon = (now && now.icon) || { kind: 'theme' };
+          if (want === 'theme') return setIcon({ ...icon, kind: 'theme', dataUrl: null, mergeBlock: false });
+          if (want === 'merge') return setIcon({ ...icon, kind: 'theme', dataUrl: null, mergeBlock: true });
+          // A picture: the same picker an instance's icon uses -- the
+          // bundled blocks, a rendered item, block or mob, a block's face,
+          // or a file of your own.
+          if (!window.IconPicker) return;
+          window.IconPicker.open({
+            onPick: async (dataUrl) => {
+              if (!dataUrl) return;
+              await setIcon({ ...icon, kind: 'image', dataUrl, mergeBlock: false }, 'Icon changed');
+            },
+          });
+        });
+      }
+
+      if (iconParts) {
+        iconParts.addEventListener('change', async () => {
+          const r = await ipcRenderer.invoke('icon:setParts', { on: iconParts.checked });
+          if (r && r.success) await refreshAppIcon();
+          else if (window.notify) notify((r && r.error) || 'The icon could not be changed', 'error');
+        });
+      }
+
       // ── framing the picture inside the icon ──
       //
       // The backing is a circle 256 pixels across and a wallpaper is a
@@ -2216,7 +2346,9 @@
         // gradient has nothing to frame. Any of the stack counts, not the
         // top one -- the backing shows all of them.
         const has = (im) => im && (im.file || im.url);
-        const canFrame = iconMerge.checked && bg.mode === 'image'
+        const backing = document.querySelector('.appicon-back.on');
+        const fromBackground = !!backing && backing.dataset.back === 'merge';
+        const canFrame = fromBackground && bg.mode === 'image'
           && ((Array.isArray(bg.images) && bg.images.some(has)) || has(bg.image));
         iconCropRow.style.display = canFrame ? 'block' : 'none';
         const clear = document.getElementById('app-icon-crop-clear');
@@ -2224,11 +2356,6 @@
       };
       // Everything above this point is declared; now it can be filled in.
       refreshAppIcon();
-      iconMerge.addEventListener('change', async () => {
-        const r = await ipcRenderer.invoke('icon:setMergeBlock', { on: iconMerge.checked });
-        if (r && r.success && r.dataUrl) iconPreview.src = r.dataUrl;
-        showIconCrop();
-      });
       // Kept in step with the background, since choosing a picture -- or
       // switching away from one -- changes whether there is anything to
       // frame at all.
@@ -2305,7 +2432,7 @@
                 Blocks from
                 <select id="bgbFrom" style="flex:0 1 auto;"></select>
               </label>
-              <div id="bgbPicker" style="max-height:min(60vh,460px); overflow:auto;"></div>
+              <div id="bgbPicker"></div>
             </div>`;
           document.body.appendChild(ov);
           const close = (picked) => { ov.remove(); resolve(picked || null); };
@@ -2327,6 +2454,10 @@
             instanceId: from.value || null,
             only: ['block'],
             sources: true,
+            // The picture it is going to BE: straight on from the north and
+            // unlit, which for a full cube is its side texture and for
+            // anything else is the shape you would see in a wall of them.
+            view: 'north',
             onPick: (url, info) => close({
               id: info.item.id,
               name: info.item.name,
@@ -2857,7 +2988,11 @@
       async function renderBlockView(view, size = 128) {
         const d = await blockDescription();
         if (!d || !window.BlockRender) return null;
-        try { return await window.BlockRender.render(d, { size, view, span: 16 }); }
+        // Unlit: a wall is the material, not a block sitting in a world with
+        // the sun overhead. With the shading on, a tiled floor came out with
+        // every tile's top bright and its sides at 60%, which reads as a
+        // pile of boxes.
+        try { return await window.BlockRender.render(d, { size, view, span: 16, shade: false }); }
         catch { return null; }
       }
       async function loadBlockFaces() {
@@ -3057,10 +3192,22 @@
           if (code) code.value = v;
         }
         if (autoThirdCheckbox) autoThirdCheckbox.checked = !!got('autoThird');
+        // The third colour follows the other two while it is automatic, and
+        // what arrived may have been worked out from a different pair -- a
+        // saved theme carries whatever its third colour was when it was
+        // saved. Worked out again here, which is what makes the hovers, the
+        // tooltips and the install buttons change with the rest of it.
+        if (autoThirdCheckbox && autoThirdCheckbox.checked) {
+          try { updateThirdColor(true); } catch { /* the swatches are not up yet */ }
+        }
         if (fontSelect && got('font')) fontSelect.value = got('font');
         if (smoothSelect) {
           smoothSelect.value = got('fontSmoothing') || 'sharp';
           document.documentElement.dataset.smoothing = smoothSelect.value;
+        }
+        if (brightness && got('themeBrightness') !== undefined) {
+          brightness.value = got('themeBrightness') ?? 50;
+          sayBrightness();
         }
         if (borderRadius && got('borderRadius') !== undefined) {
           borderRadius.value = got('borderRadius');

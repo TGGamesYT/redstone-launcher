@@ -39,10 +39,14 @@ const check = (what, got, want, note) => {
 // for why it is done that way.
 const WANTED = [
   "GRADLE_MARKERS", "isGradleProject", "gradleRootFor",
-  "MC_JAVA", "javaForMinecraftVersion", "requiredJavaForProject",
+  "MC_JAVA", "javaForMinecraftVersion",
+  "gradleWrapperVersion", "GRADLE_JAVA_MAX", "cmpVersions", "javaRangeForGradle",
+  "javaFromScripts", "projectOwnJavaHome", "requiredJavaForProject",
   "projectText", "projectScripts", "gradleProp",
   "PROJECT_META", "PROJECT_PLUGINS", "projectLoader",
-  "projectVersion", "projectRunDir", "projectSetsUsername", "modProjectInfo",
+  "projectVersion", "projectRunDir", "projectSetsUsername",
+  "modProjectId", "modProjectIcon", "modProjectInfo",
+  "gradleSpawnArgs",
   "_projectDirsAt", "_projectDirs", "projectDirs", "instanceRoot",
 ];
 const mod = await liftModule(WANTED, {
@@ -85,7 +89,12 @@ write("fabric-example-mod/gradle.properties", [
   "archives_base_name=modid",
   "mod_id=examplemod",
 ].join("\n"));
-write("fabric-example-mod/src/main/resources/fabric.mod.json", JSON.stringify({ id: "examplemod", version: "1.0.0" }));
+write("fabric-example-mod/src/main/resources/fabric.mod.json",
+  JSON.stringify({ id: "examplemod", version: "1.0.0", icon: "assets/examplemod/icon.png" }));
+// The picture the mod gives itself, where its own metadata says it is.
+fs.mkdirSync(path.join(fabric, "src/main/resources/assets/examplemod"), { recursive: true });
+fs.writeFileSync(path.join(fabric, "src/main/resources/assets/examplemod/icon.png"),
+  Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
 
 {
   const info = mod.modProjectInfo(fabric);
@@ -103,9 +112,63 @@ write("fabric-example-mod/src/main/resources/fabric.mod.json", JSON.stringify({ 
   check("through the project's own wrapper", info.wrapper, true,
     "a project with a gradlew is built with that gradlew, not with whatever is on the PATH");
   check("the mod id is read for the instance's name", info.modId, "examplemod");
+  check("and the mod's own picture is read for its icon",
+    [String(info.icon || "").slice(0, 22), String(info.icon || "").length > 60],
+    ["data:image/png;base64,", true],
+    "the instance wears the icon the mod gives itself, which is what it would have once built");
   check("the task is the loaders' own", info.task, "runClient");
   check("and the project passes no username of its own", info.setsUsername, false,
     "which is what decides whether the launcher's account can be handed over");
+}
+
+// ── which Java its Gradle runs on ─────────────────────────────────────────
+//
+// Running Gradle on the project's own toolchain JDK is what makes that
+// toolchain resolvable without Gradle having to go looking: the running JVM
+// is always a candidate. But it has to be a JDK that Gradle can run on at
+// all, and if the project has already pinned one, that is the answer.
+{
+  // The toolchain written as a property, which is how half the templates
+  // write it -- reading only the literal form missed every one of them.
+  const byProp = path.join(tmp, "prop-java");
+  write("prop-java/gradlew", "#!/bin/sh\n");
+  write("prop-java/build.gradle",
+    "plugins { id 'fabric-loom' }\njava { toolchain { languageVersion = JavaLanguageVersion.of(java_version) } }\n");
+  write("prop-java/gradle.properties", "java_version=21\nminecraft_version=1.21.1\n");
+  write("prop-java/gradle/wrapper/gradle-wrapper.properties",
+    "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10-bin.zip\n");
+  check("a toolchain written as a property is followed up",
+    mod.requiredJavaForProject(byProp), 21,
+    "JavaLanguageVersion.of(java_version) is what the templates write");
+  check("and the wrapper's own version is read",
+    mod.gradleWrapperVersion(byProp), "8.10");
+
+  // An old wrapper cannot run a new JDK: "Unsupported class file major
+  // version" before anything is built.
+  write("prop-java/gradle/wrapper/gradle-wrapper.properties",
+    "distributionUrl=https\\://services.gradle.org/distributions/gradle-7.4-bin.zip\n");
+  check("a toolchain newer than its Gradle can run is brought back to what it can",
+    mod.requiredJavaForProject(byProp), 17,
+    "Gradle 7.4 knows Java 17 and nothing above it, whatever the toolchain says");
+
+  check("what each Gradle can run on",
+    ["9.0", "8.10", "8.5", "7.6", "7.3", "6.9"].map(v => mod.javaRangeForGradle(v).max),
+    [24, 23, 21, 19, 17, 15]);
+  check("and Gradle 9 will not run on 8 at all",
+    mod.javaRangeForGradle("9.0").min, 17);
+
+  // A project that has said which JDK to use has already answered.
+  const pinned = path.join(tmp, "pinned-java");
+  write("pinned-java/gradlew", "#!/bin/sh\n");
+  write("pinned-java/build.gradle", "plugins { id 'fabric-loom' }\n");
+  const jdkHere = path.join(tmp, "some-jdk");
+  fs.mkdirSync(jdkHere, { recursive: true });
+  write("pinned-java/gradle.properties", `org.gradle.java.home=${jdkHere}\n`);
+  check("a JDK the project pins is used as it is",
+    mod.projectOwnJavaHome(pinned), jdkHere,
+    "forcing ours over it is how a project that builds by hand stops building here");
+  check("and one that points nowhere is not",
+    mod.projectOwnJavaHome(path.join(tmp, "prop-java")), null);
 }
 
 // Picked from inside, which is what people have to hand: the build folder,
@@ -180,6 +243,32 @@ write("fabric-example-mod/src/main/resources/fabric.mod.json", JSON.stringify({ 
     mod.modProjectInfo(null).success, false);
 }
 
+// ── running the wrapper on a computer whose paths have spaces ─────────────
+//
+// gradlew.bat is a batch file and Node will not run one without a shell, and
+// `shell: true` on Windows pastes everything into one string and quotes
+// nothing -- so a project under "My Mods" was a command cmd.exe could not
+// find, and `--args=--username Some Name` was three arguments. Both look
+// like the launcher simply not working.
+{
+  const bat = "C:\\Users\\me\\My Mods\\thing\\gradlew.bat";
+  const args = ["runClient", "--args=--username Some Name"];
+  const was = process.platform;
+  check("a batch file is handed to cmd.exe as its own argument",
+    (() => {
+      // The real function, asked what it would do on Windows.
+      Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+      const r = mod.gradleSpawnArgs(bat, args);
+      Object.defineProperty(process, "platform", { value: was, configurable: true });
+      return [/cmd\.exe$/i.test(r.file), r.argv.slice(0, 4), r.shell];
+    })(),
+    [true, ["/d", "/s", "/c", bat], false],
+    "Node quotes each argument it is given; a shell pastes them together and quotes nothing");
+  check("and anywhere else it is simply run",
+    (() => { const r = mod.gradleSpawnArgs("/home/me/My Mods/thing/gradlew", args); return [r.file, r.argv.length, r.shell]; })(),
+    ["/home/me/My Mods/thing/gradlew", 2, false]);
+}
+
 // ── Where an instance's files are ──────────────────────────────────────────
 {
   const data = path.join(tmp, "data");
@@ -215,7 +304,12 @@ write("fabric-example-mod/src/main/resources/fabric.mod.json", JSON.stringify({ 
   const main = src.split(/\r?\n/);
   const offenders = [];
   main.forEach((line, i) => {
-    if (!/dataDir\s*,\s*['"]client['"]\s*,/.test(line)) return;
+    // Spelt out directly, or through the "client or servers" the two
+    // open-folder paths used -- which is the same thing written so that a
+    // search for the first spelling does not find it.
+    const spelt = /dataDir\s*,\s*['"]client['"]\s*,/.test(line)
+      || /['"]client['"]\s*:\s*['"]servers?['"]/.test(line);
+    if (!spelt) return;
     // The one place it is allowed: instanceRoot's own fallback, which is
     // what everywhere else now calls.
     if (/^\|\| path\.join\(dataDir, "client", String\(profileId\)\);$/.test(line.trim())) return;

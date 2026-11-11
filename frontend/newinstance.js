@@ -1318,7 +1318,9 @@
       version,
       loader: info.loader,
       project, projectInfo: info,
-      prefill: { name: info.modId || info.name },
+      // The mod's own picture, which is what it would have once it was
+      // built -- so a dev instance wears the mod's icon from the start.
+      prefill: { name: info.modId || info.name, icon: info.icon || null },
       onBack: back,
       onChangeVersion: () => pickVersion({
         onBack: () => finish(version),

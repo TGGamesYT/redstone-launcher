@@ -62,7 +62,7 @@ export const NOT_SETTINGS = [
   // The same names as THEME_FIELDS and THEME_OPTIONAL in main.js, plus the
   // icon, which is part of the look and not a preference.
   "baseColor", "secondaryColor", "thirdColor", "autoThird",
-  "textColor", "font", "fontSmoothing", "borderRadius",
+  "textColor", "font", "fontSmoothing", "borderRadius", "themeBrightness",
   "background", "homeLayout", "appIcon",
 ];
 

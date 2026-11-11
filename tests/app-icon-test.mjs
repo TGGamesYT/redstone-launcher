@@ -548,6 +548,28 @@ check("a tiled block is not given the picture's framing",
     background: { mode: "block", block: { url: CROP } },
     appIcon: { kind: "theme", backCrop: CROP, backCropOf: WALL },
   })).pixelated, true);
+// One block fills the icon; a PATCH of randomly turned cells is cut to the
+// size the window draws them at, or the icon is a shrunken pile of them.
+{
+  const one = await fillWith({ background: { mode: "block", block: { url: CROP, size: 64 } }, appIcon: { kind: "theme" } });
+  check("a plain tile is one block across the icon",
+    (await describe(one)).rgb, RED,
+    "the backing is a circle a quarter of an inch wide; sixteen blocks in it is a texture nobody can make out");
+  // A patch of four cells, each a quarter of the picture.
+  const patch = "data:image/png;base64," + (await sharp({
+    create: { width: 32, height: 32, channels: 4, background: { r: 200, g: 40, b: 40, alpha: 1 } },
+  }).composite([{
+    input: await sharp({ create: { width: 16, height: 16, channels: 4, background: { r: 40, g: 200, b: 40, alpha: 1 } } }).png().toBuffer(),
+    left: 16, top: 16,
+  }]).png().toBuffer()).toString("base64");
+  const many = await fillWith({
+    background: { mode: "block", block: { url: patch, size: 64, cells: 2 } },
+    appIcon: { kind: "theme" },
+  });
+  check("and a patch is cut at the size the window draws it",
+    (await sharp(many.png).metadata()).width, 256,
+    "the whole patch squeezed into the icon is every block a quarter of its size");
+}
 check("and a gradient is still a gradient",
   (await fillWith({
     background: { mode: "gradient", gradient: { colors: ["#111", "#222"], angle: 10 } },

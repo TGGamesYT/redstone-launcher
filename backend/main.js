@@ -645,16 +645,47 @@ function trimJvmCrash(text) {
   return head.join("\n").slice(0, 60000);
 }
 
+// What the GAME wrote about itself, which is not the same as what it printed
+// to us.
+//
+// A loader that fails before the window opens writes its reason into its own
+// log and exits; FML goes further and tries to put it in a window of its
+// own, and when that window has not been built yet the attempt throws -- so
+// what reaches the launcher is a NullPointerException inside the error
+// reporter and not a word about the error it was reporting. The log on disk
+// has it.
+function gameLogTail(dir, since = 10 * 60 * 1000, lines = 120) {
+  for (const name of ["logs/latest.log", "logs/debug.log", "logs/fml-client-latest.log"]) {
+    const at = path.join(dir, ...name.split("/"));
+    try {
+      if (!fs.existsSync(at)) continue;
+      if (Date.now() - fs.statSync(at).mtimeMs > since) continue;
+      const text = fs.readFileSync(at, "utf8");
+      const all = text.split(/\r?\n/);
+      return { name, lines: all.slice(-lines) };
+    } catch { /* the next one */ }
+  }
+  return null;
+}
+
 function reportInstanceCrash(profileId, cfg, code) {
-  // 0 is a clean quit; 1 is Minecraft's intentional stop/restart exit; 143/130
-  // are SIGTERM/SIGINT, i.e. the user stopping it.
+  // 0 is a clean quit; 143/130 are SIGTERM/SIGINT, i.e. the user stopping it.
   if (code === 0 || code === null || code === undefined) return;
-  if (code === 1 || code === 143 || code === 130) return;
+  if (code === 143 || code === 130) return;
   try {
     const dir = instanceRoot(profileId);
     // broadcastLog keys by whatever it was handed, which isn't always a string.
     const lines = instanceLogs.get(profileId) || instanceLogs.get(String(profileId)) || [];
     const tail = lines.slice(-400);
+    // 1 is also Minecraft's own "stop and restart" exit, so it was treated
+    // as nothing to report -- which is why a loader that died before the
+    // window opened said nothing at all: FML's fatal path exits with 1.
+    // It is a crash when the log says so.
+    if (code === 1) {
+      const said = tail.join("\n");
+      const crashed = /Exception in thread|FATAL|displayFatalErrorAndExit|Caused by:|\bERROR\b.*(?:failed|cannot|could not)/i.test(said);
+      if (!crashed) return;
+    }
 
     // The newest crash report, if one was written for this session.
     let report = null, reportPath = null, reportKind = null;
@@ -695,6 +726,23 @@ function reportInstanceCrash(profileId, cfg, code) {
       if (found) { report = found.text.slice(-60000); reportKind = found.kind; }
     }
 
+    // And when what we captured is only the reporter falling over, the
+    // reason is in the game's own log.
+    const onlyTheReporter = !report
+      || /displayFatalErrorAndExit|rendererFuture/.test(report);
+    if (onlyTheReporter) {
+      const own = gameLogTail(dir);
+      if (own) {
+        const fromOwn = extractCrashFromLog(own.lines);
+        const text = (fromOwn ? fromOwn.text : own.lines.join("\n")).slice(-60000);
+        if (text.trim()) {
+          report = (report ? report + "\n\n" : "")
+            + `--- ${own.name} ---\n` + text;
+          reportKind = reportKind || "game-log";
+        }
+      }
+    }
+
     // Something the log says outright, rather than a guess at a culprit: a
     // resource pack that could not be read this run. The crash itself is
     // inside native code and names nothing, but a pack whose every blockstate
@@ -725,6 +773,22 @@ function reportInstanceCrash(profileId, cfg, code) {
         + ", which is what a pack built for a different version looks like."
         + " A server's packs are checked for that when the launcher merges them, and it says so"
         + " in that server's log.");
+    }
+
+    // FML's own error window, falling over while reporting the error.
+    //
+    // `displayFatalErrorAndExit` builds a window to show what went wrong,
+    // and when the early display has not started yet the renderer it waits
+    // for is null -- so the only thing that reaches anybody is a
+    // NullPointerException inside the reporter, with the actual reason
+    // nowhere. The game's own log has it (and is read above); turning the
+    // early window off makes the next run print it to the console instead.
+    if (/displayFatalErrorAndExit|DisplayWindow\.shutdownAutomaticRenderer/.test(sawAll)) {
+      notes.push("NeoForge hit a fatal error before the window opened, and its own error"
+        + " display crashed while trying to show it -- which is why the stack trace above is"
+        + " about a null renderer and not about the error. The reason is in the instance's"
+        + " logs/latest.log, and adding -Dfml.earlyprogresswindow=false to this instance's"
+        + " Java arguments makes the next run print it in the console here.");
     }
 
     const payload = {
@@ -909,6 +973,8 @@ const DEFAULT_SETTINGS = {
   secondaryColor: "#ff4d4d",
   thirdColor: "#d92d2d",
   textColor: "#ffffff",
+  // 0..100, the middle meaning the theme as it was picked.
+  themeBrightness: 50,
   font: "Pixel",
   // The launcher's own font is a pixel face, and the browser's default
   // antialiasing smears every edge of it into a grey halo -- which is why
@@ -6923,6 +6989,9 @@ ipcMain.handle("suggest:mine", async () => suggestCall({ op: "mine" }));
 const THEME_FIELDS = [
   "baseColor", "secondaryColor", "thirdColor", "autoThird",
   "textColor", "font", "fontSmoothing", "borderRadius",
+  // How bright the theme is, which is as much a part of how it looks as
+  // the colours it is made of.
+  "themeBrightness",
 ];
 // What a theme MAY also carry, each one ticked when it is saved. These are
 // bigger decisions than a colour -- the background and the shape of the home
@@ -7432,6 +7501,19 @@ async function blockBackingPng(block, square = 256) {
   const raw = fromDataUrl(block.url);
   const size = Math.max(8, Math.min(512, Number(block.size) || 64));
   const cells = Math.max(1, Math.min(32, Number(block.cells) || 1));
+  // One block fills the icon unless the tile is a PATCH.
+  //
+  // The icon's backing is a circle a quarter of an inch across on a
+  // taskbar: one block is a block, and sixteen are a texture nobody can
+  // make out. The scaling below is for a patch of randomly turned cells,
+  // where showing the whole patch at icon size is what made it a shrunken
+  // pile -- a plain tile has no variety to carry and is simply the block.
+  if (cells <= 1) {
+    return sharp(raw).resize(square, square, {
+      kernel: block.render ? "lanczos3" : "nearest",
+      fit: "fill",
+    }).png().toBuffer();
+  }
   const at = size * cells;
   const tile = await sharp(raw)
     // A face texture is sixteen pixels and has to stay crisp; a block that
@@ -7499,10 +7581,18 @@ async function backgroundAsFill() {
 }
 
 // What each layer is filled with, for the theme as it stands.
-async function iconFills({ color, mergeBlock } = {}) {
+async function iconFills({ color, mergeBlock, picture } = {}) {
   const base = color || settings.get("baseColor", "#b30c0c");
   const bg = settings.get("background", null) || {};
   let background = { kind: "color", hex: base };
+  // A picture of your own is the backing itself, so the gem and the cog --
+  // if they are wanted at all -- sit on top of it. This is what lets the
+  // launcher's mark be put ON a chosen picture, which used to be a choice
+  // between the two.
+  if (picture) {
+    try { return { background: { kind: "texture", png: fromDataUrl(picture), pixelated: false }, gem: { kind: "color", hex: settings.get("secondaryColor", "#ff4d4d") } }; }
+    catch { /* not a picture after all */ }
+  }
   // The base colour, "supporting gradient": when the launcher's background IS
   // a gradient, the icon's background is that gradient.
   if (String(bg.mode) === "gradient" && bg.gradient && (bg.gradient.colors || []).length > 1) {
@@ -7520,6 +7610,19 @@ async function iconFills({ color, mergeBlock } = {}) {
 // Always built from the shipped layers, never from the last icon it made:
 // recolouring something already recoloured is how a cog went green and then
 // stayed green through every theme after it.
+// Whether the gem and the cog are drawn at all.
+//
+// They are the launcher's own mark, and they are what makes an icon the
+// launcher's -- so they are on by default. Two things wanted them off: a
+// backing that is a picture of its own and is meant to BE the icon, and a
+// background you want to see without the mark over it. A picture chosen
+// before this existed meant "the whole picture", so for one of those the
+// answer is still no mark unless it says otherwise.
+function iconWantsParts(icon) {
+  if (icon && typeof icon.parts === "boolean") return icon.parts;
+  return !(icon && icon.kind === "image");
+}
+
 async function themedIconPng(opts = {}) {
   const icon = settings.get("appIcon", null) || {};
   const layers = iconLayers();
@@ -7536,7 +7639,12 @@ async function themedIconPng(opts = {}) {
   const fills = await iconFills({
     color: opts.color,
     mergeBlock: opts.mergeBlock == null ? !!icon.mergeBlock : !!opts.mergeBlock,
+    picture: icon.kind === "image" && icon.dataUrl ? icon.dataUrl : null,
   });
+  // The mark comes off by leaving its two layers out: the backing is drawn
+  // on its own, which is the whole icon.
+  const parts = opts.parts == null ? iconWantsParts(icon) : !!opts.parts;
+  const use = parts ? layers : { background: layers.background };
   // The colours the artwork was drawn for. A theme colour is read as a
   // difference from these, so the launcher's own colours reproduce the icon
   // as drawn and every other theme is shifted by as much as it differs --
@@ -7546,7 +7654,7 @@ async function themedIconPng(opts = {}) {
     background: DEFAULT_SETTINGS.baseColor,
     gem: DEFAULT_SETTINGS.secondaryColor,
   };
-  return appIconParts.buildIcon(layers, fills, 256, anchors);
+  return appIconParts.buildIcon(use, fills, 256, anchors);
 }
 
 // Put an icon on the windows and remember it. `icon` is either
@@ -7573,9 +7681,18 @@ function updateDesktopIconSoon(png) {
 
 async function applyAppIcon(icon, { desktop = true } = {}) {
   try {
+    // Remembered first, because the icon is drawn FROM the setting: a
+    // picture is the backing of the icon now rather than a replacement for
+    // it, so what is drawn depends on the whole record and not only on the
+    // picture that was handed in.
+    const was = settings.get("appIcon", null) || {};
+    const next = { mergeBlock: !!was.mergeBlock, ...(icon || { kind: "theme" }) };
+    settings.set("appIcon", next);
     let png;
-    if (icon && icon.kind === "image" && icon.dataUrl) {
-      const b64 = String(icon.dataUrl).replace(/^data:image\/[\w+.-]+;base64,/, "");
+    if (next.kind === "image" && next.dataUrl && !iconWantsParts(next)) {
+      // The whole picture, which is what a picture meant before the mark
+      // could be put on top of one.
+      const b64 = String(next.dataUrl).replace(/^data:image\/[\w+.-]+;base64,/, "");
       png = await sharp(Buffer.from(b64, "base64")).resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
     } else {
       png = await themedIconPng();
@@ -7587,11 +7704,6 @@ async function applyAppIcon(icon, { desktop = true } = {}) {
     for (const w of BrowserWindow.getAllWindows()) {
       try { if (!w.isDestroyed()) w.setIcon(img); } catch { /* not every platform takes one */ }
     }
-    // `mergeBlock` is a preference about the icon rather than a kind of
-    // icon, so switching between the launcher's own mark and a picture of
-    // your own must not quietly forget it.
-    const was = settings.get("appIcon", null) || {};
-    settings.set("appIcon", { mergeBlock: !!was.mergeBlock, ...(icon || { kind: "theme" }) });
     // A window's icon is the taskbar and nothing else, which is why the one
     // on the desktop stayed as it was. That entry is told separately, and
     // only once the colour has settled.
@@ -7649,6 +7761,14 @@ ipcMain.handle("icon:backgroundPng", async () => {
     if (!png) return { success: false, error: "That picture could not be read" };
     return { success: true, dataUrl: "data:image/png;base64," + png.toString("base64") };
   } catch (e) { return { success: false, error: e.message }; }
+});
+// Whether the launcher's own mark -- the gem and the cog -- is drawn over
+// the backing. Off leaves the backing on its own, which is how a picture or
+// the launcher's background becomes the icon; on puts the mark over whatever
+// the backing is, including a picture of your own.
+ipcMain.handle("icon:setParts", async (event, { on } = {}) => {
+  const icon = settings.get("appIcon", null) || { kind: "theme" };
+  return applyAppIcon({ ...icon, parts: !!on });
 });
 ipcMain.handle("icon:setMergeBlock", async (event, { on } = {}) => {
   const icon = settings.get("appIcon", null) || { kind: "theme" };
@@ -9715,7 +9835,14 @@ async function getCurseForgeLoader(loader, version = "1.20.1") {
 
 ipcMain.on('open-folder', (event, { id, isClient, sub }) => {
   try {
-    const folderPath = path.join(dataDir, isClient ? 'client' : 'servers', String(id), sub || '');
+    // An instance's folder is wherever that instance's folder is -- a dev
+    // instance's is its project's run folder, not one of ours. This is the
+    // one the "Open folder" buttons go through, and it was still spelling
+    // the path out for itself, so it opened a folder of ours that a dev
+    // instance does not have.
+    const folderPath = isClient
+      ? path.join(instanceRoot(id), sub || '')
+      : path.join(dataDir, 'servers', String(id), sub || '');
 
     // Ensure folder exists
     if (!fs.existsSync(folderPath)) {
@@ -14156,13 +14283,74 @@ function javaForMinecraftVersion(v) {
   }
   return 8;
 }
-function requiredJavaForProject(root) {
-  const read = (f) => { try { return fs.readFileSync(path.join(root, f), "utf8"); } catch { return ""; } };
-  const scripts = read("build.gradle") + "\n" + read("build.gradle.kts");
-  // The toolchain is the modern and most explicit statement of it.
-  let m = scripts.match(/JavaLanguageVersion\.of\(\s*(\d+)\s*\)/);
-  if (m) return parseInt(m[1], 10);
-  // JavaVersion.VERSION_21, and VERSION_1_8 for the old numbering.
+// ── Which Java this project's Gradle runs on ────────────────────────────────
+//
+// Three things decide it, and getting any of them wrong is a build that
+// fails before it starts.
+//
+//   The project's own toolchain, which is what it COMPILES with. Running
+//   Gradle on that JDK is what makes the toolchain resolvable without Gradle
+//   having to go and find one: the running JVM is always a candidate.
+//
+//   What its Gradle can run on at all. Gradle refuses a JDK newer than it
+//   knows -- "Unsupported class file major version" -- so a project pinned
+//   to an old wrapper cannot be handed the newest JDK whatever its toolchain
+//   says.
+//
+//   And whether the project has already said, in gradle.properties, which
+//   JDK to use. If it has, that is the answer and the launcher stays out of
+//   it entirely.
+
+// The wrapper's Gradle version, out of the file the wrapper reads.
+function gradleWrapperVersion(root) {
+  let text = "";
+  try { text = fs.readFileSync(path.join(root, "gradle", "wrapper", "gradle-wrapper.properties"), "utf8"); }
+  catch { return null; }
+  const m = /distributionUrl=.*?gradle-([\d.]+)-(?:bin|all)\.zip/.exec(text.replace(/\\/g, ""));
+  return m ? m[1] : null;
+}
+
+// The newest Java each Gradle can run on, and the oldest it will accept.
+// Straight off Gradle's own compatibility table.
+const GRADLE_JAVA_MAX = [
+  ["9.1", 25], ["9.0", 24], ["8.14", 24], ["8.10", 23], ["8.8", 22], ["8.5", 21],
+  ["8.3", 20], ["8.0", 19], ["7.6", 19], ["7.5", 18], ["7.3", 17], ["7.0", 16], ["6.7", 15],
+];
+const cmpVersions = (a, b) => {
+  const x = String(a).split("."), y = String(b).split(".");
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (parseInt(x[i], 10) || 0) - (parseInt(y[i], 10) || 0);
+    if (d) return d < 0 ? -1 : 1;
+  }
+  return 0;
+};
+function javaRangeForGradle(version) {
+  if (!version) return { min: 8, max: 21 };      // nothing said: the safe middle
+  for (const [at, max] of GRADLE_JAVA_MAX) {
+    if (cmpVersions(version, at) >= 0) return { min: cmpVersions(version, "9.0") >= 0 ? 17 : 8, max };
+  }
+  return { min: 8, max: 14 };
+}
+
+// What a build script says, with a property reference followed up.
+// `JavaLanguageVersion.of(java_version)` is how half the templates write it,
+// and reading only the literal form missed every one of them.
+function javaFromScripts(root, scripts) {
+  const prop = (name) => gradleProp(root, [name]);
+  const number = (raw) => {
+    if (raw == null) return null;
+    const direct = /^\s*(\d+)\s*$/.exec(String(raw));
+    if (direct) return parseInt(direct[1], 10);
+    const named = String(raw).replace(/^(?:project|rootProject)\./, "").trim();
+    if (/^[A-Za-z_][\w.]*$/.test(named)) {
+      const v = prop(named) || prop(named.replace(/\./g, "_"));
+      const n = v && /^\s*(?:1\.)?(\d+)\s*$/.exec(v);
+      if (n) return parseInt(n[1], 10);
+    }
+    return null;
+  };
+  let m = scripts.match(/JavaLanguageVersion\.of\(\s*([^)]+?)\s*\)/);
+  if (m) { const n = number(m[1].replace(/^["']|["']$/g, "")); if (n) return n; }
   m = scripts.match(/JavaVersion\.VERSION_1_(\d+)/);
   if (m) return parseInt(m[1], 10);
   m = scripts.match(/JavaVersion\.VERSION_(\d+)/);
@@ -14171,12 +14359,53 @@ function requiredJavaForProject(root) {
   if (m) return parseInt(m[1], 10);
   m = scripts.match(/release(?:\.set\(|\s*=\s*)\s*(\d+)/);
   if (m) return parseInt(m[1], 10);
+  return null;
+}
+
+// A JDK the project has pinned for itself, if it has.
+function projectOwnJavaHome(root) {
+  const home = gradleProp(root, ["org.gradle.java.home"]);
+  if (!home) return null;
+  const at = home.replace(/\\\\/g, "\\").replace(/\\:/g, ":");
+  return fs.existsSync(at) ? at : null;
+}
+
+function requiredJavaForProject(root) {
+  const scripts = projectScripts(root);
+  const clamp = (n) => {
+    const { min, max } = javaRangeForGradle(gradleWrapperVersion(root));
+    return Math.max(min, Math.min(max, n));
+  };
+  const said = javaFromScripts(root, scripts);
+  if (said) return clamp(said);
+  // A property on its own, which some projects use instead of writing it
+  // into the toolchain line.
+  const prop = gradleProp(root, ["java_version", "javaVersion", "java"]);
+  const n = prop && /^\s*(?:1\.)?(\d+)\s*$/.exec(prop);
+  if (n) return clamp(parseInt(n[1], 10));
   // Nothing said: go by the Minecraft version it builds against, which every
   // mod template puts in gradle.properties.
-  const props = read("gradle.properties");
-  m = props.match(/^\s*minecraft_version\s*=\s*(\S+)/m) || props.match(/^\s*minecraft\s*=\s*(\S+)/m);
-  if (m) return javaForMinecraftVersion(m[1]);
-  return 17;
+  const mc = gradleProp(root, ["minecraft_version", "minecraftVersion", "mc_version", "minecraft"]);
+  if (mc) return clamp(javaForMinecraftVersion(mc.replace(/^.*:/, "")));
+  return clamp(17);
+}
+
+// Running a Gradle wrapper, on any computer whose paths have spaces in them.
+//
+// `gradlew.bat` is a batch file, and Node will not run one without a shell --
+// but `shell: true` on Windows pastes the command and its arguments into one
+// string with spaces between them and quotes nothing. So a project under
+// "C:\\Users\\me\\My Mods\\thing" was a command cmd.exe could not find, and
+// `--args=--username Some Name` was three arguments instead of one. Both
+// look like the launcher simply not working.
+//
+// cmd.exe is given the file and the arguments as separate arguments instead,
+// which Node quotes properly, and nothing else needs a shell at all.
+function gradleSpawnArgs(cmd, args) {
+  if (process.platform === "win32" && /\.(bat|cmd)$/i.test(cmd)) {
+    return { file: process.env.ComSpec || "cmd.exe", argv: ["/d", "/s", "/c", cmd, ...args], shell: false };
+  }
+  return { file: cmd, argv: args, shell: false };
 }
 
 const devBuilds = new Map();                 // key -> { child, lines }
@@ -14188,11 +14417,17 @@ async function buildDevMod({ type, id, folder, root, onLine }) {
   const projectRoot = root || gradleRootFor(folder);
   if (!projectRoot) return { success: false, error: "No Gradle project above that folder" };
 
+  // The project's own, if it has pinned one; otherwise the Java it asks
+  // for, from the launcher's own downloads.
   const major = requiredJavaForProject(projectRoot);
-  let javaBin;
-  try { javaBin = await getJavaByMajor(major, { needJdk: true, label: `building ${path.basename(projectRoot)}` }); }
-  catch (e) { return { success: false, error: `Java ${major} is needed to build this and could not be prepared: ${e.message}` }; }
-  const home = javaHomeOf(javaBin);
+  const own = projectOwnJavaHome(projectRoot);
+  let home = own;
+  if (!home) {
+    let javaBin;
+    try { javaBin = await getJavaByMajor(major, { needJdk: true, label: `building ${path.basename(projectRoot)}` }); }
+    catch (e) { return { success: false, error: `Java ${major} is needed to build this and could not be prepared: ${e.message}` }; }
+    home = javaHomeOf(javaBin);
+  }
 
   const isWin = process.platform === "win32";
   const wrapper = path.join(projectRoot, isWin ? "gradlew.bat" : "gradlew");
@@ -14209,7 +14444,8 @@ async function buildDevMod({ type, id, folder, root, onLine }) {
   }
   // `build` without the tests: a mod's tests are rarely set up and a failing
   // one should not stop the jar being produced.
-  args.push("build", "-x", "test", `-Dorg.gradle.java.home=${home}`, "--console=plain");
+  args.push("build", "-x", "test", "--console=plain");
+  if (!own) args.splice(args.length - 1, 0, `-Dorg.gradle.java.home=${home}`);
 
   const lines = [];
   const say = (line) => { lines.push(line); if (onLine) { try { onLine(line); } catch { /* ignore */ } } };
@@ -14221,11 +14457,12 @@ async function buildDevMod({ type, id, folder, root, onLine }) {
   const out = await new Promise((resolve) => {
     let child;
     try {
-      child = spawn(cmd, args, {
+      const run = gradleSpawnArgs(cmd, args);
+      child = spawn(run.file, run.argv, {
         cwd: projectRoot,
         env: { ...process.env, JAVA_HOME: home, GRADLE_OPTS: "-Dorg.gradle.daemon=false" },
         windowsHide: true,
-        shell: isWin,              // gradlew.bat is a batch file
+        shell: run.shell,
       });
     } catch (e) { resolve({ success: false, error: e.message }); return; }
     devBuilds.set(key, { child, lines });
@@ -14369,6 +14606,58 @@ function projectSetsUsername(root) {
 // Everything a picked folder says about the project in it. Accepts the
 // project root, its `build` folder or `build/libs`, the same three a dev
 // mod's folder can be, because that is what people have to hand.
+// The picture the mod gives itself.
+//
+// Every loader's metadata names one: Fabric and Quilt point at a path inside
+// the jar's resources with "icon", NeoForge and Forge with `logoFile` in
+// their toml. The same file is sitting in src/main/resources while the
+// project is being worked on, so the instance can wear the mod's own icon
+// from the moment it is made -- which is what it would have once it was
+// built, and it is how you tell one dev instance from another.
+// What the mod calls itself, from the build or from its own metadata.
+function modProjectId(root) {
+  const said = gradleProp(root, ["mod_id", "modid", "archives_base_name", "mod_name"]);
+  if (said) return said;
+  try { return JSON.parse(projectText(root, "src", "main", "resources", "fabric.mod.json")).id || null; }
+  catch { return null; }
+}
+
+function modProjectIcon(root, modId) {
+  const res = path.join(root, "src", "main", "resources");
+  const named = [];
+  try {
+    const fmj = JSON.parse(projectText(root, "src", "main", "resources", "fabric.mod.json"));
+    const i = fmj && fmj.icon;
+    if (typeof i === "string") named.push(i);
+    else if (i && typeof i === "object") for (const v of Object.values(i)) if (typeof v === "string") named.push(v);
+  } catch { /* no fabric.mod.json, or not JSON */ }
+  try {
+    const qmj = JSON.parse(projectText(root, "src", "main", "resources", "quilt.mod.json"));
+    const i = qmj && qmj.quilt_loader && qmj.quilt_loader.metadata && qmj.quilt_loader.metadata.icon;
+    if (typeof i === "string") named.push(i);
+  } catch { /* ditto */ }
+  for (const toml of ["neoforge.mods.toml", "mods.toml"]) {
+    const text = projectText(root, "src", "main", "resources", "META-INF", toml);
+    const m = /logoFile\s*=\s*["']([^"']+)["']/.exec(text);
+    if (m) named.push(m[1]);
+  }
+  // And where a mod puts one when nothing says so.
+  if (modId) named.push(`assets/${modId}/icon.png`);
+  named.push("icon.png", "logo.png");
+
+  for (const rel of named) {
+    const at = path.join(res, ...String(rel).split(/[\\/]+/));
+    try {
+      if (!fs.existsSync(at) || !fs.statSync(at).isFile()) continue;
+      if (fs.statSync(at).size > 2 * 1024 * 1024) continue;   // an icon, not a wallpaper
+      const ext = (path.extname(at) || ".png").slice(1).toLowerCase();
+      return "data:image/" + (ext === "jpg" ? "jpeg" : ext) + ";base64,"
+        + fs.readFileSync(at).toString("base64");
+    } catch { /* keep looking */ }
+  }
+  return null;
+}
+
 function modProjectInfo(picked) {
   if (!picked) return { success: false, error: "No folder" };
   const root = gradleRootFor(picked) || (isGradleProject(picked) ? path.resolve(picked) : null);
@@ -14388,8 +14677,8 @@ function modProjectInfo(picked) {
     knownLoader: !!loader,
     version: projectVersion(root),
     loaderVersion: gradleProp(root, ["loader_version", "fabric_loader_version", "neoforge_version", "forge_version"]) || "",
-    modId: gradleProp(root, ["mod_id", "modid", "archives_base_name", "mod_name"])
-      || (() => { try { return JSON.parse(projectText(root, "src", "main", "resources", "fabric.mod.json")).id || null; } catch { return null; } })(),
+    modId: modProjectId(root),
+    icon: modProjectIcon(root, modProjectId(root)),
     java: requiredJavaForProject(root),
     wrapper,
     setsUsername: projectSetsUsername(root),
@@ -14439,11 +14728,17 @@ async function launchViaGradle(profileId, cfg, run = null) {
   const root = project.root;
   if (!fs.existsSync(root)) throw new Error(`The project folder is gone: ${root}`);
 
+  // A project that has pinned its own JDK in gradle.properties has already
+  // answered this, and the launcher stays out of it.
   const major = requiredJavaForProject(root);
-  let javaBin;
-  try { javaBin = await getJavaByMajor(major, { needJdk: true, label: `running ${path.basename(root)}` }); }
-  catch (e) { throw new Error(`Java ${major} is needed to run this project and could not be prepared: ${e.message}`); }
-  const home = javaHomeOf(javaBin);
+  const own = projectOwnJavaHome(root);
+  let home = own;
+  if (!home) {
+    let javaBin;
+    try { javaBin = await getJavaByMajor(major, { needJdk: true, label: `running ${path.basename(root)}` }); }
+    catch (e) { throw new Error(`Java ${major} is needed to run this project and could not be prepared: ${e.message}`); }
+    home = javaHomeOf(javaBin);
+  }
 
   const isWin = process.platform === "win32";
   const wrapper = path.join(root, isWin ? "gradlew.bat" : "gradlew");
@@ -14456,7 +14751,8 @@ async function launchViaGradle(profileId, cfg, run = null) {
   }
 
   const task = project.task || "runClient";
-  const args = [task, `-Dorg.gradle.java.home=${home}`, "--console=plain"];
+  const args = [task, "--console=plain"];
+  if (!own) args.splice(1, 0, `-Dorg.gradle.java.home=${home}`);
   // The account, as the game's own arguments -- which is what makes a dev
   // client the launcher's instance rather than Player347. Skipped for a
   // project that passes a username itself, because the game refuses an
@@ -14477,7 +14773,9 @@ async function launchViaGradle(profileId, cfg, run = null) {
     ? "--args=" + gameArgs.map((g, i) => (gameArgs[i - 1] === "--accessToken" ? "<token>" : g)).join(" ")
     : a);
   broadcastLog(profileId, `[INFO] ${path.basename(cmd)} ${spoken.join(" ")}`, run);
-  broadcastLog(profileId, `[INFO] in ${root}, on Java ${major}`, run);
+  broadcastLog(profileId, own
+    ? `[INFO] in ${root}, on the JDK the project pins (${own})`
+    : `[INFO] in ${root}, on Java ${major}${gradleWrapperVersion(root) ? ` with Gradle ${gradleWrapperVersion(root)}` : ""}`, run);
   broadcastLog(profileId, `[INFO] The game runs in ${project.dir}`, run);
   if (auth && auth.name && projectSetsUsername(root)) {
     broadcastLog(profileId, "[INFO] The project sets its own --username, so the launcher's account is left out of it.", run);
@@ -14497,11 +14795,12 @@ async function launchViaGradle(profileId, cfg, run = null) {
     const argv = useArgs ? args : args.filter(a => !a.startsWith("--args="));
     let child, settled = false, said = "";
     try {
-      child = spawn(cmd, argv, {
+      const run = gradleSpawnArgs(cmd, argv);
+      child = spawn(run.file, run.argv, {
         cwd: root,
         env: { ...process.env, JAVA_HOME: home, GRADLE_OPTS: "-Dorg.gradle.daemon=false" },
         windowsHide: true,
-        shell: isWin,                  // gradlew.bat is a batch file
+        shell: run.shell,
         detached: !isWin,              // its own process group, so stopping it stops the game
       });
     } catch (e) { reject(e); return; }
@@ -15236,8 +15535,9 @@ ipcMain.handle("stop-instance-by-pid", (event, pid) => {
 });
 
 function checkIfFileExists(instanceID, isClient, fileUrl) {
-  const clientOrServer = isClient ? "client" : "server";
-  const baseDir = path.join(dataDir, clientOrServer, instanceID);
+  const baseDir = isClient
+    ? instanceRoot(instanceID)
+    : path.join(dataDir, "server", String(instanceID));
 
   const allowedSubfolders = [
     "mods",
