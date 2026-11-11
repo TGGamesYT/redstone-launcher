@@ -739,6 +739,17 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
   ipcRenderer.send("get-players");
   ipcRenderer.on("players-list", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });
   ipcRenderer.on("players-updated", (event, newPlayers) => { players = newPlayers; updateLoginIcon(); });
+  // A sync that happened by itself found something changed in both places.
+  // Said once, where somebody will see it, because the thing to do about it
+  // is on the settings page and nothing else will mention it.
+  ipcRenderer.on('cloud-conflict', (_e, c) => {
+    const what = (c && c.kind) || 'something';
+    if (window.notify) {
+      notify(`Cloud syncing: ${what} changed here and on another computer. `
+        + `Nothing was overwritten — settle it in Settings → Cloud syncing.`, 'error');
+    }
+  });
+
   // Which account is picked, which is not a change to the LIST of them, so
   // players-updated never carried it. The head is drawn from the picked one.
   ipcRenderer.on("selected-player-changed", (event, id) => {

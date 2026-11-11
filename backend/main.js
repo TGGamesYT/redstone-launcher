@@ -932,6 +932,9 @@ const DEFAULT_SETTINGS = {
     block: { id: null, name: null, url: null, size: 64, scroll: false, followColors: false },
   },
   predefinedThemeSync: false,
+  // Keep the cloud folder and this computer in step without being asked.
+  // Off by default: syncing on a timer is a thing to opt into.
+  cloudAutoSync: false,
   // A style sheet of the user's own, applied to every page when developer
   // mode is on.
   customCss: "",
@@ -6445,6 +6448,79 @@ ipcMain.handle("cloud:signOut", async (event, { andRemove } = {}) => {
   try { return await cloudService().signOut({ andRemove: !!andRemove }); }
   catch (e) { return cloudSaid(e); }
 });
+// ── Keeping in step without being asked ────────────────────────────────────
+//
+// The same thing the Sync now button does, on a timer. It is not a second
+// kind of syncing: the switches decide what is included and a conflict still
+// comes back as a conflict for somebody to settle. What it saves is noticing
+// that another computer changed something.
+//
+// Nothing is polled while it is off, and nothing is polled while a sync is
+// already running -- a slow one must not have a second one started on top of
+// it.
+const CLOUD_AUTO_EVERY = 5 * 60 * 1000;
+// Soon after starting, which is when another computer is most likely to have
+// moved on since this one last looked, but not so soon that it competes with
+// everything else a cold start is doing.
+const CLOUD_AUTO_FIRST = 20 * 1000;
+let cloudAutoTimer = null;
+let cloudAutoRunning = false;
+// Conflicts already mentioned, so one that nobody has settled is not
+// announced again every five minutes.
+const cloudAutoTold = new Set();
+
+async function cloudAutoSyncTick() {
+  if (cloudAutoRunning) return;
+  let cloud;
+  try { cloud = cloudService(); } catch { return; }
+  try {
+    if (!cloud.autoSync()) return;
+    const now = await cloud.status();
+    if (!now || !now.signedIn) return;
+    cloudAutoRunning = true;
+    const r = await cloud.syncNow();
+    const moved = (r && r.results || []).filter(x => x.did === "pushed" || x.did === "pulled");
+    const stuck = (r && r.results || []).filter(x => x.did === "conflict");
+    if (moved.length) devtoolsLog(`[cloud] kept in step: ${moved.map(x => `${x.kind} ${x.did}`).join(", ")}`);
+    // A conflict is somebody's to settle, so it is said once rather than
+    // every five minutes for as long as it goes unsettled.
+    for (const c of stuck) {
+      const key = `cloud-conflict:${c.kind}`;
+      if (cloudAutoTold.has(key)) continue;
+      cloudAutoTold.add(key);
+      sendEverywhere("cloud-conflict", { kind: c.kind, why: c.why || null });
+    }
+    if (!stuck.length) cloudAutoTold.clear();
+  } catch (e) {
+    devtoolsLog("[cloud] could not keep in step:", e && e.message || e);
+  } finally {
+    cloudAutoRunning = false;
+  }
+}
+
+function cloudAutoSyncStart() {
+  if (cloudAutoTimer) return;
+  cloudAutoTimer = setInterval(cloudAutoSyncTick, CLOUD_AUTO_EVERY);
+  if (cloudAutoTimer.unref) cloudAutoTimer.unref();
+}
+function cloudAutoSyncStop() {
+  if (!cloudAutoTimer) return;
+  clearInterval(cloudAutoTimer);
+  cloudAutoTimer = null;
+}
+if (settings.get("cloudAutoSync", false)) {
+  cloudAutoSyncStart();
+  setTimeout(() => { cloudAutoSyncTick(); }, CLOUD_AUTO_FIRST).unref?.();
+}
+
+ipcMain.handle("cloud:setAuto", (event, { on } = {}) => {
+  try {
+    const now = cloudService().setAutoSync(!!on);
+    if (now) { cloudAutoSyncStart(); cloudAutoSyncTick(); } else cloudAutoSyncStop();
+    return { ok: true, auto: now };
+  } catch (e) { return cloudSaid(e); }
+});
+
 ipcMain.handle("cloud:setKind", (event, { kind, on } = {}) => {
   try { return { ok: true, kinds: cloudService().setKind(String(kind || ""), !!on) }; }
   catch (e) { return cloudSaid(e); }

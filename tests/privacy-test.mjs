@@ -56,6 +56,21 @@ check("there are only two of them", google.SCOPES.length, 2);
     "a switch for instances or worlds is a promise the policy does not make");
   check("the policy says instances and worlds are asked for one at a time",
     /one at a time, when you ask for that one/i.test(policy), true);
+
+  // Syncing on a timer means data moves without anybody pressing anything,
+  // which is a thing a policy has to say rather than a convenience to add
+  // quietly.
+  const main = src("backend/main.js");
+  check("there is a switch for syncing by itself, and it starts off",
+    /cloudAutoSync: false/.test(main), true);
+  // The policy is wrapped prose, so a phrase can sit across a line break.
+  const prose = policy.replace(/\s+/g, " ");
+  check("and the policy says so, including that it adds nothing",
+    [/Keep it in step by itself/.test(prose),
+      /off until you turn it on/i.test(prose),
+      /includes nothing extra/i.test(prose)],
+    [true, true, true],
+    "a sync that happens on its own is still only the sync you asked for");
 }
 
 // ── carrying a file nothing can fetch is the person's choice ──

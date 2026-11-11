@@ -158,7 +158,11 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
   async function status() {
     const now = saved();
     if (!now) return { signedIn: false, device: device() };
-    const out = { signedIn: true, email: now.email || null, device: device(), kinds: settings.get("cloudKinds", {}) };
+    const out = {
+      signedIn: true, email: now.email || null, device: device(),
+      kinds: settings.get("cloudKinds", {}),
+      auto: !!settings.get("cloudAutoSync", false),
+    };
     try {
       const d = driveFor();
       const room = await d.room();
@@ -229,6 +233,17 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     relayHalfCache = null;
     return r;
   }
+
+  /**
+   * Whether this computer keeps itself in step without being asked.
+   *
+   * It only ever does what the Sync now button does, on a timer: the same
+   * switches decide what is included, and anything that changed in both
+   * places still comes back as a conflict for somebody to settle. Syncing
+   * by itself must not mean deciding by itself.
+   */
+  const autoSync = () => !!settings.get("cloudAutoSync", false);
+  const setAutoSync = (on) => { settings.set("cloudAutoSync", !!on); return autoSync(); };
 
   /** Which kinds this computer syncs at all. */
   const kinds = () => settings.get("cloudKinds", {}) || {};
@@ -571,7 +586,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     plan: planFor, push, pull, pushOver, unsync,
     list: () => syncer().list(),
     unsyncAll: async () => { const r = await syncer().unsyncAll(); settings.set("cloudAgreed", {}); return r; },
-    kinds, setKind, device,
+    kinds, setKind, device, autoSync, setAutoSync,
     // For the tests and for anything that needs the raw pieces.
     _syncer: syncer, _drive: driveFor,
   };

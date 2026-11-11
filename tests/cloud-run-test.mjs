@@ -361,5 +361,41 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
     items.filter(i => i.kind === "instances" || i.kind === "worlds").length, 0);
 }
 
+// ── keeping in step by itself ──
+//
+// A switch, and nothing more than the Sync now button on a timer. What
+// matters is what it is NOT: it must not decide anything a person would
+// have been asked about.
+{
+  const impl = sharedDrive();
+  const pc = launcher(impl, { name: "Desktop", settings: { baseColor: "#111111" } });
+
+  check("it is off until it is asked for", pc.c.autoSync(), false,
+    "syncing on a timer is a thing to opt into");
+  check("and the settings page is told which it is",
+    (await pc.c.status()).auto, false);
+  pc.c.setAutoSync(true);
+  check("turning it on sticks", [pc.c.autoSync(), (await pc.c.status()).auto], [true, true]);
+
+  // With it on, a sync is still exactly the sync the button does.
+  await pc.c.syncNow();
+  const laptop = launcher(impl, { name: "Laptop" });
+  laptop.c.setAutoSync(true);
+  await laptop.c.syncNow();
+
+  pc.s.set("baseColor", "#aa0000");
+  laptop.s.set("baseColor", "#0000aa");
+  await laptop.c.syncNow();
+  const clash = await pc.c.syncNow();
+  check("something changed in both places is still a conflict",
+    did(clash, "settings"), "conflict",
+    "a sync that runs by itself must not settle anything by itself");
+  check("and neither copy was touched",
+    [pc.s.get("baseColor"), laptop.s.get("baseColor")], ["#aa0000", "#0000aa"]);
+
+  pc.c.setAutoSync(false);
+  check("and it can be turned off again", pc.c.autoSync(), false);
+}
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);

@@ -48,7 +48,13 @@ Only inside the folder the launcher creates. Nothing goes without being asked
 for, in one of two ways.
 
 **Switched on in *Settings → Cloud syncing*.** Each is a separate switch and
-all of them start off. Once on, these are kept in step every time you sync:
+all of them start off. Once on, these are kept in step every time you sync —
+which is when you press *Sync now*, unless you also switch on *Keep it in
+step by itself*, in which case the launcher checks every few minutes while it
+is running and syncs the same things in the same way. That switch is off
+until you turn it on, and it changes only *when* a sync happens: it includes
+nothing extra, and anything that changed in two places is still shown for you
+to settle rather than decided for you.
 
 - **Settings** — theme, colours, layout and similar preferences. Settings that
   belong to the computer rather than to you — where Java is, how much memory
