@@ -167,11 +167,15 @@ const whole = (bg) => p.evaluate((b) => {
 }, bg);
 
 const one = await whole({ mode: "image", image: { url: "a.png", fit: "cover" } });
-check("one picture is still one picture, over the launcher's own panel",
-  [one.image.split("), ").length, one.image.startsWith('url("a.png")'),
-    one.image.includes("linear-gradient(to bottom, var(--toolbar-bg)")],
-  [2, true, true],
-  "the panel underneath is what a fitted one shows where it does not reach, instead of a slab of colour");
+check("one picture is still one picture, over the launcher's own dark",
+  [(one.image.match(/url\(|linear-gradient\(/g) || []).length, one.image.startsWith('url("a.png")'),
+    one.image.includes("var(--toolbar-bg)"),
+    one.image.includes("linear-gradient(var(--very-dark), var(--very-dark))")],
+  [2, true, false, true],
+  "what a fitted one shows where it does not reach. The launcher's PANEL was "
+  + "under it once -- and the toolbar is 38px tall while the panel's band is a "
+  + "tenth of the window, so the rest of the band came out from under the "
+  + "toolbar as a bright strip across the top of the picture");
 check("and its size and the panel's line up with the two of them",
   [one.size, one.repeat, one.attach],
   ["cover, auto", "no-repeat, no-repeat", "fixed, fixed"],

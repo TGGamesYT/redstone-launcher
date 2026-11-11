@@ -445,11 +445,14 @@ check("the build is told where the icon is now",
 // reaches for stubbed: the settings it reads and the files it opens.
 const mainSrc = fs.readFileSync(path.join(ROOT, "backend/main.js"), "utf8");
 const cutFill = (() => {
-  const i = mainSrc.indexOf("function backgroundAsFill() {");
+  // Everything the backing is made of: the stack of pictures, the key that
+  // says which stack a framing belongs to, and the tiled-block backing.
+  const i = mainSrc.indexOf("function backgroundImages(bg) {");
   const j = mainSrc.indexOf("// What each layer is filled with", i);
   return i < 0 || j < 0 ? null : mainSrc.slice(i, j);
 })();
-check("backgroundAsFill is where it was", !!cutFill, true);
+check("backgroundAsFill is where it was",
+  !!cutFill && /async function backgroundAsFill\(\)/.test(cutFill), true);
 
 const WALL = path.join(OUT, "wallpaper.png");
 await sharp({ create: { width: 40, height: 20, channels: 4, background: { r: 10, g: 120, b: 200, alpha: 1 } } })
@@ -458,53 +461,100 @@ const CROP = "data:image/png;base64," + (await sharp({
   create: { width: 8, height: 8, channels: 4, background: { r: 200, g: 40, b: 40, alpha: 1 } },
 }).png().toBuffer()).toString("base64");
 
-const fillWith = (store) => new Function("settings", "fs", "fromDataUrl", `
+const fillWith = (store) => new Function("settings", "fs", "sharp", "fromDataUrl", `
   ${cutFill}
   return backgroundAsFill();
 `)(
   { get: (k, d) => (k in store ? store[k] : d) },
   fs,
+  sharp,
   (u) => Buffer.from(String(u).replace(/^data:image\/[\w+.-]+;base64,/, ""), "base64"),
 );
 
-const bgPicture = { mode: "image", image: { file: WALL } };
-const whole = fillWith({ background: bgPicture, appIcon: { kind: "theme" } });
-check("with no framing the icon wears the whole picture",
-  [whole.kind, whole.png.length === fs.readFileSync(WALL).length], ["texture", true]);
+// What a returned backing is actually a picture OF: its size, and the
+// colour of the middle of it. The bytes cannot be compared any more --
+// the backing is drawn, not handed over -- and the colour is the point.
+const describe = async (fill) => {
+  const m = await sharp(fill.png).metadata();
+  const px = await sharp(fill.png).extract({ left: Math.floor(m.width / 2), top: Math.floor(m.height / 2), width: 1, height: 1 })
+    .raw().toBuffer();
+  return { w: m.width, h: m.height, rgb: [px[0], px[1], px[2]] };
+};
+const BLUE = [10, 120, 200], RED = [200, 40, 40];
 
-const framed = fillWith({
+const bgPicture = { mode: "image", image: { file: WALL } };
+const whole = await fillWith({ background: bgPicture, appIcon: { kind: "theme" } });
+check("with no framing the icon wears the picture itself",
+  [whole.kind, (await describe(whole)).rgb], ["texture", BLUE]);
+
+const framed = await fillWith({
   background: bgPicture,
   appIcon: { kind: "theme", backCrop: CROP, backCropOf: WALL },
 });
 check("and with a framing it wears that instead",
-  [framed.kind, framed.png.length === fs.readFileSync(WALL).length], ["texture", false],
+  [framed.kind, (await describe(framed)).rgb], ["texture", RED],
   "the crop is its own picture, not the wallpaper again");
+
+// ── a stack of pictures ──
+//
+// The backing used to be bg.image and nothing else, which is the top of the
+// stack: with two pictures, the icon showed something the window does not.
+{
+  const UNDER = path.join(OUT, "under.png");
+  await sharp({ create: { width: 40, height: 20, channels: 4, background: { r: 20, g: 200, b: 60, alpha: 1 } } })
+    .png().toFile(UNDER);
+  // A top picture with a hole in the middle of it, over a green one.
+  const HOLE = path.join(OUT, "hole.png");
+  await sharp({ create: { width: 40, height: 40, channels: 4, background: { r: 10, g: 120, b: 200, alpha: 1 } } })
+    .composite([{
+      // Opaque, and dest-out: what is removed is where the SOURCE is solid.
+      input: await sharp({ create: { width: 20, height: 20, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } } }).png().toBuffer(),
+      left: 10, top: 10, blend: "dest-out",
+    }]).png().toFile(HOLE);
+  const stack = { mode: "image", images: [{ file: HOLE, fit: "cover" }, { file: UNDER, fit: "cover" }], image: { file: HOLE } };
+  const both = await fillWith({ background: stack, appIcon: { kind: "theme" } });
+  check("the backing is the whole stack, not the top of it",
+    [(await describe(both)).w, (await describe(both)).rgb], [256, [20, 200, 60]],
+    "the one underneath shows through where the one over it does not reach, which is what the window shows");
+
+  // And a framing belongs to the stack it was made of.
+  const key = `${HOLE}@cover|${UNDER}@cover`;
+  check("a framing of this stack is worn",
+    (await describe(await fillWith({
+      background: stack, appIcon: { kind: "theme", backCrop: CROP, backCropOf: key },
+    }))).rgb, RED);
+  check("and one made before the second picture was added is not",
+    (await describe(await fillWith({
+      background: stack, appIcon: { kind: "theme", backCrop: CROP, backCropOf: `${HOLE}@cover` },
+    }))).rgb, [20, 200, 60],
+    "adding a picture changes what the backing shows, so a framing of what it showed before is a framing of something else");
+}
 
 // A framing belongs to the picture it was made from. Choosing another
 // background and finding the icon still wearing a crop of the old one is
 // worse than finding it wearing none.
-const stale = fillWith({
+const stale = await fillWith({
   background: { mode: "image", image: { file: WALL } },
   appIcon: { kind: "theme", backCrop: CROP, backCropOf: path.join(OUT, "some-other.png") },
 });
 check("a framing of a picture that is no longer set is dropped",
-  stale.png.length, fs.readFileSync(WALL).length,
+  (await describe(stale)).rgb, BLUE,
   "the whole picture comes back rather than a crop of a wallpaper nobody has any more");
 
 // And it only applies to a picture: a tiled block or a gradient has nothing
 // to frame, so a leftover crop must not be worn by one.
 check("a tiled block is not given the picture's framing",
-  fillWith({
+  (await fillWith({
     background: { mode: "block", block: { url: CROP } },
     appIcon: { kind: "theme", backCrop: CROP, backCropOf: WALL },
-  }).pixelated, true);
+  })).pixelated, true);
 check("and a gradient is still a gradient",
-  fillWith({
+  (await fillWith({
     background: { mode: "gradient", gradient: { colors: ["#111", "#222"], angle: 10 } },
     appIcon: { kind: "theme", backCrop: CROP, backCropOf: WALL },
-  }).kind, "gradient");
+  })).kind, "gradient");
 check("and the app's own panel has nothing to take",
-  fillWith({ background: { mode: "theme" }, appIcon: { kind: "theme", backCrop: CROP } }), null);
+  await fillWith({ background: { mode: "theme" }, appIcon: { kind: "theme", backCrop: CROP } }), null);
 
 // The settings page opens the same cropper an instance's icon gets, rather
 // than a second one that could drift from it.

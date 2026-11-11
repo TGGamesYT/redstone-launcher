@@ -135,11 +135,16 @@ function imageLayers(b) {
     ? b.images : [b.image];
   return list.filter(had).map(im => ({ ...BG_FALLBACK.image, ...im }));
 }
-// What the launcher wears when it has no background of its own: the toolbar's
-// colour across the top tenth and the dark below it. Kept the same as the
-// `html` rule in server.css, which is the thing it is standing in for.
-const BG_PANEL = 'linear-gradient(to bottom, var(--toolbar-bg) 0%, '
-  + 'var(--toolbar-bg) 10%, var(--very-dark) 10%, var(--very-dark) 100%)';
+// What shows under the pictures where none of them reaches.
+//
+// It was the launcher's own panel -- the toolbar's colour across the top
+// tenth, the dark below -- on the grounds that the panel is what "the
+// background" means when there is nothing else. But the toolbar is only 38
+// pixels tall and the band is a tenth of the window, so the rest of it came
+// out from under the toolbar as a bright strip across the top of the
+// picture: something no other background mode has, and nothing anybody
+// asked for. The dark alone now, which is what the other modes show.
+const BG_PANEL = 'linear-gradient(var(--very-dark), var(--very-dark))';
 
 function backgroundCss(bg) {
   const b = { ...BG_FALLBACK, ...(bg || {}) };
@@ -188,7 +193,10 @@ function backgroundCss(bg) {
       // A tile turned at random is not one texture but a patch of several
       // cells, so one repeat of it is that many tiles across. Sizing it as a
       // single tile would shrink every cell to a quarter.
-      const cells = Math.max(1, Math.min(8, Number(bl.cells) || 1));
+      // However many the patch really has: the launcher makes it, and a
+      // ceiling lower than that would draw it at the wrong size -- every
+      // cell shrunk to fit a patch the stylesheet thinks is smaller.
+      const cells = Math.max(1, Math.min(32, Number(bl.cells) || 1));
       const span = n * cells;
       // A 16-pixel texture blown up to 64 has to stay sharp, or a tiled dirt
       // wall turns into a blur. `image-rendering` applies to background

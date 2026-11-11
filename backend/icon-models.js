@@ -32,8 +32,10 @@ const fsp = fs.promises;
 // The jar whose textures every pre-1.14 version borrows.
 const LEGACY_TEXTURE_VERSION = '1.13.2';
 const FLATTENING = '1.14';          // where textures/blocks became textures/block
-// A stack is a few megabytes of index; a handful is plenty.
-const STACK_CACHE_MAX = 6;
+// A stack is a few megabytes of index; a handful is plenty. Room for a few
+// instances AND the plain version stacks the launcher's own pickers use,
+// since dropping one of those to make room costs an index rebuild.
+const STACK_CACHE_MAX = 10;
 const STACK_TTL = 10 * 60 * 1000;
 
 let DEPS = null;
@@ -156,7 +158,18 @@ export async function stackFor({ profileId = null, version, overrides = true } =
   if (!version) version = await defaultVersion();
   const key = `${profileId == null ? '-' : profileId}|${version || '-'}|${overrides ? 'o' : '-'}`;
   const hit = _stacks.get(key);
-  if (hit && Date.now() - hit.at < STACK_TTL) return hit.value;
+  if (hit) {
+    // The timeout is there so that a pack enabled or a mod dropped into an
+    // instance shows up without restarting the launcher. A stack with no
+    // instance behind it is the version's own jar and nothing else, and a
+    // version's jar does not change -- so there is nothing for a timeout to
+    // notice, and letting it expire means indexing the jar again, which for
+    // one being read over the network means fetching it again. Which is the
+    // block picker appearing to download the game's blocks afresh every ten
+    // minutes.
+    const fixed = hit.value && hit.value.profileId == null;
+    if (fixed || Date.now() - hit.at < STACK_TTL) return hit.value;
+  }
 
   const value = await (async () => {
     const jar = await jarSource(version);

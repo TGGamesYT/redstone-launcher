@@ -1781,18 +1781,32 @@
               }
             });
 
-            // "Match the background to the theme" brings the background's
-            // COLOURS across. It does not decide whether there is a custom
-            // background at all: it used to switch a gradient on for anybody
-            // with the sync ticked, and switch one OFF -- one they had built
-            // themselves -- for everybody else. Which mode is in use is the
-            // Background section's business and nothing else's.
-            const predefinedThemeSyncCheckbox = document.getElementById('predefined-theme-sync');
-            if (predefinedThemeSyncCheckbox && predefinedThemeSyncCheckbox.checked
-              && window.__syncBackgroundToTheme) {
-              window.__syncBackgroundToTheme(theme.secondaryColor);
-            }
+            // A theme brings its background with it.
+            //
+            // These ten are colours and nothing else, so the background that
+            // comes with one is the launcher's own panel -- which is what
+            // "the theme background" is. Picking a theme used to leave
+            // whatever was behind the launcher exactly as it was, so a theme
+            // was only ever half applied: the bars changed and the window
+            // behind them stayed somebody else's picture.
+            //
+            // The Colour and Gradient options are set to this theme's own
+            // shades at the same time, so picking one of them afterwards is
+            // this theme rather than the last one's.
+            //
+            // With "Match the background to the theme" ticked, the mode is
+            // left as it is: that switch says the background should BE the
+            // theme's colours, and putting it back to the panel would be the
+            // opposite of what it asks for.
+            const matching = document.getElementById('predefined-theme-sync');
+            const keepMode = !!(matching && matching.checked);
+            const bgUpdate = window.__themeBackgroundFor
+              ? window.__themeBackgroundFor(theme.secondaryColor, keepMode)
+              : null;
+            if (bgUpdate) themeUpdate.background = bgUpdate;
 
+            // One save, so one step back: the colours and the background are
+            // one thing that happened.
             ipcRenderer.send('save-settings', themeUpdate);
             const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
             localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...themeUpdate }));
@@ -2737,6 +2751,13 @@
           rm.type = 'button'; rm.textContent = 'Remove';
           rm.addEventListener('click', () => {
             bg.images.splice(i, 1);
+            // The last one has to go from `image` as well.
+            //
+            // `image` is the mirror of whatever is on top, and an empty list
+            // is read as "this was saved before there were lists" and rebuilt
+            // FROM that mirror -- so removing the only picture put it
+            // straight back, and there was no way to be rid of it at all.
+            if (!bg.images.length) bg.image = { ...bg.image, file: null, url: null };
             renderImageList(); paintBackground(); saveBackground();
             if (window.__followBackgroundColours) window.__followBackgroundColours();
           });
@@ -3082,6 +3103,28 @@
         saveBackground();
       }
       window.__syncBackgroundToTheme = syncBackgroundToTheme;
+
+      // The background a built-in theme comes with, as a value to save --
+      // not saved here, because the theme's colours and its background are
+      // one change and belong in one save (and so in one step back).
+      //
+      // `keepMode` is for "Match the background to the theme": that switch
+      // asks for the background to BE the theme's colours, so the mode it is
+      // in is left alone and only the colours move. Without it the theme
+      // brings its own background, and a built-in theme's background is the
+      // launcher's own panel.
+      function themeBackgroundFor(secondary, keepMode) {
+        const sec = secondary || '#ff4d4d';
+        bg.gradient = { ...bg.gradient, colors: themeBackgroundGradient(sec) };
+        bg.color = mixWithBlack(sec, 0.30);
+        if (!keepMode) bg.mode = 'theme';
+        if (bgColor) { bgColor.value = bg.color; bgColorCode.value = bg.color; }
+        renderGradientColors();
+        showBgPanels();
+        paintBackground();
+        return JSON.parse(JSON.stringify(bg));
+      }
+      window.__themeBackgroundFor = themeBackgroundFor;
 
       showBgPanels();
       renderGradientColors();

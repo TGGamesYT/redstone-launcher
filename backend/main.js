@@ -7388,6 +7388,30 @@ async function backgroundStackPng(bg, size = 256) {
     .png().toBuffer();
 }
 
+// A tiled block background, as the icon's 256-pixel backing.
+//
+// The window draws the patch at `size` pixels per cell (background-size is
+// size x cells). The icon is a 256-pixel square, so the same wall at the
+// same scale is that patch drawn at size*cells and then repeated until the
+// square is full -- rather than the whole patch scaled down to 256, which is
+// every block a quarter of the size it is on the window.
+async function blockBackingPng(block, square = 256) {
+  const raw = fromDataUrl(block.url);
+  const size = Math.max(8, Math.min(512, Number(block.size) || 64));
+  const cells = Math.max(1, Math.min(32, Number(block.cells) || 1));
+  const at = size * cells;
+  const tile = await sharp(raw)
+    .resize(at, at, { kernel: "nearest" })
+    .png().toBuffer();
+  if (at >= square) {
+    return sharp(tile).extract({ left: 0, top: 0, width: square, height: square }).png().toBuffer();
+  }
+  const over = [];
+  for (let y = 0; y < square; y += at) for (let x = 0; x < square; x += at) over.push({ input: tile, left: x, top: y });
+  return sharp({ create: { width: square, height: square, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite(over).png().toBuffer();
+}
+
 async function backgroundAsFill() {
   const bg = settings.get("background", null) || {};
   const mode = String(bg.mode || "theme");
@@ -7416,6 +7440,19 @@ async function backgroundAsFill() {
     return png ? { kind: "texture", png, pixelated: false } : null;
   }
   if (mode === "block" && bg.block && bg.block.url) {
+    // The tile at the size the window shows it, not the whole patch squeezed
+    // into the icon.
+    //
+    // A block the game turns at random is kept as a patch of sixteen cells
+    // by sixteen, and handing that over whole made the icon's backing a
+    // shrunken pile of tiny blocks -- a different wall from the one behind
+    // the launcher. Cut to a square of the patch at the cell size the
+    // background is drawn at, so the blocks in the icon are the size of the
+    // blocks on the window, and tiled where the patch is smaller than that.
+    try {
+      const png = await blockBackingPng(bg.block);
+      if (png) return { kind: "texture", png, pixelated: true };
+    } catch { /* fall back to the patch as it is */ }
     try { return { kind: "texture", png: fromDataUrl(bg.block.url), pixelated: true }; }
     catch { return null; }
   }
@@ -12097,7 +12134,15 @@ ipcMain.handle("model:describe", async (event, opts = {}) => {
 //   looks nothing like the game when every tile is the same way up. Asked
 //   for, the tile becomes a patch of cells each turned at random, so the
 //   repeat carries the variety instead of one picture over and over.
-const BLOCK_TILE_CELLS = 4;
+//
+//   Sixteen across rather than four. A CSS background repeats, so whatever
+//   the patch is, it comes back -- and at four cells it came back every
+//   four blocks, which does not read as "turned at random" but as a pile of
+//   four blocks tiled, which is what it is. At sixteen the repeat is a
+//   thousand pixels of wall at the usual size, which is wider than the
+//   window: there is no second copy of it on screen to see. It costs 256
+//   placements of a 16-pixel texture, once, when the block is chosen.
+const BLOCK_TILE_CELLS = 16;
 
 async function firstFrame(buf) {
   const meta = await sharp(buf).metadata();

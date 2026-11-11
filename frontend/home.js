@@ -854,14 +854,43 @@
       // so nothing is squeezed. Only on a real change of size, or the observer
       // would answer its own writes for ever.
       if (typeof ResizeObserver === 'function') {
+        // Once it stops moving, not on every step of the way.
+        //
+        // setSize is not a cheap call: skinview3d resizes the renderer AND
+        // reallocates both of the post-processing render targets. Dragging
+        // the window's edge reports a new size every frame, so that was two
+        // full-size buffers thrown away and made again per frame, which the
+        // render cannot keep up with -- so it was blank for most of the
+        // drag. CSS holds the canvas inside its segment meanwhile (see
+        // .hs-player canvas: max-width and object-fit), so what shows while
+        // the window is moving is the render scaled, not a hole.
+        //
+        // A one-off change still takes effect at once: only a size that is
+        // still moving is waited out.
+        let settleSoon = null, lastAt = 0;
+        const resizeTo = (want) => {
+          atW = want.w; atH = want.h;
+          try { v.setSize(want.w, want.h); } catch { /* an older bundle */ }
+        };
         const ro = new ResizeObserver(() => {
           const want = wanted();
           if (want.w === atW && want.h === atH) return;
-          atW = want.w; atH = want.h;
-          try { v.setSize(want.w, want.h); } catch { /* an older bundle */ }
+          const now = Date.now();
+          const moving = now - lastAt < 250;
+          lastAt = now;
+          if (settleSoon) clearTimeout(settleSoon);
+          if (!moving) { resizeTo(want); return; }
+          settleSoon = setTimeout(() => {
+            settleSoon = null;
+            const end = wanted();
+            if (end.w !== atW || end.h !== atH) resizeTo(end);
+          }, 140);
         });
         ro.observe(node);
-        onGone(node, () => { try { ro.disconnect(); } catch { /* gone */ } });
+        onGone(node, () => {
+          try { ro.disconnect(); } catch { /* gone */ }
+          if (settleSoon) clearTimeout(settleSoon);
+        });
       }
 
       await v.loadSkin('data:image/png;base64,' + skin.base64, { model: skin.slim ? 'slim' : 'default' });
