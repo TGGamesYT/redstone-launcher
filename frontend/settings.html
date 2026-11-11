@@ -2274,67 +2274,70 @@
         previewSoon = setTimeout(() => { previewSoon = null; showAppIcon(color); }, 220);
       };
 
-      // Picking a block to tile. The game's blocks, but as flat face
-      // textures rather than rendered cubes: a wall of dirt, not a wall of
-      // little dirt cubes in perspective. Only full blocks are offered,
-      // since a slab or a fence tiles into a mess.
-      function openBlockBackgroundPicker(selectedId) {
+      // Picking a block to tile.
+      //
+      // The launcher's own model picker, which is the same grid the icon
+      // picker uses: every block the game has, searchable, drawn lazily and
+      // cached -- rather than the list of flat face textures this used to
+      // be. That list was full CUBES only, because a flat texture is all a
+      // cube needs; a stair or a fence has no such thing, so they were left
+      // out altogether. They are in now, drawn straight on from whichever
+      // side is wanted (see the Side row), which is what a wall of them
+      // looks like.
+      //
+      // And blocks a MOD adds, which the old list could not reach at all:
+      // it read the version's jar and nothing else. The dropdown says whose
+      // blocks to show, and with an instance picked the grid's own switches
+      // decide between the game's, its mods', and drawing them with its
+      // resource packs on top.
+      async function openBlockBackgroundPicker(selected) {
+        const instances = await (async () => {
+          try { return await ipcRenderer.invoke('get-profiles-list'); } catch { return []; }
+        })();
         return new Promise((resolve) => {
           const ov = document.createElement('div');
           ov.className = 'modal-overlay active';
           ov.style.zIndex = 7000;
           ov.innerHTML = `
-            <div class="modal-content" style="max-width:640px; width:92%;">
+            <div class="modal-content" style="max-width:720px; width:94%;">
               <div class="modal-header"><h2>Pick a block</h2><button class="modal-close" id="bgbX">✕</button></div>
-              <input id="bgbSearch" class="bgb-search" type="search" placeholder="Search blocks…" spellcheck="false">
-              <div id="bgbGrid" class="bgb-grid"></div>
-              <div id="bgbMsg" class="bg-hint" style="margin-top:8px;"></div>
+              <label class="bg-hint" style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+                Blocks from
+                <select id="bgbFrom" style="flex:0 1 auto;"></select>
+              </label>
+              <div id="bgbPicker" style="max-height:min(60vh,460px); overflow:auto;"></div>
             </div>`;
           document.body.appendChild(ov);
-          const grid = ov.querySelector('#bgbGrid');
-          const msg = ov.querySelector('#bgbMsg');
-          const search = ov.querySelector('#bgbSearch');
           const close = (picked) => { ov.remove(); resolve(picked || null); };
           ov.querySelector('#bgbX').onclick = () => close(null);
           ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(null); });
 
-          let seq = 0;
-          const load = async (query) => {
-            const mine = ++seq;
-            msg.textContent = 'Reading the game’s blocks…';
-            grid.innerHTML = '';
-            // No version named: the newest snapshot, so everything the game
-            // has is there to pick from.
-            const r = await ipcRenderer.invoke('model:blockFaces', { version: null, query, limit: 120 });
-            if (mine !== seq) return;                    // a later search won
-            if (r && r.error) { msg.textContent = r.error; return; }
-            const items = (r && r.items) || [];
-            if (!items.length) {
-              msg.textContent = query ? 'No full blocks match that.' : 'No blocks could be read yet.';
-              return;
-            }
-            msg.textContent = `${items.length} block${items.length === 1 ? '' : 's'}`;
-            for (const it of items) {
-              const cell = document.createElement('button');
-              cell.type = 'button';
-              cell.className = 'bgb-cell' + (it.id === selectedId ? ' on' : '');
-              const img = document.createElement('img');
-              img.src = it.url;
-              img.alt = it.name;
-              const name = document.createElement('span');
-              name.textContent = it.name;
-              cell.appendChild(img); cell.appendChild(name);
-              cell.onclick = () => close(it);
-              grid.appendChild(cell);
-            }
+          const from = ov.querySelector('#bgbFrom');
+          const add = (value, label) => {
+            const o = document.createElement('option');
+            o.value = value; o.textContent = label;
+            from.appendChild(o);
           };
-          let timer = null;
-          search.addEventListener('input', () => {
-            clearTimeout(timer);
-            timer = setTimeout(() => load(search.value.trim()), 220);
+          add('', 'The game itself');
+          for (const p of instances) add(String(p.id), p.name || String(p.id));
+          const was = (selected && selected.from) || '';
+          if (was && instances.some(p => String(p.id) === String(was))) from.value = String(was);
+
+          const picker = window.ModelPicker.mount(ov.querySelector('#bgbPicker'), {
+            instanceId: from.value || null,
+            only: ['block'],
+            sources: true,
+            onPick: (url, info) => close({
+              id: info.item.id,
+              name: info.item.name,
+              ns: info.item.ns,
+              from: from.value || null,
+              overrides: !!info.overrides,
+              desc: info.desc || null,
+            }),
           });
-          load('');
-          setTimeout(() => search.focus(), 30);
+          from.addEventListener('change', () => picker.setInstance(from.value || null));
+          setTimeout(() => { const i = ov.querySelector('.mp-search'); if (i) i.focus(); }, 30);
         });
       }
 
@@ -2348,7 +2351,7 @@
         mode: 'theme', color: '#121212',
         gradient: { colors: ['#ff4d4d', '#b30c0c'], angle: 180 },
         image: { file: null, url: null, fit: 'cover' },
-        block: { id: null, name: null, url: null, size: 64 },
+        block: { id: null, name: null, url: null, size: 64, from: null, overrides: false, view: 'north', render: false },
       };
       let bg = (() => {
         const had = getSetting('background') || {};
@@ -2824,6 +2827,39 @@
       // Everything about the chosen block: which faces it offers, whether the
       // game turns it at random, and the tile itself.
       let bgFaces = null;
+      // Which way a block that has to be RENDERED is looked at. A full cube
+      // has flat faces and needs none of this; a stair, a fence or a slab is
+      // drawn straight on from one of the six directions, because that is
+      // what a wall of them looks like.
+      const BG_VIEWS = [
+        ['north', 'North'], ['south', 'South'], ['east', 'East'],
+        ['west', 'West'], ['up', 'Top'], ['down', 'Bottom'],
+      ];
+      // The model behind the chosen block, kept so switching sides does not
+      // have to read it again.
+      let bgDesc = null;
+      async function blockDescription() {
+        if (bgDesc && bgDesc.__id === bg.block.id && bgDesc.__from === (bg.block.from || null)) return bgDesc;
+        let d = null;
+        try {
+          d = await ipcRenderer.invoke('model:describe', {
+            profileId: bg.block.from || null, version: null,
+            overrides: !!bg.block.overrides, id: bg.block.id,
+          });
+        } catch { d = null; }
+        if (!d || d.error) return null;
+        d.__id = bg.block.id; d.__from = bg.block.from || null;
+        bgDesc = d;
+        return d;
+      }
+      // One block, drawn straight on from one side, at exactly one block
+      // across so that the pictures tile against each other.
+      async function renderBlockView(view, size = 128) {
+        const d = await blockDescription();
+        if (!d || !window.BlockRender) return null;
+        try { return await window.BlockRender.render(d, { size, view, span: 16 }); }
+        catch { return null; }
+      }
       async function loadBlockFaces() {
         bgFaceRow.style.display = 'none';
         bgRandomRow.style.display = 'none';
@@ -2831,7 +2867,28 @@
         if (blockRowOff) blockRowOff.style.display = 'none';
         bgFaces = null;
         if (!bg.block.id) return;
-        const r = await ipcRenderer.invoke('model:blockFace', { id: bg.block.id });
+        // A block that is not a full cube has no flat faces to offer: the
+        // choice is which SIDE it is seen from.
+        if (bg.block.render) {
+          bgFaceRow.innerHTML = '';
+          for (const [value, label] of BG_VIEWS) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bg-face' + (value === (bg.block.view || 'north') ? ' on' : '');
+            b.dataset.view = value;
+            b.innerHTML = `<img alt=""><span>${label}</span>`;
+            renderBlockView(value, 48).then(u => { if (u) b.querySelector('img').src = u; });
+            b.onclick = () => pickView(value);
+            bgFaceRow.appendChild(b);
+          }
+          bgFaceRow.style.display = 'flex';
+          const blockRowOn = document.getElementById('bg-block-colors-row');
+          if (blockRowOn) blockRowOn.style.display = '';
+          return;
+        }
+        const r = await ipcRenderer.invoke('model:blockFace', {
+          id: bg.block.id, profileId: bg.block.from || null, overrides: !!bg.block.overrides,
+        });
         if (!r || r.error) return;
         bgFaces = r;
         // A block whose sides are not all the same gets a choice of face: a
@@ -2869,9 +2926,31 @@
         if (!bg.block.id) return false;
         const r = await ipcRenderer.invoke('model:blockTile', {
           id: bg.block.id, texture: bg.block.texture || null, random: !!bg.block.random,
+          profileId: bg.block.from || null, overrides: !!bg.block.overrides,
         });
-        if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'That block could not be read', 'error'); return false; }
-        bg.block = { ...bg.block, url: r.url, texture: r.texture, label: r.label, cells: r.cells };
+        // Not a full cube, so there is no flat face to tile: it is drawn
+        // instead, straight on from whichever side is chosen. This is the
+        // only way a stair, a fence or a slab can be a background at all --
+        // they used to be left out of the list entirely.
+        if (!r || !r.success) {
+          const view = bg.block.view || 'north';
+          const url = await renderBlockView(view, 128);
+          if (!url) {
+            if (window.notify) notify((r && r.error) || 'That block could not be drawn', 'error');
+            return false;
+          }
+          bg.block = {
+            ...bg.block, url, cells: 1, render: true, view,
+            texture: null, label: (BG_VIEWS.find(v => v[0] === view) || [, view])[1],
+          };
+          showBlockName(); paintBackground(); saveBackground();
+          if (window.__followBackgroundColours) window.__followBackgroundColours();
+          for (const b of bgFaceRow.querySelectorAll('.bg-face')) {
+            b.classList.toggle('on', b.dataset.view === view);
+          }
+          return true;
+        }
+        bg.block = { ...bg.block, url: r.url, texture: r.texture, label: r.label, cells: r.cells, render: false };
         showBlockName(); paintBackground(); saveBackground();
         // A different block means different colours, while the toggle is on.
         if (window.__followBackgroundColours) window.__followBackgroundColours();
@@ -2886,6 +2965,14 @@
         bg.block.texture = texture;
         if (!await refreshBlockTile()) { bg.block.texture = was; return; }
         await loadBlockFaces();
+      };
+      const pickView = async (view) => {
+        const was = bg.block.view;
+        bg.block.view = view;
+        if (!await refreshBlockTile()) { bg.block.view = was; return; }
+        for (const b of bgFaceRow.querySelectorAll('.bg-face')) {
+          b.classList.toggle('on', b.dataset.view === view);
+        }
       };
       const bgScroll = document.getElementById('bg-block-scroll');
       bgScroll.checked = !!bg.block.scroll;
@@ -3070,13 +3157,18 @@
       });
 
       document.getElementById('bg-pick-block').addEventListener('click', async () => {
-        const picked = await openBlockBackgroundPicker(bg.block.id);
+        const picked = await openBlockBackgroundPicker(bg.block);
         if (!picked) return;
         // A different block means a different set of faces, so the face and
         // its label are cleared and whatever the new block's first face is
         // becomes the choice.
         const was = bg.block;
-        bg.block = { ...bg.block, id: picked.id, name: picked.name, texture: null, label: null };
+        bgDesc = picked.desc ? Object.assign(picked.desc, { __id: picked.id, __from: picked.from || null }) : null;
+        bg.block = {
+          ...bg.block, id: picked.id, name: picked.name,
+          from: picked.from || null, overrides: !!picked.overrides,
+          texture: null, label: null, render: false, view: bg.block.view || 'north',
+        };
         bg.mode = 'block';
         showBgPanels();
         if (!await refreshBlockTile()) { bg.block = was; showBlockName(); return; }

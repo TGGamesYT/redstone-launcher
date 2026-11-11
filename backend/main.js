@@ -2636,6 +2636,15 @@ ipcMain.handle('get-profile-by-id', async (event, profileId) => {
 });
 
 // Get game profiles
+// The instances, for a list to choose from. `get-profiles` replies on a
+// channel, which is fine for a page that draws them and wrong for a dialog
+// that needs them before it can be built.
+ipcMain.handle('get-profiles-list', async () => {
+  try {
+    return (await loadProfiles()).map(p => ({ id: p.id, name: p.name, version: p.version, loader: p.loader }));
+  } catch { return []; }
+});
+
 ipcMain.on('get-profiles', async (event) => {
   try {
     const profiles = await loadProfiles(); // make sure loadProfiles is async now
@@ -7401,7 +7410,9 @@ async function blockBackingPng(block, square = 256) {
   const cells = Math.max(1, Math.min(32, Number(block.cells) || 1));
   const at = size * cells;
   const tile = await sharp(raw)
-    .resize(at, at, { kernel: "nearest" })
+    // A face texture is sixteen pixels and has to stay crisp; a block that
+    // had to be drawn is already a picture at its own size.
+    .resize(at, at, { kernel: block.render ? "lanczos3" : "nearest" })
     .png().toBuffer();
   if (at >= square) {
     return sharp(tile).extract({ left: 0, top: 0, width: square, height: square }).png().toBuffer();
@@ -7451,7 +7462,7 @@ async function backgroundAsFill() {
     // blocks on the window, and tiled where the patch is smaller than that.
     try {
       const png = await blockBackingPng(bg.block);
-      if (png) return { kind: "texture", png, pixelated: true };
+      if (png) return { kind: "texture", png, pixelated: !bg.block.render };
     } catch { /* fall back to the patch as it is */ }
     try { return { kind: "texture", png: fromDataUrl(bg.block.url), pixelated: true }; }
     catch { return null; }
@@ -12282,11 +12293,15 @@ ipcMain.handle("model:blockFace", async (event, opts = {}) => {
 
 // The tile itself, once a face has been chosen: de-animated, coloured in,
 // and optionally a patch of randomly turned cells.
-ipcMain.handle("model:blockTile", async (event, { version, id, texture, random } = {}) => {
+ipcMain.handle("model:blockTile", async (event, { version, id, texture, random, profileId = null, overrides = false } = {}) => {
   try {
     const v = await newestBlockVersion(version);
     if (!v) return { error: "No Minecraft version could be read yet" };
-    const got = await iconModels.blockFaces({ version: v, id });
+    // An instance's blocks are its mods' blocks, and with `overrides` its
+    // resource packs are allowed on top -- the same three switches the icon
+    // picker has, because a background should be able to be any block the
+    // game you play actually has.
+    const got = await iconModels.blockFaces({ version: v, id, profileId, overrides });
     if (!got || got.error) return got || { error: "that block could not be read" };
     const face = (got.faces || []).find(f => f.texture === texture) || (got.faces || [])[0];
     if (!face) return { error: "that block has no face to tile" };

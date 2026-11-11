@@ -531,8 +531,29 @@
     const radius = Math.max(8, box.getSize(new THREE.Vector3()).length() / 2);
     const dist = radius * 4 + 40;
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, dist * 2 + radius * 4);
-    camera.position.copy(centre).add(new THREE.Vector3(dist, dist, dist).multiplyScalar(1 / Math.sqrt(3)));
-    camera.up.set(0, 1, 0);
+    // Straight on, when a side is asked for.
+    //
+    // `view` puts the camera on one axis instead of the diagonal, which is
+    // what a block looks like as a WALL rather than as an icon: a stair
+    // seen from the north is the shape of a stair, and a stair seen
+    // isometrically is a little toy on a shelf. The shading is left as it
+    // is -- the game shades a face by which way it points, whoever is
+    // looking at it.
+    const VIEW = {
+      north: [0, 0, -1], south: [0, 0, 1], east: [1, 0, 0], west: [-1, 0, 0],
+      up: [0, 1, 0], down: [0, -1, 0],
+    };
+    const along = opts.view && VIEW[opts.view];
+    if (along) {
+      camera.position.copy(centre).add(new THREE.Vector3(...along).multiplyScalar(dist));
+      // Looking straight down or straight up, "up" cannot be the Y axis as
+      // well -- the camera would have no idea which way round it is.
+      camera.up.set(0, 1, 0);
+      if (along[1]) camera.up.set(0, 0, along[1] > 0 ? -1 : 1);
+    } else {
+      camera.position.copy(centre).add(new THREE.Vector3(dist, dist, dist).multiplyScalar(1 / Math.sqrt(3)));
+      camera.up.set(0, 1, 0);
+    }
     camera.lookAt(centre);
     camera.updateMatrixWorld();
 
@@ -553,8 +574,19 @@
       }
       return Math.max(w, h, 0.001) * 1.04;   // a hair of margin
     })();
-    camera.left = -half; camera.right = half;
-    camera.top = half; camera.bottom = -half;
+    // A tile is framed by the BLOCK, not by the model in it.
+    //
+    // Fitting to the model is right for an icon, where the thing should be
+    // as big as the picture allows. A picture that is going to be TILED has
+    // to be exactly one block across, or the tiles do not line up: a slab
+    // framed to itself would be stretched to a full block, and a torch would
+    // be a wall of giant torches. `span` is how many model units the picture
+    // covers -- 16 is one block -- and what sticks out past it is cropped,
+    // which is what the game does with it too.
+    const spanHalf = Number(opts.span) > 0 ? Number(opts.span) / 2 : 0;
+    const halfUse = spanHalf || half;
+    camera.left = -halfUse; camera.right = halfUse;
+    camera.top = halfUse; camera.bottom = -halfUse;
     camera.updateProjectionMatrix();
 
     renderer.render(scene, camera);
@@ -568,7 +600,7 @@
     // four times magnified and soft — the alpha box is measured, turned back
     // into camera-space units, and the scene is rendered AGAIN through a
     // frustum that frames it. The second render is at full resolution.
-    if (opts.fit !== 'model') {
+    if (opts.fit !== 'model' && !spanHalf) {
       const box2 = contentBox(canvas);
       if (box2) {
         const w = box2.maxX - box2.minX + 1, h = box2.maxY - box2.minY + 1;

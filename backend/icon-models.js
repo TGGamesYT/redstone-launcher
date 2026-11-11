@@ -862,8 +862,8 @@ function faceGroupLabel(names) {
 // and that is the only thing that counts as varying: a command block has
 // four rotations too, but they are its FACING states, and offering to scatter
 // those would be offering nonsense.
-export async function blockFaces({ profileId, version, id } = {}) {
-  const st = await stackFor({ profileId, version, overrides: false });
+export async function blockFaces({ profileId, version, id, overrides = false } = {}) {
+  const st = await stackFor({ profileId, version, overrides });
   if (!st) return { error: 'no assets for this version yet' };
   const json = await st.models.json(MA.blockstatePath(id));
   if (!json) return { error: 'that block has no blockstate' };

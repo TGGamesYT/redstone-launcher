@@ -110,7 +110,7 @@ const BG_FALLBACK = {
   // -- means by it.
   image: { file: null, fit: 'cover' },
   images: [],
-  block: { url: null, size: 64, cells: 1 },
+  block: { url: null, size: 64, cells: 1, render: false },
 };
 // A path to something on disk, as a url the page may load.
 function fileUrl(p) {
@@ -207,7 +207,14 @@ function backgroundCss(bg) {
       // through the holes otherwise.
       return {
         ...none, image: `url("${bl.url}")`, size: `${span}px ${span}px`,
-        repeat: 'repeat', render: 'pixelated', color: 'var(--very-dark)',
+        repeat: 'repeat',
+        // A face TEXTURE is sixteen pixels blown up to sixty-four and has to
+        // stay sharp. A block that had to be drawn instead -- a stair, a
+        // fence -- is already a picture at the size it was drawn, and
+        // telling the browser to keep its pixels crisp only makes its edges
+        // jagged.
+        render: bl.render ? 'auto' : 'pixelated',
+        color: 'var(--very-dark)',
         // A tiled wall can either stay put behind the page or travel with it
         // as it scrolls; which of those looks right is a matter of taste.
         attach: bl.scroll ? 'scroll' : 'fixed',

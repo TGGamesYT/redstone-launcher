@@ -180,16 +180,21 @@
     // The source switches only make sense for an instance: a bare version has
     // nothing but its jar.
     const hasInstance = ctx.instanceId != null;
+    // Where only one kind is wanted -- the background takes blocks and
+    // nothing else -- the switches have nothing to offer and are left out.
+    const only = Array.isArray(opts.only) && opts.only.length ? opts.only : null;
+    const KIND_WORD = { block: 'blocks', item: 'items', entity: 'mobs' };
+    const looking = (only || ['block', 'item', 'entity']).map(k => KIND_WORD[k] || k);
     container.innerHTML = `
       <div class="mp-bar">
-        <input type="text" class="mp-search" placeholder="Search blocks, items and mobs…" />
-        <div class="mp-kinds">
+        <input type="text" class="mp-search" placeholder="Search ${looking.join(', ').replace(/, ([^,]*)$/, ' and $1')}…" />
+        <div class="mp-kinds" ${only ? 'style="display:none;"' : ''}>
           <label><input type="checkbox" data-kind="block" checked> Blocks</label>
           <label><input type="checkbox" data-kind="item" checked> Items</label>
           <label><input type="checkbox" data-kind="entity" checked> Mobs</label>
         </div>
       </div>
-      <div class="mp-bar mp-sources" ${hasInstance ? '' : 'style="display:none;"'}>
+      <div class="mp-bar mp-sources" ${hasInstance || opts.sources ? '' : 'style="display:none;"'}>
         <div class="mp-kinds">
           <label title="Everything the game itself has"><input type="checkbox" data-src="vanilla" checked> Vanilla</label>
           <label title="Everything this instance's mods add"><input type="checkbox" data-src="modded" checked> Modded</label>
@@ -206,7 +211,7 @@
     let io = watcher(ctx);
     let seq = 0, offset = 0, total = 0, query = '';
 
-    const kinds = () => kindBoxes.filter(b => b.checked).map(b => b.dataset.kind);
+    const kinds = () => (only || kindBoxes.filter(b => b.checked).map(b => b.dataset.kind));
 
     // The scrolling box the grid lives in, so a reload can put you back where
     // you were. Toggling a switch rebuilds the list, which emptied the grid and
@@ -333,7 +338,19 @@
       });
     }
     load(true);
-    return { reload: () => load(true) };
+    return {
+      reload: () => load(true),
+      // Which instance's blocks are listed, changed after mounting -- the
+      // background's picker offers that as a dropdown, since a background
+      // belongs to no instance but can be made of any instance's mods.
+      setInstance: (id) => {
+        ctx.instanceId = id ?? null;
+        const bar = container.querySelector('.mp-sources');
+        if (bar) bar.style.display = ctx.instanceId != null ? '' : 'none';
+        if (ctx.instanceId == null) ctx.overrides = false;
+        load(true);
+      },
+    };
   }
 
   function ensureStyle() {
