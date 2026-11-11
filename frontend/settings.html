@@ -1987,9 +1987,13 @@
           btn.addEventListener('click', async () => {
             const r = await ipcRenderer.invoke('theme:apply', { id: t.id });
             if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'That theme could not be applied', 'error'); return; }
-            // The page is showing the old theme in every control; reload so
-            // every field, the background section and the icon all agree.
-            location.reload();
+            // Every control on this page is still showing the old theme.
+            // This used to reload the page to fix that, which is a page
+            // change and so put the loading screen over the whole launcher
+            // to change eight values. The theme itself is already applied
+            // everywhere by now; only these controls were behind.
+            if (window.__adoptSettings) window.__adoptSettings(r.theme || null);
+            if (window.notify) notify(`Applied "${t.name || 'theme'}"`, 'success');
           });
           savedList.appendChild(btn);
         }
@@ -2817,6 +2821,75 @@
         }
       }
       window.__followBackgroundColours = followBackgroundColours;
+
+      // ── Taking settings that changed somewhere else ──────────────────────
+      //
+      // Applying a saved theme used to finish with location.reload(), which
+      // is how every control on this page came to agree with it. It is also
+      // a page change: the shell raises its loading screen for it, so
+      // picking a theme put a curtain over the launcher and rebuilt the page
+      // to change eight values and a background.
+      //
+      // The theme is already applied everywhere by then -- settings-updated
+      // repaints the bars, the frame and every other window -- so the only
+      // thing the reload was for is the controls on THIS page. That is what
+      // this does, and nothing else.
+      //
+      // It is also what a cloud sync needs: the same settings arriving from
+      // another computer, with the settings page open in front of you.
+      function adoptSettings(next) {
+        const s = next || {};
+        const got = (k) => (k in s ? s[k] : getSetting(k));
+
+        for (const [colorId, codeId, key] of colorSettings) {
+          const v = got(key);
+          if (!v) continue;
+          const swatch = document.getElementById(colorId);
+          const code = document.getElementById(codeId);
+          if (swatch) swatch.value = v;
+          if (code) code.value = v;
+        }
+        if (autoThirdCheckbox) autoThirdCheckbox.checked = !!got('autoThird');
+        if (fontSelect && got('font')) fontSelect.value = got('font');
+        if (smoothSelect) {
+          smoothSelect.value = got('fontSmoothing') || 'sharp';
+          document.documentElement.dataset.smoothing = smoothSelect.value;
+        }
+        if (borderRadius && got('borderRadius') !== undefined) {
+          borderRadius.value = got('borderRadius');
+          if (borderValue) borderValue.innerText = borderRadius.value;
+        }
+
+        // The background section keeps its own copy of the settings, so it
+        // is rebuilt from the new ones rather than nudged.
+        const hadBg = got('background');
+        if (hadBg) {
+          bg = {
+            ...BG_DEFAULT, ...hadBg,
+            gradient: { ...BG_DEFAULT.gradient, ...(hadBg.gradient || {}) },
+            image: { ...BG_DEFAULT.image, ...(hadBg.image || {}) },
+            block: { ...BG_DEFAULT.block, ...(hadBg.block || {}) },
+          };
+          try { renderImageList(); } catch { /* no list yet */ }
+          try { showBgPanels(); } catch { /* ditto */ }
+          try { paintBackground(); } catch { /* ditto */ }
+        }
+
+        // And the icon, whose backing follows the colours and the background.
+        ipcRenderer.invoke('icon:app').then((r) => {
+          const icon = (r && r.icon) || {};
+          if (r && r.dataUrl && iconPreview) iconPreview.src = r.dataUrl;
+          if (iconMerge) iconMerge.checked = !!icon.mergeBlock;
+          if (window.__iconCropRowRefresh) window.__iconCropRowRefresh();
+        }).catch(() => { });
+      }
+      window.__adoptSettings = adoptSettings;
+
+      // The same settings arriving from the main process -- a cloud sync, or
+      // a theme applied from another window.
+      ipcRenderer.on('settings-updated', (_e, next) => {
+        try { adoptSettings(next); } catch (e) { console.warn('could not take the new settings', e); }
+      });
 
       // One preference, shown in both panels. Both fields are still written
       // so a save made by an older build still reads.

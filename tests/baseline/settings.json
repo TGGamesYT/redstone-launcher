@@ -3,7 +3,7 @@
   1280,
   800
  ],
- "count": 143,
+ "count": 144,
  "nodes": [
   {
    "key": "#add-gradient-color",
@@ -1769,7 +1769,7 @@
    "key": "#cloud-box",
    "box": [
     131,
-    578,
+    601,
     1088,
     23
    ],
@@ -1926,46 +1926,6 @@
    }
   },
   {
-   "key": "#cloud-instances",
-   "box": [
-    0,
-    0,
-    0,
-    0
-   ],
-   "style": {
-    "display": "block",
-    "position": "static",
-    "boxSizing": "border-box",
-    "overflow": "visible",
-    "overflowX": "visible",
-    "overflowY": "visible",
-    "flexDirection": "row",
-    "justifyContent": "normal",
-    "alignItems": "normal",
-    "gridTemplateColumns": "none",
-    "fontFamily": "Pixel",
-    "fontSize": "16px",
-    "fontWeight": "400",
-    "lineHeight": "normal",
-    "textAlign": "start",
-    "color": "rgb(255, 255, 255)",
-    "backgroundColor": "rgba(0, 0, 0, 0)",
-    "borderRadius": "0px",
-    "marginTop": "14px",
-    "marginRight": "0px",
-    "marginBottom": "0px",
-    "marginLeft": "0px",
-    "paddingTop": "0px",
-    "paddingRight": "0px",
-    "paddingBottom": "0px",
-    "paddingLeft": "0px",
-    "zIndex": "auto",
-    "opacity": "1",
-    "visibility": "visible"
-   }
-  },
-  {
    "key": "#cloud-items",
    "box": [
     0,
@@ -2089,7 +2049,7 @@
    "key": "#cloud-signed-out",
    "box": [
     131,
-    578,
+    601,
     1088,
     23
    ],
@@ -2129,7 +2089,7 @@
    "key": "#cloud-signin",
    "box": [
     131,
-    578,
+    601,
     150,
     23
    ],
@@ -2169,7 +2129,7 @@
    "key": "#cloud-signin-state",
    "box": [
     291,
-    584,
+    607,
     0,
     11
    ],
@@ -3369,7 +3329,7 @@
    "key": "#pool-skins",
    "box": [
     131,
-    460,
+    483,
     28,
     24
    ],
@@ -3409,7 +3369,7 @@
    "key": "#poolSkinsState",
    "box": [
     131,
-    492,
+    515,
     1088,
     0
    ],
@@ -3769,7 +3729,7 @@
    "key": "#runImportBtn",
    "box": [
     293.4,
-    695,
+    718,
     261.6,
     35
    ],
@@ -3809,7 +3769,7 @@
    "key": "#runTourBtn",
    "box": [
     131,
-    695,
+    718,
     152.4,
     35
    ],
@@ -4009,7 +3969,7 @@
    "key": "#servers-outlive",
    "box": [
     131,
-    424,
+    447,
     28,
     24
    ],
@@ -4040,6 +4000,86 @@
     "paddingRight": "12px",
     "paddingBottom": "10px",
     "paddingLeft": "12px",
+    "zIndex": "auto",
+    "opacity": "1",
+    "visibility": "visible"
+   }
+  },
+  {
+   "key": "#settings-contact-discord",
+   "box": [
+    131,
+    871,
+    60.8,
+    15
+   ],
+   "style": {
+    "display": "block",
+    "position": "static",
+    "boxSizing": "border-box",
+    "overflow": "visible",
+    "overflowX": "visible",
+    "overflowY": "visible",
+    "flexDirection": "row",
+    "justifyContent": "normal",
+    "alignItems": "normal",
+    "gridTemplateColumns": "none",
+    "fontFamily": "Pixel",
+    "fontSize": "16px",
+    "fontWeight": "400",
+    "lineHeight": "normal",
+    "textAlign": "start",
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": "0px",
+    "marginTop": "0px",
+    "marginRight": "0px",
+    "marginBottom": "0px",
+    "marginLeft": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "zIndex": "auto",
+    "opacity": "1",
+    "visibility": "visible"
+   }
+  },
+  {
+   "key": "#settings-contact-email",
+   "box": [
+    201.8,
+    871,
+    299.2,
+    15
+   ],
+   "style": {
+    "display": "block",
+    "position": "static",
+    "boxSizing": "border-box",
+    "overflow": "visible",
+    "overflowX": "visible",
+    "overflowY": "visible",
+    "flexDirection": "row",
+    "justifyContent": "normal",
+    "alignItems": "normal",
+    "gridTemplateColumns": "none",
+    "fontFamily": "Pixel",
+    "fontSize": "16px",
+    "fontWeight": "400",
+    "lineHeight": "normal",
+    "textAlign": "start",
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": "0px",
+    "marginTop": "0px",
+    "marginRight": "0px",
+    "marginBottom": "0px",
+    "marginLeft": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
     "zIndex": "auto",
     "opacity": "1",
     "visibility": "visible"
@@ -4449,7 +4489,7 @@
    "key": "#sync-options",
    "box": [
     131,
-    360,
+    383,
     28,
     24
    ],
@@ -4489,7 +4529,7 @@
    "key": "#sync-servers",
    "box": [
     131,
-    392,
+    415,
     28,
     24
    ],
