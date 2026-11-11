@@ -16,6 +16,7 @@
 // correctly.
 import fs from "fs";
 import path from "path";
+import AdmZip from "adm-zip";
 import { vanilla } from "tomate-loaders";
 
 const NEOFORGE_MAVEN = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
@@ -106,6 +107,48 @@ async function downloadTo(url, dest) {
   fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
 }
 
+// The JVM arguments the loader itself says it needs.
+//
+// They are in the installer's own version.json, and they are not optional:
+// NeoForge 26.3 asks for
+//
+//   -DlibraryDirectory=${library_directory}
+//   --add-opens java.base/java.lang.invoke=ALL-UNNAMED
+//   --add-exports jdk.naming.dns/com.sun.jndi.dns=java.naming
+//
+// and without the first of those FML cannot find the libraries folder and
+// stops before the window opens -- with its error window crashing on the way
+// out, so nothing says why. They are read out of the jar and handed over as
+// extra JVM arguments, which costs nothing when the launcher library has
+// already added them (the same flag twice is the same flag) and is the whole
+// launch when it has not.
+//
+// Only the placeholders that can be answered here are substituted; anything
+// else is left out rather than passed through with a ${...} still in it.
+export function loaderJvmArgs(jar, { rootPath }) {
+  let json = null;
+  try {
+    const entry = new AdmZip(jar).getEntry("version.json");
+    if (!entry) return [];
+    json = JSON.parse(entry.getData().toString("utf8"));
+  } catch { return []; }
+  const raw = json && json.arguments && json.arguments.jvm;
+  if (!Array.isArray(raw)) return [];
+  const known = {
+    library_directory: path.join(rootPath, "libraries"),
+    classpath_separator: path.delimiter,
+    version_name: json.id || "",
+  };
+  const out = [];
+  for (const a of raw) {
+    if (typeof a !== "string") continue;          // a rule-gated block, not ours to read
+    const filled = a.replace(/\$\{(\w+)\}/g, (m, k) => (k in known ? known[k] : m));
+    if (/\$\{/.test(filled)) continue;             // something we cannot answer
+    out.push(filled);
+  }
+  return out;
+}
+
 // Both Forge and NeoForge hand MCLC an installer jar, which it unpacks into a
 // version JSON. The jar is kept per resolved version so switching an instance's
 // loader build doesn't reuse the previous one's installer.
@@ -119,6 +162,7 @@ async function installerConfig({ kind, rootPath, gameVersion, version, url }) {
     version: { number: gameVersion, type: "release", custom: `${kind}-${gameVersion}` },
     forge: jar,   // MCLC's option name for "the loader installer", both kinds
     resolvedLoaderVersion: version,
+    loaderJvmArgs: loaderJvmArgs(jar, { rootPath }),
   };
 }
 

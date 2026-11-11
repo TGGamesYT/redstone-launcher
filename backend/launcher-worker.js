@@ -583,6 +583,13 @@ async function runLaunch(cfg) {
   launcher.on("progress", (p) => post({ type: "progress", p }));
   launcher.on("download-status", (s) => post({ type: "dl", s }));
 
+  // The loader's own JVM arguments, which are not optional: NeoForge needs
+  // -DlibraryDirectory to find its libraries at all, and without it FML
+  // stops before the window opens. Added to whatever the instance asks for.
+  const loaderJvm = Array.isArray(launcherConfig.loaderJvmArgs) ? launcherConfig.loaderJvmArgs : [];
+  delete launcherConfig.loaderJvmArgs;
+  if (loaderJvm.length) post({ type: "log", line: `[loader] ${loaderJvm.length} JVM argument${loaderJvm.length === 1 ? "" : "s"} the loader asks for: ${loaderJvm.join(" ")}` });
+
   const opts = {
     ...launcherConfig,
     authorization: cfg.auth,
@@ -591,7 +598,8 @@ async function runLaunch(cfg) {
     overrides: { assetRoot: cfg.assetRoot, detached: true },
     quickPlay: cfg.quickPlay || null,
   };
-  if (cfg.customArgs && cfg.customArgs.length) opts.customArgs = cfg.customArgs;
+  const extraJvm = [...loaderJvm, ...(cfg.customArgs || [])];
+  if (extraJvm.length) opts.customArgs = extraJvm;
   if (cfg.customLaunchArgs && cfg.customLaunchArgs.length) opts.customLaunchArgs = cfg.customLaunchArgs;
 
   const child = await withRetry(() => launcher.launch(opts), 2);

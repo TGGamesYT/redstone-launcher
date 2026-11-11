@@ -4,7 +4,11 @@
 // old scheme and 26.x is the new one -- and NeoForge numbers its builds after
 // whatever Minecraft is on. Getting that mapping wrong does not fail loudly:
 // the loader simply stops being offered, which is what happened after 1.21.11.
-import { neoPrefix, resolveNeoForgeVersion, compareVersions } from "../backend/loader-versions.js";
+import { neoPrefix, resolveNeoForgeVersion, compareVersions, loaderJvmArgs } from "../backend/loader-versions.js";
+import AdmZip from "adm-zip";
+import fs from "fs";
+import os from "os";
+import path from "path";
 
 const LIVE = process.env.OFFLINE !== "1";
 let bad = 0;
@@ -22,6 +26,41 @@ check("the new numbering keeps all of itself",
   ["26.1.2", "26.2", "26.3"].map(neoPrefix), ["26.1.2.", "26.2.0.", "26.3.0."],
   "this returned null for every one of them, so NeoForge vanished after 1.21.11");
 check("and nonsense is nonsense", ["", "snapshot", "1"].map(neoPrefix), [null, null, null]);
+
+// ── the JVM arguments the loader itself asks for ──
+//
+// They are in the installer's own version.json and they are not optional:
+// NeoForge 26.3 asks for -DlibraryDirectory, and without it FML cannot find
+// its libraries and stops before the window opens -- with its own error
+// window crashing on the way out, so nothing says why.
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loaderjvm-"));
+  const jar = path.join(tmp, "installer.jar");
+  const zip = new AdmZip();
+  zip.addFile("version.json", Buffer.from(JSON.stringify({
+    id: "neoforge-26.3.0.102",
+    arguments: {
+      jvm: [
+        "-Djava.net.preferIPv6Addresses=system",
+        "-DlibraryDirectory=${library_directory}",
+        "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED",
+        "-Dsomething=${nobody_knows}",
+        { rules: [{ action: "allow", os: { name: "osx" } }], value: "-XstartOnFirstThread" },
+      ],
+    },
+  })));
+  zip.writeZip(jar);
+  check("the loader's own JVM arguments are read out of its installer",
+    loaderJvmArgs(jar, { rootPath: "/games/inst" }),
+    [
+      "-Djava.net.preferIPv6Addresses=system",
+      "-DlibraryDirectory=" + path.join("/games/inst", "libraries"),
+      "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED",
+    ],
+    "an argument with a placeholder nothing here can answer is left out rather than passed on with a ${...} in it");
+  check("and a jar that has no version.json is simply nothing",
+    loaderJvmArgs(path.join(tmp, "nope.jar"), { rootPath: "/games/inst" }), []);
+}
 
 check("builds sort by number, not as text",
   ["26.3.0.9", "26.3.0.101", "26.3.0.84"].sort(compareVersions).pop(), "26.3.0.101");

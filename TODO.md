@@ -87,7 +87,7 @@ started.
       cells, which is what it was written for, and wrong for a plain tile:
       the backing is a circle a quarter of an inch wide and one block is a
       block. One block fills it unless the tile really is a patch.*
-- [ ] **A NeoForge 26.3 instance does not start.** — The log ends in a
+- [x] **A NeoForge 26.3 instance does not start.** — The log ends in a
       NullPointerException inside FML's own error display. *What that means
       is that NeoForge hit a fatal error before the window opened and its
       error window crashed while reporting it, so the reason never reached
@@ -96,7 +96,18 @@ started.
       all, and nothing read the game's own logs/latest.log, which is where
       FML had written it. Both fixed, with a note saying that
       -Dfml.earlyprogresswindow=false makes the next run print the reason in
-      the console. Still open until the real error is known.*
+      the console.*
+      *And then the cause turned up, by reading NeoForge's own installer for
+      that build rather than guessing: its version.json asks for six JVM
+      arguments -- `-DlibraryDirectory=${library_directory}` among them --
+      and the launch command had none of them. Without that one FML cannot
+      find the libraries folder at all, which is a fatal error before the
+      window opens, which is the error window crashing while reporting it.
+      The loader's own JVM arguments are read out of the installer and
+      passed now, with the placeholders this end can answer filled in and
+      anything else left out rather than passed on with a `${...}` still in
+      it. The game args, for the record, were right: NeoForge really does
+      ask for `--fml.neoFormVersion 1` on 26.3.*
 
 ---
 
