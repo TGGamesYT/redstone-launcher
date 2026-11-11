@@ -1206,9 +1206,7 @@ ipcMain.handle("players:reorder", (event, { order }) => {
     for (const id of want) { const p = byId.get(id); if (p) { out.push(p); byId.delete(id); } }
     for (const p of players) if (byId.has(String(p.id))) out.push(p);   // anything not named, kept
     savePlayers(out);
-    for (const w of BrowserWindow.getAllWindows()) {
-      try { if (!w.isDestroyed()) w.webContents.send("players-updated", out); } catch { /* gone */ }
-    }
+    sendEverywhere("players-updated", out);
     return { success: true };
   } catch (err) { return { success: false, error: err.message }; }
 });
@@ -1613,9 +1611,7 @@ ipcMain.on("set-selected-player", (event, id) => {
 });
 
 function broadcastSelectedPlayer(id) {
-  for (const w of BrowserWindow.getAllWindows()) {
-    try { if (!w.isDestroyed()) w.webContents.send("selected-player-changed", id); } catch { /* gone */ }
-  }
+  sendEverywhere("selected-player-changed", id);
 }
 
 function setSelectedPlayer(id) {
@@ -1686,9 +1682,11 @@ function tellEveryoneSettingsChanged() {
   _settingsToldSoon = setTimeout(() => {
     _settingsToldSoon = null;
     const all = { ...DEFAULT_SETTINGS, ...settings.store };
-    for (const w of BrowserWindow.getAllWindows()) {
-      try { if (!w.isDestroyed()) w.webContents.send("settings-updated", all); } catch { /* gone */ }
-    }
+    // Every frame. The bars are the shell's and the page you are on is in a
+    // frame under them, and both draw themselves from this -- so sending it
+    // to one of them is how the content ends up on the new theme with the
+    // bars still on the old one, which is what a cloud sync looked like.
+    sendEverywhere("settings-updated", all);
   }, 120);
 }
 
@@ -1915,9 +1913,7 @@ function persistPlayer(player) {
     if (i === -1) return;
     players[i] = { ...players[i], ...player };
     savePlayers(players);
-    for (const w of BrowserWindow.getAllWindows()) {
-      try { if (!w.isDestroyed()) w.webContents.send("players-updated", players); } catch { /* gone */ }
-    }
+    sendEverywhere("players-updated", players);
   } catch (err) { devtoolsLog("could not persist the account:", err && err.message); }
 }
 
@@ -3209,12 +3205,7 @@ ipcMain.handle("bg:pickImage", async () => {
     // still has open fails.)
     const dest = path.join(dir, `wallpaper-${Date.now().toString(36)}${ext}`);
     fs.copyFileSync(src, dest);
-    // Now that the new one is safely in place, the older copies go --
-    // including the single fixed name used before this.
-    for (const f of fs.readdirSync(dir)) {
-      if (!/^wallpaper[-.]/i.test(f) || path.join(dir, f) === dest) continue;
-      try { fs.unlinkSync(path.join(dir, f)); } catch { /* it will go next time */ }
-    }
+    pruneBackgroundCopies(dest);
     return { file: dest, url: pathToFileURL(dest).href, name: path.basename(src) };
   } catch (e) { return { error: e.message }; }
 });
@@ -6386,9 +6377,7 @@ function cloudService() {
       readPlayers: () => loadPlayers(),
       writePlayers: (list) => {
         savePlayers(list);
-        for (const w of BrowserWindow.getAllWindows()) {
-          try { if (!w.isDestroyed()) w.webContents.send("players-updated", list); } catch { /* gone */ }
-        }
+        sendEverywhere("players-updated", list);
       },
       readProfiles: () => { try { return JSON.parse(fs.readFileSync(profilesPath, "utf8")); } catch { return []; } },
       // The shared multiplayer list, which is the one every instance uses
@@ -6741,6 +6730,40 @@ function currentWallpaper() {
 }
 
 // Put a theme's own picture on this computer and point the background at it.
+/** Every background picture the settings currently point at. */
+function backgroundFilesInUse() {
+  const bg = settings.get("background", null) || {};
+  const out = new Set();
+  const add = (p) => { if (p) { try { out.add(path.resolve(String(p))); } catch { /* not a path */ } } };
+  add(bg.image && bg.image.file);
+  for (const im of (Array.isArray(bg.images) ? bg.images : [])) add(im && im.file);
+  return out;
+}
+
+/**
+ * Throw away copied pictures nothing points at any more.
+ *
+ * This used to delete every copy but the one just made, which was right when
+ * a background was one picture. Several can be stacked now, so choosing a
+ * second one deleted the FIRST one's file off disk -- the list still named
+ * it, so it survived until something re-read the folder, and then it
+ * disappeared. A theme's own wallpaper lands in the same folder under the
+ * same kind of name, so that was on the same chopping block.
+ */
+function pruneBackgroundCopies(...keep) {
+  const dir = path.join(dataDir, "background");
+  const wanted = backgroundFilesInUse();
+  for (const k of keep) { if (k) { try { wanted.add(path.resolve(String(k))); } catch { /* ignore */ } } }
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    if (!/^wallpaper[-.]/i.test(name)) continue;
+    const full = path.join(dir, name);
+    if (wanted.has(path.resolve(full))) continue;
+    try { fs.unlinkSync(full); } catch { /* it will go next time */ }
+  }
+}
+
 function placeWallpaper(wallpaper) {
   if (!wallpaper || !wallpaper.data) return null;
   try {
@@ -6858,30 +6881,50 @@ ipcMain.handle("theme:apply", async (event, { id } = {}) => {
   if (t.wallpaper && applied.background) {
     const at = placeWallpaper(t.wallpaper);
     if (at) {
+      // The picture goes on the TOP of the stack, not just into `image`.
+      //
+      // Setting `image` alone was enough when a background was one picture.
+      // It is a stack now, `image` is a mirror of whatever is on top of it,
+      // and the settings page writes that mirror back FROM the stack -- so
+      // the freshly placed wallpaper was overwritten a moment later by
+      // whatever path the theme happened to carry, which belongs to the
+      // computer the theme was made on and is not a file here. The theme
+      // appeared to apply and the picture never showed.
+      //
+      // A theme carries one picture, so the rest of its stack can only be
+      // that other computer's paths. Any that happen to exist here are
+      // kept -- applying your own theme on your own machine keeps its
+      // stack -- and the rest are dropped rather than left pointing at
+      // nothing.
+      const was = applied.background;
+      const top = { ...((Array.isArray(was.images) && was.images[0]) || was.image || {}), file: at, url: null };
+      const rest = (Array.isArray(was.images) ? was.images.slice(1) : [])
+        .filter(im => im && im.file && fs.existsSync(im.file));
       applied.background = {
-        ...applied.background,
-        image: { ...(applied.background.image || {}), file: at },
+        ...was,
+        image: { ...(was.image || {}), ...top },
+        images: [top, ...rest],
       };
     }
   }
   for (const [k, v] of Object.entries(applied)) settings.set(k, v);
+  // Copies the old background pointed at and this one does not. Done after
+  // the settings are written, so what is in use is what is actually in use.
+  if (applied.background) pruneBackgroundCopies();
 
   // A theme that saved no icon of its own means the launcher's own icon, not
   // "leave whatever the last theme put there" -- which is how a picture from
   // a theme you had moved off kept turning up under every other theme.
   await applyAppIcon(t.icon || { kind: "theme" });
-  // Every open window re-reads the settings and repaints itself, the same way
-  // it does when a colour is changed in the settings page.
-  for (const w of BrowserWindow.getAllWindows()) {
-    try { if (!w.isDestroyed()) w.webContents.send("settings-updated", applied); } catch { /* gone */ }
-  }
+  // Every frame re-reads the settings and repaints itself, the same way it
+  // does when a colour is changed in the settings page.
+  sendEverywhere("settings-updated", applied);
   // A theme that carries the home page's shape has just changed it, and the
   // home page listens for that rather than for a settings change.
   if ("homeLayout" in applied) {
-    const layout = applied.homeLayout || HOME_DEFAULT;
-    for (const w of BrowserWindow.getAllWindows()) {
-      try { if (!w.isDestroyed()) w.webContents.send("home-layout-changed", layout); } catch { /* gone */ }
-    }
+    // The home page is in the frame, so this is one of the ones that only
+    // ever reached the shell.
+    sendEverywhere("home-layout-changed", applied.homeLayout || HOME_DEFAULT);
   }
   return { success: true, theme: applied, icon: t.icon || null };
 });
@@ -10844,9 +10887,7 @@ ipcMain.handle("import:accountsAdd", async (event, { accounts }) => {
       added++;
     }
     savePlayers(players);
-    for (const w of BrowserWindow.getAllWindows()) {
-      try { if (!w.isDestroyed()) w.webContents.send("players-updated", players); } catch { /* gone */ }
-    }
+    sendEverywhere("players-updated", players);
     return { success: true, added };
   } catch (err) {
     return { success: false, error: String(err && err.message || err) };
