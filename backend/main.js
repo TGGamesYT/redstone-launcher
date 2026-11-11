@@ -14486,10 +14486,18 @@ async function launchViaGradle(profileId, cfg, run = null) {
 
   broadcastProgress(profileId, { label: "Gradle is building the project" });
 
-  return await new Promise((resolve, reject) => {
-    let child, settled = false;
+  // `--args` is JavaExec's own command-line option, which every loader's run
+  // task has been for years -- but a project can define its run task as
+  // something else, and then Gradle stops at "Unknown command-line option
+  // '--args'" before it builds anything. That reads as the launcher being
+  // broken, when all that is wrong is that this project's task cannot be
+  // handed the account. So it is tried once more without it, which is a dev
+  // client signed in as whatever the project decides.
+  const runOnce = (useArgs) => new Promise((resolve, reject) => {
+    const argv = useArgs ? args : args.filter(a => !a.startsWith("--args="));
+    let child, settled = false, said = "";
     try {
-      child = spawn(cmd, args, {
+      child = spawn(cmd, argv, {
         cwd: root,
         env: { ...process.env, JAVA_HOME: home, GRADLE_OPTS: "-Dorg.gradle.daemon=false" },
         windowsHide: true,
@@ -14510,6 +14518,9 @@ async function launchViaGradle(profileId, cfg, run = null) {
     let rest = "";
     const feed = (buf) => {
       rest += buf.toString();
+      // Only the first few lines are kept, and only to recognise the one
+      // refusal that is worth retrying.
+      if (said.length < 4000) said += buf.toString();
       const parts = rest.split(/\r?\n/);
       rest = parts.pop();
       for (const line of parts) broadcastLog(profileId, line, run);
@@ -14517,15 +14528,26 @@ async function launchViaGradle(profileId, cfg, run = null) {
     child.stdout && child.stdout.on("data", feed);
     child.stderr && child.stderr.on("data", feed);
 
-    const done = (code) => {
+    const done = (code, { retry = false } = {}) => {
       if (settled) return;
       settled = true;
       instanceKillers.delete(pid);
       stopInstance(profileId, pid);
+      if (rest) { broadcastLog(profileId, rest, run); rest = ""; }
+      // Started again without the account: this run is over, but the
+      // instance is not -- the next one takes its place, under its own pid.
+      if (retry) {
+        runOnce(false).catch((e) => {
+          broadcastLog(profileId, "[ERROR] " + (e && e.message || e), run);
+          runEnded(profileId, run);
+          onInstanceExited(profileId);
+          broadcastProgress(profileId, { done: true });
+        });
+        return;
+      }
       runEnded(profileId, run);
       onInstanceExited(profileId);
       broadcastProgress(profileId, { done: true });
-      if (rest) broadcastLog(profileId, rest, run);
       broadcastLog(profileId, `[INFO] Gradle exited with code ${code}`, run);
       updateGamePresence();
     };
@@ -14536,6 +14558,12 @@ async function launchViaGradle(profileId, cfg, run = null) {
       done(-1);
     });
     child.on("close", (code) => {
+      const refusedArgs = useArgs && code !== 0 && /Unknown command-line option '--args'/.test(said);
+      if (refusedArgs) {
+        broadcastLog(profileId, "[INFO] This project's run task will not take arguments, so it is started again without the account.", run);
+        done(code, { retry: true });
+        return;
+      }
       // A build that fails never starts a game, and saying what went wrong
       // beats leaving the last Gradle line to speak for itself.
       if (code !== 0) broadcastLog(profileId, "[ERROR] Gradle did not finish. The lines above are its own.", run);
@@ -14546,6 +14574,8 @@ async function launchViaGradle(profileId, cfg, run = null) {
     // nothing to wait for before calling the launch started.
     resolve({ pid });
   });
+
+  return await runOnce(gameArgs.length > 0);
 }
 
 const devWatchers = new Map(); // key -> [ { watcher, timer } ]

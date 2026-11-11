@@ -75,7 +75,13 @@ started.
 - [x] **A theme with several pictures kept one.** — *`currentWallpaper()`
       read the top of the stack. It looked right until you moved to another
       theme and back: moving away prunes the copies nothing points at, so the
-      pictures the theme had not carried were deleted off disk.*
+      pictures the theme had not carried were deleted off disk. Writing the
+      test for it turned up a second fault in the same place: every copy was
+      named after the millisecond it was written, which is unique when a
+      person picks a picture and not at all when a theme writes a whole stack
+      in a loop -- so all of them landed on one name and the theme came back
+      as the same picture twice. Checked end to end in the running launcher:
+      two pictures in, off to another theme, back, two pictures out.*
 - [x] **The skin render disappears while the window is being resized.** —
       *skinview3d's setSize is not a cheap call: it resizes the renderer AND
       reallocates both post-processing render targets. Dragging a window's
@@ -115,8 +121,12 @@ started.
       Minecraft refuses an option given twice and would be gone before it
       drew anything. Stopping it kills the process GROUP: the game is
       Gradle's child, and signalling Gradle alone would leave the game
-      running with nothing tracking it. Deleting the instance does not delete
-      the folder, because that folder is somebody's project.*
+      running with nothing tracking it. A project whose run task will not
+      take `--args`, which is how the account is handed over, says so in a
+      line and is started again without it -- rather than stopping at
+      Gradle's own "Unknown command-line option", which reads as the
+      launcher being broken. Deleting the instance does not delete the
+      folder, because that folder is somebody's project.*
 - [x] **The theme of the main page content is reset by a cloud import** —
       and the left and top bars keep the old one, which is the odd part.
       *See Round 54: the look is not synced any more, and what is still
