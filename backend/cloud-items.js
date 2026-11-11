@@ -44,6 +44,26 @@ export const NOT_SETTINGS = [
 
   // About this relay/deployment rather than about you.
   "relayBackend", "relayVerifyTls",
+
+  // ── The look the launcher is wearing right now ──
+  //
+  // A theme is a thing you save, and saved themes sync as THEMES: the list
+  // of them is merged, nothing is thrown away, and which one you are
+  // wearing stays each computer's own business.
+  //
+  // These went with the settings, so a sync reached across and changed the
+  // colours of a launcher somebody was looking at -- "it applies the one
+  // that was applied", without ever being asked to. And it did it badly:
+  // the settings arrive as a file written straight into the store, so the
+  // page you were on re-read them and the bars did not, and the icon on the
+  // desktop was left as the old theme's. Syncing by itself must not mean
+  // deciding by itself, which is the same rule the rest of this follows.
+  //
+  // The same names as THEME_FIELDS and THEME_OPTIONAL in main.js, plus the
+  // icon, which is part of the look and not a preference.
+  "baseColor", "secondaryColor", "thirdColor", "autoThird",
+  "textColor", "font", "fontSmoothing", "borderRadius",
+  "background", "homeLayout", "appIcon",
 ];
 
 /**

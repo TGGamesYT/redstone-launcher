@@ -6521,7 +6521,19 @@ function cloudService() {
     // stays about syncing rather than about where anything is kept.
     content: {
       readThemes: () => loadThemes(),
-      writeThemes: (list) => saveThemes(list),
+      writeThemes: (list) => {
+        const ok = saveThemes(list);
+        // The settings page draws the list of saved themes once; themes
+        // arriving from another computer have to appear without reopening
+        // it.
+        sendEverywhere("themes-updated", list);
+        return ok;
+      },
+      // Settings that arrived from another computer are settings that
+      // changed: every window re-reads them, the same as for a change made
+      // here. Written straight into the store otherwise, which is why a
+      // sync used to show up on the page you were on and nowhere else.
+      settingsChanged: () => tellEveryoneSettingsChanged(),
       readPlayers: () => loadPlayers(),
       writePlayers: (list) => {
         savePlayers(list);
@@ -6935,18 +6947,35 @@ function currentThemeData(include) {
 // whoever the theme is sent to -- and a picture is the one part of a theme too
 // large to keep in the colours.
 const WALLPAPER_MAX = 12 * 1024 * 1024;
-function currentWallpaper() {
+// All of them, top first, because a background is a stack now.
+//
+// It used to be `bg.image` and nothing else -- the top of the stack -- so a
+// theme made of two pictures carried one. Which looked like it worked until
+// you moved to another theme and back: moving away prunes the copies
+// nothing points at any more, so the picture the theme had not carried was
+// deleted off the disk, and coming back there was one picture left.
+//
+// The size limit is over the whole stack rather than per picture, since what
+// it is protecting is the size of the theme file.
+function currentWallpapers() {
   try {
     const bg = settings.get("background", null) || {};
-    const file = bg.image && bg.image.file;
-    if (!file || !fs.existsSync(file)) return null;
-    const st = fs.statSync(file);
-    if (st.size > WALLPAPER_MAX) return { tooBig: Math.round(st.size / 1048576) };
-    return {
-      ext: (path.extname(file) || ".png").toLowerCase(),
-      name: path.basename(file),
-      data: fs.readFileSync(file).toString("base64"),
-    };
+    const has = (im) => im && im.file;
+    const list = (Array.isArray(bg.images) && bg.images.some(has) ? bg.images : [bg.image]).filter(has);
+    const out = [];
+    let total = 0;
+    for (const im of list) {
+      if (!fs.existsSync(im.file)) continue;
+      total += fs.statSync(im.file).size;
+      if (total > WALLPAPER_MAX) return { tooBig: Math.round(total / 1048576) };
+      out.push({
+        ext: (path.extname(im.file) || ".png").toLowerCase(),
+        name: path.basename(im.file),
+        fit: im.fit || "cover",
+        data: fs.readFileSync(im.file).toString("base64"),
+      });
+    }
+    return out.length ? out : null;
   } catch { return null; }
 }
 
@@ -6983,6 +7012,29 @@ function pruneBackgroundCopies(...keep) {
     if (wanted.has(path.resolve(full))) continue;
     try { fs.unlinkSync(full); } catch { /* it will go next time */ }
   }
+}
+
+// The pictures out of a theme FILE, which somebody else wrote: each one
+// taken field by field, and only while the whole lot is small enough to be
+// a theme rather than a payload.
+function readWallpapers(file) {
+  const raw = Array.isArray(file && file.wallpapers) && file.wallpapers.length
+    ? file.wallpapers
+    : (file && file.wallpaper ? [file.wallpaper] : []);
+  const out = [];
+  let total = 0;
+  for (const w of raw) {
+    if (!w || typeof w.data !== "string") continue;
+    total += w.data.length;
+    if (total >= WALLPAPER_MAX * 2) break;       // base64, so twice the bytes
+    out.push({
+      ext: String(w.ext || ".png"),
+      name: String(w.name || "wallpaper"),
+      fit: String(w.fit || "cover"),
+      data: w.data,
+    });
+  }
+  return out;
 }
 
 function placeWallpaper(wallpaper) {
@@ -7064,11 +7116,11 @@ ipcMain.handle("theme:save", async (event, { name, icon, include } = {}) => {
   // What a theme takes with it is decided HERE, when it is saved -- not when
   // it is exported. A theme is a thing in its own right: the same decision
   // has to hold whether it is applied, exported or sent to somebody.
-  let wallpaper = null, wallpaperNote = null;
+  let wallpapers = null, wallpaperNote = null;
   if (inc.wallpaper) {
-    const w = currentWallpaper();
-    if (w && w.tooBig) wallpaperNote = `The background picture is ${w.tooBig} MB, which is too big to keep in a theme.`;
-    else if (w) wallpaper = w;
+    const w = currentWallpapers();
+    if (w && w.tooBig) wallpaperNote = `The background pictures come to ${w.tooBig} MB, which is too much to keep in a theme.`;
+    else if (w) wallpapers = w;
     else wallpaperNote = "There is no background picture to include.";
   }
   // The icon is saved with it, so a theme carries the look of the app's own
@@ -7076,7 +7128,11 @@ ipcMain.handle("theme:save", async (event, { name, icon, include } = {}) => {
   const entry = {
     id: crypto.randomUUID(), name: clean, at: Date.now(),
     theme, icon: icon || settings.get("appIcon", null) || null,
-    include: inc, wallpaper,
+    include: inc,
+    wallpapers,
+    // The top one on its own as well, so a theme saved here still means
+    // something to a launcher old enough to only know about one picture.
+    wallpaper: (wallpapers && wallpapers[0]) || null,
   };
   const at = list.findIndex(t => t.name.toLowerCase() === clean.toLowerCase());
   if (at >= 0) { entry.id = list[at].id; list[at] = entry; } else list.push(entry);
@@ -7099,33 +7155,22 @@ ipcMain.handle("theme:apply", async (event, { id } = {}) => {
   // A theme that carries its own picture brings the picture too, written in
   // here and pointed at -- the path in the setting is this computer's and
   // means nothing on anybody else's.
-  if (t.wallpaper && applied.background) {
-    const at = placeWallpaper(t.wallpaper);
-    if (at) {
-      // The picture goes on the TOP of the stack, not just into `image`.
-      //
-      // Setting `image` alone was enough when a background was one picture.
-      // It is a stack now, `image` is a mirror of whatever is on top of it,
-      // and the settings page writes that mirror back FROM the stack -- so
-      // the freshly placed wallpaper was overwritten a moment later by
-      // whatever path the theme happened to carry, which belongs to the
-      // computer the theme was made on and is not a file here. The theme
-      // appeared to apply and the picture never showed.
-      //
-      // A theme carries one picture, so the rest of its stack can only be
-      // that other computer's paths. Any that happen to exist here are
-      // kept -- applying your own theme on your own machine keeps its
-      // stack -- and the rest are dropped rather than left pointing at
-      // nothing.
+  const carried = Array.isArray(t.wallpapers) && t.wallpapers.length
+    ? t.wallpapers
+    : (t.wallpaper ? [t.wallpaper] : []);
+  if (carried.length && applied.background) {
+    // Each of them, top first, put on this computer and pointed at. A theme
+    // used to carry one picture, so this took the stack it was saved with
+    // and kept whichever of those paths happened to exist here -- which on
+    // the computer it was made on was the rest of the stack right up until
+    // moving to another theme deleted the copies, and on anybody else's was
+    // nothing at all.
+    const placed = carried.map(w => ({ at: placeWallpaper(w), fit: w.fit || "cover" })).filter(p => p.at);
+    if (placed.length) {
       const was = applied.background;
-      const top = { ...((Array.isArray(was.images) && was.images[0]) || was.image || {}), file: at, url: null };
-      const rest = (Array.isArray(was.images) ? was.images.slice(1) : [])
-        .filter(im => im && im.file && fs.existsSync(im.file));
-      applied.background = {
-        ...was,
-        image: { ...(was.image || {}), ...top },
-        images: [top, ...rest],
-      };
+      const first = (Array.isArray(was.images) && was.images[0]) || was.image || {};
+      const images = placed.map(p => ({ ...first, file: p.at, url: null, fit: p.fit }));
+      applied.background = { ...was, image: images[0], images };
     }
   }
   // Nothing may redraw the icon until all of this is written.
@@ -7178,12 +7223,20 @@ ipcMain.handle("theme:export", async (event, { id, name, include } = {}) => {
   // simply applied right now has no saved decision behind it, so the ticks in
   // the settings page stand in for one.
   const inc = { ...DEFAULT_INCLUDE, ...(include || {}) };
-  const wallpaper = saved ? (saved.wallpaper || null) : (inc.wallpaper ? currentWallpaper() : null);
+  const carried = saved
+    ? (Array.isArray(saved.wallpapers) && saved.wallpapers.length
+      ? saved.wallpapers : (saved.wallpaper ? [saved.wallpaper] : []))
+    : (inc.wallpaper ? currentWallpapers() : null);
+  // `tooBig` is the answer "the pictures come to more than a theme should
+  // hold", not a list of them.
+  const wallpapers = Array.isArray(carried) ? carried : [];
   const title = String((saved && saved.name) || name || "My theme").trim().slice(0, 60);
 
   const file = {
     format: "redstone-theme", version: 1, name: title, theme, icon, author: null,
-    wallpaper: wallpaper && !wallpaper.tooBig ? wallpaper : null,
+    wallpapers,
+    // And the top one on its own, for a launcher that only knows about one.
+    wallpaper: wallpapers[0] || null,
   };
   const signed = await themeRelayCall({ op: "sign", hash: themeHash(theme) });
   let note = null;
@@ -7239,14 +7292,16 @@ ipcMain.handle("theme:import", async () => {
     imported: true,
     // Only what the file actually carries -- a picture is checked for being a
     // picture when it is written out, not trusted for being in the file.
-    wallpaper: file.wallpaper && typeof file.wallpaper.data === "string"
-      && file.wallpaper.data.length < WALLPAPER_MAX * 2
-      ? { ext: String(file.wallpaper.ext || ".png"), name: String(file.wallpaper.name || "wallpaper"), data: file.wallpaper.data }
-      : null,
+    // Whatever the file carries, from a file that carries a stack or from
+    // one written when a theme held a single picture. Each one is checked
+    // and copied field by field, because this came out of a file somebody
+    // else wrote: nothing else about it is taken.
+    wallpapers: readWallpapers(file),
+    wallpaper: readWallpapers(file)[0] || null,
     include: {
       background: "background" in theme,
       layout: "homeLayout" in theme,
-      wallpaper: !!file.wallpaper,
+      wallpaper: readWallpapers(file).length > 0,
     },
   };
   const at = list.findIndex(t => t.name.toLowerCase() === entry.name.toLowerCase());

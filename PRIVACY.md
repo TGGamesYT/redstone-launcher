@@ -56,10 +56,14 @@ until you turn it on, and it changes only *when* a sync happens: it includes
 nothing extra, and anything that changed in two places is still shown for you
 to settle rather than decided for you.
 
-- **Settings** — theme, colours, layout and similar preferences. Settings that
-  belong to the computer rather than to you — where Java is, how much memory
-  to use, which Google account this machine is signed in with — are
-  deliberately excluded and never leave it.
+- **Settings** — your preferences. Settings that belong to the computer
+  rather than to you — where Java is, how much memory to use, which Google
+  account this machine is signed in with — are deliberately excluded and
+  never leave it. So is the look the launcher is currently wearing: its
+  colours, font, background and icon are not synced, because a sync changing
+  the colours of a launcher you are looking at is a decision, and syncing is
+  not meant to decide things for you. Save the look as a theme and it syncs
+  as one.
 - **Themes** you have made or installed.
 - **Server list** — your saved multiplayer servers, as entries, so two
   computers' lists merge rather than one replacing the other.

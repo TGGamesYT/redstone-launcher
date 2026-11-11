@@ -262,7 +262,16 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     settings: {
       name: "Settings",
       read: () => items.settingsFor(settings),
-      write: (v) => items.applySettings(settings, v),
+      write: (v) => {
+        const r = items.applySettings(settings, v);
+        // Settings that arrived are settings that changed, and everything
+        // showing has to be told -- a sync writes them straight into the
+        // store, so nothing would otherwise know.
+        if (r.changed.length && content.settingsChanged) {
+          try { content.settingsChanged(r.changed); } catch { /* nothing showing */ }
+        }
+        return r;
+      },
     },
     themes: {
       name: "Themes",

@@ -143,7 +143,7 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
   const impl = sharedDrive();
   const pc = launcher(impl, {
     name: "Desktop",
-    settings: { baseColor: "#111111", font: "Pixel" },
+    settings: { greeting: "one", nickname: "pc" },
     themes: [{ name: "Mine", at: 1 }],
     players: [{ id: "p1", username: "TGdoesCode", refresh: "the-token" }],
   });
@@ -151,11 +151,11 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
   check("the first sync sends everything that is switched on",
     ["settings", "themes", "accounts"].map(k => did(up, k)), ["pushed", "pushed", "pushed"]);
 
-  const laptop = launcher(impl, { name: "Laptop", settings: { baseColor: "#ffffff" } });
+  const laptop = launcher(impl, { name: "Laptop", settings: { greeting: "two" } });
   const down = await laptop.c.syncNow();
   check("and the second computer takes it",
     ["settings", "themes", "accounts"].map(k => did(down, k)), ["pulled", "pulled", "pulled"]);
-  check("the settings arrived", laptop.s.get("baseColor"), "#111111");
+  check("the settings arrived", laptop.s.get("greeting"), "one");
   check("the themes arrived", laptop.state.themes.map(t => t.name), ["Mine"]);
   check("and so did the account, token and all",
     [laptop.state.players.length, laptop.state.players[0].refresh], [1, "the-token"],
@@ -170,13 +170,13 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
 // ── both changed ──
 {
   const impl = sharedDrive();
-  const pc = launcher(impl, { name: "Desktop", settings: { baseColor: "#111111" } });
+  const pc = launcher(impl, { name: "Desktop", settings: { greeting: "one" } });
   await pc.c.syncNow();
   const laptop = launcher(impl, { name: "Laptop" });
   await laptop.c.syncNow();
 
-  pc.s.set("baseColor", "#aa0000");
-  laptop.s.set("baseColor", "#0000aa");
+  pc.s.set("greeting", "desktop");
+  laptop.s.set("greeting", "laptop");
   await laptop.c.syncNow();                  // laptop gets there first
   const clash = await pc.c.syncNow();
 
@@ -184,7 +184,7 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
     did(clash, "settings"), "conflict",
     "quietly taking whichever saved last is how somebody's settings disappear");
   check("and nothing of either was changed by the attempt",
-    [pc.s.get("baseColor"), laptop.s.get("baseColor")], ["#aa0000", "#0000aa"]);
+    [pc.s.get("greeting"), laptop.s.get("greeting")], ["desktop", "laptop"]);
   check("it says which computer it clashed with",
     /Laptop/.test((clash.results.find(r => r.kind === "settings") || {}).why || ""), true);
 
@@ -192,33 +192,33 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
   await pc.c.keepMine("settings");
   const after = await laptop.c.syncNow();
   check("keeping this computer's makes the Drive match it",
-    [did(after, "settings"), laptop.s.get("baseColor")], ["pulled", "#aa0000"]);
+    [did(after, "settings"), laptop.s.get("greeting")], ["pulled", "desktop"]);
 }
 {
   const impl = sharedDrive();
-  const pc = launcher(impl, { name: "Desktop", settings: { baseColor: "#111111" } });
+  const pc = launcher(impl, { name: "Desktop", settings: { greeting: "one" } });
   await pc.c.syncNow();
   const laptop = launcher(impl, { name: "Laptop" });
   await laptop.c.syncNow();
-  pc.s.set("baseColor", "#aa0000");
-  laptop.s.set("baseColor", "#0000aa");
+  pc.s.set("greeting", "desktop");
+  laptop.s.set("greeting", "laptop");
   await laptop.c.syncNow();
   await pc.c.syncNow();                      // conflict
   await pc.c.takeTheirs("settings");
   check("or taking the Drive's replaces what is here",
-    pc.s.get("baseColor"), "#0000aa");
+    pc.s.get("greeting"), "laptop");
 }
 
 // ── one kind clashing does not stop the rest ──
 {
   const impl = sharedDrive();
-  const pc = launcher(impl, { name: "Desktop", settings: { baseColor: "#111111" }, themes: [{ name: "A", at: 1 }] });
+  const pc = launcher(impl, { name: "Desktop", settings: { greeting: "one" }, themes: [{ name: "A", at: 1 }] });
   await pc.c.syncNow();
   const laptop = launcher(impl, { name: "Laptop" });
   await laptop.c.syncNow();
 
-  pc.s.set("baseColor", "#aa0000");
-  laptop.s.set("baseColor", "#0000aa");
+  pc.s.set("greeting", "desktop");
+  laptop.s.set("greeting", "laptop");
   await laptop.c.syncNow();
   pc.state.themes.push({ name: "B", at: 2 });
   const mixed = await pc.c.syncNow();
@@ -230,7 +230,7 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
 // ── what is switched off stays off ──
 {
   const impl = sharedDrive();
-  const pc = launcher(impl, { name: "Desktop", settings: { baseColor: "#111111" }, players: [{ id: "p1", refresh: "t" }] });
+  const pc = launcher(impl, { name: "Desktop", settings: { greeting: "one" }, players: [{ id: "p1", refresh: "t" }] });
   pc.c.setKind("accounts", false);
   const r = await pc.c.syncNow();
   check("a kind that is switched off is not synced",
@@ -248,7 +248,7 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
   };
   const pc = launcher(watched, {
     name: "Desktop",
-    settings: { baseColor: "#111111" },
+    settings: { greeting: "one" },
     players: [{ id: "p1", refresh: "minecraft-token" }],
   });
   pc.s.set("cloudGoogle", { refreshToken: "GOOGLE-TOKEN", email: "me@example.com" });
@@ -345,7 +345,7 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
   const root = tmp();
   put(root, { "7/mods/a.jar": "A", "7/saves/W/level.dat": "W" });
   const pc = launcher(impl, {
-    name: "Desktop", root, settings: { baseColor: "#111111" },
+    name: "Desktop", root, settings: { greeting: "one" },
     profiles: [{ id: 7, name: "A", version: "1.21" }],
   });
   for (const k of ["settings", "themes", "accounts", "servers"]) pc.c.setKind(k, true);
@@ -368,7 +368,7 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
 // have been asked about.
 {
   const impl = sharedDrive();
-  const pc = launcher(impl, { name: "Desktop", settings: { baseColor: "#111111" } });
+  const pc = launcher(impl, { name: "Desktop", settings: { greeting: "one" } });
 
   check("it is off until it is asked for", pc.c.autoSync(), false,
     "syncing on a timer is a thing to opt into");
@@ -383,15 +383,15 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
   laptop.c.setAutoSync(true);
   await laptop.c.syncNow();
 
-  pc.s.set("baseColor", "#aa0000");
-  laptop.s.set("baseColor", "#0000aa");
+  pc.s.set("greeting", "desktop");
+  laptop.s.set("greeting", "laptop");
   await laptop.c.syncNow();
   const clash = await pc.c.syncNow();
   check("something changed in both places is still a conflict",
     did(clash, "settings"), "conflict",
     "a sync that runs by itself must not settle anything by itself");
   check("and neither copy was touched",
-    [pc.s.get("baseColor"), laptop.s.get("baseColor")], ["#aa0000", "#0000aa"]);
+    [pc.s.get("greeting"), laptop.s.get("greeting")], ["desktop", "laptop"]);
 
   pc.c.setAutoSync(false);
   check("and it can be turned off again", pc.c.autoSync(), false);

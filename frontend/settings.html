@@ -1245,11 +1245,66 @@
       writeStack(fromKey, from);
       writeStack(toKey, to);
       recording = false;
-      rawSend('save-settings', step.before);
-      // Everything on this page is showing the value that has just been put
-      // back; the same reload applying a saved theme does.
-      setTimeout(() => location.reload(), 60);
+      // The icon is not a setting the page can simply write back: putting it
+      // on the windows and the desktop is a job of its own, and a theme's
+      // apply does it. So it is undone the way it was done.
+      const { appIcon, ...plain } = step.before;
+      if (Object.keys(plain).length) rawSend('save-settings', plain);
+      if ('appIcon' in step.before) {
+        try { await ipcRenderer.invoke('icon:setApp', { icon: appIcon || { kind: 'theme' } }); }
+        catch { /* the icon stays as it is */ }
+      }
+      Object.assign(known, step.before);
+      // No reload. Everything on this page takes the settings that have just
+      // been put back, the same way it takes a theme applied in another
+      // window -- the reload was a page change, so undoing a colour put the
+      // loading screen over the launcher and rebuilt the page.
+      setTimeout(() => { recording = true; }, 300);
+      // Through the window, because this is set up before init() runs and
+      // adoptSettings belongs to init.
+      try { window.__adoptSettings && window.__adoptSettings({ ...known, ...step.before }); }
+      catch { /* the page will catch up on the next settings-updated */ }
     }
+    // Applying a saved theme, as one step on the undo stack.
+    //
+    // Everything else on this page saves through save-settings and is
+    // recorded on the way past. A theme is applied by the main process, so
+    // nothing went past: the stack got whatever the page saved while it was
+    // taking the new theme on board, and undoing "a theme" put one colour
+    // back. This writes down what the launcher looks like BEFORE, and what
+    // the apply says it changed decides which keys that covers.
+    //
+    // The icon counts as part of it -- a theme carries one -- so it is
+    // written down too and put back the same way it was applied.
+    window.__beforeThemeApply = (t) => {
+      // Taken now, not when the apply comes back: by then the new settings
+      // have arrived from the main process and `known` is the theme.
+      const was = { ...known };
+      const keys = new Set(Object.keys((t && t.theme) || {}));
+      // A theme that is somehow empty still changes the colours, so the
+      // fields a theme always has are covered whatever it says.
+      for (const k of ['baseColor', 'secondaryColor', 'thirdColor', 'autoThird',
+        'textColor', 'font', 'fontSmoothing', 'borderRadius']) keys.add(k);
+      if (t && t.include && t.include.background) keys.add('background');
+      if (t && t.include && t.include.layout) keys.add('homeLayout');
+      return {
+        done: (r) => {
+          for (const k of Object.keys((r && r.theme) || {})) keys.add(k);
+          const before = {};
+          for (const k of keys) before[k] = was[k] === undefined ? null : was[k];
+          before.appIcon = was.appIcon === undefined ? null : was.appIcon;
+          const stack = readStack(UNDO_KEY);
+          stack.push({ before, at: Date.now() });
+          writeStack(UNDO_KEY, stack);
+          writeStack(REDO_KEY, []);
+          // What the launcher is wearing now, so the next change is measured
+          // from the theme rather than from what was there before it.
+          Object.assign(known, (r && r.theme) || {});
+          if (r && r.icon !== undefined) known.appIcon = r.icon;
+        },
+      };
+    };
+
     document.addEventListener('keydown', (e) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       const t = e.target;
@@ -1986,8 +2041,18 @@
           tools.append(exp, del);
           btn.appendChild(tools);
           btn.addEventListener('click', async () => {
+            // What the launcher looks like now, so applying a theme can be
+            // undone as the one thing it is.
+            //
+            // The undo stack is filled by save-settings going past, and a
+            // theme is applied by the main process instead -- so there was
+            // nothing on the stack for it. What there WAS was whatever the
+            // page happened to save on its way through adopting it, which is
+            // why undoing a whole theme put one colour back.
+            const before = window.__beforeThemeApply ? window.__beforeThemeApply(t) : null;
             const r = await ipcRenderer.invoke('theme:apply', { id: t.id });
             if (!r || !r.success) { if (window.notify) notify((r && r.error) || 'That theme could not be applied', 'error'); return; }
+            if (before) before.done(r);
             // Every control on this page is still showing the old theme.
             // This used to reload the page to fix that, which is a page
             // change and so put the loading screen over the whole launcher
@@ -2001,6 +2066,12 @@
       }
 
       ipcRenderer.invoke('theme:list').then(r => drawSavedThemes(r && r.themes)).catch(() => { });
+      // Themes arriving from another computer. The list is drawn once, so a
+      // sync with this page open used to leave it showing the themes from
+      // before the sync.
+      ipcRenderer.on('themes-updated', (_e, themes) => {
+        try { drawSavedThemes(themes); } catch { /* the section is not up yet */ }
+      });
 
       // What a theme takes with it. Read when it is SAVED, which is the point
       // at which the theme becomes a thing -- exporting then only writes out
@@ -2903,6 +2974,40 @@
           try { paintBackground(); } catch { /* ditto */ }
         }
 
+        // The plain switches and sliders.
+        //
+        // Every one of these is one control showing one setting, so what it
+        // should show is simply what the setting now is. Listed rather than
+        // discovered: a control not on this list keeps its old value until
+        // the page is opened again, which is why the list is here and not
+        // somewhere clever.
+        for (const [id, key] of [
+          ['auto-updates', 'autoUpdates'],
+          ['discord-presence', 'discordPresence'],
+          ['grid-view', 'gridView'],
+          ['dev-mode', 'devMode'],
+          ['servers-outlive', 'serversOutliveLauncher'],
+          ['predefined-theme-sync', 'predefinedThemeSync'],
+          ['cloud-auto', 'cloudAutoSync'],
+        ]) {
+          const el = document.getElementById(id);
+          if (el) el.checked = !!got(key);
+        }
+        for (const [id, keyMin, keyMax] of [
+          ['ram-instances-slider', 'ramInstancesMin', 'ramInstancesMax'],
+          ['ram-servers-slider', 'ramServersMin', 'ramServersMax'],
+        ]) {
+          const el = document.getElementById(id);
+          const min = got(keyMin), max = got(keyMax);
+          if (el && el.noUiSlider && min != null && max != null) {
+            // Set, not nudged: `set` does not fire `change`, so putting the
+            // slider where the setting is cannot save it again.
+            try { el.noUiSlider.set([min, max]); } catch { /* not built yet */ }
+          }
+        }
+        const css = document.getElementById('custom-css');
+        if (css && typeof got('customCss') === 'string') css.value = got('customCss');
+
         // And the icon, whose backing follows the colours and the
         // background.
         //
@@ -2919,6 +3024,10 @@
       // The same settings arriving from the main process -- a cloud sync, or
       // a theme applied from another window.
       ipcRenderer.on('settings-updated', (_e, next) => {
+        // The undo stack measures a change from what this page last saw, so
+        // what it last saw has to include changes made somewhere else --
+        // otherwise undoing after a sync puts back a value from before it.
+        if (next && typeof next === 'object') Object.assign(known, next);
         try { adoptSettings(next); } catch (e) { console.warn('could not take the new settings', e); }
       });
 

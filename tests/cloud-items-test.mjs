@@ -29,8 +29,12 @@ const store = (obj) => {
 
 // ── the settings ──
 const EVERYTHING = {
-  baseColor: "#b30c0c", font: "Pixel", borderRadius: 25, gridView: true,
+  gridView: true, greeting: "hello",
+  // the look, which is a decision rather than a preference
+  baseColor: "#b30c0c", font: "Pixel", borderRadius: 25,
   homeLayout: [{ id: "a", x: 0, y: 0, w: 100, h: 3 }],
+  background: { mode: "image", image: { file: "C:/pics/wall.png" } },
+  appIcon: { kind: "theme", mergeBlock: true },
   // things that must not go
   cloudGoogle: { refreshToken: "1//0gTheRefreshToken", email: "me@example.com" },
   themeSigningKey: "-----BEGIN PRIVATE KEY-----\nMIGH...\n-----END PRIVATE KEY-----",
@@ -53,8 +57,12 @@ check("nor does anything else that is about this computer",
   ["cloudDeviceId", "cloudAgreed", "cloudKinds", "javaPath", "ramInstancesMax",
     "relayVerifyTls", "pendingUpdate"].filter(k => k in sent), []);
 check("but the things that ARE yours do go",
-  Object.keys(sent).sort(), ["baseColor", "borderRadius", "font", "gridView", "homeLayout"],
+  Object.keys(sent).sort(), ["greeting", "gridView"],
   "a setting added later and forgotten should sync, not silently not sync");
+check("and the look the launcher is wearing is not one of them",
+  ["baseColor", "font", "borderRadius", "homeLayout", "background", "appIcon"].filter(k => k in sent), [],
+  "a sync that repaints a launcher somebody is looking at has decided something; "
+  + "saved themes sync as themes, and which one is worn stays each computer's own");
 
 // ── and by shape, for the one nobody remembers to add to the list ──
 for (const [key, value] of [
@@ -76,8 +84,9 @@ check("while an ordinary long-ish setting still goes",
 
 // ── coming back the other way ──
 {
-  const s = store({ baseColor: "#000000", javaPath: "/usr/bin/java", relayVerifyTls: true });
+  const s = store({ baseColor: "#000000", gridView: false, javaPath: "/usr/bin/java", relayVerifyTls: true });
   const r = items.applySettings(s, {
+    gridView: true,
     baseColor: "#ff0000",
     // A Drive folder somebody has got at.
     javaPath: "/tmp/evil",
@@ -85,14 +94,17 @@ check("while an ordinary long-ish setting still goes",
     themeSigningKey: "theirs",
     cloudGoogle: { refreshToken: "theirs" },
   });
-  check("what comes back changes what it should", s.get("baseColor"), "#ff0000");
+  check("what comes back changes what it should", s.get("gridView"), true);
+  check("but not the colours of a launcher somebody is looking at",
+    s.get("baseColor"), "#000000",
+    "the look is left out in both directions, so an older computer still sending it cannot apply it either");
   check("and a tampered folder cannot point this computer at another Java",
     s.get("javaPath"), "/usr/bin/java",
     "the same list applies coming in; nothing outside what we would have sent is taken");
   check("nor turn off checking the relay's certificate", s.get("relayVerifyTls"), true);
   check("nor hand it a signing key or a Google token",
     [s.get("themeSigningKey", null), s.get("cloudGoogle", null)], [null, null]);
-  check("and it says what it did change", r.changed, ["baseColor"]);
+  check("and it says what it did change", r.changed, ["gridView"]);
 }
 
 // ── accounts ──
