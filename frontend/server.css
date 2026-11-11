@@ -871,7 +871,7 @@ html:not(.custom-bg) body {
    of the corner: transparent within the radius, where the panel's own curve
    is, and the toolbar's colour outside it. */
 html.custom-bg::before,
-html.custom-bg #shell-notch {
+#shell-notch {
   content: "";
   position: fixed;
   left: 70px;
@@ -896,11 +896,20 @@ html.in-shell.custom-bg::before {
   display: none;
 }
 
+/* Always, and not only when the shell is wearing a background.
+   It was drawn only under html.custom-bg, which made the corner depend on
+   the shell and the page agreeing about whether there IS a background -- and
+   they do not always agree, because a page applies the background in its own
+   head from what the last one cached while the shell applies it when the
+   main process answers. In the gap, the shell has no class, so no wedge is
+   drawn, and the page HAS one, so the corner fills with the page's
+   background: the notch disappears for exactly as long as the two are out of
+   step. Measured in the running launcher, with the class taken off the shell
+   by hand: the corner goes from the toolbar's colour to the page's.
+   With the launcher's own panel the wedge is the same colour as the band
+   <html> paints across the top anyway, so drawing it always costs nothing
+   and cannot be out of step with anything. */
 #shell-notch {
-  display: none;
-}
-
-html.custom-bg #shell-notch {
   display: block;
   /* Above the loading screen, which covers the content area -- and the
      notch sits in the very corner of that area, so at any lower level it

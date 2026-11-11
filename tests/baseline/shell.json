@@ -528,14 +528,14 @@
   {
    "key": "#shell-notch",
    "box": [
-    0,
-    0,
-    0,
-    0
+    70,
+    38,
+    25,
+    25
    ],
    "style": {
-    "display": "none",
-    "position": "static",
+    "display": "block",
+    "position": "fixed",
     "boxSizing": "border-box",
     "overflow": "visible",
     "overflowX": "visible",
@@ -560,7 +560,7 @@
     "paddingRight": "0px",
     "paddingBottom": "0px",
     "paddingLeft": "0px",
-    "zIndex": "auto",
+    "zIndex": "9500",
     "opacity": "1",
     "visibility": "visible"
    }

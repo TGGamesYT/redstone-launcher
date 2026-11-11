@@ -1305,9 +1305,7 @@ function createWindow() {
       nodeIntegrationInSubFrames: true
     }
   });
-  if (typeof win.setAccentColor === "function") {
-    win.setAccentColor(color);
-  }
+  applyAccentColour(color, win);
   // Developer tools are gated behind the "Developer mode" setting: block the
   // F12 / Ctrl+Shift+I shortcuts unless it's on (and toggle them when it is).
   win.webContents.on("before-input-event", (event, input) => {
@@ -1693,6 +1691,10 @@ ipcMain.handle('set-setting', (event, key, value) => {
   return settings.get(key);
 });
 
+// Greater than zero while a saved theme is being put in place; see
+// theme:apply, and the icon that must not be drawn half-way through it.
+let applyingTheme = 0;
+
 ipcMain.on('save-settings', (event, newsettings) => {
   let oldshouldconnect = settings.get('discordPresence', true);
   const wasBase = settings.get('baseColor', "#b30c0c");
@@ -1703,9 +1705,7 @@ ipcMain.on('save-settings', (event, newsettings) => {
   const wasBg = JSON.stringify(settings.get('background', null) || null);
   settings.set(newsettings);
   const color = settings.get('baseColor', "#FF0000");
-  if (typeof mainWindow.setAccentColor === "function") {
-    mainWindow.setAccentColor(color);
-  }
+  applyAccentColour(color);
   if (oldshouldconnect != settings.get('discordPresence', true)) updateDiscordPresenceToggle();
   // An icon that follows the theme has to actually follow it: changing the
   // base colour -- by hand, by picking a preset, or by applying a saved
@@ -1717,9 +1717,32 @@ ipcMain.on('save-settings', (event, newsettings) => {
   // the icon too -- when it has been asked to, and also when the background
   // is the gradient the backing follows anyway.
   const bgChanged = bgNow !== wasBg && (icon.mergeBlock || /"mode":"gradient"/.test(bgNow + wasBg));
-  if ((color !== wasBase || second !== wasSecond || bgChanged) && icon.kind !== 'image') retintAppIconSoon();
+  // Not while a theme is being applied: it is a dozen saves in a row, and
+  // the icon it would draw from any one of them is made half of the new
+  // theme and half of the old. The apply draws it itself when it is done.
+  if ((color !== wasBase || second !== wasSecond || bgChanged) && icon.kind !== 'image' && !applyingTheme) retintAppIconSoon();
   tellEveryoneSettingsChanged();
 });
+
+// The colour Windows draws the window's own edge and highlight in.
+//
+// It was set in two places -- when the window is made, and when a colour is
+// saved -- and applying a SAVED theme is neither of those: it writes the
+// settings itself and never came through here, so the window kept the old
+// theme's edge until the next time a colour was picked by hand. Which is
+// exactly "sometimes it fails to set it": the times were the ones where the
+// theme came from the list rather than from the pickers.
+//
+// Every window, not only the main one: a second window (the news admin) is
+// part of the launcher and should not be wearing a different theme's edge.
+// `setAccentColor` exists on Windows and is absent elsewhere.
+function applyAccentColour(color, only = null) {
+  const wins = only ? [only] : BrowserWindow.getAllWindows();
+  for (const w of wins) {
+    try { if (typeof w.setAccentColor === "function") w.setAccentColor(color); }
+    catch { /* a window on its way out */ }
+  }
+}
 
 // Everything that is showing has to follow a change of theme.
 //
@@ -7105,15 +7128,31 @@ ipcMain.handle("theme:apply", async (event, { id } = {}) => {
       };
     }
   }
-  for (const [k, v] of Object.entries(applied)) settings.set(k, v);
-  // Copies the old background pointed at and this one does not. Done after
-  // the settings are written, so what is in use is what is actually in use.
-  if (applied.background) pruneBackgroundCopies();
+  // Nothing may redraw the icon until all of this is written.
+  //
+  // A theme is a dozen settings and a picture, and they land one at a time.
+  // The settings page saves as it adopts them, and each save used to re-tint
+  // the icon a quarter of a second later -- so the desktop and the taskbar
+  // were given an icon made of the new colours and the OLD background, or of
+  // a picture that had not been placed yet. Which is the icon updating
+  // before it is set. The apply draws it once, at the end, when everything
+  // it is made of is in place.
+  applyingTheme++;
+  try {
+    for (const [k, v] of Object.entries(applied)) settings.set(k, v);
+    // Copies the old background pointed at and this one does not. Done after
+    // the settings are written, so what is in use is what is actually in use.
+    if (applied.background) pruneBackgroundCopies();
+    if (applied.baseColor) applyAccentColour(applied.baseColor);
 
-  // A theme that saved no icon of its own means the launcher's own icon, not
-  // "leave whatever the last theme put there" -- which is how a picture from
-  // a theme you had moved off kept turning up under every other theme.
-  await applyAppIcon(t.icon || { kind: "theme" });
+    // A theme that saved no icon of its own means the launcher's own icon,
+    // not "leave whatever the last theme put there" -- which is how a
+    // picture from a theme you had moved off kept turning up under every
+    // other theme.
+    await applyAppIcon(t.icon || { kind: "theme" });
+  } finally {
+    applyingTheme--;
+  }
   // Every frame re-reads the settings and repaints itself, the same way it
   // does when a colour is changed in the settings page.
   sendEverywhere("settings-updated", applied);
@@ -7246,10 +7285,58 @@ const iconLayers = () => ({
 // layer: the same picture, the same block, the same gradient. This is what
 // "show the background through it" means -- the icon takes the background,
 // and the cog stays over the top of it untouched.
-function backgroundAsFill() {
+// The pictures behind the launcher, top one first -- the same list the
+// window paints, so the icon cannot show something the window does not.
+// A setting with one `image` and no list is a list of one.
+function backgroundImages(bg) {
+  const has = (im) => im && (im.file || im.url);
+  const list = Array.isArray(bg.images) && bg.images.some(has) ? bg.images : [bg.image];
+  return list.filter(has);
+}
+// What the stack is, as a string, so a crop made of it can say which stack
+// it was made of. Any change -- another picture, a different order, a
+// different fit -- is a different stack and a crop that no longer applies.
+function backgroundStackKey(bg) {
+  return backgroundImages(bg).map(im => `${im.file || im.url}@${im.fit || "cover"}`).join("|");
+}
+// The whole stack as one square picture.
+//
+// The window paints the list as CSS layers, first on top; the icon's backing
+// is a 256-pixel square, so each one is drawn into that square the way the
+// window draws it -- covered, fitted or stretched -- and they are laid over
+// each other bottom first. Done here because the icon is made in the main
+// process: there is no page to ask, and the answer has to be the same one
+// the window shows.
+async function backgroundStackPng(bg, size = 256) {
+  const images = backgroundImages(bg);
+  if (!images.length) return null;
+  const fitOf = (im) => im.fit === "stretch" ? "fill" : im.fit === "contain" ? "contain" : "cover";
+  const layers = [];
+  // Bottom first, which is the end of the list.
+  for (const im of [...images].reverse()) {
+    let raw = null;
+    try {
+      raw = im.file ? fs.readFileSync(im.file)
+        : (String(im.url || "").startsWith("data:image/") ? fromDataUrl(im.url) : null);
+    } catch { raw = null; }
+    if (!raw) continue;                        // a picture that is not there is not drawn
+    try {
+      layers.push(await sharp(raw)
+        .resize(size, size, { fit: fitOf(im), background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .png().toBuffer());
+    } catch { /* not an image the launcher can read */ }
+  }
+  if (!layers.length) return null;
+  if (layers.length === 1) return layers[0];
+  return sharp({ create: { width: size, height: size, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite(layers.map(input => ({ input })))
+    .png().toBuffer();
+}
+
+async function backgroundAsFill() {
   const bg = settings.get("background", null) || {};
   const mode = String(bg.mode || "theme");
-  if (mode === "image" && bg.image && bg.image.file) {
+  if (mode === "image" && backgroundImages(bg).length) {
     // How the picture is framed inside the icon, if it has been framed.
     //
     // The whole picture squashed into a 256-pixel circle is a wallpaper seen
@@ -7259,16 +7346,19 @@ function backgroundAsFill() {
     // -- and is a finished 256-pixel square, so it is used as it is.
     const icon = settings.get("appIcon", null) || {};
     if (icon.backCrop && String(icon.backCrop).startsWith("data:image/")) {
-      // Only while it still belongs to the picture that is actually set:
-      // choosing another background leaves a crop of the old one behind, and
-      // an icon wearing the last wallpaper is worse than one wearing none.
-      if (!icon.backCropOf || icon.backCropOf === bg.image.file) {
+      // Only while it still belongs to the background that is actually set:
+      // changing it leaves a crop of the old one behind, and an icon wearing
+      // the last wallpaper is worse than one wearing none. Matched against
+      // the whole STACK -- adding a second picture changes what the backing
+      // shows, so a crop of the first alone is no longer a crop of it.
+      const of = icon.backCropOf;
+      if (!of || of === backgroundStackKey(bg) || of === (bg.image && bg.image.file)) {
         try { return { kind: "texture", png: fromDataUrl(icon.backCrop), pixelated: false }; }
         catch { /* fall through to the picture itself */ }
       }
     }
-    try { return { kind: "texture", png: fs.readFileSync(bg.image.file), pixelated: false }; }
-    catch { return null; }
+    const png = await backgroundStackPng(bg);
+    return png ? { kind: "texture", png, pixelated: false } : null;
   }
   if (mode === "block" && bg.block && bg.block.url) {
     try { return { kind: "texture", png: fromDataUrl(bg.block.url), pixelated: true }; }
@@ -7282,7 +7372,7 @@ function backgroundAsFill() {
 }
 
 // What each layer is filled with, for the theme as it stands.
-function iconFills({ color, mergeBlock } = {}) {
+async function iconFills({ color, mergeBlock } = {}) {
   const base = color || settings.get("baseColor", "#b30c0c");
   const bg = settings.get("background", null) || {};
   let background = { kind: "color", hex: base };
@@ -7291,7 +7381,7 @@ function iconFills({ color, mergeBlock } = {}) {
   if (String(bg.mode) === "gradient" && bg.gradient && (bg.gradient.colors || []).length > 1) {
     background = { kind: "gradient", colors: bg.gradient.colors, angle: bg.gradient.angle };
   }
-  if (mergeBlock) background = backgroundAsFill() || background;
+  if (mergeBlock) background = (await backgroundAsFill()) || background;
   return {
     background,
     // The gem is the second colour, and never the cog's business.
@@ -7316,7 +7406,7 @@ async function themedIconPng(opts = {}) {
   if (icon.kind === "plain" || !Object.values(layers).every(f => fs.existsSync(f))) {
     return sharp(ICON_SOURCE()).resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
   }
-  const fills = iconFills({
+  const fills = await iconFills({
     color: opts.color,
     mergeBlock: opts.mergeBlock == null ? !!icon.mergeBlock : !!opts.mergeBlock,
   });
@@ -7406,9 +7496,11 @@ ipcMain.handle("icon:setBackCrop", async (event, { crop } = {}) => {
   const next = { ...icon };
   if (crop && String(crop).startsWith("data:image/")) {
     next.backCrop = String(crop);
-    // Which picture it is a crop OF, so it is dropped rather than worn by
-    // the next one.
-    next.backCropOf = (bg.image && bg.image.file) || null;
+    // Which background it is a crop OF, so it is dropped rather than worn by
+    // the next one. The whole stack, not the top picture: the backing shows
+    // all of them, so adding or reordering one is a different thing to have
+    // framed.
+    next.backCropOf = backgroundStackKey(bg) || null;
   } else {
     delete next.backCrop;
     delete next.backCropOf;
@@ -7416,6 +7508,20 @@ ipcMain.handle("icon:setBackCrop", async (event, { crop } = {}) => {
   settings.set("appIcon", next);
   if (next.kind === "image") return { success: true, dataUrl: next.dataUrl || null };
   return applyAppIcon(next);
+});
+// The picture the icon's backing is showing, for the cropper to work on.
+//
+// It is the whole stack flattened into one square, because that is what the
+// backing shows: handing the cropper the top picture alone meant framing
+// something other than the thing being framed as soon as there were two.
+ipcMain.handle("icon:backgroundPng", async () => {
+  try {
+    const bg = settings.get("background", null) || {};
+    if (String(bg.mode) !== "image") return { success: false, error: "The background is not a picture" };
+    const png = await backgroundStackPng(bg, 512);   // room to zoom into
+    if (!png) return { success: false, error: "That picture could not be read" };
+    return { success: true, dataUrl: "data:image/png;base64," + png.toString("base64") };
+  } catch (e) { return { success: false, error: e.message }; }
 });
 ipcMain.handle("icon:setMergeBlock", async (event, { on } = {}) => {
   const icon = settings.get("appIcon", null) || { kind: "theme" };

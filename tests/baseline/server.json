@@ -3,7 +3,7 @@
   1280,
   800
  ],
- "count": 117,
+ "count": 118,
  "nodes": [
   {
    "key": "#addServerBtn",
@@ -2355,6 +2355,46 @@
     "marginTop": "0px",
     "marginRight": "0px",
     "marginBottom": "0px",
+    "marginLeft": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "zIndex": "auto",
+    "opacity": "1",
+    "visibility": "visible"
+   }
+  },
+  {
+   "key": "#serversHeading",
+   "box": [
+    90,
+    38,
+    1190,
+    29
+   ],
+   "style": {
+    "display": "block",
+    "position": "static",
+    "boxSizing": "border-box",
+    "overflow": "visible",
+    "overflowX": "visible",
+    "overflowY": "visible",
+    "flexDirection": "row",
+    "justifyContent": "normal",
+    "alignItems": "normal",
+    "gridTemplateColumns": "none",
+    "fontFamily": "Pixel",
+    "fontSize": "32px",
+    "fontWeight": "900",
+    "lineHeight": "normal",
+    "textAlign": "start",
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": "0px",
+    "marginTop": "18px",
+    "marginRight": "0px",
+    "marginBottom": "14px",
     "marginLeft": "0px",
     "paddingTop": "0px",
     "paddingRight": "0px",

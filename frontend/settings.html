@@ -2077,11 +2077,22 @@
         iconIsPicture = isPicture;
         iconBack.style.display = isPicture ? '' : 'none';
       };
-      ipcRenderer.invoke('icon:app').then(async (r) => {
+      // What the section shows, worked out from scratch: which icon is in
+      // use, and then what that icon actually looks like right now. Used on
+      // the way in and again whenever the settings change under it, because
+      // an icon that follows the theme changes with every colour and with
+      // the background.
+      const refreshAppIcon = async () => {
+        let r = null;
+        try { r = await ipcRenderer.invoke('icon:app'); } catch { return; }
         const icon = (r && r.icon) || { kind: 'theme' };
         if (icon.kind === 'image' && icon.dataUrl) { iconPreview.src = icon.dataUrl; showIconMode(true); }
-        else { showIconMode(false); showAppIcon(); }
-      }).catch(() => { });
+        else { showIconMode(false); await showAppIcon(); }
+        if (iconMerge) iconMerge.checked = !!icon.mergeBlock;
+        iconHasCrop = !!icon.backCrop;
+        if (window.__iconCropRowRefresh) window.__iconCropRowRefresh();
+      };
+      window.__refreshAppIcon = refreshAppIcon;
 
       iconBack.addEventListener('click', async () => {
         const r = await ipcRenderer.invoke('icon:setApp', { icon: { kind: 'theme' } });
@@ -2117,19 +2128,17 @@
       let iconHasCrop = false;
       const showIconCrop = () => {
         // Only when the backing really is a picture: a tiled block or a
-        // gradient has nothing to frame.
+        // gradient has nothing to frame. Any of the stack counts, not the
+        // top one -- the backing shows all of them.
+        const has = (im) => im && (im.file || im.url);
         const canFrame = iconMerge.checked && bg.mode === 'image'
-          && !!(bg.image && (bg.image.file || bg.image.url));
+          && ((Array.isArray(bg.images) && bg.images.some(has)) || has(bg.image));
         iconCropRow.style.display = canFrame ? 'block' : 'none';
         const clear = document.getElementById('app-icon-crop-clear');
         if (clear) clear.style.display = iconHasCrop ? '' : 'none';
       };
-      ipcRenderer.invoke('icon:app').then((r) => {
-        const icon = (r && r.icon) || {};
-        iconMerge.checked = !!icon.mergeBlock;
-        iconHasCrop = !!icon.backCrop;
-        showIconCrop();
-      }).catch(() => { });
+      // Everything above this point is declared; now it can be filled in.
+      refreshAppIcon();
       iconMerge.addEventListener('change', async () => {
         const r = await ipcRenderer.invoke('icon:setMergeBlock', { on: iconMerge.checked });
         if (r && r.success && r.dataUrl) iconPreview.src = r.dataUrl;
@@ -2139,11 +2148,19 @@
       // switching away from one -- changes whether there is anything to
       // frame at all.
       window.__iconCropRowRefresh = showIconCrop;
-      document.getElementById('app-icon-crop').addEventListener('click', () => {
-        const im = bg.image || {};
-        const url = im.url
-          || ('file:///' + String(im.file || '').replace(/\\/g, '/').replace(/^\/+/, ''));
-        if (!url || !window.IconPicker) return;
+      document.getElementById('app-icon-crop').addEventListener('click', async () => {
+        if (!window.IconPicker) return;
+        // What the backing is actually showing: the whole stack flattened
+        // into one square, drawn by the main process exactly as the icon
+        // draws it. It used to be the top picture's own file, so with two
+        // pictures stacked you framed something other than the thing you
+        // were looking at.
+        const r = await ipcRenderer.invoke('icon:backgroundPng');
+        const url = r && r.success ? r.dataUrl : null;
+        if (!url) {
+          if (window.notify) notify((r && r.error) || 'That picture could not be read', 'error');
+          return;
+        }
         window.IconPicker.__crop(url, async (dataUrl) => {
           if (!dataUrl) return;                      // cancelled
           const r = await ipcRenderer.invoke('icon:setBackCrop', { crop: dataUrl });
@@ -2886,13 +2903,16 @@
           try { paintBackground(); } catch { /* ditto */ }
         }
 
-        // And the icon, whose backing follows the colours and the background.
-        ipcRenderer.invoke('icon:app').then((r) => {
-          const icon = (r && r.icon) || {};
-          if (r && r.dataUrl && iconPreview) iconPreview.src = r.dataUrl;
-          if (iconMerge) iconMerge.checked = !!icon.mergeBlock;
-          if (window.__iconCropRowRefresh) window.__iconCropRowRefresh();
-        }).catch(() => { });
+        // And the icon, whose backing follows the colours and the
+        // background.
+        //
+        // Drawn again rather than read back: `icon:app` says WHICH icon is
+        // in use, not what it looks like, and there is no dataUrl on it for
+        // one that follows the theme -- so this used to set the preview from
+        // undefined, which leaves whatever was there. Every colour and every
+        // background change left the section showing the icon from before
+        // it.
+        if (window.__refreshAppIcon) window.__refreshAppIcon();
       }
       window.__adoptSettings = adoptSettings;
 
