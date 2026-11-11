@@ -9,6 +9,89 @@ started.
 
 ---
 
+## 0. Round 55
+
+- [x] **Undo and redo of a theme still refreshed the page.** — *The reload was
+      how every control came to agree with what had been put back. The
+      controls take it in place now, including the plain switches, the RAM
+      sliders and the custom CSS box, which the list in `adoptSettings`
+      names one by one.*
+- [x] **A built-in theme should bring its background.** — *These ten are
+      colours and nothing else, so what comes with one is the launcher's own
+      panel. It used to leave whatever was behind the launcher exactly as it
+      was, so a theme was only ever half applied. With "Match the background
+      to the theme" ticked the mode is left alone, because that switch asks
+      for the background to BE the theme's colours.*
+- [x] **The colour and gradient options should follow the theme too.** —
+      *Set to the theme's own shades as it is applied, so picking one of them
+      afterwards is this theme rather than the last one's. Colours and
+      background go in one save, so one step back takes the whole thing.*
+- [x] **The only picture could not be removed.** — *`image` is the mirror of
+      whatever is on top of the stack, and an empty list is read as a
+      background saved before there were lists and rebuilt FROM that mirror,
+      so removing the last one put it straight back.*
+- [x] **A strip across the top behind a picture.** — *The launcher's own
+      panel was under the stack, so that a fitted picture shows the launcher
+      where it does not reach. The panel is the toolbar's colour across the
+      top tenth of the window and the toolbar is 38 pixels tall, so the rest
+      of that band came out from under the toolbar as a bright strip. The
+      dark alone now, which is what every other mode shows.*
+- [x] **Any block's any side, not just full blocks.** — *The list was flat
+      face textures of full cubes, because a flat texture is all a cube
+      needs; a stair or a fence has none, so they were not listed. Anything
+      that is not a cube is drawn now, straight on from whichever of the six
+      sides is picked, framed by the block rather than by the model in it so
+      the pictures tile against each other.*
+- [x] **Modded blocks, and resource packs.** — *The launcher's own model
+      picker, with a dropdown for whose blocks to show: the game's, an
+      instance's mods', or drawn with that instance's resource packs on top.*
+- [x] **"Turn the tiles at random" was still a loop.** — *Four cells across,
+      and a CSS background repeats -- so what you saw was a pile of four
+      blocks tiled, which is what it was. Sixteen now: a thousand pixels of
+      wall at the usual size, wider than the window.*
+- [x] **The icon showed that pile, shrunken.** — *The whole patch was
+      squeezed into 256 pixels, so every block came out a quarter of the size
+      it is on the window. It is cut from the patch at the size the window
+      draws it at, and tiled where the patch is smaller than the icon.*
+- [x] **The blocks menu re-fetched the game's assets every so often.** —
+      *The stack cache's ten-minute timeout, which is there so a pack enabled
+      or a mod dropped into an instance shows up. A stack with no instance
+      behind it is the version's own jar and cannot change, so it is kept --
+      and indexing a jar read over the network does not happen again.*
+
+---
+
+## 0. Round 54
+
+- [x] **A cloud sync applied the theme that was applied elsewhere.** — *The
+      look went with the settings, so pulling from another computer repainted
+      a launcher somebody was looking at without being asked -- and did it
+      badly, since the settings arrive as a file written straight into the
+      store: the page re-read them and the bars did not, and the desktop icon
+      was left as the old theme's. The look is not a preference, it is a
+      decision. Saved themes sync as themes; which one is worn is each
+      computer's own. What does still arrive is announced, so every window
+      takes it at once.*
+- [x] **A theme with several pictures kept one.** — *`currentWallpaper()`
+      read the top of the stack. It looked right until you moved to another
+      theme and back: moving away prunes the copies nothing points at, so the
+      pictures the theme had not carried were deleted off disk.*
+- [x] **The skin render disappears while the window is being resized.** —
+      *skinview3d's setSize is not a cheap call: it resizes the renderer AND
+      reallocates both post-processing render targets. Dragging a window's
+      edge reports a new size every frame, so that was two full-size buffers
+      thrown away and remade per frame. It is done once the size stops
+      moving; CSS holds the canvas inside its segment meanwhile. Not
+      reproducible here -- a container resizes in one jump -- so this is the
+      mechanism removed rather than a fault watched to go away.*
+- [x] **Undo after applying a theme only undid the secondary colour.** —
+      *The undo stack is filled by save-settings going past and a theme is
+      applied by the main process, so nothing went past: what landed on the
+      stack was whatever the page saved while it was taking the theme on
+      board. Applying a theme is one step now, the icon included.*
+
+---
+
 ## 0. Round 53
 
 - [x] **An instance made from a mod project.** — With developer mode on, a new
@@ -34,16 +117,42 @@ started.
       Gradle's child, and signalling Gradle alone would leave the game
       running with nothing tracking it. Deleting the instance does not delete
       the folder, because that folder is somebody's project.*
-- [ ] **The theme of the main page content is reset by a cloud import** —
+- [x] **The theme of the main page content is reset by a cloud import** —
       and the left and top bars keep the old one, which is the odd part.
-- [ ] **The notch still blinks out, sometimes.** Reported again after
-      Round 49.
-- [ ] **The app icon section does not update to what it is supposed to be.**
-- [ ] **The desktop and taskbar icon updates before it is finished** — e.g.
-      with the background showing through it.
-- [ ] **The Windows accent colour is sometimes not set** during a reload and
-      theme sync.
-- [ ] **"Frame the picture…" only offers the top picture** of the stack.
+      *See Round 54: the look is not synced any more, and what is still
+      synced is announced to every window rather than written into the store
+      behind their backs.*
+- [x] **The notch still blinks out, sometimes.** Reported again after
+      Round 49. *It was drawn only while the SHELL was wearing a background,
+      so the corner depended on the shell and the page agreeing that there
+      is one -- and they do not always agree, because a page applies the
+      background in its own head from what the last one cached while the
+      shell applies it when the main process answers. In the gap the shell
+      draws no wedge and the page's own background fills the corner. Drawn
+      always now; over the launcher's own panel it is the same colour as the
+      band <html> paints across the top anyway.*
+- [x] **The app icon section does not update to what it is supposed to be.**
+      *It set the preview from a field that does not exist: `icon:app` says
+      WHICH icon is in use, not what it looks like, and one that follows the
+      theme has no dataUrl on it. So every colour and background change left
+      the section showing the icon from before it.*
+- [x] **The desktop and taskbar icon updates before it is finished** — e.g.
+      with the background showing through it. *A theme is a dozen settings
+      and a picture landing one at a time, and each save re-tinted the icon a
+      quarter of a second later -- so what reached the desktop was made of
+      the new colours and the old background, or of a picture not yet placed.
+      Nothing redraws it while an apply is in progress; the apply draws it
+      once, at the end.*
+- [x] **The Windows accent colour is sometimes not set** during a reload and
+      theme sync. *It was set when the window is made and when a colour is
+      SAVED, and applying a saved theme is neither: it writes the settings
+      itself. The "sometimes" was "whenever the theme came from the list
+      rather than from the pickers".*
+- [x] **"Frame the picture…" only offers the top picture** of the stack.
+      *The backing is the whole stack now, flattened the way the window
+      paints it, and that is what the cropper is handed. A crop remembers the
+      whole stack it was made of, so adding or reordering a picture drops it
+      rather than leaving the icon wearing a frame of something else.*
 
 ---
 

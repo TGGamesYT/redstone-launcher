@@ -22,6 +22,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
+import { liftModule } from "./lib/lift.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const src = fs.readFileSync(path.join(ROOT, "backend", "main.js"), "utf8");
@@ -34,33 +35,8 @@ const check = (what, got, want, note) => {
     + (ok ? "" : `\n       got  ${JSON.stringify(got)}\n       want ${JSON.stringify(want)}`));
 };
 
-// ── Lifting a declaration out of main.js by name ────────────────────────────
-//
-// By name and not by line range, because a range would drag in whatever
-// happens to sit between two functions -- and in main.js that is
-// ipcMain.handle(...) calls, which run on import and need Electron.
-// Found by the shape of the file rather than by counting brackets: main.js
-// is flat, so a top-level declaration starts in column one and ends at the
-// next line that is nothing but its own closing bracket in column one.
-// Counting brackets would mean lexing JavaScript, and the first regular
-// expression with a quote in it -- ["'] , which this very file has -- would
-// be read as the start of a string and swallow the rest of the program.
-const LINES = src.split(/\r?\n/);
-function declaration(name) {
-  const re = new RegExp(`^(?:function|const|let)\\s+${name}\\b`);
-  const at = LINES.findIndex(l => re.test(l));
-  if (at < 0) { console.log(`FAIL ${name} is not declared at the top level of main.js`); process.exit(1); }
-  if (/;\s*(\/\/.*)?$/.test(LINES[at])) return LINES[at];
-  for (let i = at + 1; i < LINES.length; i++) {
-    if (/^[}\])]+;?\s*$/.test(LINES[i])) return LINES.slice(at, i + 1).join("\n");
-    // A blank line at the top level means the declaration ended without one
-    // of those, which means this is not a shape this can lift out.
-    if (/^(function|const|let|ipcMain|app|if|\/\/)/.test(LINES[i])) break;
-  }
-  console.log(`FAIL could not find the end of ${name} in main.js`);
-  process.exit(1);
-}
-
+// The real functions, lifted out of main.js by name -- see tests/lib/lift.mjs
+// for why it is done that way.
 const WANTED = [
   "GRADLE_MARKERS", "isGradleProject", "gradleRootFor",
   "MC_JAVA", "javaForMinecraftVersion", "requiredJavaForProject",
@@ -69,21 +45,14 @@ const WANTED = [
   "projectVersion", "projectRunDir", "projectSetsUsername", "modProjectInfo",
   "_projectDirsAt", "_projectDirs", "projectDirs", "instanceRoot",
 ];
-const scratch = path.join(ROOT, "node_modules", ".cache");
-fs.mkdirSync(scratch, { recursive: true });
-const modFile = path.join(scratch, "modproject.mjs");
-fs.writeFileSync(modFile,
-  'import fs from "fs";\nimport path from "path";\n'
+const mod = await liftModule(WANTED, {
+  file: "modproject",
   // What main.js has around these: where the launcher keeps its data, and
-  // the profiles file instanceRoot() reads. Supplied rather than imported,
-  // because importing main.js means importing Electron.
-  + "export let dataDir = null, profilesPath = null;\n"
-  + "export const setPaths = (d, p) => { dataDir = d; profilesPath = p; };\n"
-  + WANTED.map(n => {
-    const text = declaration(n);
-    return text.replace(/^(function|const|let)/, "export $1");
-  }).join("\n\n") + "\n");
-const mod = await import("file://" + modFile + "?v=" + Date.now());
+  // the profiles file instanceRoot() reads.
+  prelude: 'import fs from "fs";\nimport path from "path";\n'
+    + "export let dataDir = null, profilesPath = null;\n"
+    + "export const setPaths = (d, p) => { dataDir = d; profilesPath = p; };\n",
+});
 
 // ── A project tree, as a mod template leaves one ───────────────────────────
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "modproject-"));

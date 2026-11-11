@@ -3341,7 +3341,7 @@ ipcMain.handle("bg:pickImage", async () => {
     // stayed on screen and a new one could never be chosen. (On Windows the
     // copy could not always be made either: deleting a file the compositor
     // still has open fails.)
-    const dest = path.join(dir, `wallpaper-${Date.now().toString(36)}${ext}`);
+    const dest = freshWallpaperPath(dir, ext);
     fs.copyFileSync(src, dest);
     pruneBackgroundCopies(dest);
     return { file: dest, url: pathToFileURL(dest).href, name: path.basename(src) };
@@ -7046,13 +7046,54 @@ function readWallpapers(file) {
   return out;
 }
 
+// A name no other wallpaper copy has.
+//
+// It was the millisecond it was written, which is unique enough when a
+// person picks a picture and far from it when a theme writes its whole stack
+// in a loop: every one of them landed on the same name, so a theme with two
+// pictures came back as the same picture twice.
+let _wallpaperSeq = 0;
+function freshWallpaperPath(dir, ext) {
+  for (;;) {
+    const name = `wallpaper-${Date.now().toString(36)}-${(_wallpaperSeq++).toString(36)}${ext}`;
+    const full = path.join(dir, name);
+    if (!fs.existsSync(full)) return full;
+  }
+}
+
+// A theme's own pictures, put on this computer and pointed at.
+//
+// `theme.background` is the stack as it was on the computer the theme was
+// made on: paths that mean nothing here. The pictures themselves travel with
+// the theme, so the stack is rebuilt out of the copies just written, top
+// first, each keeping the fit it was saved with.
+//
+// A theme used to carry ONE picture, and this kept whichever of the saved
+// paths happened to exist here as the rest of the stack -- which on the
+// computer it was made on was the rest of it, right up until moving to
+// another theme deleted those copies, and on anybody else's was nothing.
+function withCarriedWallpapers(background, theme) {
+  if (!background) return background;
+  const carried = Array.isArray(theme.wallpapers) && theme.wallpapers.length
+    ? theme.wallpapers
+    : (theme.wallpaper ? [theme.wallpaper] : []);
+  if (!carried.length) return background;
+  const placed = carried
+    .map(w => ({ at: placeWallpaper(w), fit: w.fit || "cover" }))
+    .filter(p => p.at);
+  if (!placed.length) return background;
+  const first = (Array.isArray(background.images) && background.images[0]) || background.image || {};
+  const images = placed.map(p => ({ ...first, file: p.at, url: null, fit: p.fit }));
+  return { ...background, image: images[0], images };
+}
+
 function placeWallpaper(wallpaper) {
   if (!wallpaper || !wallpaper.data) return null;
   try {
     const ext = /^\.[a-z0-9]{2,5}$/.test(String(wallpaper.ext || "")) ? wallpaper.ext : ".png";
     const dir = path.join(dataDir, "background");
     fs.mkdirSync(dir, { recursive: true });
-    const dest = path.join(dir, `wallpaper-${Date.now().toString(36)}${ext}`);
+    const dest = freshWallpaperPath(dir, ext);
     fs.writeFileSync(dest, Buffer.from(wallpaper.data, "base64"));
     return dest;
   } catch { return null; }
@@ -7161,27 +7202,10 @@ ipcMain.handle("theme:apply", async (event, { id } = {}) => {
   const applied = {};
   for (const k of THEME_ALL_FIELDS) if (k in t.theme) applied[k] = t.theme[k];
 
-  // A theme that carries its own picture brings the picture too, written in
-  // here and pointed at -- the path in the setting is this computer's and
-  // means nothing on anybody else's.
-  const carried = Array.isArray(t.wallpapers) && t.wallpapers.length
-    ? t.wallpapers
-    : (t.wallpaper ? [t.wallpaper] : []);
-  if (carried.length && applied.background) {
-    // Each of them, top first, put on this computer and pointed at. A theme
-    // used to carry one picture, so this took the stack it was saved with
-    // and kept whichever of those paths happened to exist here -- which on
-    // the computer it was made on was the rest of the stack right up until
-    // moving to another theme deleted the copies, and on anybody else's was
-    // nothing at all.
-    const placed = carried.map(w => ({ at: placeWallpaper(w), fit: w.fit || "cover" })).filter(p => p.at);
-    if (placed.length) {
-      const was = applied.background;
-      const first = (Array.isArray(was.images) && was.images[0]) || was.image || {};
-      const images = placed.map(p => ({ ...first, file: p.at, url: null, fit: p.fit }));
-      applied.background = { ...was, image: images[0], images };
-    }
-  }
+  // A theme that carries its own pictures brings them too, written in here
+  // and pointed at -- the paths in the setting are this computer's and mean
+  // nothing on anybody else's.
+  applied.background = withCarriedWallpapers(applied.background, t);
   // Nothing may redraw the icon until all of this is written.
   //
   // A theme is a dozen settings and a picture, and they land one at a time.
