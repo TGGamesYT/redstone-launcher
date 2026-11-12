@@ -27,6 +27,7 @@ import { deliverToEveryFrame } from './ipcframes.js';
 import remod from './remod.js';
 import { convertSkinPixels, slimFromPixels } from './skin-model.js';
 import shortcuts from './shortcuts.js';
+import skinSources from './skin-sources.js';
 import git from './git.js';
 import totem from './totem.js';
 import AdmZip from 'adm-zip';
@@ -16671,6 +16672,188 @@ ipcMain.handle("mc:defaultSkinFor", async (event, opts = {}) => {
   }
 });
 
+// ── When Mojang will not say ───────────────────────────────────────────────
+//
+// Mojang's session server goes down, and not politely: it answers with an
+// HTML page whose title is "Service unavailable". A launcher that only asks
+// Mojang then has nothing, and the obvious thing to draw is the default
+// skin -- which is also exactly what an account with no custom skin looks
+// like, so it says nothing is wrong while every premium account wears Steve.
+//
+// There is more than one place to ask. The account's own profile, with the
+// account's own token, is a different service on different machines; and the
+// skin mirrors are caches of Mojang that generally still hold what it said
+// an hour ago, which is precisely what is wanted while it is down.
+//
+// None of them is believed on its word. See backend/skin-sources.js for why
+// -- the short version is that a mirror under load answers 200 with a
+// default skin, and a fallback that lies is worse than one that fails.
+
+/** A skin PNG this launcher already has somewhere on disk. */
+async function skinFromOurOwnFiles(uuid) {
+  const key = String(uuid || "").replace(/-/g, "");
+  // What Mojang last told us this player's texture was, however long ago.
+  // The picture itself is kept forever (the hash IS the content), so an old
+  // mapping plus a cached file is the player's real skin.
+  const known = _headProfile.get(key);
+  if (known && known.hash) {
+    try {
+      const file = path.join(HEADS_DIR, `tex-${known.hash}.png`);
+      const png = await fsp.readFile(file);
+      return { png, slim: !!known.slim, cape: known.cape || null, via: "what we had on disk", sure: true };
+    } catch { /* the picture is not here; the hash alone is no use offline */ }
+  }
+  return null;
+}
+
+/**
+ * Is this picture simply one of the defaults, dressed up as an answer?
+ *
+ * By its PIXELS, not its bytes. Two of the three mirrors re-encode what they
+ * serve -- measured: for the same player, minotar returns Mojang's own bytes
+ * and the other two return the same picture in different files -- so
+ * comparing files would say "not a default" about a default and the check
+ * would be worth nothing.
+ *
+ * Kept, because the answer never changes: the defaults come out of the
+ * client jar and the question is asked once per mirror answer.
+ */
+let _defaultSkinPixels = null;
+async function defaultSkinPixelHashes() {
+  if (_defaultSkinPixels) return _defaultSkinPixels;
+  const out = new Set();
+  const add = async (png) => {
+    try { out.add(await skinPixelHash(png.toString("base64"))); }
+    catch { /* one that cannot be read cannot be compared against */ }
+  };
+  for (const d of cachedDefaultSkins() || []) {
+    if (d && d.base64) await add(Buffer.from(d.base64, "base64"));
+  }
+  // The old pair as well: a mirror with nothing better to say falls back to
+  // Steve or Alex, not to the nine.
+  for (const hash of Object.values(DEFAULT_SKIN_TEXTURE)) {
+    try { await add(await skinByTextureHash(hash)); } catch { /* not cached and not reachable */ }
+  }
+  if (out.size) _defaultSkinPixels = out;
+  return out;
+}
+
+/**
+ * What each mirror serves for somebody who does not exist.
+ *
+ * Asked once per mirror and remembered beside the profile cache, because the
+ * answer is a property of the service rather than of this launcher's day.
+ * Without it the check below has nothing to compare against: a mirror's
+ * stand-in is its own file, not one of Minecraft's defaults -- measured,
+ * minotar's matches neither the nine nor the Steve and Alex in the jar.
+ */
+const STANDIN_FILE = () => path.join(texturesDir, "mirror-standins.json");
+let _standIns = null;
+async function standInHashFor(mirrorName) {
+  if (!_standIns) {
+    try { _standIns = JSON.parse(fs.readFileSync(STANDIN_FILE(), "utf8")) || {}; }
+    catch { _standIns = {}; }
+  }
+  if (mirrorName in _standIns) return _standIns[mirrorName];
+  const mirror = skinSources.MIRRORS.find(m => m.name === mirrorName);
+  if (!mirror) return null;
+  let hash = null;
+  try {
+    const png = await skinSources.standInFor(mirror);
+    if (png) hash = await skinPixelHash(png.toString("base64"));
+  } catch { /* it would not say, which is fine: it cannot mislead either */ }
+  _standIns[mirrorName] = hash;
+  try {
+    fs.mkdirSync(texturesDir, { recursive: true });
+    fs.writeFileSync(STANDIN_FILE(), JSON.stringify(_standIns, null, 1));
+  } catch { /* it will be asked again next time */ }
+  return hash;
+}
+
+/**
+ * Is this picture a stand-in rather than this player?
+ *
+ * Two questions, because there are two ways to be handed one: Minecraft's
+ * own defaults (which a player may genuinely be wearing, so this only
+ * decides whether to ask again later) and the mirror's own "I do not know"
+ * picture, which is the one that would otherwise rebuild the original bug
+ * through a different door.
+ */
+async function isOneOfTheDefaults(png, via) {
+  let mine = null;
+  // The launcher already hashes a skin by its decoded pixels, for the skin
+  // library; two files of the same picture therefore compare equal, which
+  // is the whole question here since two of the three mirrors re-encode
+  // what they serve.
+  try { mine = await skinPixelHash(png.toString("base64")); } catch { return false; }
+  if (via) {
+    try {
+      const standIn = await standInHashFor(via);
+      if (standIn && standIn === mine) return true;
+    } catch { /* fall through to the defaults */ }
+  }
+  try {
+    const known = await defaultSkinPixelHashes();
+    return known.has(mine);
+  } catch { return false; }
+}
+
+/**
+ * Everything else to try, in order, for a player we could not ask about.
+ *
+ * Returns { png, slim, cape, via, sure } or null. `sure` is false when what
+ * came back might be a stand-in rather than this player -- it is still
+ * drawn, because it is the best picture there is, but it is never written
+ * down as what this player looks like and the real one is asked for again.
+ */
+async function skinFromSomewhereElse(uuid, { playerId = null } = {}) {
+  const key = String(uuid || "").replace(/-/g, "");
+  if (!/^[0-9a-f]{32}$/i.test(key)) return null;
+
+  const ours = await skinFromOurOwnFiles(key);
+  if (ours) return ours;
+
+  // The account telling us about itself. Only for accounts this launcher is
+  // signed in to, which are the ones somebody notices going Steve.
+  try {
+    const players = loadPlayers();
+    const mine = players.find(p =>
+      (playerId != null && String(p.id) === String(playerId))
+      || String(p.auth && p.auth.uuid || "").replace(/-/g, "") === key);
+    if (mine && mine.auth && mine.auth.access_token) {
+      const said = await skinSources.profileFromServices(mine.auth.access_token, { userAgent: LAUNCHER_UA });
+      if (said && said.hash) {
+        _headProfile.set(key, { hash: said.hash, slim: said.slim, cape: said.cape, at: Date.now() });
+        headProfilesChanged();
+        const png = await skinByTextureHash(said.hash);
+        devtoolsLog(`skin: Mojang would not say, so ${mine.username || "the account"} told us itself`);
+        return { png, slim: said.slim, cape: said.cape, via: "the account itself", sure: true };
+      }
+    }
+  } catch (err) {
+    devtoolsLog("skin: the account could not tell us either:", err && err.message);
+  }
+
+  // The mirrors: caches of Mojang, which is the point of them today.
+  const got = await skinSources.skinFromMirrors(key, {
+    onTry: (name, r) => {
+      if (!r || !r.ok) devtoolsLog(`skin: ${name} could not help (${skinSources.describeOutage(r && r.status, r && r.body)})`);
+    },
+  });
+  if (!got) return null;
+  const standIn = await isOneOfTheDefaults(got.png, got.via);
+  // The sheet knows its own model: a slim skin has the right-hand column of
+  // the arm left transparent. Neither mirror says which it is, and guessing
+  // wrong gives a figure with one arm wider than the other.
+  let slim = false;
+  try {
+    const { data, info } = await sharp(got.png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    slim = slimFromPixels(data, info.width, info.height);
+  } catch { /* leave it classic */ }
+  devtoolsLog(`skin: ${got.via} had one${standIn ? ", though it may be a stand-in" : ""}`);
+  return { png: got.png, slim, cape: null, via: got.via, sure: !standIn };
+}
+
 // A skin PNG by its texture hash, kept on disk forever — the hash IS the
 // content, so it can never go stale.
 async function skinByTextureHash(hash) {
@@ -16938,6 +17121,23 @@ async function playerHead({ name, uuid, offline, playerId }) {
     devtoolsLog("head: falling back to the default:", err && err.message);
   }
 
+  // Mojang would not say: the account itself, our own files, or a mirror.
+  if (!offline && id) {
+    try {
+      const other = await skinFromSomewhereElse(id, { playerId });
+      if (other) {
+        if (!other.sure) headWasGuessed(id);
+        return {
+          url: await renderHeadPng(other.png, contentKey(other.png)),
+          from: other.sure ? "skin" : "default",
+          via: other.via,
+        };
+      }
+    } catch (err) {
+      devtoolsLog("head: nowhere else had it either:", err && err.message);
+    }
+  }
+
   // The same two reasons as headSkinFor: either this account has no custom
   // skin, or we could not find out. The second is remembered and asked
   // again rather than settled on.
@@ -16989,6 +17189,26 @@ async function headSkinFor({ name, uuid, offline, playerId } = {}) {
   } catch (err) {
     devtoolsLog("skin: falling back to the default:", err && err.message);
   }
+  // Mojang would not say. Somewhere else might.
+  if (!offline && id) {
+    try {
+      const other = await skinFromSomewhereElse(id, { playerId });
+      if (other) {
+        if (!other.sure) headWasGuessed(id);
+        return {
+          base64: other.png.toString("base64"),
+          slim: !!other.slim,
+          from: other.sure ? "skin" : "default",
+          via: other.via,
+          guessed: !other.sure,
+          capeUrl: other.cape || null,
+        };
+      }
+    } catch (err) {
+      devtoolsLog("skin: nowhere else had it either:", err && err.message);
+    }
+  }
+
   // A default, for one of two quite different reasons.
   //
   // Either this account really has no custom skin -- in which case a default

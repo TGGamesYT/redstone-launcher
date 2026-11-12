@@ -9,6 +9,40 @@ started.
 
 ---
 
+## 0. Round 60
+
+- [x] **Mojang being down should mean a fallback, not Steve everywhere.** —
+      *It answers with an HTML page titled "Service unavailable", sometimes
+      with a 200, so a launcher that only asks Mojang has nothing and the
+      obvious thing to draw is the default skin. Which is also exactly what
+      an account with no custom skin looks like, so it says nothing is wrong
+      while every premium account wears Steve.*
+
+      *Four places to ask now, in order. What is already on this disk: the
+      picture is kept forever under its texture's hash, so an old mapping
+      plus a cached file IS the real skin. Then the account telling the
+      launcher about itself -- api.minecraftservices.com is a different
+      service on different machines from sessionserver, it is authoritative,
+      and it works for exactly the accounts somebody notices going Steve.
+      Then three mirrors, which are caches of Mojang and generally still
+      hold what it said an hour ago. Then, and only then, a default.*
+
+      *None of them is believed on its word. The launcher was moved off
+      minotar and mc-heads once already because when they throttle they
+      answer 200 with a stand-in skin, and a fallback that lies is worse
+      than one that fails. So every answer must be a PNG of a skin's shape,
+      and it is compared against what that mirror serves for a player who
+      does not exist -- asked once per mirror and remembered, because a
+      mirror's stand-in is its own file and matches neither the nine
+      defaults nor the Steve and Alex in the client jar. A stand-in is still
+      drawn, because it is the best picture there is, but it is never
+      written down as what this player looks like and the real one is asked
+      for again when Mojang comes back.*
+
+      *Checked with Mojang made genuinely unreachable: a real player comes
+      back as their own skin via minotar, and a uuid nobody has comes back
+      as a default marked unsure.*
+
 ## 0. Round 59
 
 - [x] **`ipcNative` missing, and an empty page on the first open.** — *The
