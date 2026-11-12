@@ -9,6 +9,75 @@ started.
 
 ---
 
+## 0. Round 57
+
+- [x] **A dev instance waited a long time without showing as launching, then
+      said it was already launching.** — *The Gradle path never put anything
+      in `launchWorkers`, which is the list `get-launching-instances` reads,
+      so for the whole time it spent getting a JDK ready the launcher
+      believed nothing was starting: the instance did not light up, and
+      pressing Play again was taken as a second launch and answered with
+      "This profile is already launching". A stand-in entry goes in before
+      any of the slow work now, is swapped for the real child when Gradle
+      spawns, and its `kill` cancels the launch rather than doing nothing.
+      The wait itself is no longer silent either -- the JDK download reports
+      through the same progress and log lines as everything else.*
+- [x] **`'gradle.bat' is not recognized`, on a project that has a wrapper.** —
+      *The project had `gradle/wrapper/gradle-wrapper.properties` and no
+      `gradlew`, no `gradlew.bat` and no `gradle-wrapper.jar` -- which is
+      extremely common, because several popular `.gitignore` templates drop
+      all three. The launcher looked for the scripts, did not find them, and
+      fell through to "gradle" on the PATH, which most people do not have.
+      Four ways down now, in order: the wrapper JAR run directly (which is
+      all `gradlew` itself does, and needs no shell and no batch file), the
+      distribution the properties file NAMES -- downloaded to the launcher's
+      own folder if it is not already there -- then the scripts, then a real
+      Gradle on the PATH, checked for rather than hoped for. The new
+      instance page says which of those will run it before you create it.*
+- [x] **And it still gave the project Java 21 when it wanted 25.** — *Two
+      separate causes. `javaForMinecraftVersion` compared "26.3" against the
+      old version numbers digit by digit, so Minecraft's new numbering came
+      out as 1.20-era and answered 21; there is a table for the new scheme
+      now, and the version is asked of Mojang's own manifest when that is
+      all the project names. And the project's own number was being looked
+      for in the wrong files: only the root build script was read, so a
+      multi-loader mod -- `common` plus a folder per loader, each with its
+      own script -- was read at the one file that says nothing about Java.
+      The subprojects are read too now (two levels, skipping `build`, `run`
+      and the rest of what a build leaves lying about), a key only a
+      subproject sets in `gradle.properties` is found, `JavaVersion.toVersion`
+      is understood, and a number the script declares for itself and then
+      uses in a way nothing here recognises counts as a last resort. Checked
+      against the uploaded project and against the detection in the mod
+      build workflow, which is where the subproject and
+      `targetJavaVersion` cases came from.*
+- [x] **A mod project's icon was not used for the instance or the mod.** —
+      *`modProjectInfo` never read one. It reads the mod's own picture out of
+      the project's resources now and the new instance page prefills it, so
+      the instance wears the icon the mod will have once it is built.*
+- [x] **Opening a dev instance's folder opened the launcher's folder.** —
+      *Several places still spelled out `<data>/client/<id>` instead of
+      asking where the instance's files actually are. There is one function
+      that answers that, `instanceRoot`, 43 call sites were moved onto it,
+      and a test now fails the build if a new one spells the path out.*
+- [x] **Cloud syncing now syncs skins.** — *A switch of its own, next to the
+      others. The library merges rather than replaces, so a skin only one
+      computer has is kept, and a deletion is recorded as a deletion so it
+      travels instead of the skin coming back on the next sync. The skins
+      page redraws itself when a sync brings some in. Written down in
+      PRIVACY.md, which a test now checks has a bullet for every kind that
+      syncs.*
+- [x] **The small skin renders teleported their arms when the pointer left.** —
+      *The card eased the figure back to facing forward and swapped the still
+      picture in the instant the ROTATION was home -- but the arms, legs,
+      head and cape are springs hanging off that rotation, and measured in
+      the running launcher the right arm was 0.87 radians, fifty degrees, out
+      of place at that exact moment. The still picture is the rest pose, so
+      the swap was the arms jumping there. The physics says whether it has
+      settled now, on a threshold set to what is visible rather than to what
+      is measurable, and the card waits for it: 1250ms rather than 2617ms,
+      with a cap so nothing waits for ever.*
+
 ## 0. Round 56
 
 - [x] **A mod project instance assumed Java 21 and a Gradle on the PATH.** —

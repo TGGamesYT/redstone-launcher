@@ -42,11 +42,11 @@ const WANTED = [
   "MC_JAVA", "javaForMinecraftVersion",
   "gradleWrapperVersion", "GRADLE_JAVA_MAX", "cmpVersions", "javaRangeForGradle",
   "javaFromScripts", "projectOwnJavaHome", "requiredJavaForProject",
-  "projectText", "projectScripts", "gradleProp",
+  "projectText", "NOT_PROJECT_DIRS", "projectScriptFiles", "projectScripts", "gradleProp",
   "PROJECT_META", "PROJECT_PLUGINS", "projectLoader",
   "projectVersion", "projectRunDir", "projectSetsUsername",
   "modProjectId", "modProjectIcon", "modProjectInfo",
-  "gradleSpawnArgs",
+  "gradleSpawnArgs", "gradleOnPath", "wrapperDistribution", "gradleLauncherJar", "gradleInvocation", "MC_JAVA_NEW",
   "_projectDirsAt", "_projectDirs", "projectDirs", "instanceRoot",
 ];
 const mod = await liftModule(WANTED, {
@@ -137,9 +137,79 @@ fs.writeFileSync(path.join(fabric, "src/main/resources/assets/examplemod/icon.pn
   write("prop-java/gradle.properties", "java_version=21\nminecraft_version=1.21.1\n");
   write("prop-java/gradle/wrapper/gradle-wrapper.properties",
     "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10-bin.zip\n");
+  // And one declared in the build script itself, which is how the Fabric
+  // template writes it.
+  {
+    const local = path.join(tmp, "local-def-java");
+    write("local-def-java/gradlew", "#!/bin/sh\n");
+    write("local-def-java/build.gradle", [
+      "plugins { id 'fabric-loom' }",
+      "def targetJavaVersion = 25",
+      "java { toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion) }",
+    ].join("\n"));
+    write("local-def-java/gradle.properties", "minecraft_version=26.3\n");
+    write("local-def-java/gradle/wrapper/gradle-wrapper.properties",
+      "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.9.0-bin.zip\n");
+    check("a toolchain declared in the build script is followed up too",
+      mod.requiredJavaForProject(local), 25,
+      "`def targetJavaVersion = 25` is what the Fabric template writes");
+  }
   check("a toolchain written as a property is followed up",
     mod.requiredJavaForProject(byProp), 21,
     "JavaLanguageVersion.of(java_version) is what the templates write");
+
+  // ── a mod that builds for more than one loader ──
+  //
+  // Architectury and the other multi-loader templates split the project into
+  // `common` and one folder per loader, each with its own build script. The
+  // root script sets up the plugins and says nothing about Java, so reading
+  // only the root reads the one file without the answer -- and the launcher
+  // then handed a Java 25 project a Java 21, which is the "it still gives it
+  // java 21" that was reported.
+  {
+    const multi = path.join(tmp, "multiloader");
+    write("multiloader/gradlew", "#!/bin/sh\n");
+    write("multiloader/settings.gradle", "include 'common'\ninclude 'fabric'\ninclude 'neoforge'\n");
+    write("multiloader/build.gradle", "plugins { id 'dev.architectury.loom' apply false }\n");
+    write("multiloader/common/build.gradle", "plugins { id 'dev.architectury.loom' }\n");
+    write("multiloader/fabric/build.gradle",
+      "plugins { id 'fabric-loom' }\njava { toolchain { languageVersion = JavaLanguageVersion.of(25) } }\n");
+    write("multiloader/fabric/gradle.properties", "minecraft_version=26.3\n");
+    write("multiloader/gradle/wrapper/gradle-wrapper.properties",
+      "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.9.0-bin.zip\n");
+    check("a subproject's toolchain is read as well as the root's",
+      mod.requiredJavaForProject(multi), 25,
+      "the root script of a multi-loader mod says nothing about Java; the loader folders do");
+    check("and a key only a subproject sets is still found",
+      mod.gradleProp(multi, ["minecraft_version"]), "26.3");
+    // The folders a build fills with copies of these files are not read.
+    write("multiloader/build/tmp/build.gradle", "java { toolchain { languageVersion = JavaLanguageVersion.of(8) } }\n");
+    write("multiloader/run/build.gradle", "java { toolchain { languageVersion = JavaLanguageVersion.of(8) } }\n");
+    check("what the build itself leaves lying about is not mistaken for the project",
+      mod.requiredJavaForProject(multi), 25,
+      "build/ and run/ are full of other projects' build files");
+  }
+
+  // The number a script declares and then uses somewhere this cannot see.
+  {
+    const bare = path.join(tmp, "bare-java-decl");
+    write("bare-java-decl/gradlew", "#!/bin/sh\n");
+    write("bare-java-decl/build.gradle", [
+      "plugins { id 'fabric-loom' }",
+      "def targetJavaVersion = 25",
+      "applyJavaSettings(project, targetJavaVersion)",
+    ].join("\n"));
+    write("bare-java-decl/gradle.properties", "minecraft_version=1.20.1\n");
+    write("bare-java-decl/gradle/wrapper/gradle-wrapper.properties",
+      "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.9.0-bin.zip\n");
+    check("a Java version the script declares counts even where it goes is unclear",
+      mod.requiredJavaForProject(bare), 25,
+      "better its own number than the game version's guess, which here would say 17");
+    check("but it is the weakest of the rules",
+      mod.javaFromScripts(bare, "def targetJavaVersion = 25\njava { toolchain { languageVersion = JavaLanguageVersion.of(21) } }"),
+      21,
+      "a toolchain line says what the build does; a declaration is only a hint");
+  }
   check("and the wrapper's own version is read",
     mod.gradleWrapperVersion(byProp), "8.10");
 
@@ -268,6 +338,68 @@ fs.writeFileSync(path.join(fabric, "src/main/resources/assets/examplemod/icon.pn
     (() => { const r = mod.gradleSpawnArgs("/home/me/My Mods/thing/gradlew", args); return [r.file, r.argv.length, r.shell]; })(),
     ["/home/me/My Mods/thing/gradlew", 2, false]);
 }
+
+// ── what actually runs Gradle ────────────────────────────────────────────
+//
+// A project can easily have neither gradlew nor gradlew.bat -- plenty of
+// .gitignore templates drop them -- and still have the wrapper itself, which
+// is the part that decides WHICH Gradle. Falling back to "gradle.bat" on the
+// PATH told somebody with a perfectly good wrapper that 'gradle.bat' is not
+// recognized as an internal or external command.
+{
+  const proj = path.join(tmp, "wrapper-only");
+  write("wrapper-only/build.gradle", "plugins { id 'fabric-loom' }\n");
+  write("wrapper-only/gradle/wrapper/gradle-wrapper.properties",
+    "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.9.0-bin.zip\n");
+  write("wrapper-only/gradle/wrapper/gradle-wrapper.jar", "not really a jar");
+  const java = "/jdk/bin/java";
+  const how = await mod.gradleInvocation(proj, java);
+  check("the wrapper's JAR is run directly, with the Java we already have",
+    [how.file, how.lead],
+    [java, ["-Dorg.gradle.appname=gradlew", "-classpath", path.join(proj, "gradle", "wrapper", "gradle-wrapper.jar"),
+      "org.gradle.wrapper.GradleWrapperMain"]],
+    "which is what gradlew does, without needing either script to exist");
+
+  // No wrapper at all, and no gradle anywhere: that is worth saying before
+  // anything is started, not after cmd.exe says it.
+  const bare = path.join(tmp, "no-gradle-at-all");
+  write("no-gradle-at-all/build.gradle", "plugins { id 'fabric-loom' }\n");
+  const was = process.env.PATH;
+  process.env.PATH = path.join(tmp, "empty-path");
+  fs.mkdirSync(process.env.PATH, { recursive: true });
+  check("and a project with no wrapper and no gradle has nothing to run",
+    await mod.gradleInvocation(bare, java), null);
+  process.env.PATH = was;
+
+  // The wrapper's settings on their own, which is what plenty of projects
+  // have: no gradlew, no gradlew.bat, no gradle-wrapper.jar, just the file
+  // that says WHICH Gradle. That is enough to go and get it.
+  const settingsOnly = path.join(tmp, "settings-only");
+  write("settings-only/build.gradle", "plugins { id 'fabric-loom' }\n");
+  write("settings-only/gradle/wrapper/gradle-wrapper.properties",
+    "distributionBase=GRADLE_USER_HOME\n"
+    + "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.9.0-bin.zip\n");
+  check("the distribution a wrapper names is read, colon-escape and all",
+    mod.wrapperDistribution(settingsOnly),
+    { url: "https://services.gradle.org/distributions/gradle-9.9.0-bin.zip", version: "9.9.0" },
+    "a java.util.Properties file escapes the colon, and the raw string is not a URL");
+  check("and something that is not a distribution is not one",
+    [mod.wrapperDistribution(bare),
+      mod.wrapperDistribution(path.join(tmp, "nowhere"))], [null, null]);
+}
+
+// ── which Java a Minecraft version wants ─────────────────────────────────
+//
+// Minecraft changed how it numbers releases: 1.21.11 was the last of the old
+// scheme and 26.x is the new one. The table only knew the old one and
+// compared "26.3" to "1.20.5" digit by digit -- 26 > 1, so every version of
+// the new scheme came out as Java 21.
+check("the old numbering still reads",
+  ["1.16.5", "1.17", "1.18.2", "1.20.4", "1.21.1"].map(mod.javaForMinecraftVersion),
+  [8, 16, 17, 17, 21]);
+check("and the new numbering is not read as the old one",
+  ["26.0", "26.3", "27.1"].map(mod.javaForMinecraftVersion), [25, 25, 25],
+  "26.3 wants Java 25, and it was being given 21");
 
 // ── Where an instance's files are ──────────────────────────────────────────
 {

@@ -290,6 +290,12 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
       read: () => (content.readServers ? content.readServers() : null),
       write: (v) => content.writeServers && content.writeServers(v),
     },
+    skins: {
+      name: "Skins",
+      read: () => (content.readSkins ? content.readSkins() : null),
+      write: (v) => content.writeSkins
+        && content.writeSkins(items.mergeSkins(content.readSkins(), v).library),
+    },
   };
 
   // ── instances and worlds ────────────────────────────────────────────────

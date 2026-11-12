@@ -1425,9 +1425,27 @@
       L.freeRaf = requestAnimationFrame(step);
     }
 
+    // Have the limbs finished reacting?
+    //
+    // The arms, the cape and the head are springs hanging off the model's
+    // rotation, so they are still moving for a moment after the rotation
+    // itself is home. Swapping the card back to its still picture then is
+    // what made the arms teleport: the still is the rest pose, and they were
+    // mid-swing. The animation knows, so it is asked.
+    const limbsAtRest = (L) => {
+      try {
+        const a = L.v.animation;
+        return !a || typeof a.atRest !== 'function' || a.atRest();
+      } catch { return true; }
+    };
+
     function easeHome(L, holder) {
       const norm = (a) => Math.atan2(Math.sin(a), Math.cos(a));   // to [-PI, PI]
       L.easing = true;
+      // Waiting for the limbs cannot be allowed to hold a viewer for ever:
+      // there are four of them and a card that never settles would take one
+      // out of the pool.
+      const waitUntil = Date.now() + 2500;
       if (L.freeRaf) { cancelAnimationFrame(L.freeRaf); L.freeRaf = null; }
       L.spin.camRate = 0;
       const finish = () => {
@@ -1478,6 +1496,9 @@
             L.v.controls.update();
           } catch { }
         }
+
+        // The rotation and the camera are home; the arms may not be.
+        if (settled && !limbsAtRest(L) && Date.now() < waitUntil) settled = false;
 
         if (settled) { finish(); return; }
         L.raf = requestAnimationFrame(step);
@@ -1760,6 +1781,19 @@
     // Which account the page is currently showing, so a re-render can tell a
     // refresh from an account switch.
     let renderedPlayerId = null;
+
+    // Skins that arrived from another computer.
+    //
+    // The library is drawn once, so a sync that brought skins in -- or took
+    // deleted ones away -- left this page showing the library from before
+    // it. Drawn again when the main process says it changed, which is also
+    // what makes "it synced" visible rather than something you find out
+    // about next time you open the page.
+    try {
+      ipcRenderer.on('skins-updated', () => {
+        try { updateSKin({ force: false }); } catch { /* the page is going away */ }
+      });
+    } catch { /* not in the app */ }
 
     async function updateSKin(opts) {
       const forceProfile = !!(opts && opts.force);

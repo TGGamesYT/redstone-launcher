@@ -69,6 +69,12 @@ to settle rather than decided for you.
   computers' lists merge rather than one replacing the other.
 - **Signed-in Minecraft accounts**, including the tokens that keep them
   signed in.
+- **Skins** — your skin library: every skin you have saved, which account
+  each belongs to and the order you put them in, as the images themselves.
+  Like the server list they merge rather than replace, so a skin only one
+  computer has is kept. A skin you *delete* is also recorded as deleted —
+  the picture is gone, but the fact that you removed it stays, so it is
+  removed on your other computers rather than coming back on the next sync.
 
 **Sent one at a time, when you ask for that one.** There is no switch for
 these and no sweep that collects them: an instance goes when you choose *Save

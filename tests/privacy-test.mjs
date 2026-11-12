@@ -44,16 +44,31 @@ check("there are only two of them", google.SCOPES.length, 2);
 // one at a time when asked for. If a switch for either ever comes back, that
 // sentence stops being true, and it is the kind of claim somebody relies on.
 {
+  // The switched kinds, and the sentence in the policy that describes each.
+  // Spelled out here so that adding a kind to the code and not to the policy
+  // fails rather than quietly shipping -- which is the whole job of this
+  // file. The phrase is the bullet's own first words.
+  const SWITCHED = {
+    accounts: "**Signed-in Minecraft accounts**",
+    servers: "**Server list**",
+    settings: "**Settings**",
+    skins: "**Skins**",
+    themes: "**Themes**",
+  };
+  const kinds = Object.keys(SWITCHED).sort();
   const cloud = src("backend/cloud.js");
   const sweep = [...cloud.matchAll(/^    (\w+): \{\n      name: "/gm)].map(m => m[1]);
-  check("the kinds a sync sweeps up are the four the policy lists as switches",
-    sweep.sort(), ["accounts", "servers", "settings", "themes"],
+  check("the kinds a sync sweeps up are the ones the policy lists as switches",
+    sweep.sort(), kinds,
     "an instance or a world in here would be sent by ticking a box, which the policy says cannot happen");
   const page = src("frontend/settings.html");
   check("and the settings page offers a switch for exactly those",
     [...page.matchAll(/class="cloud-kind" data-kind="(\w+)"/g)].map(m => m[1]).sort(),
-    ["accounts", "servers", "settings", "themes"],
+    kinds,
     "a switch for instances or worlds is a promise the policy does not make");
+  check("and the policy has a bullet for every one of them",
+    kinds.filter(k => !policy.includes(SWITCHED[k])), [],
+    "a kind that syncs without being written down here is the one real failure mode of a privacy policy");
   check("the policy says instances and worlds are asked for one at a time",
     /one at a time, when you ask for that one/i.test(policy), true);
 

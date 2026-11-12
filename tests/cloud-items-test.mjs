@@ -166,6 +166,52 @@ check("while an ordinary long-ish setting still goes",
     m.themes.find(t => t.name === "Both").at, 9);
 }
 
+// ── skins ──
+//
+// The library is per-account, and the interesting part is the tombstones:
+// without them a deletion cannot travel. Deleting a skin here and syncing
+// would find it missing locally, decide the Drive's copy was the newer
+// truth, and put it straight back -- a deletion that undoes itself, which is
+// worse than one that does not happen.
+{
+  const skin = (hash, at) => ({ pixelHash: hash, addedAt: at, png: "data:" + hash });
+  const m = items.mergeSkins(
+    { a: [skin("one", 10), skin("two", 20)], b: [skin("mine", 5)], __pool_order__: ["one", "two"] },
+    { a: [skin("two", 20), skin("three", 30)], c: [skin("theirs", 7)] });
+  check("a skin only one computer has is kept, whichever computer that is",
+    m.library.a.map(s => s.pixelHash).sort(), ["one", "three", "two"],
+    "merged like the servers and the themes: syncing must not cost you a skin");
+  check("and an account only one computer knows is kept whole",
+    [m.library.b.length, m.library.c.length], [1, 1]);
+  check("the same skin on both sides is one skin",
+    m.library.a.filter(s => s.pixelHash === "two").length, 1,
+    "the pixels are the identity; the same picture saved twice is not two skins");
+  check("the order a pooled list is shown in survives",
+    m.library.__pool_order__, ["one", "two"]);
+  check("and what arrived is reported, so a sync can say what it did",
+    m.added.includes("three"), true);
+}
+{
+  const skin = (hash, at) => ({ pixelHash: hash, addedAt: at });
+  // Deleted here at t=50, and the Drive still has it from t=10.
+  const m = items.mergeSkins(
+    { a: [], __deleted__: { a: { gone: 50 } } },
+    { a: [skin("gone", 10), skin("kept", 10)] });
+  check("a skin deleted here stays deleted when the Drive still has it",
+    m.library.a.map(s => s.pixelHash), ["kept"],
+    "without the tombstone the deletion undoes itself on the next sync");
+  check("and the tombstone itself is kept, for the next computer to sync",
+    m.library.__deleted__.a.gone, 50);
+  // Deleted, then saved again deliberately. The newer save wins: a
+  // tombstone is a record of one deletion, not a ban on the picture.
+  const back = items.mergeSkins(
+    { a: [], __deleted__: { a: { gone: 50 } } },
+    { a: [skin("gone", 90)] });
+  check("but saving it again afterwards brings it back",
+    back.library.a.map(s => s.pixelHash), ["gone"],
+    "a tombstone records a deletion, it does not ban the picture for ever");
+}
+
 // ── the list is readable where somebody will look for it ──
 // Belt and braces: the two that matter most are caught by the shape test as
 // well as by name, so forgetting one of them in the list is not the whole of

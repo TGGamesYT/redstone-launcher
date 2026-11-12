@@ -572,6 +572,23 @@
     // Nothing to add once everything has settled back to zero.
     let moving = false;
     for (const n of Object.keys(t)) if (Math.abs(v[n]) > 1e-4 || Math.abs(state[n].v) > 1e-4) moving = true;
+    // Remembered, because whoever is driving the render needs to know: a card
+    // that swaps itself back to a still picture the moment its ROTATION is
+    // home does it while the arms are still swinging, and they teleport.
+    //
+    // Two different questions, two different thresholds. `moving` decides
+    // whether to touch the pose at all, and 1e-4 is right for that. "Has it
+    // visually settled" is a quarter of a degree: measured in the running
+    // launcher, the arm is 0.88 rad out when the spin stops, back under
+    // 0.01 rad half a second later, and does not clear 1e-4 for another two
+    // seconds -- so waiting for THAT would be waiting for nothing anybody
+    // can see.
+    state.moving = moving;
+    let rested = true;
+    for (const n of Object.keys(t)) {
+      if (Math.abs(v[n]) > 0.004 || Math.abs(state[n].v) > 0.02) { rested = false; break; }
+    }
+    state.rested = rested;
     if (!moving) return;
 
     const part = (name) => {
@@ -641,8 +658,17 @@
     const JUMP = 0.35;
     anim.resetSpin = function () {
       lastYaw = null;
-      for (const k of Object.keys(state)) { state[k].x = 0; state[k].v = 0; }
+      for (const k of Object.keys(state)) {
+        if (!state[k] || typeof state[k] !== 'object') continue;
+        state[k].x = 0; state[k].v = 0;
+      }
+      state.moving = false;
+      state.rested = true;
     };
+    // Whether the limbs have finished reacting. The rotation coming home is
+    // not the same thing: the arms are springs hanging off it and they are
+    // still moving for a moment afterwards.
+    anim.atRest = function () { return state.rested !== false; };
     anim.animate = function (player, delta) {
       const rest = restPose(player);
       const dt = Number.isFinite(delta) && delta > 0 ? Math.min(delta, 0.1) : 1 / 60;
@@ -704,6 +730,7 @@
       }
       applySpin(state, rest, currentSpin(), dt);
     };
+    anim.atRest = function () { return state.rested !== false; };
     return anim;
   }
 

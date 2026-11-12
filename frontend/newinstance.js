@@ -1243,9 +1243,14 @@
       const say = [
         `Gradle runs ${p.task || 'runClient'} in ${p.root}`,
         `The game's folder is ${opts.project.dir}`,
-        `On Java ${p.java}${p.wrapper ? ', through the project’s own gradlew' : ', with the gradle on your PATH'}`,
+        `On Java ${p.java}${p.gradleHow ? ', ' + p.gradleHow : ''}`,
       ];
-      if (!p.knownLoader) say.push('The project does not say which loader it is for; ' + loaderName + ' is a guess.');
+      if (!p.gradleHow) {
+      say.push('Nothing here can run Gradle: no wrapper, no wrapper settings naming one, '
+        + 'and no gradle on your PATH. The instance can still be made, but it will not start '
+        + 'until one of those exists.');
+    }
+    if (!p.knownLoader) say.push('The project does not say which loader it is for; ' + loaderName + ' is a guess.');
       if (p.setsUsername) say.push('It passes a username of its own, so the account you pick is left out of it.');
       showNote(say.join('\n'));
       contentsNote.style.whiteSpace = 'pre-line';

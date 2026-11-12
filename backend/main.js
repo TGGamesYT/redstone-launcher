@@ -3967,6 +3967,16 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     // install and no Java of the game's to pick, because the project says
     // which Java it wants and Gradle uses it.
     if (profile.project && profile.project.root) {
+      // Counted as launching from here, the same as any other instance.
+      //
+      // Only the worker path registered itself, so a dev instance preparing
+      // a launch -- which can be a hundred-megabyte JDK download before
+      // Gradle even starts -- showed as not launching at all, and pressing
+      // Play again got "This profile is already launching" and nothing
+      // else. The entry is a stand-in for the worker: what the launcher
+      // does with it is ask whether it is there and, for Cancel, kill it.
+      launchWorkers.set(String(profileId), { kill: () => { gradleCancelled.add(String(profileId)); } });
+      broadcastProgress(profileId, { label: "Getting ready" });
       const { pid } = await launchViaGradle(profileId, {
         project: profile.project, name: profile.name, auth,
         gameVersion: profile.version,
@@ -4047,6 +4057,12 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
     return { pid, run };
   } catch (err) {
     launchingProfiles.delete(profileId);
+    // And it is no longer preparing one either: a launch that threw before
+    // the game started would otherwise leave the instance showing "Cancel"
+    // for ever.
+    launchWorkers.delete(String(profileId));
+    gradleCancelled.delete(String(profileId));
+    broadcastProgress(profileId, { done: true });
     broadcastLog(profileId, "[ERROR] " + err.message, run);
     runEnded(profileId, run);
     return { error: err.message };
@@ -6609,6 +6625,15 @@ function cloudService() {
       // here. Written straight into the store otherwise, which is why a
       // sync used to show up on the page you were on and nowhere else.
       settingsChanged: () => tellEveryoneSettingsChanged(),
+      // The skin library: every saved skin, by account, with the order a
+      // pooled list is shown in and the tombstones that make a deletion
+      // travel rather than being undone by the next sync.
+      readSkins: () => loadSkinLib(),
+      writeSkins: (lib) => {
+        saveSkinLib(lib);
+        sendEverywhere("skins-updated", { from: "cloud" });
+        return true;
+      },
       readPlayers: () => loadPlayers(),
       writePlayers: (list) => {
         savePlayers(list);
@@ -14271,17 +14296,33 @@ function resolveDevModFolder(picked) {
 // Which Java the project wants, read from the build script. Gradle will not
 // run at all on the wrong major -- and it is the project's requirement, not
 // the game's, so the instance's Java is the wrong answer.
+// Which Java a Minecraft version wants, WITHOUT asking Mojang.
+//
+// The authoritative answer is javaVersion.majorVersion in the version's own
+// json, and that is what a real launch uses (javaMajorForMinecraft). This is
+// the offline fallback and the answer for a project that only names the
+// version it builds against.
+//
+// Minecraft changed how it numbers releases: 1.21.11 was the last of the old
+// scheme and 26.x is the new one. This table only knew the old one, and
+// compared "26.3" against "1.20.5" digit by digit -- 26 > 1, so every
+// version of the new scheme came out as Java 21. 26.3 wants 25.
 const MC_JAVA = [[[1, 20, 5], 21], [[1, 18, 0], 17], [[1, 17, 0], 16]];
+// The new numbering, which is a year and a release within it.
+const MC_JAVA_NEW = [[[26, 0], 25]];
 function javaForMinecraftVersion(v) {
-  const parts = String(v || "").split(".").map(n => parseInt(n, 10) || 0);
-  for (const [at, major] of MC_JAVA) {
-    for (let i = 0; i < 3; i++) {
+  const parts = String(v || "").split(/[.\-+]/).map(n => parseInt(n, 10) || 0);
+  const table = parts[0] === 1 ? MC_JAVA : MC_JAVA_NEW;
+  for (const [at, major] of table) {
+    for (let i = 0; i < at.length; i++) {
       if ((parts[i] || 0) > (at[i] || 0)) return major;
       if ((parts[i] || 0) < (at[i] || 0)) break;
-      if (i === 2) return major;
+      if (i === at.length - 1) return major;
     }
   }
-  return 8;
+  // Anything newer than this file knows about is likelier to want the
+  // newest Java it lists than the oldest.
+  return parts[0] === 1 ? 8 : 25;
 }
 // ── Which Java this project's Gradle runs on ────────────────────────────────
 //
@@ -14346,6 +14387,12 @@ function javaFromScripts(root, scripts) {
       const v = prop(named) || prop(named.replace(/\./g, "_"));
       const n = v && /^\s*(?:1\.)?(\d+)\s*$/.exec(v);
       if (n) return parseInt(n[1], 10);
+      // Not a property but a name declared in the build script itself,
+      // which is how the Fabric template writes it:
+      //   def targetJavaVersion = 25
+      //   ... JavaLanguageVersion.of(targetJavaVersion)
+      const local = new RegExp(`(?:^|\\n)\\s*(?:def|val|var|int)\\s+${named}\\s*=\\s*(\\d+)`).exec(scripts);
+      if (local) return parseInt(local[1], 10);
     }
     return null;
   };
@@ -14357,7 +14404,18 @@ function javaFromScripts(root, scripts) {
   if (m) return parseInt(m[1], 10);
   m = scripts.match(/(?:source|target)Compatibility\s*=?\s*["']?(?:1\.)?(\d+)["']?/);
   if (m) return parseInt(m[1], 10);
+  m = scripts.match(/JavaVersion\.toVersion\(\s*["']?(?:1\.)?(\d+)["']?\s*\)/);
+  if (m) return parseInt(m[1], 10);
   m = scripts.match(/release(?:\.set\(|\s*=\s*)\s*(\d+)/);
+  if (m) return parseInt(m[1], 10);
+  // A number the script declares for itself and then uses in some way this
+  // does not recognise -- `def targetJavaVersion = 21` handed to a helper, a
+  // `java_version` read by a convention plugin. The first rule above already
+  // follows such a name when the toolchain line names it; this is for when
+  // nothing here can see where it goes. It is last because it is the
+  // weakest: a declaration is not a statement about the build, only a very
+  // good hint, and anything above it says what the build actually does.
+  m = scripts.match(/(?:^|\n)[ \t]*(?:def|val|var|int|final[ \t]+int)?[ \t]*(?:target)?java_?version[ \t]*=[ \t]*["']?(?:1\.)?(\d+)["']?[ \t]*(?:$|\n)/i);
   if (m) return parseInt(m[1], 10);
   return null;
 }
@@ -14370,7 +14428,7 @@ function projectOwnJavaHome(root) {
   return fs.existsSync(at) ? at : null;
 }
 
-function requiredJavaForProject(root) {
+function requiredJavaForProject(root, { mcJava = null } = {}) {
   const scripts = projectScripts(root);
   const clamp = (n) => {
     const { min, max } = javaRangeForGradle(gradleWrapperVersion(root));
@@ -14385,6 +14443,7 @@ function requiredJavaForProject(root) {
   if (n) return clamp(parseInt(n[1], 10));
   // Nothing said: go by the Minecraft version it builds against, which every
   // mod template puts in gradle.properties.
+  if (mcJava) return clamp(mcJava);
   const mc = gradleProp(root, ["minecraft_version", "minecraftVersion", "mc_version", "minecraft"]);
   if (mc) return clamp(javaForMinecraftVersion(mc.replace(/^.*:/, "")));
   return clamp(17);
@@ -14408,6 +14467,161 @@ function gradleSpawnArgs(cmd, args) {
   return { file: cmd, argv: args, shell: false };
 }
 
+// How to run this project's Gradle.
+//
+// The wrapper's JAR, not its script. `gradlew.bat` is what Windows runs and
+// `gradlew` is what everything else runs, and a project can easily have
+// neither: plenty of .gitignore templates drop them, and a repository cloned
+// without them still has the wrapper itself -- gradle/wrapper/, which is the
+// part that decides WHICH Gradle. The script is a dozen lines that work out
+// the Java to use and then run
+//
+//   java -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain
+//
+// and we already know the Java. Doing that directly needs no batch file, no
+// shell and no quoting, and works whichever of the two scripts a project
+// happens to have committed. Falling back to "gradle.bat" on the PATH --
+// which is what this used to do, and which told somebody with a perfectly
+// good wrapper that 'gradle.bat' is not recognized -- is the last resort,
+// and it is checked for rather than hoped for.
+const isWinBin = () => (process.platform === "win32" ? "java.exe" : "java");
+
+function gradleOnPath() {
+  const names = process.platform === "win32"
+    ? ["gradle.bat", "gradle.cmd", "gradle.exe", "gradle"]
+    : ["gradle"];
+  const dirs = String(process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    for (const name of names) {
+      const at = path.join(dir, name);
+      try { if (fs.existsSync(at) && fs.statSync(at).isFile()) return at; } catch { /* unreadable */ }
+    }
+  }
+  return null;
+}
+
+// The Gradle a project's wrapper ASKS for, fetched if it is not here.
+//
+// gradle/wrapper/gradle-wrapper.properties names a distribution:
+//
+//   distributionUrl=https\://services.gradle.org/distributions/gradle-9.9.0-bin.zip
+//
+// and plenty of projects have that file and nothing else -- no gradlew, no
+// gradlew.bat, no gradle-wrapper.jar, because they were never committed.
+// Downloading the distribution the project names is exactly what the wrapper
+// would have done, and the launcher already fetches JDKs this way, so it is
+// the same pattern. Kept per version under the launcher's own folder and
+// shared by every project that asks for it.
+const GRADLE_DIR = () => path.join(dataDir, "gradle_dists");
+
+function wrapperDistribution(root) {
+  let text = "";
+  try { text = fs.readFileSync(path.join(root, "gradle", "wrapper", "gradle-wrapper.properties"), "utf8"); }
+  catch { return null; }
+  // The file is a java.util.Properties, where a colon in a value is escaped.
+  const m = /distributionUrl\s*=\s*(\S+)/.exec(text);
+  if (!m) return null;
+  const url = m[1].replace(/\\(.)/g, "$1");
+  const v = /gradle-([\d.]+(?:-\w+)?)-(?:bin|all)\.zip/.exec(url);
+  if (!v || !/^https?:\/\//i.test(url)) return null;
+  return { url, version: v[1] };
+}
+
+// The jar inside a Gradle distribution that its own `bin/gradle` script runs.
+function gradleLauncherJar(dir) {
+  try {
+    const lib = path.join(dir, "lib");
+    const jar = fs.readdirSync(lib).find(f => /^gradle-launcher-[\d.]+.*\.jar$/.test(f));
+    return jar ? path.join(lib, jar) : null;
+  } catch { return null; }
+}
+
+async function fetchGradleDistribution(dist, onLine) {
+  const home = path.join(GRADLE_DIR(), dist.version);
+  const already = gradleLauncherJar(home);
+  if (already) return already;
+  const say = (line) => { if (onLine) { try { onLine(line); } catch { /* ignore */ } } };
+  say(`[INFO] This project asks for Gradle ${dist.version} and does not carry it. Fetching it once…`);
+  const tmpZip = path.join(os.tmpdir(), `gradle-${dist.version}-${Date.now().toString(36)}.zip`);
+  await downloadFile(dist.url, tmpZip);
+  try {
+    const directory = await unzipper.Open.file(tmpZip);
+    for (const entry of directory.files) {
+      // Everything in the zip sits under "gradle-<version>/".
+      const parts = entry.path.split(/[/\\]/);
+      parts.shift();
+      const rel = parts.join(path.sep);
+      if (!rel) continue;
+      const dest = path.join(home, rel);
+      if (entry.type === "Directory") { fs.mkdirSync(dest, { recursive: true }); continue; }
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      await new Promise((resolve, reject) => {
+        entry.stream().pipe(fs.createWriteStream(dest)).on("finish", resolve).on("error", reject);
+      });
+    }
+  } finally {
+    try { fs.unlinkSync(tmpZip); } catch { /* it can stay in temp */ }
+  }
+  const jar = gradleLauncherJar(home);
+  if (!jar) throw new Error(`Gradle ${dist.version} did not unpack into anything runnable`);
+  return jar;
+}
+
+async function gradleInvocation(root, javaBin, onLine) {
+  const jar = path.join(root, "gradle", "wrapper", "gradle-wrapper.jar");
+  if (javaBin && fs.existsSync(jar)) {
+    return {
+      file: javaBin,
+      lead: ["-Dorg.gradle.appname=gradlew", "-classpath", jar, "org.gradle.wrapper.GradleWrapperMain"],
+      how: "the project's own Gradle wrapper",
+      shell: false,
+    };
+  }
+  // The wrapper's properties without the wrapper: fetch what they name.
+  const dist = javaBin ? wrapperDistribution(root) : null;
+  if (dist) {
+    try {
+      const launcher = await fetchGradleDistribution(dist, onLine);
+      return {
+        file: javaBin,
+        lead: ["-classpath", launcher, "org.gradle.launcher.GradleMain"],
+        how: `Gradle ${dist.version}, which this project's wrapper asks for`,
+        shell: false,
+      };
+    } catch (e) {
+      if (onLine) onLine(`[WARN] Gradle ${dist.version} could not be fetched: ${e.message}`);
+    }
+  }
+  const script = path.join(root, process.platform === "win32" ? "gradlew.bat" : "gradlew");
+  if (fs.existsSync(script)) {
+    if (process.platform !== "win32") { try { fs.chmodSync(script, 0o755); } catch { /* it may not be ours */ } }
+    return { file: script, lead: [], how: "the project's gradlew", shell: false };
+  }
+  const onPath = gradleOnPath();
+  if (onPath) return { file: onPath, lead: [], how: `the Gradle on your PATH (${onPath})`, shell: false };
+  return null;
+}
+
+// The same answer, allowed to ask Mojang.
+//
+// A project that states a toolchain has already answered and nothing is
+// fetched. One that only names the Minecraft version it builds against gets
+// the version's own `javaVersion.majorVersion`, which is the only answer
+// that does not go stale -- the table above is what is left when there is no
+// network.
+async function projectJavaMajor(root) {
+  const said = javaFromScripts(root, projectScripts(root));
+  if (said) return requiredJavaForProject(root);
+  const prop = gradleProp(root, ["java_version", "javaVersion", "java"]);
+  if (prop && /^\s*(?:1\.)?\d+\s*$/.test(prop)) return requiredJavaForProject(root);
+  const mc = gradleProp(root, ["minecraft_version", "minecraftVersion", "mc_version", "minecraft"]);
+  if (mc) {
+    try { return requiredJavaForProject(root, { mcJava: await javaMajorForMinecraft(mc.replace(/^.*:/, "")) }); }
+    catch { /* offline, or a version Mojang does not list: the table it is */ }
+  }
+  return requiredJavaForProject(root);
+}
+
 const devBuilds = new Map();                 // key -> { child, lines }
 function devBuildKey(type, id, folder) { return `${type}:${id}:${folder}`; }
 
@@ -14419,33 +14633,29 @@ async function buildDevMod({ type, id, folder, root, onLine }) {
 
   // The project's own, if it has pinned one; otherwise the Java it asks
   // for, from the launcher's own downloads.
-  const major = requiredJavaForProject(projectRoot);
+  const major = await projectJavaMajor(projectRoot);
   const own = projectOwnJavaHome(projectRoot);
-  let home = own;
+  let home = own, javaBin = own ? path.join(own, "bin", isWinBin()) : null;
   if (!home) {
-    let javaBin;
     try { javaBin = await getJavaByMajor(major, { needJdk: true, label: `building ${path.basename(projectRoot)}` }); }
     catch (e) { return { success: false, error: `Java ${major} is needed to build this and could not be prepared: ${e.message}` }; }
     home = javaHomeOf(javaBin);
   }
 
   const isWin = process.platform === "win32";
-  const wrapper = path.join(projectRoot, isWin ? "gradlew.bat" : "gradlew");
-  let cmd, args;
-  if (fs.existsSync(wrapper)) {
-    // A wrapper checked out of git on a Unix box often arrives without its
-    // executable bit, and then nothing will run it.
-    if (!isWin) { try { fs.chmodSync(wrapper, 0o755); } catch { /* it may not be ours */ } }
-    cmd = wrapper;
-    args = [];
-  } else {
-    cmd = isWin ? "gradle.bat" : "gradle";
-    args = [];
+  // The same answer the launch path uses: the project's wrapper jar, the
+  // Gradle its wrapper settings name, its gradlew, or one on the PATH.
+  const how = await gradleInvocation(projectRoot, javaBin, onLine);
+  if (!how) {
+    return { success: false, error: "There is nothing here to run Gradle with: this project has no "
+      + "wrapper (gradle/wrapper/gradle-wrapper.jar), its wrapper settings name no distribution, "
+      + "and there is no gradle on your PATH." };
   }
+  const cmd = how.file;
   // `build` without the tests: a mod's tests are rarely set up and a failing
   // one should not stop the jar being produced.
-  args.push("build", "-x", "test", "--console=plain");
-  if (!own) args.splice(args.length - 1, 0, `-Dorg.gradle.java.home=${home}`);
+  const args = [...how.lead, "build", "-x", "test", "--console=plain"];
+  if (!own) args.splice(how.lead.length + 3, 0, `-Dorg.gradle.java.home=${home}`);
 
   const lines = [];
   const say = (line) => { lines.push(line); if (onLine) { try { onLine(line); } catch { /* ignore */ } } };
@@ -14514,17 +14724,85 @@ async function buildDevMod({ type, id, folder, root, onLine }) {
 function projectText(root, ...rel) {
   try { return fs.readFileSync(path.join(root, ...rel), "utf8"); } catch { return ""; }
 }
+// Folders inside a project that are not the project.
+//
+// `build` and `.gradle` are full of copies of the build scripts and of
+// gradle.properties -- unpacked dependencies, generated sources, the
+// wrapper's own cache -- and `run` is a whole Minecraft installation. A
+// search that walks into them is slow and, worse, finds the wrong file: the
+// Java version of some library's build, not of this mod.
+const NOT_PROJECT_DIRS = new Set([
+  "build", ".gradle", ".git", "run", "runs", "src", "gradle",
+  "node_modules", ".idea", "out", "logs", ".github",
+]);
+
+/**
+ * The project's build scripts and its subprojects', nearest first.
+ *
+ * A mod that builds for more than one loader is not one project but several:
+ * a `common` with the code in it and a `fabric`, `neoforge` or `forge`
+ * beside it, each with its own build script. The root script of such a
+ * project frequently says nothing about Java at all -- the toolchain line
+ * lives in the subprojects -- so reading only the root reads the one file
+ * that does not have the answer, and the launcher then guesses 21 at a
+ * project that said 25 three lines into a file it never opened.
+ *
+ * Two levels down, which is where every multi-loader template puts them
+ * (`fabric/build.gradle`, occasionally `loaders/fabric/build.gradle`).
+ * Root first, because a root `subprojects { java { toolchain ... } }`
+ * speaks for all of them.
+ */
+function projectScriptFiles(root, depth = 2) {
+  const out = [];
+  const walk = (dir, left) => {
+    for (const name of ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"]) {
+      const at = path.join(dir, name);
+      try { if (fs.existsSync(at)) out.push(at); } catch { /* unreadable */ }
+    }
+    if (left <= 0) return;
+    let kids = [];
+    try { kids = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const k of kids) {
+      if (!k.isDirectory() || k.name.startsWith(".") || NOT_PROJECT_DIRS.has(k.name)) continue;
+      walk(path.join(dir, k.name), left - 1);
+    }
+  };
+  walk(root, depth);
+  return out;
+}
+
 // Every build script of the project, as one piece of text to match against.
 function projectScripts(root) {
-  return projectText(root, "build.gradle") + "\n" + projectText(root, "build.gradle.kts")
-    + "\n" + projectText(root, "settings.gradle") + "\n" + projectText(root, "settings.gradle.kts");
+  const seen = [];
+  for (const file of projectScriptFiles(root)) {
+    try { seen.push(fs.readFileSync(file, "utf8")); } catch { /* unreadable */ }
+  }
+  return seen.join("\n");
 }
-// What `key = value` says in gradle.properties, by any of several spellings.
+
+/**
+ * What `key = value` says in gradle.properties, by any of several spellings.
+ *
+ * The root's own file first. Failing that, a subproject's: a multi-loader
+ * project often keeps `minecraft_version` and friends at the root but lets a
+ * loader's folder override them, and a single-loader project nested one deep
+ * has nothing at the root at all.
+ */
 function gradleProp(root, names) {
-  const props = projectText(root, "gradle.properties");
-  for (const n of names) {
-    const m = new RegExp(`^[ \\t]*${n}[ \\t]*[=:][ \\t]*(.+?)[ \\t]*$`, "mi").exec(props);
-    if (m && m[1]) return m[1].trim();
+  const files = [path.join(root, "gradle.properties")];
+  let kids = [];
+  try { kids = fs.readdirSync(root, { withFileTypes: true }); } catch { /* unreadable */ }
+  for (const k of kids) {
+    if (!k.isDirectory() || k.name.startsWith(".") || NOT_PROJECT_DIRS.has(k.name)) continue;
+    files.push(path.join(root, k.name, "gradle.properties"));
+  }
+  for (const file of files) {
+    let props = "";
+    try { props = fs.readFileSync(file, "utf8"); } catch { continue; }
+    for (const n of names) {
+      const m = new RegExp(`^[ \\t]*${n}[ \\t]*[=:][ \\t]*(.+?)[ \\t]*$`, "mi").exec(props);
+      if (m && m[1]) return m[1].trim();
+    }
   }
   return null;
 }
@@ -14681,6 +14959,19 @@ function modProjectInfo(picked) {
     icon: modProjectIcon(root, modProjectId(root)),
     java: requiredJavaForProject(root),
     wrapper,
+    // What will actually run it, worked out without fetching anything --
+    // the same order gradleInvocation uses. Said on the last page of the
+    // creator, because "with the gradle on your PATH" is a lie for a
+    // project that carries its wrapper's settings and nothing else.
+    gradleHow: (() => {
+      if (fs.existsSync(path.join(root, "gradle", "wrapper", "gradle-wrapper.jar"))) return "through its own Gradle wrapper";
+      const dist = wrapperDistribution(root);
+      if (dist) return `with Gradle ${dist.version}, which its wrapper asks for (fetched once)`;
+      if (wrapper) return "through its gradlew";
+      const onPath = gradleOnPath();
+      if (onPath) return "with the Gradle on your PATH";
+      return null;
+    })(),
     setsUsername: projectSetsUsername(root),
   };
 }
@@ -14711,6 +15002,9 @@ ipcMain.handle("project:pick", async () => {
 // rather than through a bare process.kill -- which would leave the game
 // running with nothing tracking it.
 const instanceKillers = new Map();   // pid -> () => void
+// Dev launches that were cancelled while Java or Gradle was still being
+// got ready, by instance id.
+const gradleCancelled = new Set();
 
 function killTree(pid) {
   if (process.platform === "win32") {
@@ -14730,29 +15024,35 @@ async function launchViaGradle(profileId, cfg, run = null) {
 
   // A project that has pinned its own JDK in gradle.properties has already
   // answered this, and the launcher stays out of it.
-  const major = requiredJavaForProject(root);
+  const major = await projectJavaMajor(root);
   const own = projectOwnJavaHome(root);
-  let home = own;
+  let home = own, javaBin = own ? path.join(own, "bin", process.platform === "win32" ? "java.exe" : "java") : null;
   if (!home) {
-    let javaBin;
+    // This can be a download of a hundred megabytes, so it is said out loud:
+    // it used to be minutes of a launch that had announced nothing, during
+    // which the instance did not even show as starting.
+    broadcastLog(profileId, `[INFO] Getting Java ${major} ready for this project…`, run);
+    broadcastProgress(profileId, { label: `Getting Java ${major} ready` });
     try { javaBin = await getJavaByMajor(major, { needJdk: true, label: `running ${path.basename(root)}` }); }
     catch (e) { throw new Error(`Java ${major} is needed to run this project and could not be prepared: ${e.message}`); }
     home = javaHomeOf(javaBin);
   }
 
+  if (gradleCancelled.delete(String(profileId))) throw new Error("Launch cancelled");
+
   const isWin = process.platform === "win32";
-  const wrapper = path.join(root, isWin ? "gradlew.bat" : "gradlew");
-  let cmd;
-  if (fs.existsSync(wrapper)) {
-    if (!isWin) { try { fs.chmodSync(wrapper, 0o755); } catch { /* it may not be ours */ } }
-    cmd = wrapper;
-  } else {
-    cmd = isWin ? "gradle.bat" : "gradle";
+  broadcastProgress(profileId, { label: "Getting Gradle ready" });
+  const how = await gradleInvocation(root, javaBin, (line) => broadcastLog(profileId, line, run));
+  if (!how) {
+    throw new Error("There is nothing here to run Gradle with: this project has no wrapper "
+      + "(gradle/wrapper/gradle-wrapper.jar), its wrapper settings name no distribution, "
+      + "and there is no gradle on your PATH.");
   }
+  const cmd = how.file;
 
   const task = project.task || "runClient";
-  const args = [task, "--console=plain"];
-  if (!own) args.splice(1, 0, `-Dorg.gradle.java.home=${home}`);
+  const args = [...how.lead, task, "--console=plain"];
+  if (!own) args.splice(how.lead.length + 1, 0, `-Dorg.gradle.java.home=${home}`);
   // The account, as the game's own arguments -- which is what makes a dev
   // client the launcher's instance rather than Player347. Skipped for a
   // project that passes a username itself, because the game refuses an
@@ -14772,7 +15072,7 @@ async function launchViaGradle(profileId, cfg, run = null) {
   const spoken = args.map(a => a.startsWith("--args=")
     ? "--args=" + gameArgs.map((g, i) => (gameArgs[i - 1] === "--accessToken" ? "<token>" : g)).join(" ")
     : a);
-  broadcastLog(profileId, `[INFO] ${path.basename(cmd)} ${spoken.join(" ")}`, run);
+  broadcastLog(profileId, `[INFO] ${how.how}: ${path.basename(cmd)} ${spoken.join(" ")}`, run);
   broadcastLog(profileId, own
     ? `[INFO] in ${root}, on the JDK the project pins (${own})`
     : `[INFO] in ${root}, on Java ${major}${gradleWrapperVersion(root) ? ` with Gradle ${gradleWrapperVersion(root)}` : ""}`, run);
@@ -14806,6 +15106,9 @@ async function launchViaGradle(profileId, cfg, run = null) {
     } catch (e) { reject(e); return; }
 
     const pid = child.pid;
+    // Past the point of cancelling: Gradle is up and the Stop button takes
+    // over from here, which is also what the worker path does.
+    launchWorkers.delete(String(profileId));
     instanceKillers.set(pid, () => killTree(pid));
     instanceMeta.set(profileId, { name, version: cfg.gameVersion || "" });
     startInstance(profileId, pid);

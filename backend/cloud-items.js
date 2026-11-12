@@ -219,7 +219,83 @@ export function mergeThemes(local, incoming) {
   return { themes: [...by.values()], added };
 }
 
+// ── skins ─────────────────────────────────────────────────────────────────
+//
+// The library is a map of account uuid to a list of saved skins, plus two
+// keys that are not accounts: the order a pooled list is shown in, and the
+// tombstones -- skins that were DELETED, by the hash of their pixels and
+// when.
+//
+// Merged rather than replaced, like the accounts and the themes, and for the
+// same reason: a computer that has a skin the Drive has not should not lose
+// it by syncing. The tombstones are what make a deletion travel: without
+// them, deleting a skin here and syncing would find it missing locally,
+// decide the Drive's copy was the newer truth, and put it back.
+const SKIN_ORDER_KEY = "__pool_order__";
+const SKIN_DELETED_KEY = "__deleted__";
+const skinKeyOf = (s) => (s && (s.pixelHash || (s.id != null ? `id:${s.id}` : null))) || null;
+
+export function mergeSkins(local, incoming) {
+  const out = {};
+  const sides = [local || {}, incoming || {}];
+
+  // Deletions first, from both sides, so what follows can be measured
+  // against the full set of them.
+  const graves = {};
+  for (const side of sides) {
+    const all = side[SKIN_DELETED_KEY];
+    if (!all || typeof all !== "object") continue;
+    for (const [uuid, map] of Object.entries(all)) {
+      if (!map || typeof map !== "object") continue;
+      graves[uuid] = graves[uuid] || {};
+      for (const [key, at] of Object.entries(map)) {
+        const when = Number(at) || 0;
+        if (!graves[uuid][key] || when > graves[uuid][key]) graves[uuid][key] = when;
+      }
+    }
+  }
+
+  const uuids = new Set();
+  for (const side of sides) {
+    for (const [k, v] of Object.entries(side)) {
+      if (k === SKIN_ORDER_KEY || k === SKIN_DELETED_KEY) continue;
+      if (Array.isArray(v)) uuids.add(k);
+    }
+  }
+
+  const added = [];
+  for (const uuid of uuids) {
+    const by = new Map();
+    for (const side of sides) {
+      for (const s of (Array.isArray(side[uuid]) ? side[uuid] : [])) {
+        const key = skinKeyOf(s);
+        if (!key) continue;
+        // Deleted, and deleted after this copy was saved: it stays gone.
+        const gone = (graves[uuid] || {})[key];
+        if (gone && gone >= (Number(s.addedAt) || 0)) continue;
+        const have = by.get(key);
+        if (!have) { by.set(key, s); if (side === incoming) added.push(key); continue; }
+        // The same skin on both sides: the one that says more about itself
+        // wins, and failing that the newer.
+        const better = (Number(s.addedAt) || 0) > (Number(have.addedAt) || 0);
+        if (better) by.set(key, s);
+      }
+    }
+    out[uuid] = [...by.values()];
+  }
+
+  // The order the pooled list is shown in: whichever side has one, with
+  // anything it does not name left to fall where it falls.
+  const order = (Array.isArray(local && local[SKIN_ORDER_KEY]) && local[SKIN_ORDER_KEY].length)
+    ? local[SKIN_ORDER_KEY]
+    : (Array.isArray(incoming && incoming[SKIN_ORDER_KEY]) ? incoming[SKIN_ORDER_KEY] : null);
+  if (order) out[SKIN_ORDER_KEY] = order;
+  if (Object.keys(graves).length) out[SKIN_DELETED_KEY] = graves;
+
+  return { library: out, added };
+}
+
 export default {
   NOT_SETTINGS, NOT_ACCOUNT, looksSecret,
-  settingsFor, applySettings, accountsFor, mergeAccounts, mergeThemes,
+  settingsFor, applySettings, accountsFor, mergeAccounts, mergeThemes, mergeSkins,
 };
