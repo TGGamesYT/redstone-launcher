@@ -7321,7 +7321,21 @@ ipcMain.handle("theme:apply", async (event, { id } = {}) => {
     // not "leave whatever the last theme put there" -- which is how a
     // picture from a theme you had moved off kept turning up under every
     // other theme.
-    await applyAppIcon(t.icon || { kind: "theme" });
+    //
+    // The framing travels with it. A crop of the background records WHICH
+    // background it is a crop of, by the files in the stack, so that
+    // changing the background drops a crop of the old one instead of
+    // wearing it. A theme carries its pictures as bytes and they are
+    // written out here under fresh names, so that record never matched and
+    // the framing was thrown away by the very act of applying the theme it
+    // was saved in. The theme is the statement that the crop belongs to the
+    // background it ships with, so it is re-pointed at where that
+    // background has just landed.
+    let wantIcon = t.icon || { kind: "theme" };
+    if (wantIcon.backCrop) {
+      wantIcon = { ...wantIcon, backCropOf: backgroundStackKey(settings.get("background", null) || {}) || null };
+    }
+    await applyAppIcon(wantIcon);
   } finally {
     applyingTheme--;
   }
@@ -7649,7 +7663,7 @@ function iconWantsParts(icon) {
 }
 
 async function themedIconPng(opts = {}) {
-  const icon = settings.get("appIcon", null) || {};
+  const icon = opts.icon || settings.get("appIcon", null) || {};
   const layers = iconLayers();
   // "Plain" is the logo as it was drawn, which is also the fallback if a
   // layer is missing -- an install without them should still have an icon.
@@ -7680,6 +7694,29 @@ async function themedIconPng(opts = {}) {
     gem: DEFAULT_SETTINGS.secondaryColor,
   };
   return appIconParts.buildIcon(use, fills, 256, anchors);
+}
+
+/**
+ * The icon the settings describe, whichever kind they describe.
+ *
+ * One path for both the icon that is written and the one the settings page
+ * shows, because there were two. A picture of your own with no mark over it
+ * is the WHOLE picture -- not cut to the backing's round shape -- and only
+ * the writing path knew that, so the page showed a different icon from the
+ * one it had just set. Worse, the page's path was the one that failed on
+ * that very combination, so what it showed was the icon from before: "the
+ * picture option doesn't update the app icon display".
+ */
+async function iconPngFor(icon, opts = {}) {
+  const want = icon || {};
+  const parts = opts.parts == null ? iconWantsParts(want) : !!opts.parts;
+  if (want.kind === "image" && want.dataUrl && !parts) {
+    const b64 = String(want.dataUrl).replace(/^data:image\/[\w+.-]+;base64,/, "");
+    return sharp(Buffer.from(b64, "base64"))
+      .resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png().toBuffer();
+  }
+  return themedIconPng({ ...opts, icon: want, parts });
 }
 
 // Put an icon on the windows and remember it. `icon` is either
@@ -7713,15 +7750,7 @@ async function applyAppIcon(icon, { desktop = true } = {}) {
     const was = settings.get("appIcon", null) || {};
     const next = { mergeBlock: !!was.mergeBlock, ...(icon || { kind: "theme" }) };
     settings.set("appIcon", next);
-    let png;
-    if (next.kind === "image" && next.dataUrl && !iconWantsParts(next)) {
-      // The whole picture, which is what a picture meant before the mark
-      // could be put on top of one.
-      const b64 = String(next.dataUrl).replace(/^data:image\/[\w+.-]+;base64,/, "");
-      png = await sharp(Buffer.from(b64, "base64")).resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
-    } else {
-      png = await themedIconPng();
-    }
+    const png = await iconPngFor(next);
     fs.writeFileSync(ICON_OUT(), png);
     // The window icon IS the taskbar button while the app is running, so this
     // is the one that has to happen now rather than in a moment.
@@ -7804,7 +7833,9 @@ ipcMain.handle("icon:setMergeBlock", async (event, { on } = {}) => {
 // What the icon would look like for a colour, without committing to it.
 ipcMain.handle("icon:previewApp", async (event, { color, mergeBlock } = {}) => {
   try {
-    const png = await themedIconPng({ color, mergeBlock });
+    // Through the same function that writes the real one, so the page cannot
+    // show an icon the launcher is not wearing.
+    const png = await iconPngFor(settings.get("appIcon", null), { color, mergeBlock });
     return { success: true, dataUrl: "data:image/png;base64," + png.toString("base64") };
   } catch (e) { return { success: false, error: String(e && e.message || e) }; }
 });

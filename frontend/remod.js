@@ -17,7 +17,7 @@
     const s = document.createElement('style');
     s.id = 'remod-style';
     s.textContent = `
-      .modal-content.rm-modal { display:flex; flex-direction:column; overflow:hidden; max-height:85vh; }
+      .modal-content.rm-modal { display:flex; flex-direction:column; overflow:hidden; max-height:100%; }
       .rm-modal .rm-scroll { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
       .rm-modal .rm-files { flex:1; min-height:0; display:none; }
       .rm-modal .modal-actions { flex:0 0 auto; margin-top:12px; }

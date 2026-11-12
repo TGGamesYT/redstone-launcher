@@ -196,11 +196,24 @@ function gradientAt(t, stops) {
 }
 
 // The fill, as a flat RGB buffer the size of the icon.
+// What a fill looks like, pixel by pixel, as RGBA.
+//
+// RGBA rather than RGB because of what a transparent fill used to do. A
+// picture is read with `removeAlpha`, which does not flatten the picture
+// onto anything -- it simply drops the alpha channel and leaves whatever RGB
+// was underneath it, and in almost every PNG the colour under a transparent
+// pixel is 0,0,0. So a picture with a hole in it, or a block texture with
+// one, came out of the icon as BLACK: not see-through, not the colour behind
+// it, black. And it was opaque black, so there was nothing to fix further
+// down either.
+//
+// A colour and a gradient are opaque by their nature and say so; a picture
+// brings its own alpha, which the layer then has to respect.
 async function fillPixels(fill, size) {
-  const px = Buffer.alloc(size * size * 3);
+  const px = Buffer.alloc(size * size * 4);
   if (fill.kind === "color") {
     const [r, g, b] = hexToRgb(fill.hex);
-    for (let i = 0; i < px.length; i += 3) { px[i] = r; px[i + 1] = g; px[i + 2] = b; }
+    for (let i = 0; i < px.length; i += 4) { px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = 255; }
     return px;
   }
   if (fill.kind === "gradient") {
@@ -208,18 +221,17 @@ async function fillPixels(fill, size) {
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const [r, g, b] = gradientAt(gradientT(x, y, size, size, fill.angle), stops);
-        const i = (y * size + x) * 3;
-        px[i] = r; px[i + 1] = g; px[i + 2] = b;
+        const i = (y * size + x) * 4;
+        px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = 255;
       }
     }
     return px;
   }
   // A texture. A block is sixteen pixels across and the icon is hundreds, so
   // it is scaled without smoothing -- a blurred block reads as a smudge.
-  const tex = await sharp(fill.png)
+  return sharp(fill.png)
     .resize(size, size, { fit: "cover", kernel: fill.pixelated === false ? "lanczos3" : "nearest" })
-    .removeAlpha().raw().toBuffer();
-  return tex;
+    .ensureAlpha().raw().toBuffer();
 }
 
 // Recolour one layer to `fill`, keeping its own light and shade.
@@ -289,14 +301,19 @@ export async function shadeLayer(layerPng, fill, size, opts = {}) {
   // and darkens a picture that was meant to show as itself. So a texture is
   // only cut to the shape of the layer.
   if (want.kind === "texture") {
-    for (let i = 0, p = 0; i < out.length; i += 4, p += 3) {
+    for (let i = 0; i < out.length; i += 4) {
       if (out[i + 3] < 8) continue;
-      out[i] = px[p]; out[i + 1] = px[p + 1]; out[i + 2] = px[p + 2];
+      out[i] = px[i]; out[i + 1] = px[i + 1]; out[i + 2] = px[i + 2];
+      // Where the picture is see-through, so is the icon. The layer's shape
+      // still decides the outline -- the two alphas multiply -- so a hole in
+      // the picture shows through the icon and the picture is still cut to
+      // the backing's shape.
+      out[i + 3] = Math.round(out[i + 3] * (px[i + 3] / 255));
     }
     return out;
   }
 
-  for (let i = 0, p = 0; i < out.length; i += 4, p += 3) {
+  for (let i = 0, p = 0; i < out.length; i += 4, p += 4) {
     if (out[i + 3] < 8) continue;
     let r, g, b;
     if (anchor) {
@@ -365,12 +382,20 @@ function over(under, above) {
 // `layers` holds the three PNGs; `fills` says what the first two are made of.
 // A layer with no fill is drawn as it is, which is what the cog always wants
 // and what every layer wants when the icon is left plain.
+// A layer that was left out is left out.
+//
+// Turning the gem and the cog off is done by not passing their files at
+// all -- the backing on its own is the whole icon. But both were handed to
+// sharp regardless, and sharp given `undefined` throws "Invalid input", so
+// the icon was never built: the call failed, the old file stayed where it
+// was, and turning the mark off looked like a switch that did nothing. It
+// was reported twice, once for a picture and once for a colour, because the
+// mark never came off either.
 export async function buildIcon(layers, fills = {}, size = 256, anchors = {}) {
+  if (!layers || !layers.background) throw new Error("An icon needs its backing");
   const background = await shadeLayer(layers.background, fills.background, size, { anchor: anchors.background });
-  const gem = await shadeLayer(layers.gem, fills.gem, size, { anchor: anchors.gem });
-  const cog = await shadeLayer(layers.cog, null, size);
-  over(background, gem);
-  over(background, cog);
+  if (layers.gem) over(background, await shadeLayer(layers.gem, fills.gem, size, { anchor: anchors.gem }));
+  if (layers.cog) over(background, await shadeLayer(layers.cog, null, size));
   return sharp(background, { raw: { width: size, height: size, channels: 4 } }).png().toBuffer();
 }
 

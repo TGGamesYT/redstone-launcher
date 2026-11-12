@@ -578,6 +578,118 @@ check("and a gradient is still a gradient",
 check("and the app's own panel has nothing to take",
   await fillWith({ background: { mode: "theme" }, appIcon: { kind: "theme", backCrop: CROP } }), null);
 
+// ── a picture that is see-through ──
+//
+// `removeAlpha` does not flatten a picture onto anything: it drops the alpha
+// channel and leaves whatever RGB was under it, which in almost every PNG is
+// 0,0,0. So a background or a picture with a hole in it came out of the icon
+// as opaque BLACK -- not see-through, not the colour behind it, black.
+{
+  const size = 64;
+  const raw = Buffer.alloc(32 * 32 * 4);
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 32; x++) {
+      const i = (y * 32 + x) * 4;
+      raw[i] = 0; raw[i + 1] = 200; raw[i + 2] = 0;
+      raw[i + 3] = (x < 16 && y < 16) ? 0 : 255;   // the top-left quarter is a hole
+    }
+  }
+  const hole = await sharp(raw, { raw: { width: 32, height: 32, channels: 4 } }).png().toBuffer();
+  const shaded = await icon.shadeLayer(layers.background, { kind: "texture", png: hole, pixelated: false }, size);
+  const at = (x, y) => [...shaded.slice((y * size + x) * 4, (y * size + x) * 4 + 4)];
+  check("a hole in the picture is a hole in the icon",
+    at(20, 20)[3], 0,
+    "it was coming out as opaque black, which is what removeAlpha leaves behind");
+  check("and the rest of the picture is still the picture",
+    at(44, 44), [0, 200, 0, 255]);
+  // The layer's shape still decides the outline: the two alphas multiply.
+  check("the picture is still cut to the backing's shape",
+    at(1, 1)[3], 0,
+    "the corner is outside the backing, whatever the picture says");
+}
+
+// ── turning the mark off ──
+//
+// Done by not passing the gem's and the cog's files at all -- the backing on
+// its own is the whole icon. Both were handed to sharp regardless, and sharp
+// given `undefined` throws, so the icon was never built: the call failed,
+// the old file stayed, and the switch looked like it did nothing. Reported
+// twice, once for a picture and once for a colour.
+{
+  let threw = null, png = null;
+  try {
+    png = await icon.buildIcon({ background: layers.background },
+      { background: { kind: "color", hex: "#3344ff" } }, 64, {});
+  } catch (e) { threw = String(e.message); }
+  check("an icon can be built from its backing alone",
+    [threw, png && png.length > 0], [null, true],
+    "this threw 'Invalid input', which is why turning the mark off did nothing");
+  if (png) {
+    const { data } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    // The cog is grey and sits across the middle of the icon. Nothing in a
+    // backing painted one flat blue should be grey.
+    let grey = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] < 128) continue;
+      const [, s] = icon.rgbToHsl(data[i], data[i + 1], data[i + 2]);
+      if (s < 0.1) grey++;
+    }
+    check("and there is no cog left on it", grey, 0,
+      "a grey pixel on a backing painted one flat colour is the cog");
+  }
+}
+
+// ── the cropper's own buttons ──
+//
+// It was one tall column with the browser's scrollbar, bounded at 85vh. In
+// an 800-pixel window that came to 757 pixels of content in a 676-pixel box,
+// which put "Use this" and "Cancel" below the edge and cut in half.
+// Scrolling was the way to them in theory only: the square in the middle
+// fills most of the dialog and answers the wheel by ZOOMING.
+{
+  const ip = fs.readFileSync(path.join(ROOT, "frontend/iconpicker.js"), "utf8");
+  const crop = ip.slice(ip.indexOf("function openCropper"), ip.indexOf("function ensureStyle"));
+  const body = crop.indexOf('class="ip-crop-body"');
+  check("the cropper's buttons are not in the part that scrolls",
+    [body > 0, crop.indexOf("modal-actions") > body, crop.indexOf("ipCropStage") > body],
+    [true, true, true],
+    "the square is inside the scrolling part and the buttons are below it, outside");
+  check("and the square may shrink rather than push them off",
+    /max-width:min\(400px, 44vh\)/.test(crop), true);
+  check("the cropper puts its own stylesheet in",
+    /function openCropper\([^)]*\)\s*\{[\s\S]{0,600}?ensureStyle\(\);/.test(ip), true,
+    "the settings page opens it without ever opening the picker, so nothing else would have");
+  // And nothing is bounded by the window any more: the overlay starts below
+  // the toolbar, so 85vh is taller than the room it is centred in.
+  // The declarations, not the prose around them.
+  const css = fs.readFileSync(path.join(ROOT, "frontend/server.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const at = css.indexOf(".modal-content, .modal-inner");
+  const rule = css.slice(at, css.indexOf("}", at));
+  check("a dialog is bounded by the space it is centred in, not by the window",
+    [/max-height:\s*100%/.test(rule), /vh/.test(rule)], [true, false]);
+}
+
+// ── what a theme carries about the icon ──
+{
+  check("a saved theme carries the whole icon record",
+    /icon: icon \|\| settings\.get\("appIcon", null\)/.test(mainSrc), true,
+    "which is its kind, its picture, whether it follows the background, the mark and the framing");
+  check("and applying one re-points the framing at the background it brought",
+    /backCropOf: backgroundStackKey\(settings\.get\("background"/.test(mainSrc), true,
+    "a crop records which background it is a crop OF, by file; a theme's pictures land under new names, "
+    + "so the framing was thrown away by the very act of applying the theme it was saved in");
+}
+
+// ── the block controls follow a theme ──
+{
+  const set = fs.readFileSync(path.join(ROOT, "frontend/settings.html"), "utf8");
+  const adopt = set.slice(set.indexOf("function adoptSettings"), set.indexOf("window.__adoptSettings ="));
+  check("applying a theme with a block in it updates what the section says",
+    [/showBlockName\(\)/.test(adopt), /setTileSize\(/.test(adopt), /loadBlockFaces\(\)/.test(adopt)],
+    [true, true, true],
+    "the name, the size and the faces are written when a block is CHOSEN, and a theme chooses one with no click");
+}
+
 // The settings page opens the same cropper an instance's icon gets, rather
 // than a second one that could drift from it.
 const setSrc = fs.readFileSync(path.join(ROOT, "frontend/settings.html"), "utf8");

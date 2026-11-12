@@ -9,6 +9,70 @@ started.
 
 ---
 
+## 0. Round 58
+
+- [x] **A transparent app icon comes out black.** — *`removeAlpha` does not
+      flatten a picture onto anything: it drops the alpha channel and leaves
+      whatever RGB was under it, which in almost every PNG is 0,0,0. So a
+      hole in the picture came out as black -- and opaque black, so nothing
+      further down could rescue it. A fill is read as RGBA now and the two
+      alphas multiply, so a hole shows through while the picture is still
+      cut to the backing's shape.*
+- [x] **"A picture" does not update the icon display when a picture is
+      chosen.** — *The same fault as the two below: the preview is built by
+      the path that failed whenever the mark is off, which for a picture is
+      the default, so what the page showed was the icon from before. The
+      preview and the icon that is actually written now go through one
+      function, so the page cannot show an icon the launcher is not
+      wearing -- they were two, and a picture with no mark over it is the
+      WHOLE picture in one of them and cut to a circle in the other.*
+- [x] **A theme should carry the icon configuration** — *It already saved the
+      whole record -- kind, picture, whether it follows the background, the
+      mark -- and the one part that did not survive was the framing. A crop
+      records WHICH background it is a crop of, by the files in the stack,
+      so that changing the background drops a crop of the old one; a theme
+      carries its pictures as bytes and writes them out under fresh names,
+      so that record never matched and the framing was thrown away by the
+      very act of applying the theme it was saved in. It is re-pointed at
+      where the theme's own background has just landed.*
+- [x] **The crop modal's buttons are half off the bottom.** — *Measured in
+      the running launcher: 757 pixels of content in a 676-pixel box, which
+      put both buttons below the edge. Scrolling was the way to them in
+      theory only -- the square in the middle fills most of the dialog and
+      answers the wheel by zooming, so the wheel only worked over the few
+      pixels of margin either side. Three things: the buttons are out of the
+      scrolling part, the square may shrink instead of pushing them off, and
+      every dialog is now bounded by the room it is centred in rather than
+      by 85vh -- the overlay starts below the toolbar, so 85vh is taller
+      than the space there is. Also the cropper was the one way in that
+      never put the stylesheet on the page, so on the settings page it had
+      no layout rules at all.*
+- [x] **The chosen block's name does not update when a theme with a block
+      background is applied.** — *The name, the tile size and the row of
+      faces are written when a block is CHOSEN. A theme chooses one without
+      anybody clicking, so they kept saying what the last block was, or
+      "nothing chosen yet" over a wall that was plainly a block.*
+- [x] **With an image background and the gem and cog turned off, the cog is
+      still there.** — *Turning the mark off is done by not passing the gem's
+      and the cog's files at all. Both were handed to sharp regardless, and
+      sharp given `undefined` throws, so the icon was never built: the call
+      failed, the old file stayed where it was, and the switch looked like it
+      did nothing.*
+- [x] **Same for "your colour": turning the gem and cog off does not remove
+      them.** — *The same one fault, which is why it was reported twice.*
+- [ ] **The modified-pivot bbmodel exports still do not have the rotation
+      pivot modified.** — `playeranims.bbmodel` and
+      `playeranims_modifiedpivot.bbmodel` are now in the repository;
+      everything comes from the first except `idle.bored`, which comes from
+      the second.
+- [ ] **A Git tab on a dev instance whose project folder is a repository.** —
+      pull, switch branch, switch to a commit, change the remote.
+- [ ] **Add a dev instance from a Git URL, by cloning it.** — system Git, or
+      the launcher's own if there is none, and signing in with GitHub where
+      the system Git is not already signed in somewhere.
+- [ ] **And when any of that changes the loader or the Minecraft version, the
+      launcher must notice and update what it shows.**
+
 ## 0. Round 57
 
 - [x] **A dev instance waited a long time without showing as launching, then

@@ -3228,6 +3228,15 @@
           try { renderImageList(); } catch { /* no list yet */ }
           try { showBgPanels(); } catch { /* ditto */ }
           try { paintBackground(); } catch { /* ditto */ }
+          // The block controls are not a panel that is shown or hidden --
+          // they are a name, a size and a row of faces, each written once
+          // when a block is CHOSEN. A theme that brings a block with it
+          // chooses one without anybody clicking, so they were left saying
+          // what the last block was, or "nothing chosen yet" over a wall
+          // that was plainly a block.
+          try { showBlockName(); } catch { /* ditto */ }
+          try { setTileSize(bg.block.size || BG_TILE_DEFAULT); } catch { /* ditto */ }
+          try { loadBlockFaces(); } catch { /* ditto */ }
         }
 
         // The plain switches and sliders.

@@ -423,6 +423,11 @@ html[data-smoothing="smooth"] {
   animation: fadeIn 0.2s ease;
   /* Keep the rounded top-left corner where the bars meet visible. */
   border-top-left-radius: var(--border-radius);
+  /* So a tall dialog has a little air around it rather than meeting the
+     window's edges, and so `max-height: 100%` on the dialog leaves that air
+     instead of eating it. */
+  padding: 14px;
+  box-sizing: border-box;
 }
 
 .modal-overlay.active, .modal-base.active {
@@ -437,7 +442,13 @@ html[data-smoothing="smooth"] {
   padding: 30px;
   max-width: 500px;
   width: 90%;
-  max-height: 85vh;
+  /* Bounded by the room the overlay actually has, not by the window.
+     `85vh` is 85% of the WINDOW, and the overlay starts below the toolbar
+     and is centred in what is left -- so a dialog that wanted all of its
+     85vh hung past the bottom edge, with its buttons cut in half and the
+     overlay clipping the part you would have scrolled to. A percentage
+     resolves against the overlay, which is the space there is. */
+  max-height: 100%;
   overflow-y: auto;
   animation: slideInUp 0.3s ease;
   color: var(--text-color);

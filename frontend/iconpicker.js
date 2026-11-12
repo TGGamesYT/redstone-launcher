@@ -718,32 +718,55 @@
   // Crop + optional circle mask. Everything reaching this is already a data:
   // URL, so the canvas is never tainted and toDataURL always works.
   function openCropper(src, onDone) {
+    // The cropper can be opened on its own -- the settings page frames the
+    // launcher's background with it without ever opening the picker -- and
+    // it was the one entry point that did not put the stylesheet in first.
+    // So its own section titles, its slider row and the layout that keeps
+    // the buttons in view had no rules at all on that page.
+    ensureStyle();
     const ov = document.createElement('div');
     ov.className = 'modal-overlay active';
     ov.style.zIndex = 6200;
-    ov.innerHTML = `<div class="modal-content" style="max-width:460px;">
+    // Why this is a flex column with its own scrolling middle.
+    //
+    // It was an ordinary modal: one tall column, bounded at 85vh, with the
+    // browser's own scrollbar. In an 800-pixel window that came to 757
+    // pixels of content in a 676-pixel box, which put "Use this" and
+    // "Cancel" below the bottom edge, cut in half. Scrolling was the way to
+    // them in theory and not in practice: the square in the middle takes up
+    // most of the dialog and it answers the wheel by ZOOMING, so the wheel
+    // only scrolled over the few pixels of margin either side of it.
+    //
+    // So the buttons are no longer in the scrolling part, and the square is
+    // allowed to shrink -- `44vh` rather than the full width -- which makes
+    // the dialog fit a short window outright instead of fitting it by being
+    // scrolled.
+    ov.innerHTML = `<div class="modal-content ip-crop" style="max-width:460px;">
       <div class="modal-header"><h2>Adjust icon</h2><button class="modal-close" id="ipCropX">✕</button></div>
-      <div id="ipCropStage" style="position:relative; width:100%; aspect-ratio:1/1; background:var(--menu-bg);
-        border:1px solid var(--border-dark); border-radius:var(--border-radius); overflow:hidden; touch-action:none; cursor:grab;">
-        <canvas id="ipCropCv" style="width:100%; height:100%; display:block; pointer-events:none;"></canvas>
-      </div>
-      <p id="ipCropHint" style="margin:8px 0 0; font-size:11px; opacity:0.7; text-align:center;">
-        Drag to choose what's in frame · scroll to zoom
-      </p>
-      <!-- Lining a picture up with the square by eye is a pixel-at-a-time
-           job, and being one pixel out is visible in a 32-pixel icon. With
-           this on, the picture pulls to the middle and to each edge of the
-           square. Off for anything that has to sit just so. -->
-      <label style="display:flex; align-items:center; gap:6px; justify-content:center;
-        margin:6px 0 0; font-size:11px; opacity:0.8;">
-        <input type="checkbox" id="ipCropSnap"> Snap to the edges and the middle
-      </label>
-      <div class="ip-section-title" style="margin-top:8px;">Zoom</div>
-      <input type="range" id="ipCropZoom" min="100" max="400" value="100" style="width:100%;">
-      <div class="ip-section-title" style="margin-top:8px;">Corners</div>
-      <div class="ip-circle-row">
-        <input type="range" id="ipCropRound" min="0" max="50" value="0" style="flex:1;">
-        <span id="ipCropRoundLabel" style="font-size:11px;opacity:0.75;min-width:52px;text-align:right;"></span>
+      <div class="ip-crop-body">
+        <div id="ipCropStage" style="position:relative; width:100%; max-width:min(400px, 44vh); margin:0 auto;
+          aspect-ratio:1/1; background:var(--menu-bg);
+          border:1px solid var(--border-dark); border-radius:var(--border-radius); overflow:hidden; touch-action:none; cursor:grab;">
+          <canvas id="ipCropCv" style="width:100%; height:100%; display:block; pointer-events:none;"></canvas>
+        </div>
+        <p id="ipCropHint" style="margin:8px 0 0; font-size:11px; opacity:0.7; text-align:center;">
+          Drag to choose what's in frame · scroll to zoom
+        </p>
+        <!-- Lining a picture up with the square by eye is a pixel-at-a-time
+             job, and being one pixel out is visible in a 32-pixel icon. With
+             this on, the picture pulls to the middle and to each edge of the
+             square. Off for anything that has to sit just so. -->
+        <label style="display:flex; align-items:center; gap:6px; justify-content:center;
+          margin:6px 0 0; font-size:11px; opacity:0.8;">
+          <input type="checkbox" id="ipCropSnap"> Snap to the edges and the middle
+        </label>
+        <div class="ip-section-title" style="margin-top:8px;">Zoom</div>
+        <input type="range" id="ipCropZoom" min="100" max="400" value="100" style="width:100%;">
+        <div class="ip-section-title" style="margin-top:8px;">Corners</div>
+        <div class="ip-circle-row">
+          <input type="range" id="ipCropRound" min="0" max="50" value="0" style="flex:1;">
+          <span id="ipCropRoundLabel" style="font-size:11px;opacity:0.75;min-width:52px;text-align:right;"></span>
+        </div>
       </div>
       <div class="modal-actions"><button id="ipCropOk">Use this</button><button id="ipCropCancel">Cancel</button></div>
     </div>`;
@@ -951,7 +974,15 @@
       .ip-cell img { width:100%; height:100%; object-fit:contain; padding:4px; image-rendering:auto; }
       .ip-section-title { font-size:12px; text-transform:uppercase; opacity:0.7; margin:12px 0 4px; }
       /* The icons scroll; the title above them and the buttons below do not. */
-      .modal-content.ip-modal { display:flex; flex-direction:column; overflow:hidden; max-height:85vh; }
+      .modal-content.ip-modal { display:flex; flex-direction:column; overflow:hidden; max-height:100%; }
+      /* Same shape for the cropper: the heading and the buttons stay put and
+         the controls between them scroll if the window is too short for all
+         of them. The buttons used to be inside the scrolling part, below the
+         square that eats the wheel, which left them unreachable. */
+      .modal-content.ip-crop { display:flex; flex-direction:column; overflow:hidden; }
+      .modal-content.ip-crop .modal-header,
+      .modal-content.ip-crop .modal-actions { flex:0 0 auto; }
+      .ip-crop-body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; }
       .ip-modal .ip-scroll { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
       .ip-modal .modal-actions { flex:0 0 auto; margin-top:12px; }
       /* Each grid scrolls with the page now rather than inside itself. */
