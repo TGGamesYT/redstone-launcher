@@ -9,6 +9,63 @@ started.
 
 ---
 
+## 0. Round 59
+
+- [x] **`ipcNative` missing, and an empty page on the first open.** — *The
+      first half is the launcher's own doing and is gone. A frame exists
+      before its document does, and the main process sends every broadcast
+      to every frame -- so while the first page was still loading, each
+      broadcast went to an empty frame as well and the renderer printed
+      "Attempted to get the 'ipcNative' object but it was missing". It is
+      logged, not thrown, so no try/catch ever saw it. Frames with no
+      document in them are skipped now, and the test stands up a window with
+      an empty frame in it and fails if the line comes back.*
+
+      *The empty page itself I could not reproduce, so this does not claim
+      to know why it happened. What it does is notice: the shell IS the
+      window -- the bars are its and everything else is the frame -- so a
+      frame that fails to load is the whole launcher looking empty with
+      nothing to click. If there is no page in it five seconds in, it is
+      asked for again, once.*
+- [x] **Every premium account's skin turned into a default.** — *The log
+      said it four times: `profile 429`. That is Mojang saying "you asked too
+      often", and it was being treated as an answer about the PLAYER -- so
+      the launcher drew the default skin, which is also exactly what an
+      account with no custom skin looks like, so nothing on screen could say
+      which it was. Three things made it happen and all three are fixed.
+      Every skin picture was already cached on disk by its texture hash, but
+      the mapping from a player to that hash lived only in memory, so every
+      start knew nothing and asked about every account at once -- it is
+      written down now, and a restart begins knowing what it knew. Nothing
+      stopped the same uuid being asked about twice at the same time, and
+      the log shows one asked three times -- the same question in flight is
+      now one request that everyone waits on, and separate players are
+      spaced out instead of going off together. And a 429 keeps whatever was
+      known rather than replacing it, waits a minute rather than ten, and
+      if there was nothing known the account is remembered, asked about
+      again once Mojang will answer, and every window told so the Steve
+      turns back into the player.*
+- [x] **NeoForge 26.3 logs four lines and then launches for ever.** — *The
+      log ends on `[MCLC]: Parsed version from version manifest`, and that is
+      precisely where it stops. mclc prints that line BEFORE parsing the
+      version JSON, inside the HTTP callback, with nothing around it -- so
+      when the parse throws (an empty body, a proxy's error page, a
+      truncated response) the throw lands in nothing: the promise is never
+      resolved and never REJECTED, and launch() waits on it until the
+      launcher is closed. Reproduced against the real mclc here: after three
+      seconds the promise has neither settled nor failed, and the last thing
+      said is a claim that the thing which just failed had worked.*
+
+      *So the fetch is done by the launcher instead -- with a timeout,
+      checked for being JSON, checked for having the parts mclc will reach
+      for -- and written where mclc looks first, so its own fragile path is
+      never taken. Anything wrong throws with a reason, including the first
+      line of whatever did come back. And a watchdog for the next one of
+      these: everything in a launch reports as it goes, so four minutes of
+      complete silence means something is waiting on something that is not
+      coming, and it ends with a reason instead of saying "launching" for
+      ever.*
+
 ## 0. Round 58
 
 - [x] **A transparent app icon comes out black.** — *`removeAlpha` does not

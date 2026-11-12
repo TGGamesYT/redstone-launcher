@@ -28,6 +28,35 @@ export function deliverToEveryFrame(app) {
 }
 
 /** The same, for one webContents that already exists. */
+/**
+ * Can this frame actually be sent to?
+ *
+ * A frame exists before its document does. In between -- while it is still
+ * `about:blank`, while it is being replaced, once it has been detached --
+ * there is nothing in it listening, and sending anyway prints
+ *
+ *   ERROR:electron_ipc_native.cc: Attempted to get the 'ipcNative' object
+ *   but it was missing
+ *
+ * in the renderer. Not thrown, so the try/catch below never saw it: logged,
+ * once per send per unready frame, which at startup is every broadcast the
+ * main process makes while the launcher's first page is still loading.
+ *
+ * Asked each time rather than remembered, because a frame goes through this
+ * state more than once: every page change is a new document in the same
+ * frame.
+ */
+function canHear(frame) {
+  try {
+    if (!frame || frame.detached) return false;
+    const url = String(frame.url || "");
+    // No document yet, or the empty one a frame starts life with. Nothing
+    // of ours is running in either.
+    if (!url || url === "about:blank") return false;
+    return true;
+  } catch { return false; }        // being torn down as we looked at it
+}
+
 export function patchWebContents(wc) {
   if (!wc || wc.__everyFrame) return wc;
   const toMainFrame = wc.send.bind(wc);
@@ -37,7 +66,7 @@ export function patchWebContents(wc) {
       const top = wc.mainFrame;
       if (!top) return;
       for (const frame of top.framesInSubtree) {
-        if (frame === top) continue;
+        if (frame === top || !canHear(frame)) continue;
         try { frame.send(channel, ...args); } catch { /* that frame has gone */ }
       }
     } catch { /* the window is on its way out */ }

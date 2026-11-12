@@ -1793,6 +1793,15 @@
       ipcRenderer.on('skins-updated', () => {
         try { updateSKin({ force: false }); } catch { /* the page is going away */ }
       });
+      // And the other way a render can be wrong: Mojang could not be asked
+      // what this account looks like, so a default was drawn -- and a
+      // default is also what an account with no skin looks like, which is
+      // why nothing on screen said anything was amiss. The main process
+      // asks again once Mojang will answer and says so; this is what turns
+      // the Steve back into the player.
+      ipcRenderer.on('heads-changed', () => {
+        try { updateSKin({ force: true }); } catch { /* the page is going away */ }
+      });
     } catch { /* not in the app */ }
 
     async function updateSKin(opts) {

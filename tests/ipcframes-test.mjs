@@ -56,8 +56,14 @@ fs.mkdirSync(OUT, { recursive: true });
 const write = (name, text) => fs.writeFileSync(path.join(OUT, name), text);
 
 write("package.json", JSON.stringify({ name: "ipcframes", version: "1.0.0", main: "main.cjs" }));
+// A second frame that never gets a document of its own, which is what every
+// frame is for the first moments of its life -- and what the launcher's own
+// frame is while its first page loads. Nothing of ours is running in it, so
+// sending to it reaches nobody and makes the renderer print
+// "Attempted to get the 'ipcNative' object but it was missing".
 write("shell.html", `<!doctype html><html><body>
 <iframe src="inner.html"></iframe>
+<iframe id="blank"></iframe>
 <script>
   const { ipcRenderer } = require('electron');
   ipcRenderer.on('ping', (_e, what) => ipcRenderer.send('heard', { who: 'shell', what }));
@@ -112,7 +118,10 @@ function run(patched) {
     console.log((r.stderr || "").split("\n").slice(-6).join("\n"));
     return null;
   }
-  return JSON.parse(line.slice(7));
+  // Electron prints the ipcNative complaint to stderr, from the renderer --
+  // it is not thrown, so no try/catch in the main process ever sees it.
+  const noise = String(r.stdout || "") + String(r.stderr || "");
+  return { ...JSON.parse(line.slice(7)), ipcNative: /ipcNative/.test(noise) };
 }
 
 const plain = run(false);
@@ -128,6 +137,14 @@ if (!fixed) { fail("the test window runs with the fix", "Electron never answered
 check("and with backend/ipcframes.js it reaches both",
   fixed.heard, ["page <- a broadcast", "shell <- a broadcast"],
   "the page hears a game's log lines as they happen again");
+
+// And that reaching both does not mean shouting at a frame that is not
+// there. This is the line that was in the launcher's log on every start:
+// the window's first page is still loading, every broadcast goes to its
+// empty frame as well, and each one prints the complaint.
+check("and it says nothing to a frame with no document in it",
+  fixed.ipcNative, false,
+  "\"Attempted to get the 'ipcNative' object but it was missing\", once per broadcast");
 
 // And that the launcher actually turns it on.
 const src = fs.readFileSync(path.join(ROOT, "backend", "main.js"), "utf8");

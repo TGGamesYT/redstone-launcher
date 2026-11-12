@@ -16431,6 +16431,132 @@ const _headFresh = (e, ttl) => !!e && (Date.now() - e.at) < ttl;
 const _headCooling = (k) => Date.now() < (_headFail.get(k) || 0);
 const _headCool = (k) => _headFail.set(k, Date.now() + HEAD_FAIL_TTL);
 
+// ── Remembering what Mojang said, across restarts ──────────────────────────
+//
+// Every skin picture is already cached on disk by its texture hash. The one
+// thing that was not was the mapping from a player's uuid TO that hash, and
+// it lived in a Map that died with the process -- so every start knew
+// nothing, asked Mojang about every account at once, and fell back to the
+// DEFAULT SKIN for each one it could not reach.
+//
+// Which is what happens, because Mojang rate-limits that endpoint hard: it
+// is about one request per profile per minute, and the answer to too many is
+// 429. So a launcher with four accounts, asking three times for one of them
+// because nothing stopped it asking twice at once, gets 429s on a cold start
+// and every premium account turns into Steve. That is exactly what was
+// reported, and the log said `profile 429` four times over.
+//
+// Three things together fix it, and all three are needed:
+//
+//   1. this file, so a restart begins knowing what it knew;
+//   2. one request in flight per uuid, so a page drawing the same player
+//      three times asks once;
+//   3. a gap between requests, so twenty heads are twenty requests spread
+//      out rather than twenty at once.
+const HEAD_PROFILE_FILE = () => path.join(texturesDir, "profilecache.json");
+// Long, because the cache is not a performance trick: it is what the
+// launcher shows when Mojang cannot be reached at all, and a skin from
+// yesterday is enormously better than a Steve. Anything fresher than
+// HEAD_PROFILE_TTL is used without asking; anything older is used anyway
+// while the asking happens, and replaced when an answer comes.
+const HEAD_PROFILE_KEEP = 30 * 24 * 60 * 60 * 1000;
+let _headProfileDirty = false;
+
+function loadHeadProfiles() {
+  let raw = {};
+  try { raw = JSON.parse(fs.readFileSync(HEAD_PROFILE_FILE(), "utf8")) || {}; } catch { return; }
+  const now = Date.now();
+  for (const [uuid, e] of Object.entries(raw)) {
+    if (!e || typeof e !== "object" || typeof e.at !== "number") continue;
+    if (now - e.at > HEAD_PROFILE_KEEP) continue;
+    _headProfile.set(String(uuid), { hash: e.hash || null, slim: !!e.slim, cape: e.cape || null, at: e.at });
+  }
+}
+function saveHeadProfiles() {
+  if (!_headProfileDirty) return;
+  _headProfileDirty = false;
+  try {
+    fs.mkdirSync(texturesDir, { recursive: true });
+    fs.writeFileSync(HEAD_PROFILE_FILE(), JSON.stringify(Object.fromEntries(_headProfile), null, 1));
+  } catch { /* the cache is optional; the launcher still works without it */ }
+}
+try { loadHeadProfiles(); } catch { /* nothing cached yet */ }
+// Written a moment after it changes rather than on every single lookup: a
+// page of forty heads would otherwise rewrite the file forty times.
+let _headSaveSoon = null;
+function headProfilesChanged() {
+  _headProfileDirty = true;
+  if (_headSaveSoon) return;
+  _headSaveSoon = setTimeout(() => { _headSaveSoon = null; saveHeadProfiles(); }, 2000);
+}
+app.on("will-quit", () => { try { saveHeadProfiles(); } catch { /* going away anyway */ } });
+
+/**
+ * One at a time, with a gap, and never the same question twice at once.
+ *
+ * Mojang counts requests, not callers. Two parts to not being counted more
+ * than necessary: the same uuid asked while an answer is already on its way
+ * waits for that answer, and separate uuids are spaced out instead of going
+ * off together the moment a page draws.
+ */
+const MOJANG_GAP = 150;                 // ms between requests to Mojang
+const _mojangInFlight = new Map();      // key -> the promise everyone shares
+let _mojangNext = 0;
+
+// ── Coming back with the real answer ───────────────────────────────────────
+//
+// When a lookup fails there is nothing to draw but a default, and a default
+// IS what an account with no custom skin looks like -- so the page cannot
+// tell "this player is a Steve" from "we could not find out", and it settles
+// on the wrong one. The answer is not to pick better in the moment but to
+// come back: the uuids that were served a guess are remembered, asked again
+// once the cool-down is up, and every window is told when a real answer
+// arrives so the heads and the renders redraw themselves.
+const _headGuessed = new Set();         // uuids drawn as a default we were not sure of
+let _headRetrySoon = null;
+
+function headWasGuessed(uuid) {
+  if (!uuid) return;
+  _headGuessed.add(uuid);
+  if (_headRetrySoon) return;
+  // A little past the cool-down, so the retry is not refused by our own
+  // rule the instant it fires.
+  _headRetrySoon = setTimeout(retryGuessedHeads, 65 * 1000);
+}
+
+async function retryGuessedHeads() {
+  _headRetrySoon = null;
+  const want = [..._headGuessed];
+  let told = false;
+  for (const uuid of want) {
+    _headFail.delete("p:" + uuid);               // the cool-down was the point of waiting
+    let prof = null;
+    try { prof = await headTextureForUuid(uuid); } catch { prof = null; }
+    if (prof && prof.hash) { _headGuessed.delete(uuid); told = true; }
+  }
+  // One message for all of them: a page redraws the heads it has, and
+  // telling it six times means six redraws.
+  if (told) sendEverywhere("heads-changed", {});
+  if (_headGuessed.size && !_headRetrySoon) {
+    // Still nothing. Try again later, but not for ever and not often: this
+    // is the case where Mojang is down or the computer is offline, and
+    // asking every minute all evening helps nobody.
+    _headRetrySoon = setTimeout(retryGuessedHeads, 10 * 60 * 1000);
+  }
+}
+
+function askMojang(key, work) {
+  const already = _mojangInFlight.get(key);
+  if (already) return already;
+  const wait = Math.max(0, _mojangNext - Date.now());
+  _mojangNext = Date.now() + wait + MOJANG_GAP;
+  const p = (wait ? new Promise(r => setTimeout(r, wait)) : Promise.resolve())
+    .then(work)
+    .finally(() => { _mojangInFlight.delete(key); });
+  _mojangInFlight.set(key, p);
+  return p;
+}
+
 // Which default skin a UUID gets. Identical to the rule the skins page uses
 // when it shows an account's default, so the head and the render agree: Java's
 // UUID.hashCode() over the 128-bit value, floor-modded by however many defaults
@@ -16633,25 +16759,41 @@ async function headTextureForUuid(uuid) {
   const hit = _headProfile.get(key);
   if (_headFresh(hit, HEAD_PROFILE_TTL)) return hit;
   if (_headCooling("p:" + key)) return hit || null;    // stale is better than wrong
-  try {
-    const res = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${key}`);
-    if (!res.ok) throw new Error(`profile ${res.status}`);
-    const prof = await res.json();
-    const tex = (prof.properties || []).find(p => p.name === "textures");
-    if (!tex) throw new Error("no textures property");
-    const decoded = JSON.parse(Buffer.from(tex.value, "base64").toString("utf8"));
-    const url = decoded?.textures?.SKIN?.url || "";
-    const hash = url.split("/").pop() || null;
-    const slim = decoded?.textures?.SKIN?.metadata?.model === "slim";
-    const cape = decoded?.textures?.CAPE?.url || null;
-    const entry = { hash, slim, cape, at: Date.now() };
-    _headProfile.set(key, entry);
-    return entry;
-  } catch (err) {
-    _headCool("p:" + key);
-    devtoolsLog(`head: no profile for ${key}:`, err && err.message);
-    return hit || null;
-  }
+  return askMojang("p:" + key, async () => {
+    // Asked again while we were waiting our turn, and answered meanwhile.
+    const now = _headProfile.get(key);
+    if (_headFresh(now, HEAD_PROFILE_TTL)) return now;
+    try {
+      const res = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${key}`);
+      // 429 is "you asked too often", which is a fact about this minute and
+      // not about the player. It gets a short cool-down of its own rather
+      // than the long one a real failure gets, so a burst at startup is
+      // over in a minute instead of leaving every account looking wrong for
+      // ten.
+      if (res.status === 429) {
+        _headFail.set("p:" + key, Date.now() + 60 * 1000);
+        devtoolsLog(`head: Mojang is rate-limiting us for ${key}; keeping what we knew`);
+        return hit || null;
+      }
+      if (!res.ok) throw new Error(`profile ${res.status}`);
+      const prof = await res.json();
+      const tex = (prof.properties || []).find(p => p.name === "textures");
+      if (!tex) throw new Error("no textures property");
+      const decoded = JSON.parse(Buffer.from(tex.value, "base64").toString("utf8"));
+      const url = decoded?.textures?.SKIN?.url || "";
+      const hash = url.split("/").pop() || null;
+      const slim = decoded?.textures?.SKIN?.metadata?.model === "slim";
+      const cape = decoded?.textures?.CAPE?.url || null;
+      const entry = { hash, slim, cape, at: Date.now() };
+      _headProfile.set(key, entry);
+      headProfilesChanged();
+      return entry;
+    } catch (err) {
+      _headCool("p:" + key);
+      devtoolsLog(`head: no profile for ${key}:`, err && err.message);
+      return hit || null;
+    }
+  });
 }
 
 async function headUuidForName(name) {
@@ -16660,8 +16802,18 @@ async function headUuidForName(name) {
   const hit = _headUuid.get(key);
   if (_headFresh(hit, HEAD_PROFILE_TTL)) return hit.uuid;
   if (_headCooling("n:" + key)) return hit ? hit.uuid : null;
+  return askMojang("n:" + key, () => resolveNameAtMojang(key, hit));
+}
+
+async function resolveNameAtMojang(key, hit) {
   try {
     const res = await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(key)}`);
+    // Asked too often rather than asked about nobody: keep what we knew and
+    // try again in a minute.
+    if (res.status === 429) {
+      _headFail.set("n:" + key, Date.now() + 60 * 1000);
+      return hit ? hit.uuid : null;
+    }
     // 404 is a real answer: there is no such player, so remember that rather
     // than asking again every time the list redraws.
     if (res.status === 404 || res.status === 204) {
@@ -16786,6 +16938,10 @@ async function playerHead({ name, uuid, offline, playerId }) {
     devtoolsLog("head: falling back to the default:", err && err.message);
   }
 
+  // The same two reasons as headSkinFor: either this account has no custom
+  // skin, or we could not find out. The second is remembered and asked
+  // again rather than settled on.
+  if (!offline && id) headWasGuessed(id);
   try {
     return await defaultHead({ uuid: id, name, offline });
   } catch (err) {
@@ -16833,14 +16989,24 @@ async function headSkinFor({ name, uuid, offline, playerId } = {}) {
   } catch (err) {
     devtoolsLog("skin: falling back to the default:", err && err.message);
   }
+  // A default, for one of two quite different reasons.
+  //
+  // Either this account really has no custom skin -- in which case a default
+  // is what it looks like and there is nothing more to do -- or we could not
+  // find out, which is not the same thing at all and used to be drawn as if
+  // it were. An online account we have no texture for is the second case:
+  // it is remembered, asked again once Mojang will answer, and every window
+  // is told when the real skin turns up.
+  const guessed = !offline && !!id;
+  if (guessed) headWasGuessed(id);
   try {
     // The same nine defaults, picked the same way, as the head and the skins
     // page use — one implementation, in defaultSkinFor.
     const pick = defaultSkinFor({ uuid: id, name, offline });
-    if (pick) return { base64: pick.base64, slim: pick.model === "slim", from: "default" };
+    if (pick) return { base64: pick.base64, slim: pick.model === "slim", from: "default", guessed };
     const model = legacyDefaultModel(skinIdentity({ uuid: id, name, offline }));
     const png = await skinByTextureHash(DEFAULT_SKIN_TEXTURE[model]);
-    return { base64: png.toString("base64"), slim: model === "slim", from: "default" };
+    return { base64: png.toString("base64"), slim: model === "slim", from: "default", guessed };
   } catch (err) {
     return { error: String(err && err.message || err) };
   }

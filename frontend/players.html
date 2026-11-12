@@ -1362,6 +1362,11 @@
     });
     // The account this page is about just went stale — reflect it here too.
     ipcRenderer.on("account-needs-signin", () => { _friendsLoadedFor = null; renderPlayers(); });
+    // A skin that was drawn as a default because Mojang could not be asked.
+    // A default is also what an account with no skin looks like, so nothing
+    // on screen could say which it was; the main process asks again once
+    // Mojang will answer and tells every window when it has one.
+    ipcRenderer.on("heads-changed", () => { try { renderPlayers(); } catch { /* going away */ } });
 
     // Render player list
     let _friendsLoadedFor = null;

@@ -251,6 +251,100 @@ function verifyLibraries() {
 // outright size mismatch counts here: a wrong hash could be a jar some
 // loader patched in place, but a jar that is not the length Mojang published
 // is simply an interrupted download.
+// ── A launch that stops dead with nothing more to say ───────────────────────
+//
+// mclc's getVersion() fetches the version's JSON and parses it inside the
+// request's callback:
+//
+//     this.client.emit('debug', '[MCLC]: Parsed version from version manifest')
+//     this.version = ... : JSON.parse(body)
+//     return resolve(this.version)
+//
+// If that parse throws -- an empty body, a proxy's error page, a captive
+// portal, a truncated response -- the throw happens inside a callback with
+// nothing around it. The promise is never resolved and never REJECTED, so
+// launch() waits on it for ever. The launcher shows the instance as
+// launching with no error, no exit and nothing further in the log, which is
+// exactly what was reported: the log ends on that very line.
+//
+// Note which line it ends on. "Parsed version from version manifest" is
+// printed BEFORE the parse, not after it, so the last thing in the log is a
+// claim that the thing which just failed had succeeded.
+//
+// So the fetch is done here instead, properly: with a timeout, checked for
+// being JSON at all, and checked for having the parts mclc will reach for.
+// The result is written to the file mclc looks for first, so the real
+// getVersion takes its own fast path and the fragile code is never reached.
+// Anything that goes wrong throws, which fails the launch with a reason --
+// a launch that fails is worse than one that works and far better than one
+// that hangs.
+function fetchVersionJsonProperly() {
+  let Handler = null;
+  try { Handler = require_("minecraft-launcher-core/components/handler"); }
+  catch { return; }
+  if (Handler.__honestVersion) return;
+  const real = Handler.prototype.getVersion;
+
+  const getJson = async (url, what) => {
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), 60000);
+    let res;
+    try {
+      res = await fetch(url, { signal: stop.signal });
+    } catch (e) {
+      throw new Error(`Could not reach ${what} (${url}): ${e && e.name === "AbortError" ? "it took too long" : (e && e.message) || e}`);
+    } finally { clearTimeout(timer); }
+    if (!res.ok) throw new Error(`${what}: the answer was ${res.status} ${res.statusText || ""} (${url})`);
+    const body = await res.text();
+    try { return JSON.parse(body); } catch {
+      // The first line of it, because that is what says what it really was:
+      // an HTML error page, a login portal, or nothing at all.
+      const peek = body.trim().split("\n")[0].slice(0, 120) || "(it was empty)";
+      throw new Error(`${what}: that is not JSON (${url}). It began: ${peek}`);
+    }
+  };
+
+  Handler.prototype.getVersion = async function () {
+    const number = this.options.version.number;
+    const file = this.options.overrides.versionJson
+      || path.join(this.options.directory, `${number}.json`);
+    // Already here and readable: nothing to do, and this is the path mclc
+    // takes on every launch after the first.
+    try {
+      if (fs.existsSync(file)) { JSON.parse(fs.readFileSync(file, "utf8")); return real.call(this); }
+    } catch {
+      // Here but not readable. mclc would throw on it from inside the
+      // Promise executor, which does at least reject -- but the file is
+      // rubbish either way, so it goes and is fetched again.
+      try { fs.unlinkSync(file); } catch { /* it will be overwritten */ }
+    }
+
+    const meta = (this.options.overrides.url && this.options.overrides.url.meta) || "https://launchermeta.mojang.com";
+    const manifest = await getJson(`${meta}/mc/game/version_manifest.json`, "Mojang's version list");
+    const want = (manifest.versions || []).find(v => v && v.id === number);
+    if (!want || !want.url) {
+      throw new Error(`Mojang's version list has no "${number}" in it.`);
+    }
+    const version = await getJson(want.url, `the details of Minecraft ${number}`);
+    // What mclc will reach into without checking. Saying which part is
+    // missing here beats a TypeError three functions later.
+    for (const key of ["id", "libraries", "downloads", "assetIndex"]) {
+      if (!version[key]) throw new Error(`The details of Minecraft ${number} have no "${key}" in them.`);
+    }
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      writeAtomic(file, JSON.stringify(version, null, 2));
+    } catch (e) {
+      // It could not be saved, which is survivable: hand mclc the parsed
+      // version directly and let it carry on.
+      this.version = version;
+      return version;
+    }
+    return real.call(this);
+  };
+  Handler.__honestVersion = true;
+}
+
 function verifyNatives() {
   let Handler = null;
   try { Handler = require_("minecraft-launcher-core/components/handler"); }
@@ -575,6 +669,7 @@ async function runLaunch(cfg) {
   verifyDownloads();
   verifyLibraries();
   verifyNatives();
+  fetchVersionJsonProperly();
 
   const launcher = new Client();
   launcher.on("data", (m) => post({ type: "log", line: String(m) }));
@@ -602,7 +697,42 @@ async function runLaunch(cfg) {
   if (extraJvm.length) opts.customArgs = extraJvm;
   if (cfg.customLaunchArgs && cfg.customLaunchArgs.length) opts.customLaunchArgs = cfg.customLaunchArgs;
 
-  const child = await withRetry(() => launcher.launch(opts), 2);
+  // ── A launch that has stopped getting anywhere ────────────────────────────
+  //
+  // Everything in a launch reports as it goes: a download emits progress
+  // several times a second, a library check emits a line per library, mclc
+  // narrates each step. So complete silence does not mean "it is busy", it
+  // means something is waiting on something that is never going to happen --
+  // a promise that was neither resolved nor rejected, a socket with no
+  // timeout on it.
+  //
+  // Left to itself that is an instance that says "launching" for ever, with
+  // nothing in the log and no way to find out why, which is what was
+  // reported. A launch that gives up with a reason is not a good outcome,
+  // but it is an outcome.
+  const QUIET_LIMIT = 4 * 60 * 1000;
+  let lastWord = Date.now();
+  const quiet = setInterval(() => {
+    if (Date.now() - lastWord < QUIET_LIMIT) return;
+    clearInterval(quiet);
+    post({
+      type: "log",
+      line: `[redstone] Nothing has happened for ${Math.round(QUIET_LIMIT / 60000)} minutes. `
+        + "Something in the launch is waiting on something that is not coming -- "
+        + "usually the game's files could not be fetched. Giving up rather than waiting for ever.",
+    });
+    post({ type: "error", error: "The launch stopped getting anywhere and was given up on." });
+    releaseInUse();
+    // The whole point is that nothing here will finish on its own, so there
+    // is nothing to await and nothing to cancel: the process goes.
+    try { process.exit(1); } catch { /* going anyway */ }
+  }, 15000);
+  const heard = () => { lastWord = Date.now(); };
+  for (const ev of ["data", "debug", "progress", "download-status"]) launcher.on(ev, heard);
+
+  let child;
+  try { child = await withRetry(() => launcher.launch(opts), 2); }
+  finally { clearInterval(quiet); }
   saveChecks();
   if (!child || !child.pid) { post({ type: "error", error: "The game process failed to start" }); return; }
   try { child.unref(); } catch { /* ignore */ }

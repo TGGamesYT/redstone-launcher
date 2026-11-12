@@ -315,6 +315,42 @@
 
   markCurrent();
 
+  // ── A page that did not arrive ────────────────────────────────────────────
+  //
+  // The shell is the window: the bars are its, and everything else is the
+  // frame. So a frame that fails to load is not a blank area, it is the
+  // whole launcher looking empty, with the bars drawn over nothing and no
+  // way back -- there is nothing to click that would reload it.
+  //
+  // It was reported happening once, on a first open, and I could not make it
+  // happen again, so this does not claim to know why. What it does is
+  // notice: if the frame has no page in it a few seconds in, it is loaded
+  // again, once. A reload that was not needed costs nothing, because this
+  // only ever runs when there is nothing on screen to disturb.
+  function framePage() {
+    try {
+      const doc = frame.contentDocument;
+      // Cross-origin would throw; ours never is. A document with no body,
+      // or a body with nothing in it, is a page that did not arrive.
+      return doc && doc.body && doc.body.childElementCount > 0 ? doc : null;
+    } catch { return null; }        // mid-navigation: not an answer either way
+  }
+  let triedAgain = false;
+  function checkFrameArrived() {
+    if (triedAgain || framePage()) return;
+    triedAgain = true;
+    const want = frame.getAttribute("src") || "index.html";
+    console.warn("[shell] nothing loaded in the frame; asking for", want, "again");
+    try {
+      // `src` set to what it already is does not navigate, so it is cleared
+      // first. location.replace would also do it, but there may be no
+      // location to ask.
+      frame.src = "about:blank";
+      setTimeout(() => { frame.src = want; }, 0);
+    } catch { /* nothing more to try from here */ }
+  }
+  setTimeout(checkFrameArrived, 5000);
+
   // ── Being told to show something ──────────────────────────────────────────
   //
   // A desktop shortcut or a redstonelauncher:// link names a page and some

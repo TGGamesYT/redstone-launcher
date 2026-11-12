@@ -2398,6 +2398,11 @@
       LAYOUT = layout.map(s => ({ ...s }));
       drawAll();
     });
+    // The figure on this page is drawn once, from whatever Mojang said at
+    // the time. When Mojang could not be asked, what it said was a default
+    // skin -- indistinguishable from an account that really has one -- and
+    // the page settled on it. The main process asks again later and says so.
+    ipcRenderer.on('heads-changed', () => { try { drawAll(); } catch { /* going away */ } });
   }
 
   window.Home = {
