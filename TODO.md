@@ -42,6 +42,16 @@ started.
       *Checked with Mojang made genuinely unreachable: a real player comes
       back as their own skin via minotar, and a uuid nobody has comes back
       as a default marked unsure.*
+- [x] **A block's state should be one dropdown per property, not one list of
+      every combination.** — *Oak stairs are forty combinations and a door
+      sixty-four, offered as one list to find a row in. They are separate
+      decisions -- which way it faces, which half, which shape -- so each is
+      its own dropdown now, built from the combinations the block really has
+      so nothing can be asked for that does not exist. Where a blockstate is
+      not a full grid, changing one property lands on the state that has it
+      and differs from where you were in as few other ways as possible. A
+      property with only one value is not offered, and a blockstate whose
+      variants are not property=value keeps the single list.*
 
 ## 0. Round 59
 

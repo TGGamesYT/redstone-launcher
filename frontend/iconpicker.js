@@ -420,7 +420,7 @@
       </div>
       <div id="ipAdjStateWrap" style="display:none;">
         <div class="ip-section-title">Block state</div>
-        <select id="ipAdjState" style="width:100%;"></select>
+        <div id="ipAdjStates" class="ip-states"></div>
       </div>
       <div id="ipAdjPartsWrap" style="display:none;">
         <div class="ip-section-title">Parts</div>
@@ -638,9 +638,46 @@
       };
     }
 
-    // The same block in another state: which way it faces, whether it is open.
+    // ── The same block in another state ──────────────────────────────────
+    //
+    // A blockstate is a list of combinations: oak_stairs has forty of them,
+    // "facing=east,half=top,shape=outer_left" and the thirty-nine others.
+    // Offering that list as one dropdown is offering somebody a product of
+    // three separate decisions and asking them to find the row they want --
+    // and with a door (facing × half × hinge × open × powered, sixty-four
+    // rows) it is unusable.
+    //
+    // They are separate decisions, so they get separate dropdowns: which way
+    // it faces, which half, which shape. The combinations are still what the
+    // game has, and that is what the dropdowns are built FROM -- so a
+    // property only offers the values this block really has, and nothing can
+    // be asked for that does not exist.
     const stateWrap = ov.querySelector('#ipAdjStateWrap');
-    const stateSel = ov.querySelector('#ipAdjState');
+    const stateBox = ov.querySelector('#ipAdjStates');
+
+    /** "facing=east,half=top" -> { facing: "east", half: "top" } */
+    const readState = (s) => {
+      const out = {};
+      for (const bit of String(s || '').split(',')) {
+        if (!bit) continue;
+        const at = bit.indexOf('=');
+        if (at < 0) continue;
+        out[bit.slice(0, at)] = bit.slice(at + 1);
+      }
+      return out;
+    };
+    // Written the way the game writes it: the properties in the order the
+    // blockstate file lists them, which is the order they came in.
+    const writeState = (props, order) =>
+      order.filter(k => props[k] != null).map(k => `${k}=${props[k]}`).join(',');
+
+    // A word a person reads rather than an identifier: "outer_left" ->
+    // "Outer left", "north" -> "North".
+    const pretty = (s) => {
+      const t = String(s).replace(/_/g, ' ').trim();
+      return t ? t[0].toUpperCase() + t.slice(1) : t;
+    };
+
     async function loadStates() {
       if (!info.item || info.item.kind !== 'block') return;
       let r = null;
@@ -649,26 +686,118 @@
           profileId: opts0.instanceId ?? null, version: opts0.version || null, overrides: !!info.overrides, id: info.item.id,
         });
       } catch { /* a block with no states is the usual case */ }
-      const list = Array.isArray(r) ? r : ((r && r.states) || []);
+      const list = (Array.isArray(r) ? r : ((r && r.states) || []))
+        .map(st => (typeof st === 'string' ? { state: st } : st))
+        .filter(st => st && typeof st.state === 'string');
       if (list.length < 2) return;
-      stateWrap.style.display = '';
-      stateSel.innerHTML = '';
-      let preferred = '';
-      for (const st of list) {
-        const o = document.createElement('option');
-        o.value = typeof st === 'string' ? st : (st.state || '');
-        o.textContent = o.value || 'default';
-        if (st && st.preferred) preferred = o.value;
-        stateSel.appendChild(o);
+
+      const states = list.map(st => st.state);
+      const preferred = (list.find(st => st.preferred) || {}).state || '';
+      let current = states.includes(info.state) ? info.state
+        : (states.includes(preferred) ? preferred : states[0]);
+
+      // The properties, in the order the blockstate file lists them, and
+      // every value each one is ever given.
+      const order = [];
+      const values = new Map();
+      for (const s of states) {
+        for (const [k, v] of Object.entries(readState(s))) {
+          if (!values.has(k)) { values.set(k, []); order.push(k); }
+          const have = values.get(k);
+          if (!have.includes(v)) have.push(v);
+        }
       }
-      stateSel.value = info.state || preferred || stateSel.options[0].value;
-      stateSel.onchange = async () => {
+      // A property with one value is not a decision; it is a fact about the
+      // block, and a dropdown that can only say one thing is noise.
+      const choosable = order.filter(k => (values.get(k) || []).length > 1);
+
+      stateWrap.style.display = '';
+      stateBox.innerHTML = '';
+      // Made before either branch below: useState puts the dropdowns where
+      // the state is, and with no dropdowns that is simply nothing to do.
+      const selects = new Map();
+
+      // Nothing named, or nothing to choose between: the old single list,
+      // which is still right for a blockstate whose variants are not
+      // property=value at all.
+      if (!choosable.length) {
+        const sel = document.createElement('select');
+        sel.style.width = '100%';
+        for (const s of states) {
+          const o = document.createElement('option');
+          o.value = s;
+          o.textContent = s || 'default';
+          sel.appendChild(o);
+        }
+        sel.value = current;
+        sel.onchange = () => useState(sel.value);
+        stateBox.appendChild(sel);
+        return;
+      }
+
+      for (const key of choosable) {
+        const row = document.createElement('label');
+        row.className = 'ip-state-row';
+        const name = document.createElement('span');
+        name.textContent = pretty(key);
+        const sel = document.createElement('select');
+        for (const v of values.get(key)) {
+          const o = document.createElement('option');
+          o.value = v;
+          o.textContent = pretty(v);
+          sel.appendChild(o);
+        }
+        sel.onchange = () => pick(key, sel.value);
+        row.append(name, sel);
+        stateBox.appendChild(row);
+        selects.set(key, sel);
+      }
+
+      show(current);
+
+      /**
+       * One property changed. Which combination is that?
+       *
+       * Usually the obvious one -- everything else as it was. But a
+       * blockstate is not always a full grid: a door's hinge only exists
+       * while it is a door, and some mods' blocks list combinations that
+       * others skip. So the answer is the state that has the new value and
+       * differs from where we are in as few other ways as possible, which
+       * for a full grid IS the obvious one.
+       */
+      function pick(key, value) {
+        const now = readState(current);
+        const want = { ...now, [key]: value };
+        const exact = writeState(want, order);
+        if (states.includes(exact)) return useState(exact);
+        let best = null, bestScore = -1;
+        for (const s of states) {
+          const p = readState(s);
+          if (p[key] !== value) continue;
+          let same = 0;
+          for (const k of order) if (p[k] != null && p[k] === now[k]) same++;
+          if (same > bestScore) { bestScore = same; best = s; }
+        }
+        if (best == null) { show(current); return; }     // nothing has it: put the dropdown back
+        useState(best);
+      }
+
+      /** Put the dropdowns where the state actually is. */
+      function show(state) {
+        const props = readState(state);
+        for (const [key, sel] of selects) if (props[key] != null) sel.value = props[key];
+      }
+
+      async function useState(state) {
+        current = state;
+        show(state);
         const next = await ipcRenderer.invoke('model:describe', {
           profileId: opts0.instanceId ?? null, version: opts0.version || null, overrides: !!info.overrides,
-          id: info.item.id, state: stateSel.value,
+          id: info.item.id, state,
         });
         if (next && !next.error) { desc = next; startOff(desc); paintParts(); paintVariants(); paintTint(); showTurn(); redraw(); }
-      };
+      }
+
     }
 
     let drawing = null;
@@ -969,6 +1098,11 @@
       .ip-cell.ip-wide { width:auto; grid-column:span 2; }
       .ip-circle-row { display:flex; align-items:center; gap:10px; margin:4px 0 0; font-size:12px; }
       .ip-circle-row input[type=range] { margin:0; }
+      /* One dropdown per block-state property, side by side while there is room. */
+      .ip-states { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:6px 10px; }
+      .ip-state-row { display:flex; flex-direction:column; gap:2px; font-size:11px; min-width:0; }
+      .ip-state-row span { opacity:0.7; }
+      .ip-state-row select { width:100%; min-width:0; }
       .ip-cell { width:56px; height:56px; border:2px solid var(--border-dark); border-radius:var(--border-radius); cursor:pointer; display:flex; align-items:center; justify-content:center; background:var(--menu-bg); overflow:hidden; }
       .ip-cell:hover { border-color:var(--accent); }
       .ip-cell img { width:100%; height:100%; object-fit:contain; padding:4px; image-rendering:auto; }
