@@ -141,10 +141,27 @@
   // those defaults are relative to the skin. The upper half dropped twelve
   // units the first time a rest pose was taken. Leaving the parts alone means
   // there is nothing for resetJoints to disagree with.
+  /** Is this still somewhere under that, however many groups deep? */
+  function stillUnder(node, root) {
+    for (let n = node; n; n = n.parent) if (n === root) return true;
+    return false;
+  }
+
   function makeWaist(player) {
     const skin = player && player.skin;
     if (!skin) return null;
-    if (skin.__waist && skin.__waist.parent === skin) return skin.__waist;
+    // Still rigged? Asked by ANCESTRY, not by parentage.
+    //
+    // A clip whose rig moved the waist's pivot turns it about a group hung
+    // between it and the skin, so the waist is then a grandchild rather than
+    // a child. Asking `parent === skin` called that "gone" -- and this runs
+    // every frame -- so every frame built a SECOND waist, moved the head,
+    // body and arms into it, and left the first one hanging off the pivot
+    // group with nothing under it. The rest pose is read once and still held
+    // the first one, so the clip went on writing the waist's rotation to an
+    // orphan: the one bone whose pivot had been moved was the one bone that
+    // stopped moving at all.
+    if (skin.__waist && stillUnder(skin.__waist, skin)) return skin.__waist;
     try {
       const group = emptyGroupLike(skin);
       const inner = emptyGroupLike(skin);

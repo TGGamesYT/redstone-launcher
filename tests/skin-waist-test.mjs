@@ -215,5 +215,63 @@ const offsetToSkin = (part, skin) => {
     "the next clip is usually an ordinary one, and it turns about the part");
 }
 
+// ── the waist, whose pivot was moved, frame after frame ──
+//
+// This is the one that was reported as "the modified pivot still isn't
+// modified", and the data was never the problem: the clip carried the moved
+// pivot and the shift came out right. What went wrong was downstream.
+//
+// A waist with a moved pivot hangs off the group that moves where it turns,
+// so it is a GRANDCHILD of the skin rather than a child. makeWaist asked
+// `parent === skin`, called that gone, and built a second waist -- every
+// frame, because the spin layer resets the pose on every one. The head, body
+// and arms were moved into each new waist in turn and the first one was left
+// hanging off the pivot group with nothing under it. The rest pose is read
+// once and still held that first one, so the clip went on writing the
+// waist's rotation to an orphan: the one bone whose pivot had been moved was
+// the one bone that stopped moving.
+{
+  setData({ pivots: { waist: [0, 12, 0], rightLeg: [-1.9, 12, 0] } });
+  const skin = new Skin();
+  const player = { skin };
+  const waist = makeWaist(player);
+  // idle.bored's waist, from the rig with the pivot at the neck.
+  const clip = { bones: { waist: { pivot: [0, 24, 0] }, rightLeg: { pivot: [-1.9, 0, 0] } } };
+
+  const shift = pivotShift(clip, "waist", 1, 1);
+  check("the moved waist is twelve higher", shift, [0, 12, 0],
+    "the hip line against the neck, which is what the second rig moved");
+  const turner = turnerFor(waist, shift);
+  check("and it is turned by a group at the neck",
+    [turner !== waist, turner.position.toArray()], [true, [0, 0, 0]],
+    "the waist sits at -12 and the shift puts it back to 0, which is the neck in skin space");
+
+  // Now play it: every frame resets the pose, which asks for the waist again.
+  let rebuilt = 0;
+  for (let f = 0; f < 5; f++) if (makeWaist(player) !== waist) rebuilt++;
+  check("the rig is not rebuilt behind the clip's back", rebuilt, 0,
+    "it was rebuilt on every single frame, which orphaned the waist the clip was writing to");
+  check("and the parts above the waist are still under the one being turned",
+    ABOVE_THE_WAIST.map(n => {
+      for (let p = skin[n]; p; p = p.parent) if (p === turner) return true;
+      return false;
+    }), [true, true, true, true]);
+  check("the figure has not moved while all that was going on",
+    Object.fromEntries(Object.keys(PARTS).map(n => [n, offsetToSkin(skin[n], skin)])),
+    Object.fromEntries(Object.entries(PARTS).map(([n, p]) => [n, p])),
+    "rigging a pivot must not reposition anything");
+
+  // And the legs, which the same clip turns about the feet.
+  check("a leg's moved pivot puts it at the floor",
+    pivotShift(clip, "rightLeg", 1, 1), [0, -12, 0],
+    "bbmodel y=0 is the feet; the leg normally turns at the hip");
+  const leg = skin.rightLeg;
+  const legTurner = turnerFor(leg, pivotShift(clip, "rightLeg", 1, 1));
+  check("so it is turned by a group down there",
+    legTurner.position.toArray(), [-1.9, -24, -0.1]);
+  check("and makeWaist still leaves the legs alone",
+    [makeWaist(player) === waist, offsetToSkin(leg, skin)], [true, [-1.9, -12, -0.1]]);
+}
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);

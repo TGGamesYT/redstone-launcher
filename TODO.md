@@ -60,11 +60,22 @@ started.
       did nothing.*
 - [x] **Same for "your colour": turning the gem and cog off does not remove
       them.** — *The same one fault, which is why it was reported twice.*
-- [ ] **The modified-pivot bbmodel exports still do not have the rotation
-      pivot modified.** — `playeranims.bbmodel` and
-      `playeranims_modifiedpivot.bbmodel` are now in the repository;
-      everything comes from the first except `idle.bored`, which comes from
-      the second.
+- [x] **The modified-pivot bbmodel exports still do not have the rotation
+      pivot modified.** — *The export was never the problem. `idle.bored`
+      carries its own pivots -- the waist at the neck instead of the hips,
+      the legs at the floor instead of the hips -- and the difference from
+      the baseline came out right: twelve up for the waist, twelve down for
+      the legs. What went wrong was a frame later. A waist with a moved
+      pivot hangs off the group that moves where it turns, so it is a
+      GRANDCHILD of the skin rather than a child; `makeWaist` asked whether
+      its parent was the skin, called it gone, and built a second waist --
+      on every frame, because the spin layer resets the pose on every one.
+      The head, body and arms were moved into each new waist in turn, while
+      the first one hung off the pivot group with nothing under it. The rest
+      pose is read once and still held that first one, so the clip went on
+      writing sixteen keyframes of waist rotation to an orphan: the one bone
+      whose pivot had been moved was the one bone that stopped moving at
+      all. It asks by ancestry now.*
 - [ ] **A Git tab on a dev instance whose project folder is a repository.** —
       pull, switch branch, switch to a commit, change the remote.
 - [ ] **Add a dev instance from a Git URL, by cloning it.** — system Git, or
