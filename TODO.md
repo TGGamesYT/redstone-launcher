@@ -76,13 +76,60 @@ started.
       writing sixteen keyframes of waist rotation to an orphan: the one bone
       whose pivot had been moved was the one bone that stopped moving at
       all. It asks by ancestry now.*
-- [ ] **A Git tab on a dev instance whose project folder is a repository.** —
-      pull, switch branch, switch to a commit, change the remote.
-- [ ] **Add a dev instance from a Git URL, by cloning it.** — system Git, or
-      the launcher's own if there is none, and signing in with GitHub where
-      the system Git is not already signed in somewhere.
-- [ ] **And when any of that changes the loader or the Minecraft version, the
-      launcher must notice and update what it shows.**
+- [x] **A Git tab on a dev instance whose project folder is a repository.** —
+      *First in the strip, not last: for somebody working on a mod, which
+      branch they are on is the first thing about the instance. It shows the
+      branch or the commit, what is uncommitted, how far ahead or behind,
+      the recent commits and the remote; it can pull, fetch, switch branch,
+      go back to a commit and change a remote's URL. What it deliberately
+      cannot do is lose work -- there is no reset, no clean, no force, no
+      commit and no push anywhere in the module, and the test fails the
+      build if one appears. A pull is `--ff-only` for the same reason: a
+      pull that cannot fast-forward wants a merge or a rebase, and both are
+      decisions about somebody's work. A remote branch is checked out as a
+      local one tracking it, because checking out `origin/thing` by name
+      leaves a detached head that quietly loses anything committed on it.*
+- [x] **Add a dev instance from a Git URL, by cloning it.** — *A second
+      developer row in the creator. It takes a full address, an ssh one, or
+      just `owner/name`; says where it will land before anything happens and
+      lets that be changed; reports git's own progress while it runs; and
+      ends in exactly the page picking a project off the disk ends in. The
+      Git it uses is the one on the PATH by preference -- that is the
+      person's own, with their keys, their name on their commits and their
+      credential helper -- and on Windows it can fetch MinGit for itself if
+      there is none, asked of git-for-windows rather than pinned to a URL
+      that goes stale. On Linux and macOS it says to install one instead,
+      because there is no portable build worth shipping and both have one a
+      package manager away.*
+
+      *Signing in: where the system Git has a credential helper nothing is
+      needed and the launcher asks for nothing. Where it does not, it takes
+      a GitHub token, kept for github.com alone and never synced -- and
+      never on a command line, because argv is readable by anything on the
+      machine, so it goes in the environment the way GitHub's own runner
+      does it. A "Sign in with GitHub" button is the one thing here I could
+      not build: the device flow needs an OAuth application registered to
+      this launcher and there is not one. Register one and it is an
+      afternoon's work.*
+- [x] **And when any of that changes the loader or the Minecraft version, the
+      launcher must notice and update what it shows.** — *Every operation
+      that can move HEAD ends by reading the project again, and writes down
+      what changed: the Minecraft version, the loader, the mod id and the
+      run folder. The profile is saved, every window is told, and the tab
+      says in words what the project has become rather than leaving somebody
+      to find out at the next launch. Checked both ways in the running
+      launcher on a repository whose two branches are Fabric 1.21.1 and
+      NeoForge 1.20.1: clicking the branch changes the heading above the
+      tabs there and then.*
+
+      *One thing found on the way: the instance view clears its detail panel
+      and then builds it with several awaits in between, and it is re-run
+      from `profiles-updated`, which fires for all sorts of reasons. Two
+      runs interleaving each cleared what the other was half-way through
+      filling and then both appended their own -- two tab strips, two sets
+      of contents. It was always possible; one more await made it happen
+      every time. Each render takes a number now and stops if it is no
+      longer the newest.*
 
 ## 0. Round 57
 

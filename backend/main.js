@@ -27,6 +27,7 @@ import { deliverToEveryFrame } from './ipcframes.js';
 import remod from './remod.js';
 import { convertSkinPixels, slimFromPixels } from './skin-model.js';
 import shortcuts from './shortcuts.js';
+import git from './git.js';
 import totem from './totem.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
@@ -15015,6 +15016,240 @@ ipcMain.handle("project:pick", async () => {
   });
   if (r.canceled || !r.filePaths.length) return { canceled: true };
   return modProjectInfo(r.filePaths[0]);
+});
+
+// ── A mod project that came out of a repository ─────────────────────────────
+//
+// Nine dev instances out of ten are somebody's clone, so pulling, changing
+// branch or going back to a commit belongs in the launcher next to the
+// project rather than in a terminal somewhere else. backend/git.js has the
+// rules about what may be run; this is about which folder, whose token, and
+// what the launcher has to notice afterwards.
+//
+// What it has to notice is the point of the last part of this. A branch is
+// not only different code: it can be a different Minecraft version, a
+// different loader, a different mod id and a different icon, all of which
+// the instance SHOWS and one of which decides how it launches. So every
+// operation that can move HEAD ends by reading the project again and
+// writing down what changed, and the instance list is told. Without it, a
+// checkout from 1.21-fabric to 1.20-neoforge leaves an instance that still
+// says Fabric 1.21 and tries to launch as one.
+
+/** Where the project of this instance is, if it is a dev instance at all. */
+async function projectRootOf(profileId) {
+  const p = (await loadProfiles()).find(x => String(x.id) === String(profileId));
+  if (!p || !p.project || !p.project.root) return null;
+  return { profile: p, root: String(p.project.root) };
+}
+
+const GIT_TOKEN_KEY = "gitGithubToken";   // secret-shaped on purpose: it never syncs
+const gitToken = () => settings.get(GIT_TOKEN_KEY, "") || null;
+const PROJECTS_DIR = () => path.join(dataDir, "projects");
+
+function gitBin() {
+  const { bin, how } = git.whichGit(dataDir);
+  return { bin, how };
+}
+
+/**
+ * Read the project again and write down anything that changed.
+ *
+ * Only the facts the instance shows or launches by, and only when they
+ * really did change -- writing the profile on every pull would put the
+ * instance list through a rebuild for nothing.
+ */
+async function afterProjectChanged(profileId) {
+  const found = await projectRootOf(profileId);
+  if (!found) return null;
+  const info = modProjectInfo(found.root);
+  if (!info || !info.success) return null;
+  const profiles = await loadProfiles();
+  const p = profiles.find(x => String(x.id) === String(profileId));
+  if (!p) return null;
+  const changed = [];
+  const say = (what, from, to) => changed.push({ what, from, to });
+  if (info.version && info.version !== p.version) { say("Minecraft version", p.version, info.version); p.version = info.version; }
+  if (info.knownLoader && info.loader && info.loader !== p.loader) { say("loader", p.loader, info.loader); p.loader = info.loader; }
+  const project = { ...(p.project || {}) };
+  if (info.dir && info.dir !== project.dir) { project.dir = info.dir; changed.push({ what: "run folder", from: p.project && p.project.dir, to: info.dir }); }
+  if (info.modId && info.modId !== project.modId) { say("mod id", project.modId, info.modId); project.modId = info.modId; }
+  p.project = project;
+  // The icon only when the instance is still wearing the mod's own: a
+  // picture somebody chose for themselves is theirs, and a branch is no
+  // reason to take it off them.
+  if (info.icon && p.icon && p.icon !== info.icon && p.iconFromProject) p.icon = info.icon;
+  if (!changed.length) return { changed: [], info };
+  saveProfiles(profiles);
+  broadcastProfiles(profiles);
+  return { changed, info };
+}
+
+ipcMain.handle("git:available", async () => {
+  const { bin, how } = gitBin();
+  return {
+    success: true,
+    bin: bin ? path.basename(bin) : null,
+    how,                                   // "system", "own", or null
+    advice: bin ? null : git.noGitAdvice(),
+    hasToken: !!gitToken(),
+  };
+});
+
+ipcMain.handle("git:setToken", (event, { token } = {}) => {
+  const clean = String(token || "").trim();
+  if (!clean) { settings.delete ? settings.delete(GIT_TOKEN_KEY) : settings.set(GIT_TOKEN_KEY, ""); return { success: true, hasToken: false }; }
+  settings.set(GIT_TOKEN_KEY, clean);
+  return { success: true, hasToken: true };
+});
+
+ipcMain.handle("git:info", async (event, { profileId, dir } = {}) => {
+  const { bin } = gitBin();
+  if (!bin) return { success: true, git: false, advice: git.noGitAdvice() };
+  const where = dir || ((await projectRootOf(profileId)) || {}).root;
+  if (!where) return { success: false, error: "That instance is not a mod project" };
+  try {
+    const r = await git.info(bin, where);
+    if (!r.repo) return { success: true, git: true, repo: false, dir: where };
+    const b = await git.branches(bin, r.dir);
+    return { success: true, git: true, ...r, branches: b, hasToken: !!gitToken() };
+  } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+});
+
+/**
+ * One shape for every operation that touches a repository.
+ *
+ * All of them do the same four things: find the git, find the folder, run
+ * the thing, and then look at what the project has become. Doing that in
+ * one place is what stops "pull also re-reads the project but checkout
+ * forgot to" from ever being true.
+ */
+async function gitOperation(profileId, dir, work) {
+  const { bin } = gitBin();
+  if (!bin) return { success: false, error: "There is no Git on this computer.", advice: git.noGitAdvice() };
+  const found = dir ? { root: dir } : await projectRootOf(profileId);
+  if (!found) return { success: false, error: "That instance is not a mod project" };
+  const top = await git.topLevel(bin, found.root);
+  if (!top) return { success: false, error: "That project is not in a Git repository" };
+  let origin = null;
+  try {
+    const r = await git.run(bin, ["remote", "get-url", "origin"], { cwd: top });
+    if (r.ok) origin = r.out.trim();
+  } catch { /* no origin; a token is no use anyway */ }
+  const r = await work(bin, top, { token: gitToken(), url: origin });
+  const after = r && r.ok && profileId ? await afterProjectChanged(profileId) : null;
+  return {
+    success: !!(r && r.ok),
+    // git writes its errors for a person to read; they are shown as it
+    // wrote them rather than replaced with a sentence of our own.
+    error: r && r.ok ? null : ((r && (r.err || "").trim()) || "Git could not do that"),
+    output: ((r && r.out) || "") + ((r && r.err) || ""),
+    changed: (after && after.changed) || [],
+    project: (after && after.info) || null,
+  };
+}
+
+ipcMain.handle("git:fetch", (e, { profileId, dir } = {}) =>
+  gitOperation(profileId, dir, (bin, top, opts) => git.fetchAll(bin, top, opts)));
+
+ipcMain.handle("git:pull", (e, { profileId, dir } = {}) =>
+  gitOperation(profileId, dir, (bin, top, opts) => git.pull(bin, top, opts)));
+
+ipcMain.handle("git:checkout", (e, { profileId, dir, ref, asBranch } = {}) =>
+  gitOperation(profileId, dir, (bin, top, opts) => git.checkout(bin, top, ref, { ...opts, asBranch: !!asBranch })));
+
+ipcMain.handle("git:setRemote", (e, { profileId, dir, name, url } = {}) =>
+  gitOperation(profileId, dir, (bin, top, opts) => git.setRemote(bin, top, name, url, opts)));
+
+// Where a clone would land, so the page can show it before anybody commits
+// to anything.
+ipcMain.handle("git:cloneTarget", (event, { url, parent } = {}) => {
+  const read = git.readCloneUrl(url);
+  if (!read.ok) return { success: false, error: read.error };
+  const into = parent || PROJECTS_DIR();
+  const dest = path.join(into, read.name);
+  let taken = false;
+  try { taken = fs.existsSync(dest) && fs.readdirSync(dest).length > 0; } catch { taken = false; }
+  return { success: true, url: read.url, name: read.name, host: read.host, parent: into, dest, taken };
+});
+
+ipcMain.handle("git:pickParent", async () => {
+  const r = await dialog.showOpenDialog({
+    title: "Where should the project be cloned to?",
+    defaultPath: PROJECTS_DIR(),
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (r.canceled || !r.filePaths.length) return { canceled: true };
+  return { success: true, parent: r.filePaths[0] };
+});
+
+ipcMain.handle("git:clone", async (event, { url, parent, name, branch } = {}) => {
+  const { bin } = gitBin();
+  if (!bin) return { success: false, error: "There is no Git on this computer.", advice: git.noGitAdvice() };
+  const into = parent || PROJECTS_DIR();
+  try { fs.mkdirSync(into, { recursive: true }); }
+  catch (e) { return { success: false, error: "That folder could not be made: " + e.message }; }
+  const read = git.readCloneUrl(url);
+  // Cloning says how it is going, because it is the one operation here that
+  // can take minutes and a bar that does not move looks like a hang.
+  const r = await git.clone(bin, url, into, {
+    name, branch,
+    token: gitToken(),
+    url: read.ok ? read.url : null,
+    onLine: (line) => { try { event.sender.send("git-progress", { line }); } catch { /* the page went */ } },
+  });
+  if (!r.ok) {
+    const err = (r.err || "").trim();
+    return {
+      success: false,
+      error: err || "It could not be cloned",
+      // The one failure worth naming, because the answer to it is a button
+      // rather than a different URL.
+      needsAuth: /Authentication failed|could not read Username|terminal prompts disabled|repository ['"]?.*['"]? not found/i.test(err),
+      host: r.host || (read.ok ? read.host : null),
+    };
+  }
+  // What was cloned, read as a mod project -- the whole point of cloning it
+  // here. A repository that is not one is still cloned and still said so.
+  const info = modProjectInfo(r.dest);
+  return { success: true, dir: r.dest, project: info && info.success ? info : null, error: info && info.success ? null : (info && info.error) || null };
+});
+
+/**
+ * Fetch a Git of the launcher's own.
+ *
+ * Windows only, and MinGit only: it is the build git-for-windows publishes
+ * for being unzipped into a folder, and there is no equivalent worth
+ * shipping for Linux or macOS where one is a package manager away.
+ */
+ipcMain.handle("git:install", async (event) => {
+  if (process.platform !== "win32") {
+    return { success: false, error: git.noGitAdvice().say };
+  }
+  const say = (line) => { try { event.sender.send("git-progress", { line }); } catch { /* gone */ } };
+  say("Asking git-for-windows which version is current…");
+  const release = await git.latestMinGit();
+  const asset = git.minGitAsset(release);
+  if (!asset || !asset.browser_download_url) {
+    return { success: false, error: "The download could not be found. Install Git yourself and the launcher will use it." };
+  }
+  const home = path.join(dataDir, "git");
+  const zipAt = path.join(dataDir, "git-download.zip");
+  try {
+    say(`Downloading ${asset.name}…`);
+    await downloadFile(asset.browser_download_url, zipAt);
+    say("Unpacking it…");
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.mkdirSync(home, { recursive: true });
+    new AdmZip(zipAt).extractAllTo(home, true);
+    fs.rmSync(zipAt, { force: true });
+  } catch (e) {
+    try { fs.rmSync(zipAt, { force: true }); } catch { /* nothing to clean */ }
+    return { success: false, error: "It could not be fetched: " + (e && e.message || e) };
+  }
+  const bin = git.ownGitPath(dataDir);
+  if (!bin) return { success: false, error: "It was downloaded but there is no git.exe in it." };
+  say("Done.");
+  return { success: true, bin: path.basename(bin), how: "own" };
 });
 
 // ── Launching one ───────────────────────────────────────────────────────────

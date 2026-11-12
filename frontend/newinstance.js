@@ -68,6 +68,22 @@
         color:var(--text-color); border-radius:var(--border-radius); cursor:pointer; font-family:var(--text-font); }
       .ni-empty { opacity:0.7; padding:24px 4px; font-size:13px; line-height:1.6; }
 
+      /* Cloning a project: a form rather than a list of things to click. */
+      .ni-clone { display:flex; flex-direction:column; padding:4px 2px; }
+      .ni-clone label, .ni-token label { font-size:12px; opacity:0.75; margin-bottom:4px; display:block; }
+      .ni-clone input, .ni-token input { width:100%; box-sizing:border-box; padding:8px 10px;
+        background:var(--menu-bg); color:var(--text-color);
+        border:1px solid var(--border-dark); border-radius:var(--border-radius);
+        font-family:var(--text-font); font-size:13px; }
+      .ni-where { font-size:12px; opacity:0.75; margin-top:6px; display:flex; gap:10px;
+        align-items:baseline; flex-wrap:wrap; word-break:break-all; }
+      .ni-note { font-size:12px; opacity:0.78; line-height:1.55; }
+      .ni-linkish { background:none; border:none; padding:0; cursor:pointer; font-size:12px;
+        color:var(--base-color); text-decoration:underline; font-family:var(--text-font); }
+      .ni-log { font-family:ui-monospace, Consolas, monospace; font-size:11px; line-height:1.5;
+        white-space:pre-wrap; margin:10px 0 0; padding:8px 10px; max-height:180px; overflow:auto;
+        background:var(--very-dark); border-radius:var(--border-radius); }
+
       /* The version / loader cards: the wiki banner behind, the version's own
          rendered icon on top of it, the name under that. */
       /* The version and loader pages are the whole job, not a dialog off to
@@ -676,6 +692,16 @@
             desc: 'A Gradle mod project on this computer. The instance is its run folder, and playing it runs the project.',
             tag: 'Developer',
             onClick: () => { close(); openProject(opts, reopen); },
+          });
+          // And one that is not on this computer yet. The same thing at the
+          // end of it -- a dev instance pointed at a Gradle project -- with
+          // the clone done first.
+          row(list, {
+            icon: 'cloud_download',
+            title: 'A mod project from Git',
+            desc: 'Clone a repository and make a dev instance of what comes out of it.',
+            tag: 'Developer',
+            onClick: () => { close(); openClone(opts, reopen); },
           });
         }).catch(() => { });
       }
@@ -1318,13 +1344,197 @@
       await uiAlert(info.error || 'That folder is not a Gradle project.', 'Mod project');
       return openProject(opts, back);
     }
+    // From here, picking a project off the disk and cloning one are the same
+    // thing: see finishProject, which both end in.
+    finishProject(info, opts, back);
+  }
+
+  // ── A mod project that is not on this computer yet ────────────────────────
+  //
+  // The same thing at the end of it as the step above -- a dev instance
+  // pointed at a Gradle project -- with the clone done first. Which is why
+  // it hands straight over to that step's own finishing page once the clone
+  // lands: there is one description of what a dev instance is, and it is
+  // not in here.
+  //
+  // What is in here is the three ways this goes wrong. Git may not be on the
+  // computer at all, which on Windows is a download and elsewhere is a
+  // sentence about a package manager. The repository may be private, which
+  // needs a sign-in and not a different address. And the clone may produce
+  // something that is not a mod project, which is worth saying plainly
+  // rather than failing at the next step with a Gradle error.
+  async function openClone(opts, back) {
+    ensureStyle();
+    const { card, list, close } = shell(
+      'Clone a mod project',
+      'Paste a repository and it will be cloned, then set up as a dev instance.',
+      { onBack: back });
+
+    const have = await ipcRenderer.invoke('git:available').catch(() => null);
+    if (!have || !have.bin) {
+      const advice = (have && have.advice) || {};
+      const box = document.createElement('div');
+      box.className = 'ni-note';
+      box.textContent = 'There is no Git on this computer. ' + (advice.say || '');
+      list.appendChild(box);
+      if (advice.canFetch) {
+        const get = document.createElement('button');
+        get.textContent = 'Get one';
+        get.style.marginTop = '10px';
+        const out = document.createElement('pre');
+        out.className = 'ni-log';
+        out.style.display = 'none';
+        get.onclick = async () => {
+          get.disabled = true;
+          out.style.display = '';
+          const onLine = (_e, m) => { out.textContent += (m.line || '') + '\n'; out.scrollTop = out.scrollHeight; };
+          ipcRenderer.on('git-progress', onLine);
+          const g = await ipcRenderer.invoke('git:install');
+          ipcRenderer.removeListener('git-progress', onLine);
+          if (g && g.success) { close(); openClone(opts, back); }
+          else { get.disabled = false; out.textContent += ((g && g.error) || 'It could not be fetched') + '\n'; }
+        };
+        list.appendChild(get);
+        list.appendChild(out);
+      }
+      return;
+    }
+
+    const form = document.createElement('div');
+    form.className = 'ni-clone';
+    form.innerHTML = `
+      <label>The repository</label>
+      <input type="text" class="ni-url" spellcheck="false"
+        placeholder="https://github.com/someone/their-mod   ·   or just someone/their-mod">
+      <div class="ni-where"></div>
+      <label style="margin-top:10px;">A branch, if you want one in particular</label>
+      <input type="text" class="ni-branch" spellcheck="false" placeholder="leave this empty for the default branch">
+      <pre class="ni-log" style="display:none"></pre>`;
+    list.appendChild(form);
+
+    const urlEl = form.querySelector('.ni-url');
+    const branchEl = form.querySelector('.ni-branch');
+    const whereEl = form.querySelector('.ni-where');
+    const logEl = form.querySelector('.ni-log');
+    let target = null;
+
+    // Where it will land, said before anybody presses anything -- a clone
+    // that appears in a folder you did not expect is a folder you then have
+    // to go and find.
+    const look = async () => {
+      const raw = urlEl.value.trim();
+      if (!raw) { whereEl.textContent = ''; target = null; return; }
+      const r = await ipcRenderer.invoke('git:cloneTarget', { url: raw, parent: target && target.parent }).catch(() => null);
+      if (!r || !r.success) { whereEl.textContent = (r && r.error) || ''; target = null; return; }
+      target = { ...r, parent: (target && target.parent) || r.parent };
+      whereEl.innerHTML = '';
+      const line = document.createElement('div');
+      line.textContent = (r.taken ? 'There is already something in ' : 'It will be cloned to ') + r.dest;
+      whereEl.appendChild(line);
+      const pick = document.createElement('button');
+      pick.className = 'ni-linkish';
+      pick.textContent = 'Somewhere else…';
+      pick.onclick = async () => {
+        const p = await ipcRenderer.invoke('git:pickParent').catch(() => null);
+        if (!p || !p.success) return;
+        target = { ...(target || {}), parent: p.parent };
+        look();
+      };
+      whereEl.appendChild(pick);
+    };
+    urlEl.addEventListener('input', () => { clearTimeout(urlEl.__t); urlEl.__t = setTimeout(look, 250); });
+
+    const actions = card.querySelector('.ni-actions');
+    const go = document.createElement('button');
+    go.textContent = 'Clone it';
+    go.style.background = 'var(--base-color)';
+    actions.appendChild(go);
+
+    go.onclick = async () => {
+      const raw = urlEl.value.trim();
+      if (!raw) return urlEl.focus();
+      go.disabled = true;
+      go.textContent = 'Cloning…';
+      logEl.style.display = '';
+      logEl.textContent = '';
+      const onLine = (_e, m) => { logEl.textContent += (m.line || '') + '\n'; logEl.scrollTop = logEl.scrollHeight; };
+      ipcRenderer.on('git-progress', onLine);
+      let r = null;
+      try {
+        r = await ipcRenderer.invoke('git:clone', {
+          url: raw,
+          parent: target && target.parent,
+          branch: branchEl.value.trim() || null,
+        });
+      } catch (e) { r = { success: false, error: e.message }; }
+      ipcRenderer.removeListener('git-progress', onLine);
+      go.disabled = false;
+      go.textContent = 'Clone it';
+
+      if (!r || !r.success) {
+        logEl.textContent += '\n' + ((r && r.error) || 'It could not be cloned') + '\n';
+        if (r && r.needsAuth) askForToken(form, logEl, () => go.click());
+        return;
+      }
+      if (!r.project) {
+        logEl.textContent += '\nIt was cloned to ' + r.dir
+          + '\nbut there is no Gradle mod project in it'
+          + (r.error ? ': ' + r.error : '.') + '\n';
+        return;
+      }
+      // From here it is exactly a project picked off the disk.
+      close();
+      finishProject(r.project, opts, () => openClone(opts, back));
+    };
+
+    setTimeout(() => urlEl.focus(), 0);
+  }
+
+  /**
+   * The sign-in, offered only when the failure was actually a sign-in.
+   *
+   * Not a "Sign in with GitHub" button: that needs an OAuth application
+   * registered to this launcher, and there is not one. A token is the thing
+   * anybody can make in a minute and is what the launcher can honestly
+   * offer today. It is kept for github.com alone and never synced.
+   */
+  function askForToken(form, logEl, retry) {
+    if (form.querySelector('.ni-token')) return;
+    const box = document.createElement('div');
+    box.className = 'ni-token';
+    // GitHub answers "not found" for a repository that is private as well as
+    // for one that does not exist -- it will not tell a stranger which --
+    // so this offers the sign-in without claiming to know which it was.
+    box.innerHTML = `
+      <label style="margin-top:12px;">Either that repository is private, or there is no such repository</label>
+      <div class="ni-note" style="margin:4px 0 8px;">
+        GitHub gives the same answer for both, so check the address first. If it is private and Git on
+        this computer is not signed in, make a token at
+        GitHub → Settings → Developer settings → Personal access tokens, with access to the
+        repository's contents, and paste it here. It stays on this computer and is never synced.
+      </div>
+      <input type="password" class="ni-pat" spellcheck="false" placeholder="github_pat_…  or  ghp_…">`;
+    const save = document.createElement('button');
+    save.textContent = 'Save it and try again';
+    save.style.marginTop = '8px';
+    save.onclick = async () => {
+      const token = box.querySelector('.ni-pat').value.trim();
+      if (!token) return;
+      await ipcRenderer.invoke('git:setToken', { token });
+      logEl.textContent += '\nSigned in. Trying again…\n';
+      retry();
+    };
+    box.appendChild(save);
+    form.appendChild(box);
+  }
+
+  /** The last page of the project flow, shared by picking one and cloning one. */
+  function finishProject(info, opts, back) {
     const project = { root: info.root, dir: info.dir, task: info.task, modId: info.modId };
     const finish = (version) => pickFinalize({
       version,
       loader: info.loader,
       project, projectInfo: info,
-      // The mod's own picture, which is what it would have once it was
-      // built -- so a dev instance wears the mod's icon from the start.
       prefill: { name: info.modId || info.name, icon: info.icon || null },
       onBack: back,
       onChangeVersion: () => pickVersion({

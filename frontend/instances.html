@@ -2044,8 +2044,22 @@
     }
 
     let lastShownInstance = null;
+    // Which render of this page is the current one.
+    //
+    // renderListOrDetail clears the detail panel and then builds it, with
+    // several awaits in between -- and it is called from 'profiles-updated',
+    // which fires for all sorts of reasons and can easily land while a
+    // render is still waiting on one of them. Two of them interleaving each
+    // cleared the panel the other was half-way through filling and then both
+    // appended their own: two tab strips, two sets of contents, one on top
+    // of the other. Each render takes a number, and a render that is no
+    // longer the newest stops where it is rather than finishing into a panel
+    // that belongs to somebody else.
+    let renderSeq = 0;
 
     async function renderListOrDetail() {
+      const myRender = ++renderSeq;
+      const overtaken = () => myRender !== renderSeq;
       const urlParams = new URLSearchParams(window.location.search);
       const instanceId = urlParams.get('i');
       if (String(instanceId) !== String(lastShownInstance)) {
@@ -2665,7 +2679,20 @@
         tabsRow.className = "instance-tabs-row tabstrip";
         instanceDetail.appendChild(tabsRow);
 
+        // A dev instance whose project folder is a clone gets a Git tab, in
+        // front of the rest: for somebody working on a mod, which branch
+        // they are on is the first thing about the instance and not the
+        // ninth. Asked of the main process rather than guessed from a .git
+        // folder, because a project can sit anywhere inside a repository
+        // and only git knows where the top of one is.
         const tabs = ["Logs", "Resourcepacks", "Mods", "Shaderpacks", "Worlds", "Servers", "Screenshots", "Files"];
+        if (profile.project && profile.project.root) {
+          try {
+            const g = await ipcRenderer.invoke("git:info", { profileId: profile.id });
+            if (g && g.success && g.git && g.repo) tabs.unshift("Git");
+          } catch { /* no git, no tab */ }
+          if (overtaken()) return;
+        }
         const tabButtons = {};
         const tabContent = document.createElement("div");
         tabContent.classList.add("instanceView-scrolly");
@@ -4386,10 +4413,13 @@
           // resource pack, vanilla included, so hiding the tab until one exists
           // left no way to add the first one.
           const isModded = (profile.loader || "vanilla").toLowerCase() !== "vanilla";
-          let alwaysVisible = ["logs", "servers", "worlds", "files", "resourcepacks"].includes(tName)
+          // Git is only in the list at all when the project really is a
+          // clone, so by the time it is here the question has been answered.
+          let alwaysVisible = ["logs", "servers", "worlds", "files", "resourcepacks", "git"].includes(tName)
             || (tName === "mods" && isModded);
           let exists = alwaysVisible ? true
             : await ipcRenderer.invoke("check-instance-tab", { profileId: profile.id, tab: tName });
+          if (overtaken()) return;
           if (!exists && !alwaysVisible) continue;
 
           const btn = document.createElement("button");
@@ -5320,6 +5350,20 @@
               if (!ensureStillActive()) return;
               tabContent.appendChild(ul);
 
+            } else if (tab.toLowerCase() === "git") {
+              logsEl.style.display = "none";
+              tabContent.innerHTML = "";
+              if (window.fitHeights) window.fitHeights();
+              // A pull or a checkout can leave the project a different
+              // Minecraft version, a different loader or a different mod
+              // altogether. The main process writes that onto the profile
+              // and broadcasts it; redrawing here is what puts the new
+              // version and loader in the heading above these tabs without
+              // anybody having to go out and come back in.
+              window.GitTab.mount(tabContent, {
+                profileId: profile.id,
+                onChanged: () => { try { renderListOrDetail(); } catch { /* the page moved on */ } },
+              });
             } else if (tab.toLowerCase() === "files") {
               logsEl.style.display = "none";
               tabContent.innerHTML = "";
@@ -5753,6 +5797,7 @@
   </script>
 
   <script src="filetree.js"></script>
+  <script src="gittab.js"></script>
   <script src="filebrowser.js"></script>
   <script src="remod.js"></script>
   <script src="updateall.js"></script>
