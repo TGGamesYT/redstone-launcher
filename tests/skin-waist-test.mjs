@@ -53,11 +53,9 @@ fs.writeFileSync(modFile,
     .replace(/^function makeWaist/m, "export function makeWaist")
     .replace(/^function emptyGroupLike/m, "export function emptyGroupLike")
     .replace(/^function pivotShift/m, "export function pivotShift")
-    .replace(/^function turnerFor/m, "export function turnerFor")
-    .replace(/^function pivotGroupFor/m, "export function pivotGroupFor")
-    .replace(/^function clearPivotGroup/m, "export function clearPivotGroup"));
+    .replace(/^function pivotOffset/m, "export function pivotOffset"));
 const mod = await import("file://" + modFile + "?v=" + Date.now());
-const { makeWaist, WAIST_Y, ABOVE_THE_WAIST, pivotShift, turnerFor, setData } = mod;
+const { makeWaist, WAIST_Y, ABOVE_THE_WAIST, pivotShift, pivotOffset, setData } = mod;
 
 // ── a stand-in for three.js, as far as this function uses it ──
 //
@@ -185,34 +183,31 @@ const offsetToSkin = (part, skin) => {
     pivotShift({ bones: { rightArm: { pivot: [-2, 22, 3] } } }, "rightArm", -1, -1), [-3, 0, -3],
     "a pivot is a point in the same space the rotations are in");
 
-  // And the rigging it builds.
-  const skin = new Skin();
-  const arm = skin.rightArm;
-  const home = arm.parent;
-  const shift = [0, -10, 0];
-  const turner = turnerFor(arm, shift);
-
-  check("the part is turned by a group, not by itself", turner !== arm, true);
-  check("which sits where the clip says the bone turns",
-    turner.position.toArray(), [-5, -12, 0],
-    "the part's own place plus the shift: an arm at -2 with its pivot ten lower");
-  check("and the part has not moved a millimetre",
-    offsetToSkin(arm, skin), [-5, -2, 0],
-    "putting a pivot back must not reposition the limb it belongs to");
-  check("its own position is untouched too",
-    arm.position.toArray(), PARTS.rightArm,
-    "resetJoints() writes this back, so anything else would be undone");
-
-  check("asking twice gives the same rigging", turnerFor(arm, [0, -10, 0]) === turner, true);
-  const other = turnerFor(arm, [0, -4, 0]);
-  check("a different shift is rebuilt rather than added to",
-    [other !== turner, offsetToSkin(arm, skin)], [true, [-5, -2, 0]],
-    "two clips with two pivots must not stack their groups on each other");
-
-  check("and a clip with no shift puts the part back where it was",
-    [turnerFor(arm, null) === arm, arm.parent === home, offsetToSkin(arm, skin)],
-    [true, true, [-5, -2, 0]],
-    "the next clip is usually an ordinary one, and it turns about the part");
+  // And what it does to the part. A moved pivot is a correction to the
+  // part's position, worked out from its rotation: whatever the rotation,
+  // the pivot point itself must not move.
+  const turnAbout = (rot, shift) => {
+    // Where the pivot point ends up, relative to the part's rest origin:
+    // origin + offset + R*shift, which should equal shift.
+    const off = pivotOffset(rot[0], rot[1], rot[2], shift);
+    const [x, y, z] = shift;
+    // R*shift, the way three.js would (XYZ: Rx*Ry*Rz).
+    let [a, b, c] = [x, y, z];
+    let co = Math.cos(rot[2]), si = Math.sin(rot[2]); [a, b] = [a * co - b * si, a * si + b * co];
+    co = Math.cos(rot[1]); si = Math.sin(rot[1]); [a, c] = [a * co + c * si, -a * si + c * co];
+    co = Math.cos(rot[0]); si = Math.sin(rot[0]); [b, c] = [b * co - c * si, b * si + c * co];
+    return [off[0] + a, off[1] + b, off[2] + c].map(n => +n.toFixed(6));
+  };
+  check("turned, the moved pivot stays exactly where it was",
+    turnAbout([0.7, -0.3, 1.1], [0, -10, 0]), [0, -10, 0],
+    "which is what turning about a point means");
+  check("and so it does for a pivot off to one side",
+    turnAbout([-0.4, 0.9, 0.2], [3, 5, -2]), [3, 5, -2]);
+  check("not turned, the part is not moved at all",
+    pivotOffset(0, 0, 0, [0, -10, 0]).map(n => Math.abs(+n.toFixed(9))), [0, 0, 0],
+    "an ordinary pose must cost nothing");
+  check("and with no moved pivot there is nothing to add",
+    pivotOffset(0.5, 0.5, 0.5, null), null);
 }
 
 // ── the waist, whose pivot was moved, frame after frame ──
@@ -241,36 +236,38 @@ const offsetToSkin = (part, skin) => {
   const shift = pivotShift(clip, "waist", 1, 1);
   check("the moved waist is twelve higher", shift, [0, 12, 0],
     "the hip line against the neck, which is what the second rig moved");
-  const turner = turnerFor(waist, shift);
-  check("and it is turned by a group at the neck",
-    [turner !== waist, turner.position.toArray()], [true, [0, 0, 0]],
-    "the waist sits at -12 and the shift puts it back to 0, which is the neck in skin space");
 
-  // Now play it: every frame resets the pose, which asks for the waist again.
+  // Play it: every frame resets the pose, which asks for the waist again.
   let rebuilt = 0;
   for (let f = 0; f < 5; f++) if (makeWaist(player) !== waist) rebuilt++;
-  check("the rig is not rebuilt behind the clip's back", rebuilt, 0,
-    "it was rebuilt on every single frame, which orphaned the waist the clip was writing to");
-  check("and the parts above the waist are still under the one being turned",
-    ABOVE_THE_WAIST.map(n => {
-      for (let p = skin[n]; p; p = p.parent) if (p === turner) return true;
-      return false;
-    }), [true, true, true, true]);
-  check("the figure has not moved while all that was going on",
-    Object.fromEntries(Object.keys(PARTS).map(n => [n, offsetToSkin(skin[n], skin)])),
-    Object.fromEntries(Object.entries(PARTS).map(([n, p]) => [n, p])),
-    "rigging a pivot must not reposition anything");
+  check("the rig is not rebuilt behind the clip's back", rebuilt, 0);
 
-  // And the legs, which the same clip turns about the feet.
+  // The waist turned forward a little, about the neck rather than the hips:
+  // the hips swing, the neck stays put.
+  const off = pivotOffset(-0.08, 0, 0, shift);
+  check("turned about the neck, the hips are what move",
+    [+off[1].toFixed(2), +off[2].toFixed(2)], [0.04, 0.96],
+    "measured in the running launcher too: the neck stays at 0,0,0 and the hip swings forward by just under a unit at -0.08 rad");
+
   check("a leg's moved pivot puts it at the floor",
     pivotShift(clip, "rightLeg", 1, 1), [0, -12, 0],
     "bbmodel y=0 is the feet; the leg normally turns at the hip");
-  const leg = skin.rightLeg;
-  const legTurner = turnerFor(leg, pivotShift(clip, "rightLeg", 1, 1));
-  check("so it is turned by a group down there",
-    legTurner.position.toArray(), [-1.9, -24, -0.1]);
-  check("and makeWaist still leaves the legs alone",
-    [makeWaist(player) === waist, offsetToSkin(leg, skin)], [true, [-1.9, -12, -0.1]]);
+}
+
+// ── and the clips the skins page actually plays get it ────────────────────
+//
+// The pivot used to be applied in playClip only, by hanging the part off an
+// extra group. The skins page plays everything through the conductor, which
+// evaluates clips with evalClip and never went near those groups -- so the
+// moved pivot did nothing where anybody could see it.
+{
+  const evalClip = src.slice(src.indexOf("  function evalClip("), src.indexOf("  const lerpPose"));
+  check("the conductor's own clip evaluation applies the moved pivot",
+    /pivotOffset\(e\.r\[0\], e\.r\[1\], e\.r\[2\], pivotShift\(clip, r\.name, sx, sz\)\)/.test(evalClip), true,
+    "it was only ever done in playClip, which the skins page does not use");
+  const play = src.slice(src.indexOf("  function playClip("), src.indexOf("  // ── The idle, evaluated rather than delegated"));
+  check("and playClip draws the very same pose rather than its own",
+    /applyPose\(rest, evalClip\(rest, clip, t\)\)/.test(play), true);
 }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

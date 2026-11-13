@@ -9,6 +9,28 @@ started.
 
 ---
 
+## 0. Round 61
+
+- [x] **Don't use the skin mirrors.** — *Taken out again. For a player they
+      have not already cached they answer with a default skin rather than an
+      error, which would then be drawn and remembered as that player, and a
+      launcher's worth of lookups is what gets them rate-limiting. What is
+      left when Mojang will not answer is the truth rather than a copy of it:
+      the skin this launcher already has on disk from the last time Mojang
+      did answer, and the account's own profile asked with its own token. A
+      test fails if any of the three mirror names comes back into the code.*
+- [x] **The modified-pivot animation still turns about the old pivot.** —
+      *Because the fix last time was in the wrong place. The pivot was only
+      ever applied in playClip, by hanging the part off an extra group, and
+      the skins page does not use playClip: it plays everything through the
+      conductor, which evaluates a clip with evalClip and writes each part's
+      pose directly. So the moved pivot did nothing where anybody could see
+      it. It is part of the pose now -- turning about a point Q is turning
+      about the origin and moving the origin by shift minus R times shift --
+      so the conductor, its blends in and out, and playClip all get it and
+      nothing is re-parented. Measured on the real viewer with idle.bored:
+      the neck stays at 0,0,0 while the waist turns and the hips swing.*
+
 ## 0. Round 60
 
 - [x] **Mojang being down should mean a fallback, not Steve everywhere.** —

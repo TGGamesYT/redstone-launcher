@@ -306,64 +306,37 @@
     return [dx * sx, dy, dz * sz];
   }
 
-  /** The group a part is turned by, given a shift. Built once per part. */
-  function pivotGroupFor(part, shift) {
-    if (!part || !shift) return null;
-    const key = shift.join(",");
-    if (part.__pivotKey === key && part.__pivotGroup && part.__pivotGroup.parent) {
-      return part.__pivotGroup;
-    }
-    try {
-      const home = part.__pivotHome || part.parent;
-      if (!home) return null;
-      part.__pivotHome = home;
-      // A shift that changed: take the old rigging out before building new.
-      if (part.__pivotGroup && part.__pivotGroup.parent) {
-        home.add(part);
-        part.__pivotGroup.parent.remove(part.__pivotGroup);
-      }
-      const outer = emptyGroupLike(part);
-      const back = emptyGroupLike(part);
-      if (!outer || !back) return null;
-      outer.name = "pivot";
-      back.name = "pivotBack";
-      const p = part.position;
-      outer.position.set(p.x + shift[0], p.y + shift[1], p.z + shift[2]);
-      back.position.set(-(p.x + shift[0]), -(p.y + shift[1]), -(p.z + shift[2]));
-      outer.add(back);
-      back.add(part);
-      home.add(outer);
-      part.__pivotGroup = outer;
-      part.__pivotKey = key;
-      return outer;
-    } catch { return null; }
-  }
-
-  /** Put a part back under its own parent, turning where it normally turns. */
-  function clearPivotGroup(part) {
-    if (!part || !part.__pivotGroup) return;
-    try {
-      const outer = part.__pivotGroup;
-      if (part.__pivotHome) part.__pivotHome.add(part);
-      if (outer.parent) outer.parent.remove(outer);
-    } catch { /* already taken apart */ }
-    part.__pivotGroup = null;
-    part.__pivotKey = null;
-  }
-
   /**
-   * Where this bone's rotation should be written, and what to reset.
+   * Where a part has to sit so that it turns about `shift` instead of about
+   * its own origin.
    *
-   * Returns the object the angles go on. When there is no shift that is the
-   * part itself, which is what every clip did before any of this.
+   * Turning a part by R about a point Q = origin + shift leaves Q where it
+   * was and moves the origin to Q - R*shift. So the correction to the part's
+   * position is shift - R*shift, which is zero when it is not turned at all.
+   *
+   * Done as a position rather than by hanging the part off an extra group,
+   * which is what this used to do -- and only in playClip, an older path the
+   * skins page does not use. The page plays everything through the
+   * conductor, which writes each part's pose directly and never touched the
+   * groups, so a clip from a rig with a moved pivot still turned about the
+   * old one. As a position it is part of the POSE: the conductor, its blends
+   * in and out, and playClip all get it, and nothing has to be re-parented.
+   *
+   * R is three.js's default Euler order, XYZ: the matrix Rx * Ry * Rz.
    */
-  function turnerFor(part, shift) {
-    if (!shift) { clearPivotGroup(part); return part; }
-    const g = pivotGroupFor(part, shift);
-    if (!g) return part;
-    // The part keeps the rest pose's own rotation; the clip's goes on the
-    // group, so the two compose rather than one replacing the other.
-    return g;
+  function pivotOffset(rx, ry, rz, shift) {
+    if (!shift) return null;
+    let [x, y, z] = shift;
+    // Rz
+    let c = Math.cos(rz), s = Math.sin(rz);
+    [x, y] = [x * c - y * s, x * s + y * c];
+    // Ry
+    c = Math.cos(ry); s = Math.sin(ry);
+    [x, z] = [x * c + z * s, -x * s + z * c];
+    // Rx
+    c = Math.cos(rx); s = Math.sin(rx);
+    [y, z] = [y * c - z * s, y * s + z * c];
+    return [shift[0] - x, shift[1] - y, shift[2] - z];
   }
 
   // clip: { length, loop, degrees, bones: { <bone>: { rotation: [...],
@@ -371,7 +344,6 @@
   // opts.loop overrides the clip's own flag — the page plays everything once.
   function playClip(clip, opts) {
     opts = opts || {};
-    const degrees = clip.degrees !== false;      // Blockbench exports degrees
     const loops = opts.loop === undefined ? !!clip.loop : !!opts.loop;
     return function makeAnimation() {
       const anim = new skinview3d.PlayerAnimation();
@@ -380,56 +352,11 @@
       anim.clipLength = clip.length || 0;
       anim.clipLoops = loops;
       anim.animate = function (player) {
-        const pose = restPose(player);
-        const k = degrees ? DEG : 1;
-        const f = flipFor(clip);
-        // Half a turn about Y: X and Z change sign, Y does not.
-        const sx = f ? -1 : 1, sz = f ? -1 : 1;
+        const rest = restPose(player);
         let t = this.progress;
         if (clip.length) t = loops ? t % clip.length : Math.min(t, clip.length);
-
-        for (const r of pose) {
-          const tracks = (clip.bones || {})[r.name];
-          const part = r.part;
-
-          const rot = tracks && sampleTrack(tracks.rotation, t);
-          // Where this bone turns. A clip from a rig whose pivot was moved
-          // turns about a group that far away instead of about the part.
-          const shift = pivotShift(clip, r.name, sx, sz);
-          const turner = turnerFor(part, shift);
-          if (turner !== part) {
-            // The part keeps its rest rotation and the clip's goes on the
-            // group, so the pivot moves without the pose being replaced.
-            part.rotation.set(r.rotation[0], r.rotation[1], r.rotation[2]);
-            turner.rotation.set(
-              (rot ? rot[0] * k * sx : 0),
-              (rot ? rot[1] * k : 0),
-              (rot ? rot[2] * k * sz : 0),
-            );
-          } else {
-            part.rotation.set(
-              r.rotation[0] + (rot ? rot[0] * k * sx : 0),
-              r.rotation[1] + (rot ? rot[1] * k : 0),
-              r.rotation[2] + (rot ? rot[2] * k * sz : 0),
-            );
-          }
-
-          // Model units, not angles — an offset from where the part lives.
-          const pos = tracks && sampleTrack(tracks.position, t);
-          part.position.set(
-            r.position[0] + (pos ? pos[0] : 0),
-            r.position[1] + (pos ? pos[1] : 0),
-            r.position[2] + (pos ? pos[2] : 0),
-          );
-
-          // A multiplier, so 1 means "unchanged" and a missing track means 1.
-          const scl = tracks && sampleTrack(tracks.scale, t);
-          part.scale.set(
-            r.scale[0] * (scl ? scl[0] : 1),
-            r.scale[1] * (scl ? scl[1] : 1),
-            r.scale[2] * (scl ? scl[2] : 1),
-          );
-        }
+        // The very pose the conductor would draw, moved pivots included.
+        applyPose(rest, evalClip(rest, clip, t));
       };
       return anim;
     };
@@ -499,6 +426,10 @@
       }
       const pos = sampleTrack(tracks.position, t);
       if (pos) for (let a = 0; a < 3; a++) e.p[a] = r.position[a] + pos[a];
+      // A clip from a rig whose pivot for this bone was moved turns about
+      // that pivot, not about the part's own origin.
+      const off = pivotOffset(e.r[0], e.r[1], e.r[2], pivotShift(clip, r.name, sx, sz));
+      if (off) for (let a = 0; a < 3; a++) e.p[a] += off[a];
       const scl = sampleTrack(tracks.scale, t);
       if (scl) for (let a = 0; a < 3; a++) e.s[a] = r.scale[a] * scl[a];
     });

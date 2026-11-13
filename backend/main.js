@@ -16680,14 +16680,10 @@ ipcMain.handle("mc:defaultSkinFor", async (event, opts = {}) => {
 // skin -- which is also exactly what an account with no custom skin looks
 // like, so it says nothing is wrong while every premium account wears Steve.
 //
-// There is more than one place to ask. The account's own profile, with the
-// account's own token, is a different service on different machines; and the
-// skin mirrors are caches of Mojang that generally still hold what it said
-// an hour ago, which is precisely what is wanted while it is down.
-//
-// None of them is believed on its word. See backend/skin-sources.js for why
-// -- the short version is that a mirror under load answers 200 with a
-// default skin, and a fallback that lies is worse than one that fails.
+// There are two other places to ask, and both are the truth rather than a
+// copy of it: what this launcher already has on disk from the last time
+// Mojang answered, and the account's own profile, asked with the account's
+// own token, which is a different service on different machines.
 
 /** A skin PNG this launcher already has somewhere on disk. */
 async function skinFromOurOwnFiles(uuid) {
@@ -16704,98 +16700,6 @@ async function skinFromOurOwnFiles(uuid) {
     } catch { /* the picture is not here; the hash alone is no use offline */ }
   }
   return null;
-}
-
-/**
- * Is this picture simply one of the defaults, dressed up as an answer?
- *
- * By its PIXELS, not its bytes. Two of the three mirrors re-encode what they
- * serve -- measured: for the same player, minotar returns Mojang's own bytes
- * and the other two return the same picture in different files -- so
- * comparing files would say "not a default" about a default and the check
- * would be worth nothing.
- *
- * Kept, because the answer never changes: the defaults come out of the
- * client jar and the question is asked once per mirror answer.
- */
-let _defaultSkinPixels = null;
-async function defaultSkinPixelHashes() {
-  if (_defaultSkinPixels) return _defaultSkinPixels;
-  const out = new Set();
-  const add = async (png) => {
-    try { out.add(await skinPixelHash(png.toString("base64"))); }
-    catch { /* one that cannot be read cannot be compared against */ }
-  };
-  for (const d of cachedDefaultSkins() || []) {
-    if (d && d.base64) await add(Buffer.from(d.base64, "base64"));
-  }
-  // The old pair as well: a mirror with nothing better to say falls back to
-  // Steve or Alex, not to the nine.
-  for (const hash of Object.values(DEFAULT_SKIN_TEXTURE)) {
-    try { await add(await skinByTextureHash(hash)); } catch { /* not cached and not reachable */ }
-  }
-  if (out.size) _defaultSkinPixels = out;
-  return out;
-}
-
-/**
- * What each mirror serves for somebody who does not exist.
- *
- * Asked once per mirror and remembered beside the profile cache, because the
- * answer is a property of the service rather than of this launcher's day.
- * Without it the check below has nothing to compare against: a mirror's
- * stand-in is its own file, not one of Minecraft's defaults -- measured,
- * minotar's matches neither the nine nor the Steve and Alex in the jar.
- */
-const STANDIN_FILE = () => path.join(texturesDir, "mirror-standins.json");
-let _standIns = null;
-async function standInHashFor(mirrorName) {
-  if (!_standIns) {
-    try { _standIns = JSON.parse(fs.readFileSync(STANDIN_FILE(), "utf8")) || {}; }
-    catch { _standIns = {}; }
-  }
-  if (mirrorName in _standIns) return _standIns[mirrorName];
-  const mirror = skinSources.MIRRORS.find(m => m.name === mirrorName);
-  if (!mirror) return null;
-  let hash = null;
-  try {
-    const png = await skinSources.standInFor(mirror);
-    if (png) hash = await skinPixelHash(png.toString("base64"));
-  } catch { /* it would not say, which is fine: it cannot mislead either */ }
-  _standIns[mirrorName] = hash;
-  try {
-    fs.mkdirSync(texturesDir, { recursive: true });
-    fs.writeFileSync(STANDIN_FILE(), JSON.stringify(_standIns, null, 1));
-  } catch { /* it will be asked again next time */ }
-  return hash;
-}
-
-/**
- * Is this picture a stand-in rather than this player?
- *
- * Two questions, because there are two ways to be handed one: Minecraft's
- * own defaults (which a player may genuinely be wearing, so this only
- * decides whether to ask again later) and the mirror's own "I do not know"
- * picture, which is the one that would otherwise rebuild the original bug
- * through a different door.
- */
-async function isOneOfTheDefaults(png, via) {
-  let mine = null;
-  // The launcher already hashes a skin by its decoded pixels, for the skin
-  // library; two files of the same picture therefore compare equal, which
-  // is the whole question here since two of the three mirrors re-encode
-  // what they serve.
-  try { mine = await skinPixelHash(png.toString("base64")); } catch { return false; }
-  if (via) {
-    try {
-      const standIn = await standInHashFor(via);
-      if (standIn && standIn === mine) return true;
-    } catch { /* fall through to the defaults */ }
-  }
-  try {
-    const known = await defaultSkinPixelHashes();
-    return known.has(mine);
-  } catch { return false; }
 }
 
 /**
@@ -16834,24 +16738,11 @@ async function skinFromSomewhereElse(uuid, { playerId = null } = {}) {
     devtoolsLog("skin: the account could not tell us either:", err && err.message);
   }
 
-  // The mirrors: caches of Mojang, which is the point of them today.
-  const got = await skinSources.skinFromMirrors(key, {
-    onTry: (name, r) => {
-      if (!r || !r.ok) devtoolsLog(`skin: ${name} could not help (${skinSources.describeOutage(r && r.status, r && r.body)})`);
-    },
-  });
-  if (!got) return null;
-  const standIn = await isOneOfTheDefaults(got.png, got.via);
-  // The sheet knows its own model: a slim skin has the right-hand column of
-  // the arm left transparent. Neither mirror says which it is, and guessing
-  // wrong gives a figure with one arm wider than the other.
-  let slim = false;
-  try {
-    const { data, info } = await sharp(got.png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-    slim = slimFromPixels(data, info.width, info.height);
-  } catch { /* leave it classic */ }
-  devtoolsLog(`skin: ${got.via} had one${standIn ? ", though it may be a stand-in" : ""}`);
-  return { png: got.png, slim, cape: null, via: got.via, sure: !standIn };
+  // And that is all. The public skin mirrors are NOT asked: for a player
+  // they have not cached they answer with a default skin rather than an
+  // error, which would then be drawn (and remembered) as the player, and a
+  // launcher's worth of lookups is exactly what gets them rate-limiting.
+  return null;
 }
 
 // A skin PNG by its texture hash, kept on disk forever — the hash IS the

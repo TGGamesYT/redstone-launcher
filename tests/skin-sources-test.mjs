@@ -15,7 +15,6 @@
 // be told from an answer. So what is checked here is mostly the refusing.
 import fs from "fs";
 import path from "path";
-import zlib from "zlib";
 import { fileURLToPath } from "url";
 import src from "../backend/skin-sources.js";
 
@@ -27,118 +26,6 @@ const check = (what, got, want, note) => {
     + (ok ? "" : `\n       got  ${JSON.stringify(got)}\n       want ${JSON.stringify(want)}`));
 };
 
-// ── a PNG of the right shape, built by hand ───────────────────────────────
-//
-// Only the header is read, so only the header has to be real -- but it is a
-// real one, chunk lengths and CRCs and all, rather than a string that
-// happens to start with the right bytes.
-function pngOf(width, height) {
-  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; ihdr[9] = 6;                 // 8-bit RGBA
-  const chunk = (type, data) => {
-    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
-    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
-    const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32 ? zlib.crc32(body) >>> 0 : 0);
-    return Buffer.concat([len, body, crc]);
-  };
-  return Buffer.concat([sig, chunk("IHDR", ihdr), chunk("IEND", Buffer.alloc(0))]);
-}
-
-// ── what is and is not a skin ─────────────────────────────────────────────
-{
-  check("a 64x64 sheet is a skin",
-    (src.readSkinPng(pngOf(64, 64)) || {}).scale, 1);
-  check("and so is an old 64x32 one",
-    [(src.readSkinPng(pngOf(64, 32)) || {}).legacy, (src.readSkinPng(pngOf(64, 32)) || {}).scale],
-    [true, 1]);
-  check("and an HD one, which is a whole multiple of both",
-    (src.readSkinPng(pngOf(256, 256)) || {}).scale, 4);
-  check("an avatar is not a skin",
-    src.readSkinPng(pngOf(96, 96)), null,
-    "96 is not 64 times anything whole, so it is not a sheet at any scale");
-  check("but 128 is, because an HD skin is a whole multiple",
-    (src.readSkinPng(pngOf(128, 128)) || {}).scale, 2);
-  check("and a sheet the wrong shape is not one either",
-    src.readSkinPng(pngOf(64, 48)), null,
-    "a skin is square or exactly half as tall as it is wide");
-  check("nor is a tracking pixel", src.readSkinPng(pngOf(1, 1)), null);
-  check("nor is an error page with a PNG's name on it",
-    src.readSkinPng(Buffer.from("<html><title>Service unavailable</title></html>")), null,
-    "which is exactly what Mojang answers with when it is down");
-  check("nor is nothing at all",
-    [src.readSkinPng(null), src.readSkinPng(Buffer.alloc(0))], [null, null]);
-  // A PNG whose IHDR is not where a PNG's IHDR is.
-  const odd = Buffer.concat([pngOf(64, 64).subarray(0, 12), Buffer.from("tEXt"), Buffer.alloc(40)]);
-  check("nor a PNG that does not begin the way a PNG begins",
-    src.readSkinPng(odd), null);
-}
-
-// ── the mirrors ───────────────────────────────────────────────────────────
-const UUID = "069a79f444e94726a5befca90e38aaf5";
-const skin = pngOf(64, 64);
-
-{
-  const tried = [];
-  const got = await src.skinFromMirrors(UUID, {
-    get: async (url) => { tried.push(url); return { ok: true, status: 200, body: skin }; },
-  });
-  check("the first mirror that answers is the one used",
-    [tried.length, got && got.via], [1, "minotar.net"],
-    "minotar first because it answers with Mojang's own bytes rather than a re-encoding");
-}
-
-// One being down moves on to the next, which is the whole point of having
-// three of them.
-{
-  const tried = [];
-  const got = await src.skinFromMirrors(UUID, {
-    get: async (url) => {
-      tried.push(url);
-      if (/minotar/.test(url)) return { ok: false, status: 503 };
-      if (/crafatar/.test(url)) return { ok: false, status: 0, error: "it took too long" };
-      return { ok: true, status: 200, body: skin };
-    },
-  });
-  check("one being down is not all of them being down",
-    [tried.length, got && got.via], [3, "mc-heads.net"]);
-}
-
-// The one that matters: an answer that is not a skin is not taken for one.
-{
-  const got = await src.skinFromMirrors(UUID, {
-    get: async () => ({ ok: true, status: 200, body: Buffer.from("<html><title>Too many requests</title></html>") }),
-  });
-  check("a mirror answering 200 with a page is no answer at all", got, null,
-    "a fallback that lies is worse than one that fails");
-}
-
-// All of them down.
-{
-  const got = await src.skinFromMirrors(UUID, { get: async () => ({ ok: false, status: 503 }) });
-  check("and nowhere having it says so", got, null);
-}
-
-// Not a uuid: nothing is asked of anybody.
-{
-  const tried = [];
-  const got = await src.skinFromMirrors("Notch", { get: async (u) => { tried.push(u); return { ok: true, body: skin }; } });
-  check("a name is not a uuid, and nothing is asked", [got, tried.length], [null, 0],
-    "every one of these services takes a uuid; a name would fetch somebody else");
-}
-
-// Dashes, which is how a uuid is written everywhere except in these URLs.
-{
-  const tried = [];
-  await src.skinFromMirrors("069a79f4-44e9-4726-a5be-fca90e38aaf5", {
-    get: async (u) => { tried.push(u); return { ok: true, status: 200, body: skin }; },
-  });
-  check("and a uuid with dashes in it is asked for without them",
-    /[0-9a-f]{32}$/.test(tried[0] || ""), true);
-}
-
 // ── the account telling us about itself ───────────────────────────────────
 //
 // api.minecraftservices.com is a different service on different machines
@@ -147,7 +34,7 @@ const skin = pngOf(64, 64);
 // notices going Steve: their own.
 {
   const body = {
-    id: UUID, name: "Someone",
+    id: "069a79f444e94726a5befca90e38aaf5", name: "Someone",
     skins: [
       { id: "1", state: "INACTIVE", url: "https://textures.minecraft.net/texture/old", variant: "CLASSIC" },
       { id: "2", state: "ACTIVE", url: "https://textures.minecraft.net/texture/abc123", variant: "SLIM" },
@@ -194,18 +81,25 @@ const skin = pngOf(64, 64);
   check("and no answer at all says that", src.describeOutage(0, ""), "it could not be reached");
 }
 
-// ── and the launcher actually uses it ─────────────────────────────────────
+// ── and no mirrors ────────────────────────────────────────────────────────
+//
+// The public skin mirrors were tried as a further fallback and taken out
+// again, for the reason the owner gave: for a player they have not already
+// cached they answer with a DEFAULT skin rather than an error, which is then
+// drawn and remembered as that player; and a launcher's worth of lookups is
+// what gets them rate-limiting. Checked here so they do not drift back in.
 {
   const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+  const code = strip(fs.readFileSync(path.join(ROOT, "backend", "main.js"), "utf8"))
+    + strip(fs.readFileSync(path.join(ROOT, "backend", "skin-sources.js"), "utf8"));
+  check("no skin mirror is asked for anything",
+    ["minotar", "crafatar", "mc-heads"].filter(m => code.includes(m)), [],
+    "one that has not cached a player answers with a default, and that would be cached as the player");
   const main = fs.readFileSync(path.join(ROOT, "backend", "main.js"), "utf8");
-  check("the skin path tries somewhere else before it gives up",
-    /skinFromSomewhereElse\(id, \{ playerId \}\)/.test(main), true);
-  check("and so does the head path",
-    (main.match(/skinFromSomewhereElse/g) || []).length >= 3, true,
-    "the declaration, the skin, and the head");
-  check("a stand-in is still asked about again later",
-    /if \(!other\.sure\) headWasGuessed\(id\)/.test(main), true,
-    "drawn because it is the best picture there is, never settled on");
+  check("the skin path still tries our own files and the account before giving up",
+    [/skinFromSomewhereElse\(id, \{ playerId \}\)/.test(main), /profileFromServices/.test(main), /skinFromOurOwnFiles/.test(main)],
+    [true, true, true]);
 }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
