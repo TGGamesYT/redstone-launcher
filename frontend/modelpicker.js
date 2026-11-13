@@ -249,6 +249,26 @@
       box.scrollTop = Math.min(wasAt, Math.max(0, box.scrollHeight - box.clientHeight));
     };
 
+    function showWaiting() {
+      const box = document.createElement('div');
+      box.className = 'mp-wait';
+      box.innerHTML = '<div class="mp-spin"></div><div class="mp-wait-text"></div><div class="mp-wait-time"></div>';
+      const text = box.querySelector('.mp-wait-text');
+      const time = box.querySelector('.mp-wait-time');
+      text.textContent = 'Loading the blocks, items and mobs…';
+      grid.appendChild(box);
+      const t0 = Date.now();
+      const tick = setInterval(() => {
+        if (!box.isConnected) { clearInterval(tick); return; }
+        const secs = Math.round((Date.now() - t0) / 1000);
+        if (secs >= 3) {
+          text.textContent = "Reading them out of the game's files. The first time for a version takes a while; after that it is quick.";
+          time.textContent = secs + 's';
+        }
+      }, 1000);
+      return { stop() { clearInterval(tick); box.remove(); } };
+    }
+
     async function load(reset) {
       const mine = ++seq;
       loading = true;
@@ -265,6 +285,13 @@
       }
       more.textContent = 'Loading…';
       more.style.display = '';
+      // An empty grid while it loads is a blank box that looks like "there is
+      // nothing here" -- and the first look at a version is the slow one,
+      // because the blocks, items and mobs are read out of the game's own
+      // files before anything can be listed. So the grid itself says it is
+      // working, with a spinner and how long it has been at it.
+      const waiting = grid.children.length ? null : showWaiting();
+      if (waiting) more.style.display = 'none';      // the grid is saying it already
       let r;
       try {
         r = await ipcRenderer.invoke('model:list', {
@@ -273,6 +300,7 @@
           vanilla: ctx.vanilla, modded: ctx.modded, overrides: ctx.overrides,
         });
       } catch { r = null; }
+      if (waiting) waiting.stop();
       if (mine !== seq) { loading = false; return; }  // a newer search overtook
       if (!r || r.error || !r.items) {
         loading = false;
@@ -405,6 +433,16 @@
       .mp-grid .ip-cell:hover { border-color:var(--accent,#c33); }
       .mp-grid .ip-cell img { width:100%; height:100%; object-fit:contain; }
       .mp-more { font-size:12px; opacity:0.75; text-align:center; padding:6px 0; }
+      /* Shown inside the grid while it is empty and loading, so a long first
+         load is visibly a load and not an empty result. */
+      .mp-wait { grid-column:1 / -1; align-self:center; justify-self:center; margin-top:90px;
+                 display:flex; flex-direction:column; align-items:center; gap:8px;
+                 font-size:12px; opacity:0.85; text-align:center; max-width:320px; }
+      .mp-spin { width:26px; height:26px; border-radius:50%;
+                 border:3px solid var(--border-dark,#444); border-top-color:var(--base-color,#c33);
+                 animation:mp-spin 0.9s linear infinite; }
+      .mp-wait-time { opacity:0.6; font-size:11px; min-height:1em; }
+      @keyframes mp-spin { to { transform:rotate(360deg); } }
       .mp-more button { margin:0; }`;
     document.head.appendChild(s);
   }

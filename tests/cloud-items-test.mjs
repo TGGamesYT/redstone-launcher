@@ -123,34 +123,77 @@ check("while an ordinary long-ish setting still goes",
     ["needsReauth", "lastRefresh"].filter(k => k in out[0]), [],
     "whether the token worked here is about here");
 }
+// Accounts as the launcher stores them: an id that is Date.now() on the
+// computer it was added on, and the Minecraft uuid inside `auth`.
+const UA = "11111111111111111111111111111111", UB = "22222222222222222222222222222222", UC = "33333333333333333333333333333333";
+const acct = (id, uuid, name, token, extra = {}) => ({
+  id, type: "microsoft", username: name,
+  auth: { uuid, name, access_token: token }, refresh: "r-" + token, ...extra,
+});
 {
   // Merging, which is where a computer could lose an account.
-  const local = [
-    { id: "a", username: "One", refresh: "local-a", needsReauth: false },
-    { id: "only-here", username: "Three", refresh: "local-c" },
-  ];
-  const incoming = [
-    { id: "a", username: "One renamed", refresh: "drive-a" },
-    { id: "b", username: "Two", refresh: "drive-b" },
-  ];
+  const local = [acct(1001, UA, "One", "local-a"), acct(1003, UC, "Three", "local-c")];
+  const incoming = [acct(2001, UA, "One", "drive-a"), acct(2002, UB, "Two", "drive-b")];
   const m = items.mergeAccounts(local, incoming);
   check("an account only this computer has is kept",
-    m.players.find(p => p.id === "only-here").refresh, "local-c",
+    m.players.find(p => p.id === 1003).refresh, "r-local-c",
     "syncing must not be a way to lose an account");
-  check("an account only the Drive has is taken", m.added, ["b"]);
+  check("an account only the Drive has is taken", m.added, ["2002"]);
   check("and where both have one, a token that works here is not replaced",
-    m.players.find(p => p.id === "a").refresh, "local-a",
+    m.players.find(p => p.id === 1001).auth.access_token, "local-a",
     "the synced one may be older; this one is known to work");
-  check("though the rest of the account still comes across",
-    m.players.find(p => p.id === "a").username, "One renamed");
+}
+
+// ── the duplicates ──
+//
+// Each computer gives an account the id Date.now() when it is added, so the
+// same Microsoft account on two computers has two ids. Merging by id made
+// every synced account a second copy of itself -- which is what was
+// reported. It is the uuid that says which account it is.
+{
+  const m = items.mergeAccounts([acct(1001, UA, "One", "here")], [acct(2001, UA, "One", "there")]);
+  check("the same account from another computer is one account, not two",
+    m.players.length, 1, "its id is different there, because ids are Date.now() on each computer");
+  check("and it keeps the id this computer knows it by",
+    m.players[0].id, 1001, "the selected account and its skins are stored against that id");
+  check("with nothing added", m.added, []);
+}
+{
+  // Dashes or not, the same uuid.
+  const dashed = acct(2001, "11111111-1111-1111-1111-111111111111", "One", "there");
+  const m = items.mergeAccounts([acct(1001, UA, "One", "here")], [dashed]);
+  check("a uuid written with dashes is the same uuid", m.players.length, 1);
+}
+{
+  // Copies already made by earlier syncs are folded together.
+  const m = items.mergeAccounts(
+    [acct(1001, UA, "One", "here"), acct(2001, UA, "One", "copy"), acct(3001, UA, "One", "copy2")], []);
+  check("copies already here are folded into one", m.players.map(p => p.id), [1001]);
+  check("and it is said which went where, so the selection can follow",
+    m.folded, { "2001": 1001, "3001": 1001 });
+}
+{
+  // An offline account is its name, and only ever matches another offline one.
+  const off = (id, name) => ({ id, type: "cracked", username: name });
+  const m = items.mergeAccounts([off(1, "Steve"), acct(2, UA, "Steve", "t")], [off(9, "steve")]);
+  check("an offline account matches the same name offline, and not a premium one called the same",
+    m.players.map(p => p.id), [1, 2]);
+}
+{
+  // Two computers' Date.now() can meet: a NEW account must not take an id
+  // that belongs to a different account here.
+  const m = items.mergeAccounts([acct(5000, UA, "One", "t")], [acct(5000, UB, "Two", "t2")]);
+  const two = m.players.find(p => p.username === "Two");
+  check("a new account whose id clashes with another here gets a fresh one",
+    [m.players.length, two && two.id !== 5000], [2, true]);
 }
 {
   // The case that is worth syncing for: this computer's token is dead.
   const m = items.mergeAccounts(
-    [{ id: "a", username: "One", refresh: "stale", needsReauth: true }],
-    [{ id: "a", username: "One", refresh: "fresh" }]);
+    [acct(1001, UA, "One", "stale", { needsReauth: true })],
+    [acct(2001, UA, "One", "fresh")]);
   check("a token this computer knows is dead is replaced by the synced one",
-    [m.players[0].refresh, m.players[0].needsReauth], ["fresh", undefined],
+    [m.players[0].auth.access_token, m.players[0].needsReauth, m.players[0].id], ["fresh", undefined, 1001],
     "which is the whole reason to sync accounts");
 }
 

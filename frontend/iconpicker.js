@@ -396,7 +396,7 @@
     const ov = document.createElement('div');
     ov.className = 'modal-overlay active';
     ov.style.zIndex = 6150;
-    ov.innerHTML = `<div class="modal-content ip-modal" style="max-width:520px;">
+    ov.innerHTML = `<div class="modal-content ip-modal ip-adjust" style="max-width:520px;">
       <div class="modal-header"><h2>Adjust the render</h2><button class="modal-close" id="ipAdjX">✕</button></div>
       <div class="ip-scroll">
       <div id="ipAdjStage" style="display:flex; justify-content:center; align-items:center; min-height:220px;
@@ -1118,6 +1118,12 @@
       .modal-content.ip-crop .modal-actions { flex:0 0 auto; }
       .ip-crop-body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; }
       .ip-modal .ip-scroll { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
+      /* The adjust dialog's sections come and go as the thing in it changes --
+         a variant list, block states, parts, a colour -- and it sized itself
+         to them, so it grew and shrank under the pointer as you used it. A
+         set height instead: what changes is what is in the scrolling part,
+         never the dialog. */
+      .modal-content.ip-adjust { height:min(780px, 100%); }
       .ip-modal .modal-actions { flex:0 0 auto; margin-top:12px; }
       /* Each grid scrolls with the page now rather than inside itself. */
       .ip-modal .ip-grid { max-height:none; overflow:visible; }`;

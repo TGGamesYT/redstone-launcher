@@ -30,6 +30,29 @@ started.
       so the conductor, its blends in and out, and playClip all get it and
       nothing is re-parented. Measured on the real viewer with idle.bored:
       the neck stays at 0,0,0 while the waist turns and the hips swing.*
+- [ ] **Why is the Git tab first for mod project instances?** — *Asked, and
+      answered in chat rather than changed: it was put first on purpose.
+      Waiting on whether it should move.*
+- [x] **The blocks, items and mobs picker shows nothing while it loads.** —
+      *The first look at a version reads every block, item and mob out of
+      the game's own files before anything can be listed, and during that
+      the grid was an empty box -- which reads as "there is nothing here".
+      The grid itself now shows a spinner while it is empty and loading, and
+      after a few seconds says what it is doing and how long it has been at
+      it.*
+- [x] **Cloud syncing accounts makes duplicates.** — *An account's id is
+      `Date.now()` on whichever computer it was added on, so the same
+      Microsoft account has a different id on each computer -- and the merge
+      matched accounts by id, so every synced account arrived as a second
+      copy of itself. It matches by the Minecraft uuid now (an offline
+      account by its name), keeps this computer's id for it, and folds
+      together copies already made by earlier syncs -- moving the selected
+      account and any offline skin over to the one that is kept.*
+- [x] **The adjust-the-render dialog changes height as options appear.** —
+      *Its sections come and go with the thing in it -- variants, block
+      states, parts, a colour -- and it sized itself to them, so it grew and
+      shrank as you used it. It has a set height now and only the scrolling
+      part inside it changes.*
 
 ## 0. Round 60
 

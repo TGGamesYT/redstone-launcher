@@ -168,35 +168,89 @@ export function accountsFor(players) {
 }
 
 /**
+ * Which Minecraft account this is, whatever this computer calls it.
+ *
+ * An account's `id` is NOT that. It is `Date.now()` on whichever computer
+ * the account was added on, so the same Microsoft account signed in on two
+ * computers has two different ids -- and merging by id, which is what this
+ * did, made every synced account a second copy of itself. The account is its
+ * Minecraft uuid; an offline account, which has none worth the name, is its
+ * name.
+ */
+export function accountIdentity(p) {
+  if (!p || typeof p !== "object") return null;
+  const uuid = String((p.auth && p.auth.uuid) || p.uuid || "").replace(/-/g, "").toLowerCase();
+  if (p.type !== "cracked" && /^[0-9a-f]{32}$/.test(uuid)) return "uuid:" + uuid;
+  const name = String(p.username || (p.auth && p.auth.name) || "").trim().toLowerCase();
+  if (!name) return p.id != null ? "id:" + String(p.id) : null;
+  return (p.type === "cracked" ? "offline:" : "name:") + name;
+}
+
+/** A token this computer has not been told is dead. */
+const works = (p) => !!(p && p.auth && p.auth.access_token && p.auth.access_token !== "0" && !p.needsReauth);
+
+/**
  * Merge synced accounts into the ones here.
  *
- * Merged rather than replaced: a computer that has an account the Drive has
- * not should not lose it for syncing. Where both have one, the one with the
- * newer refresh wins -- but a local account that still works is never
- * replaced by a synced one that is marked as needing a new sign-in.
+ * Matched by WHO the account is (see accountIdentity), never by the id a
+ * computer gave it. Merged rather than replaced: a computer that has an
+ * account the Drive has not keeps it. Where both have one, this computer's
+ * entry is kept -- its id, which the rest of this computer refers to it by --
+ * and the synced one only fills in what it knows better: a working token
+ * over a dead one, never the other way about.
+ *
+ * Copies that are ALREADY here, from syncs made before this matched by
+ * identity, are folded together too, and `folded` says which ids went into
+ * which so the caller can move anything that pointed at the one that went.
  */
 export function mergeAccounts(local, incoming) {
-  const by = new Map((local || []).map(p => [String(p.id), { ...p }]));
+  const by = new Map();                 // identity -> the account kept
+  const order = [];
+  const folded = {};                    // id that went -> id it was folded into
   const added = [], updated = [];
-  for (const p of incoming || []) {
-    const id = String(p.id || "");
-    if (!id) continue;
-    const have = by.get(id);
-    if (!have) { by.set(id, { ...p }); added.push(id); continue; }
-    // Keep this computer's own view of whether the token still works.
-    const keep = { needsReauth: have.needsReauth, lastRefresh: have.lastRefresh };
-    if (have.needsReauth && !p.needsReauth) {
-      by.set(id, { ...have, ...p, needsReauth: undefined });
-      updated.push(id);
-    } else if (!have.needsReauth) {
-      // Ours works. Take anything new about the account but not the token.
-      by.set(id, { ...p, ...keep, auth: have.auth, refresh: have.refresh });
-    } else {
-      by.set(id, { ...have, ...p, ...keep });
-      updated.push(id);
+
+  const absorb = (keep, other) => {
+    // The better token wins; everything else stays as this computer has it.
+    if (!works(keep) && works(other)) {
+      keep.auth = other.auth;
+      if (other.refresh) keep.refresh = other.refresh;
+      if (other.authKind) keep.authKind = other.authKind;
+      delete keep.needsReauth;
+      return true;
     }
+    return false;
+  };
+
+  for (const p of local || []) {
+    const key = accountIdentity(p);
+    if (!key) { order.push({ ...p }); continue; }
+    const have = by.get(key);
+    if (!have) { const copy = { ...p }; by.set(key, copy); order.push(copy); continue; }
+    absorb(have, p);
+    if (p.id != null && String(p.id) !== String(have.id)) folded[String(p.id)] = have.id;
   }
-  return { players: [...by.values()], added, updated };
+
+  for (const p of incoming || []) {
+    const key = accountIdentity(p);
+    if (!key) continue;
+    const have = by.get(key);
+    if (!have) {
+      // New here, but its id may collide with an unrelated local account's
+      // -- two computers' Date.now() can meet -- so it gets a fresh one if so.
+      const copy = { ...p };
+      if (order.some(x => String(x.id) === String(copy.id))) copy.id = Date.now() + order.length;
+      by.set(key, copy);
+      order.push(copy);
+      added.push(String(copy.id));
+      continue;
+    }
+    const changed = absorb(have, p);
+    // A new name for the same account is news worth taking.
+    if (p.username && p.username !== have.username && have.type !== "cracked") { have.username = p.username; updated.push(String(have.id)); }
+    else if (changed) updated.push(String(have.id));
+  }
+
+  return { players: order, added, updated, folded };
 }
 
 // ── themes ────────────────────────────────────────────────────────────────
@@ -297,5 +351,5 @@ export function mergeSkins(local, incoming) {
 
 export default {
   NOT_SETTINGS, NOT_ACCOUNT, looksSecret,
-  settingsFor, applySettings, accountsFor, mergeAccounts, mergeThemes, mergeSkins,
+  settingsFor, applySettings, accountsFor, accountIdentity, mergeAccounts, mergeThemes, mergeSkins,
 };

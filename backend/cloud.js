@@ -282,8 +282,11 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     accounts: {
       name: "Accounts",
       read: () => (content.readPlayers ? items.accountsFor(content.readPlayers()) : null),
-      write: (v) => content.writePlayers
-        && content.writePlayers(items.mergeAccounts(content.readPlayers(), v).players),
+      write: (v) => {
+        if (!content.writePlayers) return false;
+        const m = items.mergeAccounts(content.readPlayers(), v);
+        return content.writePlayers(m.players, { folded: m.folded });
+      },
     },
     servers: {
       name: "Server list",

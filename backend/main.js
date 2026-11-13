@@ -6637,9 +6637,23 @@ function cloudService() {
         return true;
       },
       readPlayers: () => loadPlayers(),
-      writePlayers: (list) => {
+      writePlayers: (list, { folded = {} } = {}) => {
         savePlayers(list);
+        // A copy that was folded into its twin may have been the selected
+        // account, or have had an offline skin kept against its id.
+        const sel = storage.get("selectedPlayerId", null);
+        if (sel != null && folded[String(sel)] != null) setSelectedPlayer(folded[String(sel)]);
+        try {
+          const skins = loadCrackedSkins();
+          let moved = false;
+          for (const [from, to] of Object.entries(folded)) {
+            if (skins[from] && !skins[String(to)]) { skins[String(to)] = skins[from]; moved = true; }
+            if (skins[from]) { delete skins[from]; moved = true; }
+          }
+          if (moved) saveCrackedSkins(skins);
+        } catch { /* skins are a nicety; the accounts are what matter */ }
         sendEverywhere("players-updated", list);
+        return true;
       },
       readProfiles: () => { try { return JSON.parse(fs.readFileSync(profilesPath, "utf8")); } catch { return []; } },
       // The shared multiplayer list, which is the one every instance uses
