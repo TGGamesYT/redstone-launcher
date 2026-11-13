@@ -58,12 +58,26 @@ export async function jarSource(version) {
       const local = DEPS.findClientJar(v);
       if (local) return await MA.zipSource(`${v} jar`, 'jar', local);
     } catch { /* keep looking */ }
-    // 2. The one kept when the default skins were built.
+    // 2. One kept on disk: the latest release's, from building the default
+    // skins, and any version the picker has had to read before.
     try {
       const cached = MA.cachedJarPath(v);
-      if (fs.existsSync(cached)) return await MA.zipSource(`${v} jar`, 'jar', cached);
+      if (fs.existsSync(cached)) {
+        // Touched, so the copies kept are the ones being used.
+        try { const now = new Date(); fs.utimesSync(cached, now, now); } catch { /* only the order of pruning */ }
+        return await MA.zipSource(`${v} jar`, 'jar', cached);
+      }
     } catch { /* keep looking */ }
-    // 3. Mojang's, read in place.
+    // 3. Mojang's, read in place -- and kept for next time.
+    //
+    // Read in place, because the first look should not wait for forty
+    // megabytes. But ONLY in place, which is what it used to be, meant that a
+    // version no instance had downloaded was read over the network again --
+    // its directory, then every model and texture one ranged request at a
+    // time -- on every single launcher start: "it takes a lot of time every
+    // time I reopen the launcher, for each version". So the whole jar is
+    // fetched in the background while this one is read remotely, and the
+    // next start finds it on disk.
     try {
       const manifest = await VI.manifestIndex();
       const meta = manifest.by.get(v);
@@ -71,6 +85,7 @@ export async function jarSource(version) {
       const vj = await (await fetch(meta.url)).json();
       const url = vj && vj.downloads && vj.downloads.client && vj.downloads.client.url;
       if (!url) return null;
+      keepJarForNextTime(v, url, vj.downloads.client.sha1 || null, vj.downloads.client.size || 0);
       return await MA.remoteZipSource(`${v} jar`, 'jar', url);
     } catch (err) {
       log(`icon models: no jar for ${v}: ${err && err.message}`);
@@ -79,6 +94,54 @@ export async function jarSource(version) {
   })();
   _jarSources.set(v, p);
   return p;
+}
+
+// How many client jars are kept for the picker. Each is 25-40 MB; a handful
+// covers the versions somebody actually has instances on, and the least
+// recently used go first.
+const JARS_KEPT = 6;
+const _keeping = new Set();
+
+function keepJarForNextTime(version, url, sha1, size) {
+  if (_keeping.has(version)) return;
+  _keeping.add(version);
+  const dest = MA.cachedJarPath(version);
+  const part = dest + '.part';
+  (async () => {
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      const res = await fetch(url);
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (size && buf.length !== size) throw new Error(`got ${buf.length} bytes, expected ${size}`);
+      if (sha1) {
+        const got = (await import('crypto')).createHash('sha1').update(buf).digest('hex');
+        if (got !== sha1) throw new Error('the checksum does not match');
+      }
+      fs.writeFileSync(part, buf);
+      fs.renameSync(part, dest);          // whole or not at all
+      pruneKeptJars(dest);
+      log(`icon models: kept the ${version} jar, so the picker reads it from disk from now on`);
+    } catch (err) {
+      try { fs.rmSync(part, { force: true }); } catch { /* nothing to tidy */ }
+      log(`icon models: could not keep the ${version} jar: ${err && err.message}`);
+      _keeping.delete(version);          // try again next time it is wanted
+    }
+  })();
+}
+
+function pruneKeptJars(keep) {
+  try {
+    const dir = path.dirname(keep);
+    const jars = fs.readdirSync(dir).filter(n => n.endsWith('.jar'))
+      .map(n => { const f = path.join(dir, n); return { f, at: fs.statSync(f).mtimeMs }; })
+      .sort((a, b) => b.at - a.at);
+    // The latest release's is the default skins' too; it is the newest and
+    // the most used, so it is never the one pruned in practice.
+    for (const old of jars.slice(JARS_KEPT)) {
+      if (old.f !== keep) { try { fs.rmSync(old.f, { force: true }); } catch { /* in use; next time */ } }
+    }
+  } catch { /* the cache is a nicety */ }
 }
 
 // ── An instance's own packs and mods ────────────────────────────────────────
@@ -103,10 +166,51 @@ async function instanceSources(profileId) {
     const s = p.dir ? MA.dirSource(p.name, 'pack', p.full) : await MA.zipSource(p.name, 'pack', p.full);
     if (s) out.push(s);
   }
+  // A dev instance's own mod, which is not in the mods folder at all: it is
+  // the project being worked on, and Gradle puts it on the classpath from
+  // the source tree. So its models are read from there -- every resources
+  // folder the project has that holds assets, in the root and in a
+  // multi-loader project's loader folders, the hand-written ones and the
+  // ones datagen wrote. First, because it is the mod this instance is FOR.
+  const project = DEPS.projectOf ? DEPS.projectOf(profileId) : null;
+  if (project && project.root) {
+    for (const dir of projectResourceDirs(project.root)) {
+      const label = `${project.modId || path.basename(project.root)} (${path.relative(project.root, dir).replace(/\\/g, '/')})`;
+      out.unshift(MA.dirSource(label, 'mod', dir));
+    }
+  }
   for (const e of list(path.join(root, 'mods'))) {
     if (!e.isFile() || !/\.jar$/i.test(e.name)) continue;   // .disabled skipped
     const s = await MA.zipSource(e.name, 'mod', path.join(root, 'mods', e.name));
     if (s) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Where a mod project keeps the files that end up in its jar's assets.
+ *
+ * The usual Gradle layouts: src/main/resources by hand, and whichever folder
+ * the loader's datagen writes to -- src/generated/resources for NeoForge and
+ * Forge, src/main/generated for Fabric -- plus Fabric's split client source
+ * set. In the project root and in each loader folder of a multi-loader one.
+ * Only folders that actually have an assets folder in them.
+ */
+export function projectResourceDirs(root) {
+  const bases = [root];
+  for (const sub of ['common', 'fabric', 'neoforge', 'forge', 'quilt']) bases.push(path.join(root, sub));
+  const rels = [
+    ['src', 'main', 'resources'],
+    ['src', 'client', 'resources'],
+    ['src', 'generated', 'resources'],
+    ['src', 'main', 'generated'],
+  ];
+  const out = [];
+  for (const base of bases) {
+    for (const rel of rels) {
+      const dir = path.join(base, ...rel);
+      try { if (fs.statSync(path.join(dir, 'assets')).isDirectory()) out.push(dir); } catch { /* not this one */ }
+    }
   }
   return out;
 }

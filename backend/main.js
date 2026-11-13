@@ -8933,6 +8933,7 @@ ipcMain.handle('set-player-skin', async (event, { playerId, skinPath, model }) =
   });
 
   if (!res.ok) throw new Error(`Failed to upload skin: ${res.statusText}`);
+  await headsFollowSkinChange(player);
 });
 
 /* ─────────────── Helpers ─────────────── */
@@ -12268,6 +12269,17 @@ iconModels.configure({
     return [...seen];
   },
   instanceRoot: (profileId) => instanceRoot(profileId),
+  // A dev instance's mod project, so the picker can read the mod's own
+  // models out of its source tree -- the mod is not a jar in the mods folder
+  // while it is being developed. Read straight from profiles.json because
+  // this is asked synchronously.
+  projectOf: (profileId) => {
+    try {
+      const list = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
+      const p = list.find(x => String(x.id) === String(profileId));
+      return (p && p.project && p.project.root) ? p.project : null;
+    } catch { return null; }
+  },
   enabledResourcePacks: readEnabledResourcePacks,
   // How colourful a texture is, which is what decides whether a face with a
   // `tintindex` really wants tinting. See model-assets.js.
@@ -17493,6 +17505,8 @@ ipcMain.handle("mc:applySkin", async (event, skin) => {
   });
 
   if (!res.ok) throw new Error(await res.text());
+  profileCache.clear();
+  await headsFollowSkinChange(null);
   return true;
 });
 
@@ -17515,6 +17529,46 @@ ipcMain.handle("mc:applyCape", async (event, capeId) => {
   profileCache.clear();
   return true;
 });
+
+// ── A skin was just changed from here ──────────────────────────────────────
+//
+// Every head in the launcher is drawn from what Mojang last said this
+// account's texture was -- remembered for hours, and on disk across restarts,
+// so a slow or absent Mojang does not turn everybody into Steve. Which also
+// means that changing the skin from this very launcher left every head
+// showing the old one: nothing told that memory the answer had changed.
+//
+// So every change of skin ends here. The account's own profile is asked
+// what it is wearing now -- the authoritative answer, straight after the
+// change, where the session server can lag a minute behind -- written down
+// in place of the old one, and every window is told to redraw its heads.
+async function headsFollowSkinChange(playerOrId, said = null) {
+  try {
+    const players = loadPlayers();
+    const player = typeof playerOrId === "object" && playerOrId
+      ? playerOrId
+      : players.find(p => String(p.id) === String(playerOrId != null ? playerOrId : storage.get("selectedPlayerId", null)));
+    if (!player || !player.auth) return;
+    const uuid = String(player.auth.uuid || "").replace(/-/g, "").toLowerCase();
+    if (!/^[0-9a-f]{32}$/.test(uuid)) return;
+    let now = said && said.hash ? said : null;
+    if (!now && player.auth.access_token) {
+      now = await skinSources.profileFromServices(player.auth.access_token, { userAgent: LAUNCHER_UA });
+    }
+    if (now && now.hash) {
+      _headProfile.set(uuid, { hash: now.hash, slim: !!now.slim, cape: now.cape || null, at: Date.now() });
+    } else {
+      // Could not find out: forget the old answer rather than keep showing it.
+      _headProfile.delete(uuid);
+    }
+    _headFail.delete("p:" + uuid);
+    _headGuessed.delete(uuid);
+    headProfilesChanged();
+  } catch (err) {
+    devtoolsLog("heads: could not follow the skin change:", err && err.message);
+  }
+  sendEverywhere("heads-changed", {});
+}
 
 // Turn any thrown value / error response into a clean string message so the
 // renderer never shows "[object Object]".
@@ -17541,12 +17595,14 @@ async function postSkinToMojang(base64, variant) {
   });
   if (!res.ok) throw new Error(await cleanHttpError(res));
   profileCache.clear(); // active skin changed
-  let url = null;
+  let url = null, slim = String(variant || "").toLowerCase() === "slim";
   try {
     const j = await res.json();
     const active = (j.skins || []).find(s => s.state === "ACTIVE") || (j.skins || [])[0];
     if (active && active.url) url = active.url;
+    if (active && active.variant) slim = String(active.variant).toUpperCase() === "SLIM";
   } catch { /* the upload still worked; we just don't know where it landed */ }
+  await headsFollowSkinChange(null, url ? { hash: url.split("/").pop(), slim } : null);
   return url;
 }
 
@@ -17849,6 +17905,7 @@ ipcMain.handle("mc:resetSkin", async () => {
     });
     if (!res.ok) throw new Error(await cleanHttpError(res));
     profileCache.clear();
+    await headsFollowSkinChange(null);
     return true;
   } catch (err) {
     throw new Error(err && err.message ? err.message : String(err));

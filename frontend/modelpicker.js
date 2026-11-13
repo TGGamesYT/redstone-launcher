@@ -253,6 +253,15 @@
       const box = document.createElement('div');
       box.className = 'mp-wait';
       box.innerHTML = '<div class="mp-spin"></div><div class="mp-wait-text"></div><div class="mp-wait-time"></div>';
+      // The launcher's own loader -- the pistons pushing redstone round --
+      // rather than a ring like every other program's. The ring stays only
+      // for a page that has not got loading.js.
+      let pistons = null;
+      if (window.Loading && typeof window.Loading.mount === 'function') {
+        const spot = box.querySelector('.mp-spin');
+        spot.className = 'mp-pistons';
+        try { pistons = window.Loading.mount(spot, { size: 48 }); } catch { pistons = null; }
+      }
       const text = box.querySelector('.mp-wait-text');
       const time = box.querySelector('.mp-wait-time');
       text.textContent = 'Loading the blocks, items and mobs…';
@@ -266,7 +275,13 @@
           time.textContent = secs + 's';
         }
       }, 1000);
-      return { stop() { clearInterval(tick); box.remove(); } };
+      return {
+        stop() {
+          clearInterval(tick);
+          if (pistons && pistons.stop) { try { pistons.stop(); } catch { /* gone already */ } }
+          box.remove();
+        },
+      };
     }
 
     async function load(reset) {
@@ -442,6 +457,7 @@
                  border:3px solid var(--border-dark,#444); border-top-color:var(--base-color,#c33);
                  animation:mp-spin 0.9s linear infinite; }
       .mp-wait-time { opacity:0.6; font-size:11px; min-height:1em; }
+      .mp-pistons { width:48px; height:48px; }
       @keyframes mp-spin { to { transform:rotate(360deg); } }
       .mp-more button { margin:0; }`;
     document.head.appendChild(s);

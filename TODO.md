@@ -9,6 +9,39 @@ started.
 
 ---
 
+## 0. Round 62
+
+- [x] **The Google section shows "Sign in with Google" while it is still
+      checking.** — *The signed-out state was the page's default, so for the
+      second or two it takes to ask Google, somebody already signed in was
+      offered a sign-in button. Neither state is shown now until the answer
+      is in; meanwhile it says it is checking, with the launcher's loader.*
+- [x] **The picker's loader should be the launcher's own.** — *The pistons
+      pushing redstone round, from loading.js, instead of a ring.*
+- [x] **The picker is slow every time the launcher is reopened, for each
+      version.** — *A version no instance had downloaded was read straight
+      out of Mojang's jar over the network -- its directory, then each model
+      and texture one ranged request at a time -- and only the newest
+      release's jar was ever kept on disk, so every launcher start read it
+      over the network again. The first look still reads it in place so it
+      does not wait for forty megabytes, but the whole jar is fetched in the
+      background, checked against Mojang's checksum, and kept; the next start
+      reads it from disk. The six most recently used are kept.*
+- [x] **Changing a skin does not update the player's head anywhere.** — *The
+      heads are drawn from what Mojang last said the account was wearing,
+      remembered for hours and, since last round, across restarts -- and a
+      skin change made from this launcher never told that memory. Every way
+      of changing a skin now asks the account's own profile what it is
+      wearing (the session server can lag a minute behind), writes that down
+      in place of the old one, and tells every window to redraw its heads.*
+- [x] **A dev instance's icon picker does not have the mod project's own
+      models.** — *The mod being developed is not a jar in the mods folder;
+      Gradle runs it from the source tree. The picker reads the project's
+      resources now -- src/main/resources, and wherever the loader's datagen
+      writes, in the root and in a multi-loader project's loader folders --
+      ahead of everything else. Checked on the uploaded pcmod: its two
+      blocks and eight items are listed and draw.*
+
 ## 0. Round 61
 
 - [x] **Don't use the skin mirrors.** — *Taken out again. For a player they

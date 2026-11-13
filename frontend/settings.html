@@ -737,7 +737,15 @@
            Minecraft account and only hands to a connection Mojang has
            verified. Neither half opens anything alone. -->
       <div id="cloud-box" style="margin-bottom:50px;">
-        <div id="cloud-signed-out">
+        <!-- Neither state until the main process has said which it is. The
+             signed-out one used to be the default, so while Google was being
+             asked -- which takes a second or two -- somebody already signed
+             in was shown a "Sign in with Google" button. -->
+        <div id="cloud-checking" class="bg-hint" style="display:flex;align-items:center;gap:10px;">
+          <span id="cloud-checking-spin" style="display:inline-block;width:28px;height:28px;"></span>
+          Checking your Google sign-in…
+        </div>
+        <div id="cloud-signed-out" style="display:none;">
           <button type="button" id="cloud-signin" class="bg-btn"
             data-tip="Keeps your settings, themes, server list and signed-in accounts in your own Google Drive, so they follow you to another computer. Instances and worlds are not swept up by this — each is sent from its own menu, one at a time, when you ask for it. The launcher can only see the folder it makes — it asks for access to files it created and nothing wider — and the folder is ordinary files you can open and download — worlds as .zip, the rest as .json. The one exception is your signed-in accounts, which are encrypted with a key in two halves: one kept in the folder, one the relay works out from your Minecraft account and only hands over after Mojang has verified it. Neither half opens it on its own.">Sign in with Google…</button>
           <span id="cloud-signin-state" class="bg-hint" style="margin-left:10px;"></span>
@@ -2550,8 +2558,17 @@
           return `${v < 10 && i ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
         };
 
+        const checking = document.getElementById('cloud-checking');
+        let checkingSpin = null;
+        try {
+          const spot = document.getElementById('cloud-checking-spin');
+          if (spot && window.Loading && window.Loading.mount) checkingSpin = window.Loading.mount(spot, { size: 28 });
+        } catch { /* the words are enough */ }
         async function paint() {
-          const r = await ipcRenderer.invoke('cloud:status');
+          let r = null;
+          try { r = await ipcRenderer.invoke('cloud:status'); } catch { r = null; }
+          if (checking) checking.style.display = 'none';
+          if (checkingSpin) { try { checkingSpin.stop(); } catch { } checkingSpin = null; }
           const on = r && r.ok && r.signedIn;
           outBox.style.display = on ? 'none' : '';
           inBox.style.display = on ? '' : 'none';

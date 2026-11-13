@@ -3,7 +3,7 @@
   1280,
   800
  ],
- "count": 145,
+ "count": 147,
  "nodes": [
   {
    "key": "#add-gradient-color",
@@ -1731,7 +1731,7 @@
     131,
     601,
     1088,
-    23
+    28
    ],
    "style": {
     "display": "block",
@@ -1755,6 +1755,86 @@
     "marginTop": "0px",
     "marginRight": "0px",
     "marginBottom": "50px",
+    "marginLeft": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "zIndex": "auto",
+    "opacity": "1",
+    "visibility": "visible"
+   }
+  },
+  {
+   "key": "#cloud-checking",
+   "box": [
+    131,
+    601,
+    1088,
+    28
+   ],
+   "style": {
+    "display": "flex",
+    "position": "static",
+    "boxSizing": "border-box",
+    "overflow": "visible",
+    "overflowX": "visible",
+    "overflowY": "visible",
+    "flexDirection": "row",
+    "justifyContent": "normal",
+    "alignItems": "center",
+    "gridTemplateColumns": "none",
+    "fontFamily": "Pixel",
+    "fontSize": "12px",
+    "fontWeight": "400",
+    "lineHeight": "normal",
+    "textAlign": "start",
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": "0px",
+    "marginTop": "0px",
+    "marginRight": "0px",
+    "marginBottom": "0px",
+    "marginLeft": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "zIndex": "auto",
+    "opacity": "0.7",
+    "visibility": "visible"
+   }
+  },
+  {
+   "key": "#cloud-checking-spin",
+   "box": [
+    131,
+    601,
+    28,
+    28
+   ],
+   "style": {
+    "display": "block",
+    "position": "static",
+    "boxSizing": "border-box",
+    "overflow": "visible",
+    "overflowX": "visible",
+    "overflowY": "visible",
+    "flexDirection": "row",
+    "justifyContent": "normal",
+    "alignItems": "normal",
+    "gridTemplateColumns": "none",
+    "fontFamily": "Pixel",
+    "fontSize": "12px",
+    "fontWeight": "400",
+    "lineHeight": "normal",
+    "textAlign": "start",
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": "0px",
+    "marginTop": "0px",
+    "marginRight": "0px",
+    "marginBottom": "0px",
     "marginLeft": "0px",
     "paddingTop": "0px",
     "paddingRight": "0px",
@@ -2008,13 +2088,13 @@
   {
    "key": "#cloud-signed-out",
    "box": [
-    131,
-    601,
-    1088,
-    23
+    0,
+    0,
+    0,
+    0
    ],
    "style": {
-    "display": "block",
+    "display": "none",
     "position": "static",
     "boxSizing": "border-box",
     "overflow": "visible",
@@ -2048,10 +2128,10 @@
   {
    "key": "#cloud-signin",
    "box": [
-    131,
-    601,
-    150,
-    23
+    0,
+    0,
+    0,
+    0
    ],
    "style": {
     "display": "inline-block",
@@ -2088,10 +2168,10 @@
   {
    "key": "#cloud-signin-state",
    "box": [
-    291,
-    607,
     0,
-    11
+    0,
+    0,
+    0
    ],
    "style": {
     "display": "inline",
@@ -3689,7 +3769,7 @@
    "key": "#runImportBtn",
    "box": [
     293.4,
-    718,
+    723,
     261.6,
     35
    ],
@@ -3729,7 +3809,7 @@
    "key": "#runTourBtn",
    "box": [
     131,
-    718,
+    723,
     152.4,
     35
    ],
@@ -3969,7 +4049,7 @@
    "key": "#settings-contact-discord",
    "box": [
     131,
-    871,
+    876,
     60.8,
     15
    ],
@@ -4009,7 +4089,7 @@
    "key": "#settings-contact-email",
    "box": [
     201.8,
-    871,
+    876,
     299.2,
     15
    ],
