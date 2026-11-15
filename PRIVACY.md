@@ -166,8 +166,9 @@ Google account, your Google email address, or your Google tokens.
 - Your Google account's email address, to display on the settings page.
 - A random identifier and a name for this computer, so that when the same
   thing is changed on two computers the launcher can tell you which one.
-- A **GitHub token**, if you gave the launcher one so that it could reach a
-  private repository for a mod project. It is stored locally, used only for
+- A **GitHub token**, if you signed in with GitHub or gave the launcher one so
+  that it could reach a private repository for a mod project (and, if you
+  did, to read the credits with GitHub's higher rate limit). It is stored locally, used only for
   `github.com`, sent only to GitHub as the `Authorization` header of a Git
   request, and is **never uploaded, never synced and never sent to our
   relay**. It is also never put on a command line, where anything else

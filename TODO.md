@@ -36,8 +36,17 @@ started.
       written. Kept for a day; a saved GitHub token is used if there is one,
       since sixty unauthenticated requests an hour is easily used up on a
       shared network.*
-- [ ] **GitHub sign-in the way `gh auth login` does it.** — *See the answer in
-      chat.*
+- [x] **GitHub sign-in the way `gh auth login` does it.** — *The same OAuth
+      device flow: a short code shown in the launcher, typed in at
+      github.com/login/device. Two ways, in order. The launcher's own OAuth
+      app, done directly -- offered once a client id is filled in at
+      GITHUB_CLIENT_ID in backend/github-auth.js (registering one is free and
+      has no secret). And GitHub CLI where it is installed: `gh auth login
+      --web` runs the flow with gh's own app and `gh auth setup-git` makes the
+      system Git use it, so every clone and pull works from anywhere. What is
+      deliberately not done is borrowing gh's public client id for a flow of
+      our own, which would have GitHub ask whether to grant "GitHub CLI"
+      access to something that is not GitHub CLI. A test fails if it appears.*
 - [x] **Space on the right of the skins list.** — *The columns were exactly
       one card wide, so whatever was left after the last whole card sat
       empty on the right. They share the row now, and the cards widen into

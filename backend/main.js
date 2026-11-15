@@ -30,6 +30,7 @@ import shortcuts from './shortcuts.js';
 import skinSources from './skin-sources.js';
 import credits from './credits.js';
 import git from './git.js';
+import githubAuth from './github-auth.js';
 import totem from './totem.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
@@ -15225,6 +15226,32 @@ ipcMain.handle("git:setToken", (event, { token } = {}) => {
   if (!clean) { settings.delete ? settings.delete(GIT_TOKEN_KEY) : settings.set(GIT_TOKEN_KEY, ""); return { success: true, hasToken: false }; }
   settings.set(GIT_TOKEN_KEY, clean);
   return { success: true, hasToken: true };
+});
+
+// Signing in to GitHub, the way `gh auth login` does: a code shown here and
+// typed in at github.com/login/device. See backend/github-auth.js for the
+// two ways it is done and why neither borrows anybody else's app.
+ipcMain.handle("github:methods", () => ({ success: true, ...githubAuth.methods(), signedIn: !!gitToken() }));
+let _githubSigningIn = null;
+ipcMain.handle("github:signIn", async (event) => {
+  if (_githubSigningIn) return _githubSigningIn;
+  const tell = (m) => { try { event.sender.send("github-signin", m); } catch { /* the page went */ } };
+  const opts = { onCode: (c) => tell(c), openUrl: (u) => shell.openExternal(u) };
+  _githubSigningIn = (async () => {
+    const m = githubAuth.methods();
+    const r = m.native ? await githubAuth.signInDeviceFlow(opts)
+      : m.gh ? await githubAuth.signInWithGh(opts)
+        : { ok: false, error: "There is no way to sign in to GitHub here yet: install GitHub CLI, or paste a token." };
+    if (!r.ok) return { success: false, error: r.error };
+    if (r.token) settings.set(GIT_TOKEN_KEY, r.token);
+    let login = null;
+    try {
+      const u = await fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${r.token}`, "User-Agent": LAUNCHER_UA } });
+      if (u.ok) login = (await u.json()).login || null;
+    } catch { /* signed in all the same */ }
+    return { success: true, via: r.via, login, gitHelper: !!r.gitHelper };
+  })();
+  try { return await _githubSigningIn; } finally { _githubSigningIn = null; }
 });
 
 ipcMain.handle("git:info", async (event, { profileId, dir } = {}) => {

@@ -1525,6 +1525,20 @@
       retry();
     };
     box.appendChild(save);
+    // Or the way `gh auth login` does it, where that is possible here.
+    if (window.GitHubSignIn) {
+      window.GitHubSignIn.available().then((ok) => {
+        if (!ok || !box.isConnected) return;
+        const gh = document.createElement('button');
+        gh.textContent = 'Sign in with GitHub';
+        gh.style.margin = '8px 8px 0 0';
+        gh.onclick = async () => {
+          const r = await window.GitHubSignIn.open();
+          if (r && r.success) { logEl.textContent += '\nSigned in. Trying again…\n'; retry(); }
+        };
+        box.insertBefore(gh, save);
+      });
+    }
     form.appendChild(box);
   }
 
