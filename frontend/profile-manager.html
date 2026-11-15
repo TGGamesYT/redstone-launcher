@@ -159,12 +159,34 @@
       --card-track: calc(var(--card-w) + var(--card-gutter) * 2);
     }
 
+    /* The columns share out the row's width rather than each being exactly
+       one card wide. With fixed tracks, whatever was left after the last
+       whole card -- anything up to a card's width -- sat as an empty strip
+       on the right of the list, at the default window size included. A
+       track is never narrower than a card, so the same number fit on a row
+       as before; the cards just widen to use the remainder, and what is
+       drawn inside them stays centred. */
     #skins,
     #capes {
       display: grid;
-      grid-template-columns: repeat(auto-fill, var(--card-track));
+      grid-template-columns: repeat(auto-fill, minmax(var(--card-track), 1fr));
       gap: 10px;
       align-items: start;
+    }
+    #skins > .card,
+    #capes > .card {
+      width: auto;
+      display: block;
+    }
+    #skins > .card canvas,
+    #skins > .card img.card-image,
+    #capes > .card canvas,
+    #capes > .card img.card-image {
+      display: block;
+      margin-left: auto;
+      margin-right: auto;
+      /* The picture stays the size it was; only the card around it grows. */
+      max-width: calc(var(--card-w) - var(--card-pad) * 2);
     }
 
     .card {
@@ -1156,9 +1178,12 @@
       const cols = (cs.gridTemplateColumns || '').split(/\s+/)
         .map(v => parseFloat(v)).filter(v => Number.isFinite(v) && v > 0);
       if (!cols.length) return;
-      const gap = parseFloat(cs.columnGap || cs.gap || '0') || 0;
-      const full = cols.reduce((a, b) => a + b, 0) + gap * (cols.length - 1);
-      if (full > 0) row.style.width = full + "px";
+      // The columns fill the row now (see #skins in the styles), so the row
+      // spanning all of them already ends where the list does. Setting a
+      // width on top of that is what pushed it out past the right edge by
+      // its own margin; with the columns filling the row there is nothing
+      // left to correct, and it is left to the grid.
+      void cols;
     }
     window.addEventListener("resize", fitActionsRow);
 
@@ -1895,6 +1920,11 @@
             width: vw,
             height: vh
           });
+          // Hidden until it wears the skin, which it does not at first: a
+          // fresh viewer draws a plain white player until the texture loads.
+          if (window.SkinAnimations && window.SkinAnimations.revealWhenSkinned) {
+            window.SkinAnimations.revealWhenSkinned(window.skinViewer, document.getElementById("skin_container"), 'skins-render');
+          }
         } else {
           try { window.skinViewer.setSize(vw, vh); } catch { }
         }

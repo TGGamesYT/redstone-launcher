@@ -9,6 +9,48 @@ started.
 
 ---
 
+## 0. Round 63
+
+- [x] **CinemaMod/webdisplays: no version found, read as Forge, no icon.** —
+      *NeoForge 1.20.1 is a fork of Forge 47 that kept Forge's file names --
+      META-INF/mods.toml, not neoforge.mods.toml -- and its dependency is
+      still published as net.neoforged:forge:1.20.1-47.1.65. A mods.toml is
+      NeoForge now when the build script names net.neoforged, and that
+      dependency, Parchment's mapping version and the mod's own minecraft
+      dependency range are all read for the version. It has no icon in the
+      tree at all (logoFile is ""), so one is taken from Modrinth -- looked
+      up by mod id and used only when the source repository Modrinth records
+      is the one the folder was cloned from.*
+- [ ] **GitHub sign-in the way `gh auth login` does it.** — *See the answer in
+      chat.*
+- [x] **Space on the right of the skins list.** — *The columns were exactly
+      one card wide, so whatever was left after the last whole card sat
+      empty on the right. They share the row now, and the cards widen into
+      the remainder with their picture kept centred and the same size. A
+      script that sized the Add row to the old fixed columns pushed it past
+      the edge once they filled the row; it is left to the grid.*
+- [x] **Instances and Servers not clickable on their own page; the bars,
+      the account's face, the instance shortcuts and the running list
+      reloading on every page change; the loading screen restarting.** —
+      *All one fault. sidebar.js runs in the shell as well as in every page,
+      and two of its handlers set window.location.href -- which in the shell
+      does not change the frame, it replaces the whole shell with a lone
+      page. "Add an instance" from anywhere but Instances did it, and so did
+      clicking a running instance in the title bar. From then on there was
+      no shell, so every page change reloaded everything, for the rest of
+      the session. Those go through the shell now, and the main process
+      turns any navigation of the window to one of our pages into the shell
+      framing it, so the next one cannot either. Separately, asking for the
+      page you are already on no longer reloads it: Instances and the Server
+      Manager go back to their list in place, and every other page stays as
+      it is.*
+- [x] **The home page's and the skins page's render show white while the
+      loading screen fades.** — *A viewer draws its player from the moment it
+      is made, and plain white until the skin's texture has loaded. The canvas
+      stays hidden until the first skin it is given is loaded and drawn, and
+      the loading screen is held for it if it is still up -- only then, so a
+      later redraw does not bring the loading screen back.*
+
 ## 0. Round 62
 
 - [x] **The Google section shows "Sign in with Google" while it is still

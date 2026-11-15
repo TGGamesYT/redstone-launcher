@@ -851,6 +851,11 @@
 
       const first = wanted();
       const v = new skinview3d.SkinViewer({ canvas, width: first.w, height: first.h });
+      // Not shown -- and the loading screen not taken down -- until it is
+      // wearing the skin: until then it is a plain white figure.
+      if (window.SkinAnimations && window.SkinAnimations.revealWhenSkinned) {
+        window.SkinAnimations.revealWhenSkinned(v, canvas, 'home-skin');
+      }
       let atW = first.w, atH = first.h;
       v.zoom = 0.9;
       v.autoRotate = !!seg.spin;

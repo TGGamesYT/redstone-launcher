@@ -1393,6 +1393,27 @@ function createWindow() {
   // The shell, not a page. It holds the bars and frames whichever page is
   // open, so navigating stops throwing the bars away and building them again.
   win.loadFile('frontend/shell.html');
+  // The window IS the shell, and nothing may replace it.
+  //
+  // A page lives in the shell's frame; the shell itself stays put, which is
+  // what keeps the bars, the account's face, the instance shortcuts and the
+  // running list from reloading on every page change. Any script running in
+  // the shell that sets `location.href` does not change the frame -- it
+  // swaps the whole shell for a lone page, and the launcher quietly goes
+  // back to reloading everything every time, for the rest of the session.
+  // Two of the sidebar's handlers did exactly that. They are fixed; this is
+  // so the next one cannot: a navigation of the window to one of our pages
+  // is turned into the shell framing it.
+  win.webContents.on("will-navigate", (e, url) => {
+    try {
+      const u = new URL(url);
+      if (u.protocol !== "file:") return;
+      const file = decodeURIComponent(u.pathname).split("/").pop();
+      if (!/^[\w.-]+\.html$/i.test(file) || file.toLowerCase() === "shell.html") return;
+      e.preventDefault();
+      win.webContents.send("shell-navigate", file + (u.search || "") + (u.hash || ""));
+    } catch { /* not ours to judge */ }
+  });
   win.on("maximize", () => {
     win.webContents.send("window-maximized");
   });

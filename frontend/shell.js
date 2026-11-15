@@ -95,6 +95,20 @@
   function navigate(href) {
     const page = ourPage(href);
     if (!page) return false;
+    // The page that is already open, asked for again with nothing after it --
+    // the sidebar button for where you are. Reloading it showed the loading
+    // screen from the start and rebuilt a page that was already there.
+    // Instances and the Server Manager go back to their list instead (from
+    // inside one instance or server), in place; every other page simply
+    // stays as it is.
+    const file = page.split(/[?#]/)[0].toLowerCase();
+    if (file === here && !/[?#]/.test(page)) {
+      const w = frameWindow();
+      try {
+        if (w && typeof w.showListView === "function") { w.showListView(); markCurrent(file); return true; }
+      } catch { /* the page could not be asked; reload it as before */ }
+      if (w) { markCurrent(file); return true; }
+    }
     // Same page, different query: still a navigation, because that is how
     // these pages are told which instance or server to open.
     loadingUp(label(page));

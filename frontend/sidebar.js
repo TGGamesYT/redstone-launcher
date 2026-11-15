@@ -486,6 +486,32 @@ async function updateLoginIcon() {
   }
 }
 
+
+/**
+ * Go to one of the launcher's pages, from wherever this is running.
+ *
+ * sidebar.js runs in the SHELL as well as in every page, and in the shell
+ * `window.location.href = ...` does not change the page in the frame: it
+ * replaces the shell itself with that page, standing alone. From then on
+ * there is no shell -- every page change reloads the bars, the account's
+ * face, the instance shortcuts and the running list, and the loading screen
+ * starts again from nothing, which is exactly what it was built to stop.
+ * "Add an instance" from any page but Instances, and clicking a running
+ * instance in the title bar, both did this. In the shell the frame is
+ * navigated; in a page on its own, the page is.
+ */
+function goToPage(href) {
+  try {
+    if (typeof window.shellNavigate === 'function' && window.shellNavigate(href)) return;
+  } catch { /* fall through to the plain way */ }
+  try {
+    const up = window.parent !== window && window.parent.shellNavigate;
+    if (typeof up === 'function' && up(href)) return;
+  } catch { /* not reachable */ }
+  window.location.href = href;
+}
+window.goToPage = goToPage;
+
 function renderInstances(instances) {
   const ul = document.getElementById("instances");
 
@@ -563,7 +589,7 @@ function renderInstances(instances) {
     if (typeof window.openNewInstanceInPage === "function") {
       window.openNewInstanceInPage();
     } else {
-      window.location.href = "instances.html?i=NEWINSTANCE";
+      goToPage("instances.html?i=NEWINSTANCE");
     }
   });
   ul.appendChild(liAdd);
@@ -641,8 +667,10 @@ applyModProviderIcon();
 // Global loading-screen handling. Any page that includes a
 // `#loading-overlay` element gets the same fade-out once the window finishes
 // loading, so every page shows the launcher splash without duplicating logic.
+let _pageSaidReady = false;
 function hideLoadingOverlay() {
   if (_loadHolds.size) return;        // something is still loading; it says so
+  _pageSaidReady = true;
   // The shell puts its own loading screen up the moment a page change starts,
   // and takes it down when the page that was asked for says it is ready --
   // which is this, the point at which the page would have taken its own down.
@@ -713,6 +741,15 @@ window.pageLoading = {
     clearTimeout(_loadHolds.get(key));
     _loadHolds.delete(key);
     if (!_loadHolds.size) hideLoadingOverlay();
+  },
+  // Keep the loading screen up a little longer -- but only if it is still up.
+  // For something that is part of the page arriving (a skin render wearing
+  // its skin), which must not bring the loading screen BACK when the same
+  // thing is redrawn later on.
+  holdIfLoading(key, text) {
+    if (_pageSaidReady) return false;
+    window.pageLoading.hold(key, text);
+    return true;
   },
   // A change WITHIN a page -- the instance list to an instance, and back --
   // which is a page change as far as anyone looking at it is concerned, and
@@ -1119,7 +1156,7 @@ async function createInstanceInfoBar(container) {
         row.append(img, mid, act);
         row.onclick = () => {
             setOpen(false);
-            window.location.href = `instances.html?i=${encodeURIComponent(id)}`;
+            goToPage(`instances.html?i=${encodeURIComponent(id)}`);
         };
         ipcRenderer.invoke("get-profile-by-id", id).then(p => {
             if (p && window.instanceIconInto) window.instanceIconInto(img, p);

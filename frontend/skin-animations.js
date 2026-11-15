@@ -1148,7 +1148,49 @@
   // The spin reactions and the cape reparenting are useful with or without
   // converted clips, so this object exists either way; only `conductor` and
   // `clips` depend on there being any.
+  /**
+   * Keep a skin render out of sight until it is wearing its skin.
+   *
+   * A viewer draws its player from the moment it is made, and until the
+   * skin's texture has loaded that player is plain white. The loading screen
+   * fades out on the page's own schedule, which is usually sooner, so what
+   * showed through the fade was a white figure that then turned into the
+   * player. So the canvas is hidden until the first skin it is given has
+   * loaded and been drawn once, and the launcher's loading screen is held
+   * up for that long too -- bounded, so a skin that never comes cannot keep
+   * the page covered.
+   */
+  function revealWhenSkinned(viewer, canvas, holdKey) {
+    if (!viewer || !canvas || viewer.__revealing) return;
+    viewer.__revealing = true;
+    canvas.style.transition = 'opacity 0.18s ease';
+    canvas.style.opacity = '0';
+    let held = false;
+    if (holdKey && window.pageLoading && window.pageLoading.holdIfLoading) {
+      try { held = window.pageLoading.holdIfLoading(holdKey, 'Loading the skin…'); } catch { held = false; }
+    }
+    let done = false;
+    const show = () => {
+      if (done) return;
+      done = true;
+      // Two frames: one for the texture to be uploaded, one to be drawn with it.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        canvas.style.opacity = '1';
+        if (held) { try { window.pageLoading.release(holdKey); } catch { } }
+      }));
+    };
+    const real = viewer.loadSkin.bind(viewer);
+    viewer.loadSkin = function (...args) {
+      let out;
+      try { out = real(...args); } catch (e) { show(); throw e; }
+      Promise.resolve(out).then(show, show);
+      return out;
+    };
+    setTimeout(show, 8000);
+  }
+
   window.SkinAnimations = {
+    revealWhenSkinned,
     clips,
     names,
     resetPose: resetToRest,
