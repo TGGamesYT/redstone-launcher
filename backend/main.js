@@ -14885,7 +14885,14 @@ const PROJECT_PLUGINS = [
 ];
 function projectLoader(root) {
   for (const [loader, rel] of PROJECT_META) {
-    if (fs.existsSync(path.join(root, ...rel))) return loader;
+    if (!fs.existsSync(path.join(root, ...rel))) continue;
+    // META-INF/mods.toml is not Forge's alone. NeoForge kept that very file
+    // name until 1.20.2 -- its 1.20.1 is a fork of Forge 47 that still reads
+    // mods.toml -- so a NeoForge 1.20.1 project was taken for Forge. The
+    // build script settles it: NeoForge's toolchain is net.neoforged, and
+    // so is its dependency ("net.neoforged:forge:1.20.1-47.1.65").
+    if (loader === "forge" && /net\.neoforged/i.test(projectScripts(root))) return "neoforge";
+    return loader;
   }
   const scripts = projectScripts(root);
   for (const [loader, re] of PROJECT_PLUGINS) if (re.test(scripts)) return loader;
@@ -14906,8 +14913,13 @@ function projectVersion(root) {
   const scripts = projectScripts(root);
   let m = /com\.mojang:minecraft:([\w.\-+]+)/.exec(scripts);
   if (m) return m[1];
-  m = /net\.minecraftforge:forge:([\d.]+?)-/.exec(scripts)
+  // Forge's dependency names the game first: "<mc>-<forge>". So does
+  // NeoForge's for 1.20.1, which was still published as net.neoforged:forge.
+  m = /net\.(?:minecraftforge|neoforged):forge:([\d.]+?)-/.exec(scripts)
     || /mappings\s+channel:[^\n]*version:\s*["']([\d.]+)["']/.exec(scripts);
+  if (m) return m[1];
+  // Parchment's mappings end in the game version: '2023.06.26-1.20.1'.
+  m = /mappings\s+channel:\s*["']parchment["'][^\n]*version:\s*["'][\d.]+-(1\.\d+(?:\.\d+)?)["']/.exec(scripts);
   if (m) return m[1];
   // NeoForge never writes the game's version down: it names its OWN, and
   // 21.1.80 is NeoForge for 1.21.1. Matched narrowly, off the version it
@@ -14917,6 +14929,19 @@ function projectVersion(root) {
   m = /neoForge\s*(?:\{|\()[^})]*version\s*[=(]\s*["']v?(\d+)\.(\d+)\./i.exec(scripts)
     || /net\.neoforged:neoforge:(\d+)\.(\d+)\./i.exec(scripts);
   if (m) return `1.${m[1]}.${m[2]}`;
+  // Last: what the mod itself says it needs. mods.toml's dependency on
+  // "minecraft" carries a range whose lower end is the version it is for.
+  for (const toml of ["neoforge.mods.toml", "mods.toml"]) {
+    const text = projectText(root, "src", "main", "resources", "META-INF", toml);
+    const dep = /modId\s*=\s*["']minecraft["'][\s\S]*?versionRange\s*=\s*["'][\[(]\s*(\d+\.\d+(?:\.\d+)?)/.exec(text);
+    if (dep) return dep[1];
+  }
+  try {
+    const fmj = JSON.parse(projectText(root, "src", "main", "resources", "fabric.mod.json"));
+    const want = fmj && fmj.depends && fmj.depends.minecraft;
+    const v = /(\d+\.\d+(?:\.\d+)?)/.exec(Array.isArray(want) ? want[0] : String(want || ""));
+    if (v && !/\$\{/.test(String(want))) return v[1];
+  } catch { /* not a Fabric mod, or a templated one */ }
   return null;
 }
 
@@ -14979,8 +15004,8 @@ function modProjectIcon(root, modId) {
     if (m) named.push(m[1]);
   }
   // And where a mod puts one when nothing says so.
-  if (modId) named.push(`assets/${modId}/icon.png`);
-  named.push("icon.png", "logo.png");
+  if (modId) named.push(`assets/${modId}/icon.png`, `assets/${modId}/logo.png`, `assets/${modId}/textures/icon.png`);
+  named.push("icon.png", "logo.png", "pack.png");
 
   for (const rel of named) {
     const at = path.join(res, ...String(rel).split(/[\\/]+/));
@@ -15035,14 +15060,65 @@ function modProjectInfo(picked) {
   };
 }
 
-ipcMain.handle("project:inspect", (event, { folder } = {}) => modProjectInfo(folder));
+// The mod's icon from Modrinth, for a project whose repository has none.
+//
+// Plenty of mods keep the icon only on their mod page: WebDisplays' logoFile
+// is "" and there is no icon.png anywhere in the tree. Modrinth has it, and
+// Modrinth records each project's source repository -- so the project is
+// looked up by its mod id and taken ONLY if the repository Modrinth names is
+// the one this folder was cloned from. A mod id is not unique across the
+// whole site, and wearing an unrelated project's icon would be worse than
+// wearing none.
+async function projectIconOnline(root, modId) {
+  if (!modId) return null;
+  let origin = null;
+  try {
+    const { bin } = git.whichGit(dataDir);
+    if (bin) {
+      const r = await git.run(bin, ["remote", "get-url", "origin"], { cwd: root, timeout: 10000 });
+      if (r.ok) origin = r.out.trim();
+    }
+  } catch { /* not a clone */ }
+  const repoOf = (url) => {
+    const m = /github\.com[/:]([^/]+)\/([^/.\s]+?)(?:\.git)?\/?$/i.exec(String(url || ""));
+    return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+  };
+  const mine = repoOf(origin);
+  if (!mine) return null;
+  try {
+    const res = await fetch(`https://api.modrinth.com/v2/project/${encodeURIComponent(modId)}`, {
+      headers: { "User-Agent": LAUNCHER_UA },
+    });
+    if (!res.ok) return null;
+    const p = await res.json();
+    if (repoOf(p.source_url) !== mine || !p.icon_url) return null;
+    const img = await fetch(p.icon_url);
+    if (!img.ok) return null;
+    const buf = Buffer.from(await img.arrayBuffer());
+    if (buf.length > 2 * 1024 * 1024) return null;
+    const type = (img.headers.get("content-type") || "image/png").split(";")[0];
+    if (!/^image\//.test(type)) return null;
+    return `data:${type};base64,${buf.toString("base64")}`;
+  } catch { return null; }
+}
+
+async function modProjectInfoWithIcon(folder) {
+  const info = modProjectInfo(folder);
+  if (info && info.success && !info.icon) {
+    const online = await projectIconOnline(info.root, info.modId);
+    if (online) { info.icon = online; info.iconFrom = "Modrinth"; }
+  }
+  return info;
+}
+
+ipcMain.handle("project:inspect", (event, { folder } = {}) => modProjectInfoWithIcon(folder));
 ipcMain.handle("project:pick", async () => {
   const r = await dialog.showOpenDialog({
     title: "Select the mod project's folder",
     properties: ["openDirectory"],
   });
   if (r.canceled || !r.filePaths.length) return { canceled: true };
-  return modProjectInfo(r.filePaths[0]);
+  return modProjectInfoWithIcon(r.filePaths[0]);
 });
 
 // ── A mod project that came out of a repository ─────────────────────────────
@@ -15237,7 +15313,7 @@ ipcMain.handle("git:clone", async (event, { url, parent, name, branch } = {}) =>
   }
   // What was cloned, read as a mod project -- the whole point of cloning it
   // here. A repository that is not one is still cloned and still said so.
-  const info = modProjectInfo(r.dest);
+  const info = await modProjectInfoWithIcon(r.dest);
   return { success: true, dir: r.dest, project: info && info.success ? info : null, error: info && info.success ? null : (info && info.error) || null };
 });
 

@@ -452,5 +452,56 @@ check("and the new numbering is not read as the old one",
     "<data>/client/<id> spelt out anywhere else is a line that reads the wrong folder for a dev instance");
 }
 
+// ── NeoForge for 1.20.1, which still looked like Forge ─────────────────────
+//
+// Shaped like CinemaMod/webdisplays: NeoForge 1.20.1 is a fork of Forge 47
+// and kept Forge's file names -- META-INF/mods.toml, not neoforge.mods.toml
+// -- and its dependency is still "net.neoforged:forge:<mc>-<forge>". So it
+// was read as Forge, and its Minecraft version, which is only in that
+// dependency line, was not found at all.
+{
+  const wd = path.join(tmp, "webdisplays-like");
+  write("webdisplays-like/gradlew", "#!/bin/sh\n");
+  write("webdisplays-like/build.gradle", [
+    "plugins {",
+    "    id 'net.neoforged.gradle' version '[6.0.18,6.2)'",
+    "    id 'org.parchmentmc.librarian.forgegradle' version '1.+'",
+    "}",
+    "java.toolchain.languageVersion = JavaLanguageVersion.of(17)",
+    "minecraft { mappings channel: 'parchment', version: '2023.06.26-1.20.1' }",
+    "dependencies {",
+    "    minecraft 'net.neoforged:forge:1.20.1-47.1.65'",
+    "}",
+  ].join("\n"));
+  write("webdisplays-like/gradle.properties", "mod_version = 2.0.2-1.20.1\narchives_base_name = webdisplays\n");
+  write("webdisplays-like/src/main/resources/META-INF/mods.toml", [
+    'modLoader="javafml"', 'loaderVersion="[43,)"', "[[mods]]", 'modId="webdisplays"', 'logoFile= ""',
+    "[[dependencies.webdisplays]]", 'modId="forge"', 'versionRange="[43,)"',
+    "[[dependencies.webdisplays]]", 'modId="minecraft"', 'versionRange="[1.20.1,)"',
+  ].join("\n"));
+  check("NeoForge 1.20.1 is NeoForge, though it kept Forge's mods.toml",
+    mod.projectLoader(wd), "neoforge", "the build script names net.neoforged; Forge's does not");
+  check("and its Minecraft version is read off the forge-shaped dependency",
+    mod.projectVersion(wd), "1.20.1", "\"net.neoforged:forge:1.20.1-47.1.65\"");
+  check("on the Java it asks for", mod.requiredJavaForProject(wd), 17);
+
+  // A real Forge project with the same file is still Forge.
+  const forge = path.join(tmp, "plain-forge");
+  write("plain-forge/gradlew", "#!/bin/sh\n");
+  write("plain-forge/build.gradle", "plugins { id 'net.minecraftforge.gradle' version '6.+' }\ndependencies { minecraft 'net.minecraftforge:forge:1.20.1-47.2.0' }\n");
+  write("plain-forge/src/main/resources/META-INF/mods.toml", 'modLoader="javafml"\n');
+  check("while Forge with the same file stays Forge",
+    [mod.projectLoader(forge), mod.projectVersion(forge)], ["forge", "1.20.1"]);
+
+  // Nothing in the scripts at all: the mod's own dependency range says it.
+  const bare = path.join(tmp, "toml-only");
+  write("toml-only/gradlew", "#!/bin/sh\n");
+  write("toml-only/build.gradle", "plugins { id 'net.minecraftforge.gradle' }\n");
+  write("toml-only/src/main/resources/META-INF/mods.toml",
+    '[[dependencies.x]]\nmodId="minecraft"\nmandatory=true\nversionRange="[1.19.2,1.20)"\n');
+  check("and failing everything else, the range the mod depends on",
+    mod.projectVersion(bare), "1.19.2");
+}
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);
