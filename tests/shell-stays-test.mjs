@@ -42,6 +42,8 @@ for (const s of [...scripts, "playerhead.js"]) {
       // The one allowed form: goToPage's own last resort, for a page that is
       // NOT in a shell, after it has tried the shell first.
       if (/goToPage/.test(text) && /window\.location\.href = href;/.test(line)) return;
+      // The frame's own address, not the shell's: that is a page change.
+      if (/\bframe\.contentWindow\.location\./.test(line)) return;
       offenders.push(`${s}:${i + 1}: ${line.trim()}`);
     }
   });
@@ -55,11 +57,11 @@ check("and the main process turns any such navigation into framing the page",
   "so the next handler that does it cannot take the shell away either");
 
 const shell = code("frontend/shell.js");
-check("asking for the page you are on does not reload it",
-  /file === here && !\/\[\?#\]\/\.test\(page\)/.test(shell), true,
-  "it started the loading screen over and rebuilt a page that was already there");
-check("and Instances and the Server Manager go back to their list instead",
-  /typeof w\.showListView === "function"/.test(shell), true);
+check("asking for the page you are on reloads it",
+  /file === here[\s\S]{0,400}?location\.assign\(page\)/.test(shell), true,
+  "its button is how a page is reloaded, and how Instances gets back to its list");
+check("and does not quietly do nothing instead",
+  /typeof w\.showListView === "function"/.test(shell), false);
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);

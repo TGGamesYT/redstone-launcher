@@ -9,12 +9,10 @@ change seems to need a version bump, say so and leave the number alone.
 
 ## Commits
 
-Every commit message ends with:
-
-```
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_019mf42aQEewZcshHgF56BNJ
-```
+Every commit message ends with the attribution lines the session gives for
+commits (a `Co-Authored-By:` line naming the model that wrote it, and the
+`Claude-Session:` link), exactly as given. Don't copy them from an older
+commit: the model and the session change.
 
 No model identifier appears in a commit message, a PR title or body, a code
 comment, or anything else pushed to the repository. That belongs in chat only.

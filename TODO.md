@@ -64,10 +64,8 @@ started.
       no shell, so every page change reloaded everything, for the rest of
       the session. Those go through the shell now, and the main process
       turns any navigation of the window to one of our pages into the shell
-      framing it, so the next one cannot either. Separately, asking for the
-      page you are already on no longer reloads it: Instances and the Server
-      Manager go back to their list in place, and every other page stays as
-      it is.*
+      framing it, so the next one cannot either. (Asking for the page you are
+      already on was briefly made to do nothing; that was wrong, see below.)*
 - [x] **The home page's and the skins page's render show white while the
       loading screen fades.** — *A viewer draws its player from the moment it
       is made, and plain white until the skin's texture has loaded. The canvas
@@ -89,6 +87,11 @@ started.
       virtualization (which would have hidden %APPDATA%\Redstone Launcher
       from Explorer, Java and shortcut icons; turned off, which needs the
       unvirtualizedResources capability approved at certification).*
+- [x] **Clicking the button of the page you are on should reload that
+      page, not do nothing.** — *It reloads it now, as the button's own page:
+      a plain reload kept the address the page had moved to, so Instances
+      pressed from inside an instance (instances.html?i=...) reloaded the
+      instance instead of going back to the list.*
 
 ## 0. Round 62
 
