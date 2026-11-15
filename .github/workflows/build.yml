@@ -80,6 +80,20 @@ jobs:
     runs-on: windows-latest
     needs: check
     if: needs.check.outputs.build == 'true'
+    # The Microsoft Store settings, read once here so the steps can ask
+    # whether they are set (a step's `if` cannot read secrets directly).
+    # The three identity values are not secret -- Partner Center shows them
+    # to anyone who looks at the product -- so they may be repository
+    # variables or secrets, whichever was used. See docs/microsoft-store.md.
+    env:
+      MS_STORE_IDENTITY_NAME: ${{ vars.MS_STORE_IDENTITY_NAME || secrets.MS_STORE_IDENTITY_NAME }}
+      MS_STORE_PUBLISHER: ${{ vars.MS_STORE_PUBLISHER || secrets.MS_STORE_PUBLISHER }}
+      MS_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.MS_STORE_PUBLISHER_DISPLAY_NAME || secrets.MS_STORE_PUBLISHER_DISPLAY_NAME }}
+      MS_STORE_PRODUCT_ID: ${{ secrets.MS_STORE_PRODUCT_ID }}
+      MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_TENANT_ID }}
+      MS_STORE_SELLER_ID: ${{ secrets.MS_STORE_SELLER_ID }}
+      MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_CLIENT_ID }}
+      MS_STORE_CLIENT_SECRET: ${{ secrets.MS_STORE_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,6 +143,38 @@ jobs:
         with:
           name: redstone-launcher-win
           path: dist/*.exe
+
+      # ── The Microsoft Store ────────────────────────────────────────────────
+      #
+      # The same app, packed as an MSIX from dist/win-unpacked. Skipped, not
+      # failed, until the Store's identity is set up: a fork, or this repo
+      # before the Store listing exists, still builds everything else.
+      - name: Pack the MSIX for the Microsoft Store
+        if: env.MS_STORE_IDENTITY_NAME != '' && env.MS_STORE_PUBLISHER != ''
+        run: node scripts/build-msix.mjs --out dist/Redstone-Launcher.msix
+
+      # Kept with the run, not attached to the release: it is unsigned (the
+      # Store signs what it publishes), so it cannot be installed by hand.
+      - name: Upload the MSIX
+        if: env.MS_STORE_IDENTITY_NAME != '' && env.MS_STORE_PUBLISHER != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: redstone-launcher-msix
+          path: dist/Redstone-Launcher.msix
+
+      # Submitted to Partner Center with Microsoft's own Store CLI, which
+      # creates a submission with the new package and sends it for
+      # certification. Only when everything it needs has been set.
+      - name: Set up the Microsoft Store CLI
+        if: env.MS_STORE_PRODUCT_ID != '' && env.MS_STORE_CLIENT_SECRET != '' && env.MS_STORE_IDENTITY_NAME != ''
+        uses: microsoft/setup-msstore-cli@v1
+
+      - name: Submit to the Microsoft Store
+        if: env.MS_STORE_PRODUCT_ID != '' && env.MS_STORE_CLIENT_SECRET != '' && env.MS_STORE_IDENTITY_NAME != ''
+        shell: pwsh
+        run: |
+          msstore reconfigure --tenantId $env:MS_STORE_TENANT_ID --sellerId $env:MS_STORE_SELLER_ID --clientId $env:MS_STORE_CLIENT_ID --clientSecret $env:MS_STORE_CLIENT_SECRET
+          msstore publish "dist/Redstone-Launcher.msix" -id $env:MS_STORE_PRODUCT_ID
 
   build-linux:
     name: Build Linux

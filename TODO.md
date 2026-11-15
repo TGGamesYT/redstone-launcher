@@ -74,6 +74,21 @@ started.
       stays hidden until the first skin it is given is loaded and drawn, and
       the loading screen is held for it if it is still up -- only then, so a
       later redraw does not bring the loading screen back.*
+- [x] **An MSIX for the Microsoft Store, built and submitted by the Windows
+      workflow, with a full setup guide, and whether MSIX breaks anything.**
+      — *scripts/build-msix.mjs packs dist/win-unpacked into an MSIX with
+      makeappx from the Windows SDK, after the NSIS build, using the
+      identity Partner Center gives out (repository variables). Microsoft's
+      Store CLI then submits it, once the submission secrets are set; until
+      they are, the steps are skipped. The guide is docs/microsoft-store.md.
+      Three things would have broken and are dealt with: the self-updater
+      (a Store copy now never updates itself -- running the NSIS installer
+      from it would install a second copy), the redstonelauncher:// links
+      desktop shortcuts use (a packaged app cannot register a protocol at run
+      time, so it is declared in the manifest), and file-write
+      virtualization (which would have hidden %APPDATA%\Redstone Launcher
+      from Explorer, Java and shortcut icons; turned off, which needs the
+      unvirtualizedResources capability approved at certification).*
 
 ## 0. Round 62
 

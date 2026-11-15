@@ -9095,7 +9095,17 @@ let cachedUpdate = null;
 let lastUpdateCheck = 0;
 const UPDATE_CHECK_INTERVAL = 1000 * 60 * 60; // 1 hour
 
+// Installed from the Microsoft Store (an MSIX package), the Store is what
+// updates this copy, and nothing else may: the install folder is read-only,
+// running the NSIS installer from inside the package would put a SECOND copy
+// of the launcher on the computer beside it, and the Store's own rules forbid
+// an app updating itself. Electron says which kind of install this is.
+const FROM_THE_STORE = process.platform === "win32" && !!process.windowsStore;
+
 async function checkForUpdate(force = false) {
+  if (FROM_THE_STORE) {
+    return { updateAvailable: false, current: app.getVersion(), latest: app.getVersion(), managedBy: "Microsoft Store" };
+  }
   const now = Date.now();
   if (!force && cachedUpdate && (now - lastUpdateCheck < UPDATE_CHECK_INTERVAL)) {
     return cachedUpdate;
@@ -9218,6 +9228,7 @@ function getPendingUpdate() {
 // Called before the window is created. If a valid, still-newer update was
 // staged previously, run its installer now and quit. Returns true if so.
 async function maybeApplyStagedUpdate() {
+  if (FROM_THE_STORE) return false;
   const pending = getPendingUpdate();
   if (!pending || !pending.path) return false;
 
@@ -9243,6 +9254,7 @@ async function maybeApplyStagedUpdate() {
 // Runs after the window is open. Downloads the newest update to a stable
 // location and records it as pending — without installing it.
 async function stageUpdateInBackground() {
+  if (FROM_THE_STORE) return;
   try {
     if (!settings.get("autoUpdates", true)) return;
     const result = await checkForUpdate(true);
@@ -9291,6 +9303,7 @@ ipcMain.handle("apply-staged-update", async () => {
 });
 
 ipcMain.handle("download-and-install", async (event, assetURL, assetName) => {
+  if (FROM_THE_STORE) return { success: false, error: "This copy is updated by the Microsoft Store." };
   try {
     const path = await downloadUpdate(assetURL, assetName);
     devtoolsLog(path)
