@@ -21,6 +21,21 @@ started.
       tree at all (logoFile is ""), so one is taken from Modrinth -- looked
       up by mod id and used only when the source repository Modrinth records
       is the one the folder was cloned from.*
+- [x] **A Credits button in Settings.** — *A dialog with four sections. The
+      founders, TGdoesCode and Muavees, by Minecraft uuids looked up once and
+      written down, so their heads are drawn and their current names shown
+      (falling back to those two). Everyone who has contributed to the
+      launcher's repository and to the website's, most lines added first, as
+      GitHub's own statistics count it -- bots left out, and the plain
+      by-commits list if GitHub has not worked its statistics out yet. And
+      everything in credits.json at the root of the launcher's repository,
+      fetched from GitHub so a credit can be added without a release: each
+      key is a section, a value that is a uuid (with or without dashes) is a
+      Minecraft player shown with their head and current name -- the key
+      being the fallback name -- and anything else is the credited name as
+      written. Kept for a day; a saved GitHub token is used if there is one,
+      since sixty unauthenticated requests an hour is easily used up on a
+      shared network.*
 - [ ] **GitHub sign-in the way `gh auth login` does it.** — *See the answer in
       chat.*
 - [x] **Space on the right of the skins list.** — *The columns were exactly

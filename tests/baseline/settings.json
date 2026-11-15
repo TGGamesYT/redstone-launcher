@@ -3,7 +3,7 @@
   1280,
   800
  ],
- "count": 147,
+ "count": 148,
  "nodes": [
   {
    "key": "#add-gradient-color",
@@ -2362,6 +2362,46 @@
     "paddingLeft": "0px",
     "zIndex": "auto",
     "opacity": "0.7",
+    "visibility": "visible"
+   }
+  },
+  {
+   "key": "#creditsBtn",
+   "box": [
+    131,
+    965,
+    84,
+    35
+   ],
+   "style": {
+    "display": "block",
+    "position": "static",
+    "boxSizing": "border-box",
+    "overflow": "visible",
+    "overflowX": "visible",
+    "overflowY": "visible",
+    "flexDirection": "row",
+    "justifyContent": "normal",
+    "alignItems": "normal",
+    "gridTemplateColumns": "none",
+    "fontFamily": "Pixel",
+    "fontSize": "12px",
+    "fontWeight": "600",
+    "lineHeight": "normal",
+    "textAlign": "center",
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "color(srgb 0.5 0.15098 0.15098)",
+    "borderRadius": "25px",
+    "marginTop": "0px",
+    "marginRight": "0px",
+    "marginBottom": "0px",
+    "marginLeft": "0px",
+    "paddingTop": "10px",
+    "paddingRight": "16px",
+    "paddingBottom": "10px",
+    "paddingLeft": "16px",
+    "zIndex": "auto",
+    "opacity": "1",
     "visibility": "visible"
    }
   },

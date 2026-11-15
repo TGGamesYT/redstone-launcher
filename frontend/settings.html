@@ -20,6 +20,7 @@
   <script src="blockrender.js"></script>
   <script src="modelpicker.js"></script>
   <script src="iconpicker.js"></script>
+  <script src="credits.js"></script>
   <script src="versionicon.js"></script>
   <style>
     .settings-container {
@@ -787,6 +788,11 @@
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:30px;">
         <a href="https://discord.gg/S9H2Z6SuEA" id="settings-contact-discord" style="color:var(--text-color);">Discord</a>
         <a href="mailto:contact@redstone-launcher.com" id="settings-contact-email" style="color:var(--text-color);">Email: contact@redstone-launcher.com</a>
+      </div>
+
+      <h3>Credits</h3>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:30px;">
+        <button id="creditsBtn" type="button" data-tip="Who made the launcher: its founders, everyone who has worked on it and on the website, and everyone else who helped.">Credits</button>
       </div>
     </div>
 
@@ -3609,6 +3615,8 @@
 
       // The tour points at the sidebar, which is on this page too, so it can be
       // replayed right here without navigating anywhere.
+      const creditsBtn = document.getElementById('creditsBtn');
+      if (creditsBtn) creditsBtn.onclick = () => window.Credits && window.Credits.open();
       const tourBtn = document.getElementById('runTourBtn');
       if (tourBtn) tourBtn.onclick = () => window.Onboarding && window.Onboarding.openTour();
       const importBtn = document.getElementById('runImportBtn');

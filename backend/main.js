@@ -28,6 +28,7 @@ import remod from './remod.js';
 import { convertSkinPixels, slimFromPixels } from './skin-model.js';
 import shortcuts from './shortcuts.js';
 import skinSources from './skin-sources.js';
+import credits from './credits.js';
 import git from './git.js';
 import totem from './totem.js';
 import AdmZip from 'adm-zip';
@@ -16593,7 +16594,7 @@ function loadHeadProfiles() {
   for (const [uuid, e] of Object.entries(raw)) {
     if (!e || typeof e !== "object" || typeof e.at !== "number") continue;
     if (now - e.at > HEAD_PROFILE_KEEP) continue;
-    _headProfile.set(String(uuid), { hash: e.hash || null, slim: !!e.slim, cape: e.cape || null, at: e.at });
+    _headProfile.set(String(uuid), { hash: e.hash || null, slim: !!e.slim, cape: e.cape || null, name: e.name || null, at: e.at });
   }
 }
 function saveHeadProfiles() {
@@ -16981,7 +16982,9 @@ async function headTextureForUuid(uuid) {
       const hash = url.split("/").pop() || null;
       const slim = decoded?.textures?.SKIN?.metadata?.model === "slim";
       const cape = decoded?.textures?.CAPE?.url || null;
-      const entry = { hash, slim, cape, at: Date.now() };
+      // The current name comes with it, for whoever wants to show one (the
+      // credits do).
+      const entry = { hash, slim, cape, name: prof.name || null, at: Date.now() };
       _headProfile.set(key, entry);
       headProfilesChanged();
       return entry;
@@ -17251,6 +17254,25 @@ ipcMain.handle("head:skin", async (event, opts = {}) => headSkinFor(opts));
 // A username -> the account Mojang has for it, or nothing. Used by the
 // friends panel's Add box, which looks a player up and shows them before it
 // offers to send anybody a request.
+// ── The credits ─────────────────────────────────────────────────────────────
+// What is in them and where it comes from is backend/credits.js. Names are
+// asked of Mojang through the same queue and cache as the heads, so opening
+// the credits is not a burst of lookups of its own.
+ipcMain.handle("credits:get", async (event, { fresh } = {}) => {
+  try {
+    const data = await credits.loadCredits({
+      cacheDir: texturesDir,
+      fresh: !!fresh,
+      token: settings.get("gitGithubToken", "") || null,
+      nameOf: async (uuid) => {
+        const p = await headTextureForUuid(uuid);
+        return (p && p.name) || null;
+      },
+    });
+    return { success: true, ...data };
+  } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+});
+
 ipcMain.handle("mc:profileByName", async (event, { name } = {}) => {
   const who = String(name || "").trim();
   if (!/^\w{1,16}$/.test(who)) return null;
