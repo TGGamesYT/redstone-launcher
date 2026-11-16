@@ -95,6 +95,19 @@
       opacity: 1;
     }
 
+    /* A page change through the shell DOES fade in: the shell waits for the
+       fade to finish before it loads the new page, so nothing changes under
+       it while it is still see-through. (A page raising it for a change of
+       its own still gets it at once, since that change is immediate.) */
+    #shell-loading.arriving {
+      display: flex;
+      opacity: 0;
+    }
+    #shell-loading.arriving.on {
+      opacity: 1;
+      transition: opacity 0.18s ease;
+    }
+
     /* Leaving is slower than arriving: a page change should feel like it
        settles, not like it blinks. */
     #shell-loading.going {

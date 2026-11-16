@@ -32,7 +32,15 @@
     loading = new Promise((done) => {
       const s = document.createElement("script");
       s.src = "skinview3d.bundle.js";
-      s.onload = () => done(typeof skinview3d !== "undefined");
+      // And the game's lighting for it (viewer-light.js), before any viewer
+      // is made; without it the still is only flatter.
+      s.onload = () => {
+        const ok = typeof skinview3d !== "undefined";
+        const l = document.createElement("script");
+        l.src = "viewer-light.js";
+        l.onload = l.onerror = () => done(ok);
+        document.head.appendChild(l);
+      };
       s.onerror = () => done(false);
       document.head.appendChild(s);
     });

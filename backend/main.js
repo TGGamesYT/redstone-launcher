@@ -16151,7 +16151,12 @@ function sendEverywhere(channel, ...args) {
     try {
       const root = w.webContents.mainFrame;
       const frames = root && root.framesInSubtree ? root.framesInSubtree : [];
-      if (frames.length) for (const f of frames) { try { f.send(channel, ...args); } catch { /* a frame on its way out */ } }
+      // Our own pages only. A frame that is not one -- the blank document a
+      // frame holds before its page arrives, say -- has nothing listening,
+      // and sending to it only logs "ipcNative ... missing".
+      if (frames.length) for (const f of frames) {
+        try { if (!/^file:/i.test(String(f.url || ""))) continue; f.send(channel, ...args); } catch { /* a frame on its way out */ }
+      }
       else w.webContents.send(channel, ...args);
     } catch { /* gone */ }
   }

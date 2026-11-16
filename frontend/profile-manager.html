@@ -701,6 +701,7 @@
   <!-- Discards the pending skin/cape and goes back to what's actually applied. -->
   <button id="undoSkinBtn" title="Go back to the skin &amp; cape you had" style="display:none; position:fixed; bottom:20px; left:190px; z-index:1500; background:var(--secondary-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 18px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Undo</button>
   <script src="skinview3d.bundle.js"></script>
+  <script src="viewer-light.js"></script>
   <script src="gender-render.js"></script>
   <!-- Optional hand-made animations; falls back to skinview3d's own if empty. -->
   <script src="skin-animations.js"></script>
@@ -1413,7 +1414,7 @@
     // its own pitch level as it goes — the same as the big render — and only
     // then does it ease home.
     const CARD_SPIN_DAMP = 0.96;
-    const CARD_MAX_VEL = 0.35;
+    const CARD_MAX_VEL = 0.8;     // see MAX_VEL in skin-animations.js
     const CARD_FPS = 60;
 
     function sampleCardDrag(L) {
@@ -1428,6 +1429,7 @@
           L.spin.camRate = -L.velTheta * CARD_FPS;
         }
         L.lastTheta = cur.theta; L.lastPhi = cur.phi;
+        if (L.flick) L.flick.add(cur.theta, cur.phi);
       } catch { }
     }
 
@@ -1772,9 +1774,14 @@
                   L.easing = false;
                   L.velTheta = L.velPhi = 0; L.lastTheta = L.lastPhi = null;
                   try { L.v.autoRotate = false; } catch { }
+                  // The release speed is measured over time; see flickTracker.
+                  if (!L.flick && window.SkinAnimations && SkinAnimations.flickTracker) L.flick = SkinAnimations.flickTracker();
+                  if (L.flick) { L.flick.reset(); try { const c = camSpherical(L.v.camera.position); L.flick.add(c.theta, c.phi); } catch { } }
                 });
                 L.v.controls.addEventListener("change", () => { if (L.owner) sampleCardDrag(L); });
                 L.v.controls.addEventListener("end", () => {
+                  // Held still and let go is no flick; a fast drag is a fast one.
+                  if (L.flick) { const o = L.flick.release(); L.velTheta = o.theta; L.velPhi = o.phi; }
                   // Still hovered: spin on from the flick and level out, but
                   // stay where it is rather than going home.
                   if (L.owner && L.owner._live === L) cardFreeSpin(L, L.owner, () => { });

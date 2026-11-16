@@ -730,7 +730,9 @@
   const HOME_SPRING = 0.022;    // pull toward home, per frame
   const HOME_DAMP = 0.94;       // <1 leaves overshoot; lower = stiffer
   const HOME_PHI = Math.PI / 2; // level
-  const MAX_VEL = 0.35;
+  // About eight turns a second. It was a third of that, which a quick flick
+  // reached at once, so a faster drag could not make a faster spin.
+  const MAX_VEL = 0.8;
   // Free-spin decay after a flick, per frame at 60Hz. It was 0.97, which halves
   // the speed every 0.4s and has the figure standing still inside two and a
   // half seconds: the levelling finishes in a quarter of a second and the spin
@@ -760,6 +762,47 @@
     p.set(r * sp * Math.sin(theta), r * Math.cos(phi), r * sp * Math.cos(theta));
   }
 
+  /**
+   * How fast a drag was going at the moment it was let go of.
+   *
+   * It used to be the turn between the last two pointer events, which was
+   * wrong both ways. Held still and then let go, the last two events were
+   * still the last movement, however long ago -- so it was flung anyway. And
+   * a turn per EVENT is not a speed: a fast mouse sends more events, each a
+   * smaller turn, so a faster drag did not make a faster spin.
+   *
+   * So the camera's angles are kept for the last fraction of a second, and
+   * the speed is how far it turned in the window that ends NOW, divided by
+   * that window. A pointer that has stopped has turned nothing in it.
+   * Returned per 60Hz frame, which is what the springs are written in.
+   */
+  function flickTracker() {
+    const WINDOW = 80;
+    const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    let s = [];
+    return {
+      reset() { s = []; },
+      add(theta, phi) {
+        const t = now();
+        s.push({ t, theta, phi });
+        while (s.length > 2 && t - s[1].t > WINDOW + 60) s.shift();
+      },
+      release() {
+        const t = now();
+        if (s.length < 2) return { theta: 0, phi: 0 };
+        // The last sample from before the window is where the window starts.
+        let i0 = 0;
+        for (let i = 0; i < s.length; i++) if (s[i].t <= t - WINDOW) i0 = i;
+        let dTheta = 0;
+        for (let i = i0 + 1; i < s.length; i++) dTheta += normAngle(s[i].theta - s[i - 1].theta);
+        const dPhi = s[s.length - 1].phi - s[i0].phi;
+        const span = Math.max(16, Math.min(WINDOW, t - s[i0].t));
+        const perFrame = (1000 / 60) / span;
+        return { theta: dTheta * perFrame, phi: dPhi * perFrame };
+      },
+    };
+  }
+
   function orbitPhysics(v, opts) {
     opts = opts || {};
     if (!v || !v.canvas || !v.controls) return { dragging: false, stop() { }, home() { } };
@@ -787,6 +830,7 @@
     let raf = null, idleTimer = null;
     let velTheta = 0, velPhi = 0;       // radians per frame
     let lastTheta = null, lastPhi = null;
+    const flick = flickTracker();
     let homing = false, dragging = false, hovering = false, dead = false;
     let lastW = 0;
     // When it last came to rest facing forward with nobody touching it, so
@@ -829,6 +873,7 @@
           reportSpin(velTheta);
         }
         lastTheta = cur.theta; lastPhi = cur.phi;
+        flick.add(cur.theta, cur.phi);
       } catch { }
     };
 
@@ -947,10 +992,16 @@
     const onStart = () => {
       dragging = true; restingSince = 0; cancelReturn(); homing = false; stopLoop();
       velTheta = velPhi = 0; lastTheta = lastPhi = null;
+      flick.reset();
+      try { const c = camSpherical(v.camera.position); flick.add(c.theta, c.phi); } catch { }
     };
     const onChange = () => { if (dragging) sampleDrag(); };
     const onEnd = () => {
       dragging = false;
+      // What the drag was doing as it was let go of -- nothing, if the
+      // pointer had stopped -- rather than its last movement.
+      const out = flick.release();
+      velTheta = out.theta; velPhi = out.phi;
       // No momentum means a release stops it dead rather than letting the
       // flick carry; it may still find its way back to the front afterwards.
       if (!MOMENTUM) { velTheta = 0; velPhi = 0; }
@@ -1212,6 +1263,7 @@
     withSpin,
     // Weight on the camera, and a way back to facing forward.
     orbitPhysics,
+    flickTracker,
     // The springs orbitPhysics is built from, for a render that drives its own
     // camera and still has to come home the same way -- the card previews do.
     // One definition, so a skin let go of moves identically whichever render

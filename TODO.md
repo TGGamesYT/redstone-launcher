@@ -9,6 +9,39 @@ started.
 
 ---
 
+## 0. Round 66
+
+- [~] **The home page sometimes left empty, with "Attempted to get the
+      'ipcNative' object but it was missing" in the console.** — *Not
+      reproduced here (four clean starts). The message means a message
+      reached the page frame when it had no Electron in it, and a page that
+      comes up without Node fails on its first line -- every page starts with
+      require('electron') -- which is an empty page. The shell now checks each
+      page as it loads and loads one without Node again (twice at most), and
+      broadcasts only go to frames showing one of the launcher's own pages,
+      so a frame between pages does not log it. Reopen if it still happens.*
+- [x] **The Female Gender Mod easter egg is hard to see: the renders have no
+      shading.** — *skinview3d lit every face almost equally (a strong
+      ambient light and a faint one at the camera). Every player render now
+      has the game's lighting instead -- ambient 0.4 and two lights of 0.6
+      from above-front and above-behind -- so tops, fronts, sides and
+      undersides differ, and the shapes stand out (viewer-light.js).*
+- [x] **A skin render held still and then let go still flings.** — *The
+      speed at release was the turn between the last two pointer events,
+      however long ago they were. It is now how far it turned in the last
+      80ms before letting go, so a pointer that had stopped gives nothing.*
+- [x] **A faster or longer drag does not spin it any faster.** — *A turn per
+      pointer event is not a speed (a fast mouse sends more, smaller ones),
+      and the cap was low enough that a quick flick reached it at once. The
+      speed is measured over time now and the cap is a bit over twice what
+      it was.*
+- [x] **Changing pages does not fade the loading screen in.** — *It was made
+      instant on purpose, because a page changes straight after raising it
+      and that showed through a half-faded curtain. A page change through the
+      sidebar now fades it in and loads the new page only once it is fully
+      over the old one; a page raising it for a change of its own still gets
+      it at once.*
+
 ## 0. Round 65
 
 - [x] **Easter egg: the Female Gender Mod on the player renders.** — *When an

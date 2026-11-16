@@ -54,15 +54,31 @@
   // frame or two does not flash it.
   const LOADING_MIN = 260;
 
-  function loadingUp(what) {
-    if (!overlay) return;
+  const FADE_IN = 180;     // matches #shell-loading.arriving.on
+  function loadingUp(what, fade) {
+    if (!overlay) return 0;
     const sub = overlay.querySelector(".loading-subtext");
     if (sub) sub.textContent = what || "Loading...";
     clearTimeout(settleTimer); clearTimeout(capTimer);
     upAt = Date.now();
-    overlay.classList.remove("going");
-    overlay.classList.add("on");
+    const wasUp = overlay.classList.contains("on");
+    let wait = 0;
+    if (fade && !wasUp) {
+      // From wherever it is: nothing, or partway through fading out.
+      const from = overlay.classList.contains("going") ? parseFloat(getComputedStyle(overlay).opacity) || 0 : 0;
+      overlay.classList.remove("going", "on");
+      overlay.classList.add("arriving");
+      overlay.style.opacity = String(from);
+      void overlay.offsetWidth;          // start the transition from there
+      overlay.style.opacity = "";
+      overlay.classList.add("on");
+      wait = Math.round(FADE_IN * (1 - from));
+    } else {
+      overlay.classList.remove("going", "arriving");
+      overlay.classList.add("on");
+    }
     capTimer = setTimeout(() => loadingDown(true), LOADING_CAP);
+    return wait;
   }
 
   function loadingDown(now) {
@@ -70,7 +86,7 @@
     const left = now ? 0 : Math.max(0, LOADING_MIN - (Date.now() - upAt));
     clearTimeout(settleTimer); clearTimeout(capTimer);
     settleTimer = setTimeout(() => {
-      overlay.classList.remove("on");
+      overlay.classList.remove("on", "arriving");
       overlay.classList.add("going");
       // Off the paint path once it has faded, so it cannot sit over the page
       // eating clicks.
@@ -102,22 +118,35 @@
     // again, so it is told to.
     const file = page.split(/[?#]/)[0].toLowerCase();
     if (file === here && (frame.getAttribute("src") || "") === page) {
-      loadingUp(label(page));
+      const wait = loadingUp(label(page), true);
       // The button's own page, not whatever the page's address became since:
       // inside an instance the address carries ?i=..., and reloading THAT
       // stayed inside the instance instead of going back to the list.
-      try { frame.contentWindow.location.assign(page); markCurrent(file); return true; }
-      catch { /* fall through to setting the src */ }
+      clearTimeout(pendingNav);
+      const go = () => {
+        pendingNav = 0;
+        try { frame.contentWindow.location.assign(page); }
+        catch { frame.setAttribute("src", page); }
+      };
+      if (wait > 0) pendingNav = setTimeout(go, wait); else go();
+      markCurrent(file);
+      return true;
     }
     // Same page, different query: still a navigation, because that is how
     // these pages are told which instance or server to open.
-    loadingUp(label(page));
-    frame.setAttribute("src", page);
+    //
+    // The loading screen fades in first and the page is changed once it is
+    // fully over it. A second click during the fade replaces the first.
+    const wait = loadingUp(label(page), true);
+    clearTimeout(pendingNav);
+    const go = () => { pendingNav = 0; frame.setAttribute("src", page); };
+    if (wait > 0) pendingNav = setTimeout(go, wait); else go();
     // Marked now rather than waiting to be told, so the sidebar answers the
     // click immediately instead of a beat later.
     markCurrent(page.split(/[?#]/)[0]);
     return true;
   }
+  let pendingNav = 0;
 
   // What the loading screen says it is doing. The sidebar already has a name
   // for every page it links to -- its tooltip -- so the words come from there
@@ -324,6 +353,31 @@
   } catch { /* something already owns `page`; the mirrors still work */ }
 
   frame.addEventListener("load", mirrorCommands);
+
+  // A page that came up without Node.
+  //
+  // Every page here starts with require('electron'), and the frame is given
+  // Node by nodeIntegrationInSubFrames -- which, now and then, a frame
+  // loading in the same moment as something else does not get. The page's
+  // scripts then all fail on their first line and it sits there empty (the
+  // home page, most often, since it loads with the shell), and the main
+  // process's messages to it fail with "Attempted to get the 'ipcNative'
+  // object but it was missing". So each page is checked as it loads, and one
+  // without Node is loaded again -- twice at most in a row, so a page that
+  // really cannot have it is not reloaded for ever.
+  let bindinglessTries = 0;
+  frame.addEventListener("load", () => {
+    let w = null;
+    try { w = frame.contentWindow; } catch { return; }
+    if (!w || !/^file:/i.test(String(w.location && w.location.href || ""))) return;
+    let hasNode = false;
+    try { hasNode = typeof w.require === "function" && !!w.require("electron").ipcRenderer; } catch { hasNode = false; }
+    if (hasNode) { bindinglessTries = 0; return; }
+    if (bindinglessTries >= 2) { console.error("[shell] the page came up without Node twice; leaving it"); return; }
+    bindinglessTries++;
+    console.warn("[shell] the page came up without Node; loading it again");
+    try { w.location.reload(); } catch { frame.setAttribute("src", frame.getAttribute("src") || "index.html"); }
+  });
   // The frame may already be up by the time this runs.
   mirrorCommands();
 
