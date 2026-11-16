@@ -2640,16 +2640,36 @@
               what.textContent = `${r.kind} — ${r.why}`;
               const ord = document.createElement('div');
               ord.className = 'ord';
-              for (const [keep, label, tip] of [
-                ['mine', 'Keep this computer\'s', 'Sends what is here, replacing what is in the Drive.'],
-                ['theirs', 'Take the Drive\'s', 'Replaces what is here with what is in the Drive.'],
+              const buttons = [];
+              for (const [keep, label, busy, tip] of [
+                ['mine', 'Keep this computer\'s', 'Sending this computer\'s…', 'Sends what is here, replacing what is in the Drive.'],
+                ['theirs', 'Take the Drive\'s', 'Taking the Drive\'s…', 'Replaces what is here with what is in the Drive.'],
               ]) {
                 const b = document.createElement('button');
                 b.type = 'button'; b.textContent = label; b.title = tip;
                 b.onclick = async () => {
-                  await ipcRenderer.invoke('cloud:resolve', { kind: r.kind, keep });
+                  // Once: both buttons go quiet and the row says what it is
+                  // doing, so a second click has nothing to land on.
+                  if (row._settling) return;
+                  row._settling = true;
+                  for (const x of buttons) x.disabled = true;
+                  b.textContent = busy;
+                  row.style.opacity = '0.7';
+                  let res = null;
+                  try { res = await ipcRenderer.invoke('cloud:resolve', { kind: r.kind, keep }); }
+                  catch (e) { res = { ok: false, error: e.message }; }
+                  if (!res || res.ok === false) {
+                    row._settling = false;
+                    for (const x of buttons) x.disabled = false;
+                    b.textContent = label;
+                    row.style.opacity = '';
+                    what.textContent = `${r.kind} — ${(res && (res.error || res.why)) || 'that did not work'}`;
+                    return;
+                  }
+                  row.remove();
                   doSync();
                 };
+                buttons.push(b);
                 ord.appendChild(b);
               }
               row.append(what, ord);
@@ -2663,14 +2683,29 @@
           syncState.textContent = said.length ? said.join(' · ') : 'Everything is up to date.';
         }
 
-        async function doSync() {
-          syncState.textContent = 'Syncing…';
-          const r = await ipcRenderer.invoke('cloud:syncNow', {});
-          if (!r || !r.ok) { syncState.textContent = (r && r.error) || 'Could not sync.'; return; }
-          showResults(r.results);
-          paint();
+        // One sync at a time from this page: pressing Sync now again, or
+        // settling a conflict while a sync is still going, waits for that one
+        // instead of starting another next to it.
+        const syncBtn = document.getElementById('cloud-sync');
+        let syncing = null;
+        function doSync() {
+          if (syncing) return syncing;
+          syncing = (async () => {
+            syncState.textContent = 'Syncing…';
+            if (syncBtn) syncBtn.disabled = true;
+            try {
+              const r = await ipcRenderer.invoke('cloud:syncNow', {});
+              if (!r || !r.ok) { syncState.textContent = (r && r.error) || 'Could not sync.'; return; }
+              showResults(r.results);
+              paint();
+            } finally {
+              if (syncBtn) syncBtn.disabled = false;
+              syncing = null;
+            }
+          })();
+          return syncing;
         }
-        document.getElementById('cloud-sync').addEventListener('click', doSync);
+        syncBtn.addEventListener('click', () => doSync());
 
         document.getElementById('cloud-signin').addEventListener('click', async () => {
           signInState.textContent = 'Waiting for your browser…';

@@ -1,21 +1,59 @@
-// "Sign in with GitHub" -- the device flow, the way `gh auth login` does it.
+// "Sign in with GitHub", through GitHub CLI -- `gh auth login --web`, which
+// is the device flow: a short code shown here, typed in at
+// github.com/login/device and approved there. See backend/github-auth.js.
 //
-// The launcher shows a short code and opens github.com/login/device; you
-// type the code in there and approve, and this waits for GitHub to say so.
-// Which of the two ways it is done (the launcher's own app, or GitHub CLI)
-// is the main process's business: see backend/github-auth.js.
-//
-//   GitHubSignIn.available()  -> Promise<boolean>
-//   GitHubSignIn.open()       -> Promise<{ success, login, ... }>
+//   GitHubSignIn.account()            -> Promise<{ gh, login, hasToken }>
+//   GitHubSignIn.open()               -> Promise<{ success, login, ... }>
+//   GitHubSignIn.mount(parent, before, onSignedIn)
+//       puts "GitHub CLI: signed in as NAME" and the button that goes with
+//       it into `parent`, before `before`.
 (function () {
   if (window.GitHubSignIn) return;
   const { ipcRenderer, shell } = require('electron');
 
-  async function available() {
-    try {
-      const m = await ipcRenderer.invoke('github:methods');
-      return !!(m && (m.native || m.gh));
-    } catch { return false; }
+  async function account() {
+    try { return await ipcRenderer.invoke('github:account'); }
+    catch { return { gh: false, login: null, hasToken: false }; }
+  }
+  async function available() { return !!(await account()).gh; }
+
+  // Who gh is signed in as, said where the sign-in is offered: the button
+  // does something different depending on it, and gh can be signed in or
+  // out from a terminal without the launcher being told.
+  function mount(parent, before, onSignedIn) {
+    const wrap = document.createElement('div');
+    wrap.className = 'gh-account';
+    wrap.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 0;font-size:12px;';
+    parent.insertBefore(wrap, before || null);
+    const paint = async () => {
+      const a = await account();
+      if (!wrap.isConnected) return;
+      wrap.innerHTML = '';
+      const line = document.createElement('span');
+      line.style.opacity = '0.8';
+      if (!a.gh) {
+        line.textContent = 'GitHub CLI is not installed. With it (cli.github.com), you can sign in here instead of making a token.';
+        wrap.appendChild(line);
+        return;
+      }
+      line.textContent = a.login ? `GitHub CLI is signed in as ${a.login}` : 'GitHub CLI is not signed in';
+      wrap.appendChild(line);
+      // Signed in to gh and the launcher already has its token: nothing to do.
+      if (a.login && a.hasToken) return;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = a.login ? `Use ${a.login}` : 'Sign in with GitHub';
+      b.onclick = async () => {
+        b.disabled = true;
+        const r = await open();
+        b.disabled = false;
+        await paint();
+        if (r && r.success && onSignedIn) onSignedIn(r);
+      };
+      wrap.appendChild(b);
+    };
+    paint();
+    return { refresh: paint, el: wrap };
   }
 
   function open() {
@@ -80,5 +118,5 @@
     });
   }
 
-  window.GitHubSignIn = { available, open };
+  window.GitHubSignIn = { account, available, open, mount };
 })();

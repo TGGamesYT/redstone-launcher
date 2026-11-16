@@ -426,14 +426,7 @@
       row.appendChild(save);
       // The way `gh auth login` does it, where that is possible here: a code
       // typed in at github.com rather than a token made and pasted by hand.
-      if (window.GitHubSignIn) {
-        window.GitHubSignIn.available().then((ok) => {
-          if (!ok || !box.isConnected) return;
-          const gh = el('button', null, 'Sign in with GitHub');
-          gh.onclick = async () => { const res = await window.GitHubSignIn.open(); if (res && res.success) draw(); };
-          row.insertBefore(gh, input);
-        });
-      }
+      if (window.GitHubSignIn) window.GitHubSignIn.mount(box, null, () => draw());
       if (r.hasToken) {
         const forget = el('button', null, 'Forget it');
         forget.onclick = async () => {

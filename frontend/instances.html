@@ -1616,7 +1616,10 @@
       (async () => {
         const section = document.getElementById('devModsSection');
         const cb = document.getElementById('devModsCb');
-        const globalDev = await ipcRenderer.invoke('get-setting', 'devMode');
+        // A mod project's instance shows it whether or not Developer mode is
+        // on: it is a developer's instance by what it is.
+        const globalDev = await ipcRenderer.invoke('get-setting', 'devMode')
+          || !!(profile.project && profile.project.root);
         section.style.display = globalDev ? '' : 'none';
         if (!globalDev) return;
         const dm = await ipcRenderer.invoke('devmod:get', { type: 'instance', id: profile.id });

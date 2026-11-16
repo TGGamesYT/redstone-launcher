@@ -1,42 +1,19 @@
-// Signing in to GitHub, the way `gh auth login` does it.
+// Signing in to GitHub, through GitHub CLI.
 //
-// That is the OAuth "device flow": the launcher asks GitHub for a short code,
-// shows it, sends you to github.com/login/device to type it in, and waits.
-// No password goes anywhere near the launcher and no browser has to be
-// embedded in it.
+// `gh auth login --web` is the OAuth "device flow": a short code shown in the
+// launcher, typed in at github.com/login/device, and approved there. No
+// password goes anywhere near the launcher and no browser is embedded in it.
+// `gh auth setup-git` then makes the system Git use gh for its credentials, so
+// every clone, fetch and pull works afterwards, from the launcher or from a
+// terminal. The launcher keeps only a copy of the token for its own GitHub API
+// calls (the credits).
 //
-// Two ways to do it, used in this order:
-//
-//   1. The launcher's own OAuth app, if one is registered (GITHUB_CLIENT_ID
-//      below). This is the device flow done directly. Registering an OAuth
-//      app is free and takes a couple of minutes -- see the note at the
-//      constant. Until one is, this way is simply not offered.
-//
-//   2. GitHub CLI, if `gh` is installed: `gh auth login --web` runs the very
-//      same flow with gh's own app, and `gh auth setup-git` then makes the
-//      system Git use gh for its credentials -- so every clone, fetch and
-//      pull works afterwards, from the launcher or from a terminal, with
-//      nothing stored by the launcher at all except a copy of the token for
-//      its own GitHub API calls (the credits).
-//
-// Deliberately NOT done: borrowing gh's client id for a device flow of our
-// own. It is public, and it would work, and it would also mean GitHub showing
-// "GitHub CLI wants access" for a request that is not from GitHub CLI.
+// There is no OAuth app of the launcher's own, and gh's client id is not
+// borrowed for one: GitHub would then show "GitHub CLI wants access" for a
+// request that is not from GitHub CLI.
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
-
-/**
- * The launcher's own GitHub OAuth app.
- *
- * To fill it in: github.com -> Settings -> Developer settings -> OAuth Apps ->
- * New OAuth App. Any name, homepage https://redstone-launcher.com, callback
- * URL the same (it is not used by the device flow). Then tick "Enable Device
- * Flow", save, and paste the Client ID here. There is no client SECRET in the
- * device flow, so nothing secret goes in the launcher.
- */
-export const GITHUB_CLIENT_ID = "";
-export const SCOPES = "repo read:user";
 
 export function ghOnPath() {
   const names = process.platform === "win32" ? ["gh.exe", "gh.cmd"] : ["gh"];
@@ -57,9 +34,6 @@ export function ghOnPath() {
   return null;
 }
 
-export function methods() {
-  return { native: !!GITHUB_CLIENT_ID, gh: ghOnPath() ? true : false };
-}
 
 const run = (bin, args, { input = null, onText = null, timeout = 15 * 60 * 1000 } = {}) => new Promise((resolve) => {
   let child;
@@ -83,6 +57,34 @@ export function codeFromGhOutput(text) {
 }
 
 /**
+ * The account `gh auth status` says is signed in to github.com, or null.
+ *
+ * gh 2.40 and later print "Logged in to github.com account NAME (keyring)",
+ * one line per account, with "Active account: true" under the one in use;
+ * older ones print "Logged in to github.com as NAME (oauth_token)".
+ */
+export function loginFromGhStatus(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const accounts = [];
+  for (const line of lines) {
+    const m = /Logged in to \S+ (?:account|as) ([A-Za-z0-9-]+)/.exec(line);
+    if (m) { accounts.push({ login: m[1], active: false }); continue; }
+    if (accounts.length && /Active account:\s*true/i.test(line)) accounts[accounts.length - 1].active = true;
+  }
+  const pick = accounts.find(a => a.active) || accounts[0];
+  return pick ? pick.login : null;
+}
+
+/** Whether gh is here, and who it is signed in to github.com as. */
+export async function ghAccount() {
+  const gh = ghOnPath();
+  if (!gh) return { gh: false, login: null };
+  // gh writes the status to stderr, and exits non-zero when signed out.
+  const r = await run(gh, ["auth", "status", "--hostname", "github.com"], { timeout: 20000 });
+  return { gh: true, login: r.ok ? loginFromGhStatus(r.out + "\n" + r.err) : null };
+}
+
+/**
  * Sign in through GitHub CLI.
  *
  * `onCode({ code, url })` is called as soon as gh prints the code, so the
@@ -93,6 +95,7 @@ export async function signInWithGh({ onCode, openUrl } = {}) {
   if (!gh) return { ok: false, error: "GitHub CLI is not installed." };
   // Already signed in: nothing to do but make sure Git uses it.
   const status = await run(gh, ["auth", "status", "--hostname", "github.com"], { timeout: 20000 });
+  let login = status.ok ? loginFromGhStatus(status.out + "\n" + status.err) : null;
   if (!status.ok) {
     let told = false;
     const login = await run(gh, ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--scopes", "repo"], {
@@ -116,44 +119,8 @@ export async function signInWithGh({ onCode, openUrl } = {}) {
   await run(gh, ["auth", "setup-git", "--hostname", "github.com"], { timeout: 20000 });
   const tok = await run(gh, ["auth", "token", "--hostname", "github.com"], { timeout: 20000 });
   const token = tok.ok ? tok.out.trim() : null;
-  return { ok: true, via: "gh", token, gitHelper: true };
+  if (!login) login = (await ghAccount()).login;
+  return { ok: true, via: "gh", token, login, gitHelper: true };
 }
 
-/**
- * The device flow, with the launcher's own OAuth app.
- *
- * https://docs.github.com/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow
- */
-export async function signInDeviceFlow({ onCode, openUrl, fetchImpl = fetch, sleep = (ms) => new Promise(r => setTimeout(r, ms)) } = {}) {
-  if (!GITHUB_CLIENT_ID) return { ok: false, error: "No GitHub app is set up for the launcher." };
-  const form = (o) => new URLSearchParams(o).toString();
-  const headers = { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "redstone-launcher" };
-  let start;
-  try {
-    const r = await fetchImpl("https://github.com/login/device/code", { method: "POST", headers, body: form({ client_id: GITHUB_CLIENT_ID, scope: SCOPES }) });
-    start = await r.json();
-  } catch (e) { return { ok: false, error: "GitHub could not be reached: " + (e.message || e) }; }
-  if (!start || !start.device_code) return { ok: false, error: (start && (start.error_description || start.error)) || "GitHub did not give a code" };
-  if (onCode) onCode({ code: start.user_code, url: start.verification_uri });
-  if (openUrl) { try { openUrl(start.verification_uri); } catch { } }
-  let interval = Math.max(5, Number(start.interval) || 5) * 1000;
-  const until = Date.now() + (Number(start.expires_in) || 900) * 1000;
-  while (Date.now() < until) {
-    await sleep(interval);
-    let r;
-    try {
-      const res = await fetchImpl("https://github.com/login/oauth/access_token", {
-        method: "POST", headers,
-        body: form({ client_id: GITHUB_CLIENT_ID, device_code: start.device_code, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
-      });
-      r = await res.json();
-    } catch { continue; }
-    if (r.access_token) return { ok: true, via: "device", token: r.access_token, gitHelper: false };
-    if (r.error === "authorization_pending") continue;
-    if (r.error === "slow_down") { interval += 5000; continue; }
-    return { ok: false, error: r.error_description || r.error || "GitHub said no" };
-  }
-  return { ok: false, error: "The code ran out before it was entered." };
-}
-
-export default { GITHUB_CLIENT_ID, methods, ghOnPath, signInWithGh, signInDeviceFlow, codeFromGhOutput };
+export default { ghOnPath, ghAccount, loginFromGhStatus, signInWithGh, codeFromGhOutput };

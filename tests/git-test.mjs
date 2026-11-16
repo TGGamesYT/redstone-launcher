@@ -200,6 +200,20 @@ sh(tmp, "clone", "-q", origin, work);
     git.noGitAdvice().canFetch, process.platform === "win32");
 }
 
+// ── cloning again what is already cloned ──────────────────────────────────
+{
+  check("a clone's origin can be read", await git.originOf(bin, work), origin);
+  check("a folder that is not a repository has none", await git.originOf(bin, tmp), null);
+  check("the https and ssh forms of one repository are the same one",
+    git.sameRepository("git@github.com:CinemaMod/webdisplays.git", "https://github.com/cinemamod/webdisplays/"), true,
+    "so cloning a project whose instance was deleted reuses the folder it left");
+  check("as is the owner/name shorthand",
+    git.sameRepository("CinemaMod/webdisplays", "https://github.com/CinemaMod/webdisplays.git"), true);
+  check("but another repository is not",
+    git.sameRepository("https://github.com/a/b", "https://github.com/a/c"), false);
+  check("and nothing is the same as nothing", git.sameRepository("", null), false);
+}
+
 // ── picking the right download ────────────────────────────────────────────
 {
   const release = {

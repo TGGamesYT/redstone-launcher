@@ -15241,28 +15241,26 @@ ipcMain.handle("git:setToken", (event, { token } = {}) => {
   return { success: true, hasToken: true };
 });
 
-// Signing in to GitHub, the way `gh auth login` does: a code shown here and
-// typed in at github.com/login/device. See backend/github-auth.js for the
-// two ways it is done and why neither borrows anybody else's app.
-ipcMain.handle("github:methods", () => ({ success: true, ...githubAuth.methods(), signedIn: !!gitToken() }));
+// Signing in to GitHub through GitHub CLI: a code shown here and typed in at
+// github.com/login/device. See backend/github-auth.js.
+//
+// Who gh is signed in as is asked of gh each time rather than remembered:
+// `gh auth login` or `gh auth logout` in a terminal changes it under us.
+ipcMain.handle("github:account", async () => {
+  try { return { success: true, ...(await githubAuth.ghAccount()), hasToken: !!gitToken() }; }
+  catch (e) { return { success: false, gh: false, login: null, error: e.message }; }
+});
 let _githubSigningIn = null;
 ipcMain.handle("github:signIn", async (event) => {
   if (_githubSigningIn) return _githubSigningIn;
   const tell = (m) => { try { event.sender.send("github-signin", m); } catch { /* the page went */ } };
   const opts = { onCode: (c) => tell(c), openUrl: (u) => shell.openExternal(u) };
   _githubSigningIn = (async () => {
-    const m = githubAuth.methods();
-    const r = m.native ? await githubAuth.signInDeviceFlow(opts)
-      : m.gh ? await githubAuth.signInWithGh(opts)
-        : { ok: false, error: "There is no way to sign in to GitHub here yet: install GitHub CLI, or paste a token." };
+    if (!githubAuth.ghOnPath()) return { success: false, error: "GitHub CLI is not installed: get it from cli.github.com, or paste a token." };
+    const r = await githubAuth.signInWithGh(opts);
     if (!r.ok) return { success: false, error: r.error };
     if (r.token) settings.set(GIT_TOKEN_KEY, r.token);
-    let login = null;
-    try {
-      const u = await fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${r.token}`, "User-Agent": LAUNCHER_UA } });
-      if (u.ok) login = (await u.json()).login || null;
-    } catch { /* signed in all the same */ }
-    return { success: true, via: r.via, login, gitHelper: !!r.gitHelper };
+    return { success: true, via: r.via, login: r.login || null, gitHelper: !!r.gitHelper };
   })();
   try { return await _githubSigningIn; } finally { _githubSigningIn = null; }
 });
@@ -15327,14 +15325,19 @@ ipcMain.handle("git:setRemote", (e, { profileId, dir, name, url } = {}) =>
 
 // Where a clone would land, so the page can show it before anybody commits
 // to anything.
-ipcMain.handle("git:cloneTarget", (event, { url, parent } = {}) => {
+ipcMain.handle("git:cloneTarget", async (event, { url, parent } = {}) => {
   const read = git.readCloneUrl(url);
   if (!read.ok) return { success: false, error: read.error };
   const into = parent || PROJECTS_DIR();
   const dest = path.join(into, read.name);
   let taken = false;
   try { taken = fs.existsSync(dest) && fs.readdirSync(dest).length > 0; } catch { taken = false; }
-  return { success: true, url: read.url, name: read.name, host: read.host, parent: into, dest, taken };
+  let alreadyCloned = false;
+  if (taken) {
+    const { bin } = gitBin();
+    if (bin) alreadyCloned = git.sameRepository(await git.originOf(bin, dest), read.url);
+  }
+  return { success: true, url: read.url, name: read.name, host: read.host, parent: into, dest, taken, alreadyCloned };
 });
 
 ipcMain.handle("git:pickParent", async () => {
@@ -15718,7 +15721,19 @@ function startAllDevWatchers() {
   });
 }
 
-ipcMain.handle("devmod:get", (event, { type, id }) => loadDevModsStore()[devModKey(type, id)] || { enabled: false, mods: [] });
+// An instance made from a mod project is there to develop mods in, so dev
+// mods start on for it; anything else starts off. Switching it off is kept
+// like any other choice -- this is only what it is before anybody chose.
+function isProjectInstance(type, id) {
+  if (type !== "instance") return false;
+  try {
+    const arr = JSON.parse(fs.readFileSync(profilesPath, "utf8"));
+    const p = Array.isArray(arr) ? arr.find(x => String(x.id) === String(id)) : null;
+    return !!(p && p.project && p.project.root);
+  } catch { return false; }
+}
+ipcMain.handle("devmod:get", (event, { type, id }) =>
+  loadDevModsStore()[devModKey(type, id)] || { enabled: isProjectInstance(type, id), mods: [] });
 ipcMain.handle("devmod:setEnabled", (event, { type, id, enabled }) => {
   const store = loadDevModsStore(); const k = devModKey(type, id);
   store[k] = store[k] || { enabled: false, mods: [] };

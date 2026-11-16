@@ -595,9 +595,25 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     return pushOver(kind, null, Buffer.from(JSON.stringify(mine)), { name: spec.name });
   }
 
+  // Syncing and settling a conflict, one at a time. Run side by side -- a
+  // second click while the first was still going, or the automatic sync
+  // landing in the middle of one -- the second read the Drive before the
+  // first had written to it, pushed against a version that was no longer
+  // the latest, and reported the conflict that had just been settled all
+  // over again.
+  let queue = Promise.resolve();
+  const oneAtATime = (fn) => (...args) => {
+    const run = queue.then(() => fn(...args));
+    queue = run.catch(() => {});
+    return run;
+  };
+
   return {
     client, status, signIn, signOut,
-    syncNow, takeTheirs, keepMine, WHAT,
+    syncNow: oneAtATime(syncNow),
+    takeTheirs: oneAtATime(takeTheirs),
+    keepMine: oneAtATime(keepMine),
+    WHAT,
     previewInstance, instanceParts, pushInstance, pullInstance,
     pushWorld, pullWorld, cloudWorlds,
     openingWorld, stillPlaying, closedWorld, whoHasWorlds,

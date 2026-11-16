@@ -356,6 +356,36 @@ export function readCloneUrl(url) {
 }
 
 /**
+ * Whether two remote addresses name the same repository: https and ssh
+ * forms, a trailing .git or slash, and letter case of the host do not count.
+ */
+export function sameRepository(a, b) {
+  const norm = (u) => {
+    let s = String(u || "").trim();
+    if (!s) return "";
+    const ssh = /^[\w.-]+@([\w.-]+):(.+)$/.exec(s);
+    if (ssh) s = `${ssh[1]}/${ssh[2]}`;
+    else {
+      const short = /^([\w.-]+)\/([\w.-]+?)(?:\.git)?$/.exec(s);
+      if (short && !/^[a-z]+:/i.test(s)) s = `github.com/${short[1]}/${short[2]}`;
+      else { try { const x = new URL(s); s = x.hostname + x.pathname; } catch { /* as it is */ } }
+    }
+    return s.replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "").toLowerCase();
+  };
+  const x = norm(a), y = norm(b);
+  return !!x && x === y;
+}
+
+/** The origin of the repository at `dir`, or null. */
+export async function originOf(bin, dir) {
+  try {
+    if (!fs.existsSync(path.join(dir, ".git"))) return null;
+    const r = await run(bin, ["remote", "get-url", "origin"], { cwd: dir });
+    return r.ok ? r.out.trim() : null;
+  } catch { return null; }
+}
+
+/**
  * Clone into a folder that does not exist yet.
  *
  * Into `<parent>/<name>`, and never into a folder that already has anything
@@ -368,7 +398,13 @@ export async function clone(bin, url, parent, opts = {}) {
   const dest = path.join(parent, opts.name || read.name);
   try {
     if (fs.existsSync(dest) && fs.readdirSync(dest).length) {
-      return { ok: false, err: `There is already something in ${dest}`, dest };
+      // The same repository, cloned before -- typically by an instance that
+      // has since been deleted, which leaves the project where it was. That
+      // is the clone asked for, so it is used as it is rather than refused.
+      if (sameRepository(await originOf(bin, dest), read.url)) {
+        return { ok: true, out: "", err: "", dest, url: read.url, host: read.host, reused: true };
+      }
+      return { ok: false, err: `There is already something else in ${dest}`, dest };
     }
   } catch { /* it does not exist, which is what we want */ }
   const args = ["clone", "--progress"];
@@ -432,6 +468,6 @@ export function noGitAdvice() {
 
 export default {
   gitOnPath, ownGitPath, whichGit, run, topLevel, info, branches,
-  checkout, fetchAll, pull, setRemote, clone, readCloneUrl,
+  checkout, fetchAll, pull, setRemote, clone, readCloneUrl, sameRepository, originOf,
   minGitAsset, latestMinGit, noGitAdvice, hostOf,
 };

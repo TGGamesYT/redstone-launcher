@@ -188,6 +188,17 @@
       /* The picture stays the size it was; only the card around it grows. */
       max-width: calc(var(--card-w) - var(--card-pad) * 2);
     }
+    /* Except a 3D skin: its holder is the card's full width at the model's
+       own proportions, and what is inside has to fill it. Capped, the still
+       sat narrower than the card with empty space at its sides, and the
+       hover viewer -- capped in width but still the holder's full height --
+       was drawn squeezed and stretched tall. */
+    #skins > .card .skin-still img.card-image,
+    #skins > .card .skin-still canvas,
+    #capes > .card .skin-still img.card-image,
+    #capes > .card .skin-still canvas {
+      max-width: none;
+    }
 
     .card {
       width: var(--card-w);

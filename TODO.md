@@ -9,6 +9,50 @@ started.
 
 ---
 
+## 0. Round 64
+
+- [x] **Skin cards: stretched while hovered, and not filling the card when
+      not.** — *The cards were widened to share out the row, but a rule still
+      capped any picture in a card at the old 144px. The 3D still's holder
+      took the card's full width, so the still sat narrower than it with
+      space at the sides, and the hover viewer drew at the holder's size into
+      a canvas capped at 144px wide but the holder's full height -- squeezed
+      and stretched tall. The 3D render is exempt from the cap and fills the
+      card at the model's own proportions, hovered or not.*
+- [x] **A deleted mod project's instance could not be cloned again: "there
+      is already something there".** — *Deleting the instance leaves the
+      project folder, which is the clone. Cloning refused any folder with
+      anything in it. A folder that already holds a clone of the same
+      repository (https, ssh or owner/name, however it is written) is now used
+      as it is, and the dialog says so before Clone is pressed; a folder
+      holding something else is still refused.*
+- [x] **"Somewhere else…" blends into the dialog.** — *It was link-styled
+      text in the accent colour, which is the dialog's own colour. It is a
+      small button now.*
+- [x] **Cloud sync: settling something changed in both places shows no sign
+      of the click, can be spammed, and the conflict comes back.** — *Nothing
+      happened on screen until the sync after it finished, and a second
+      click, or the automatic sync arriving at the same moment, ran beside
+      the first: it read the Drive before the first had written to it,
+      pushed against a version that was no longer the latest and reported
+      the conflict again. Syncs and settling now run one at a time, the row's
+      buttons are disabled with the one pressed saying what it is doing, the
+      row goes once it is settled, and Sync now cannot start a second sync
+      while one is going.*
+- [x] **Dev mods should be on by default in a mod project's instance.** —
+      *They start on for an instance made from a mod project (switching them
+      off is remembered), and the setting is shown for one whether or not
+      Developer mode is on.*
+- [ ] **"also if I checkout to another branch or click the play"** — the
+      sentence was cut off; asked what happens.
+- [x] **No GitHub OAuth app; show who gh is signed in as.** — *The launcher's
+      own device flow and its empty client id are gone: signing in is GitHub
+      CLI's `gh auth login` only. Where it is offered, a line says who gh is
+      signed in to github.com as (asked of gh each time, so a terminal login
+      or logout shows), with "Use NAME" when the launcher does not have that
+      sign-in yet, "Sign in with GitHub" when gh is signed out, and a note
+      when gh is not installed.*
+
 ## 0. Round 63
 
 - [x] **CinemaMod/webdisplays: no version found, read as Forge, no icon.** —

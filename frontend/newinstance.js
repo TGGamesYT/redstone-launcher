@@ -78,8 +78,12 @@
       .ni-where { font-size:12px; opacity:0.75; margin-top:6px; display:flex; gap:10px;
         align-items:baseline; flex-wrap:wrap; word-break:break-all; }
       .ni-note { font-size:12px; opacity:0.78; line-height:1.55; }
-      .ni-linkish { background:none; border:none; padding:0; cursor:pointer; font-size:12px;
-        color:var(--base-color); text-decoration:underline; font-family:var(--text-font); }
+      /* A small button of its own. It used to be text in the accent colour,
+         which is the colour of the dialog it sits in, so it vanished. */
+      .ni-linkish { border:none; padding:3px 10px; cursor:pointer; font-size:12px;
+        border-radius:var(--border-radius); font-family:var(--text-font);
+        color:var(--text-color); background:color-mix(in srgb, var(--text-color) 16%, transparent); }
+      .ni-linkish:hover { background:color-mix(in srgb, var(--text-color) 26%, transparent); }
       .ni-log { font-family:ui-monospace, Consolas, monospace; font-size:11px; line-height:1.5;
         white-space:pre-wrap; margin:10px 0 0; padding:8px 10px; max-height:180px; overflow:auto;
         background:var(--very-dark); border-radius:var(--border-radius); }
@@ -1429,7 +1433,9 @@
       target = { ...r, parent: (target && target.parent) || r.parent };
       whereEl.innerHTML = '';
       const line = document.createElement('div');
-      line.textContent = (r.taken ? 'There is already something in ' : 'It will be cloned to ') + r.dest;
+      line.textContent = (r.alreadyCloned ? 'It is already cloned in ' + r.dest + ', which will be used'
+        : r.taken ? 'There is already something else in ' + r.dest
+        : 'It will be cloned to ' + r.dest);
       whereEl.appendChild(line);
       const pick = document.createElement('button');
       pick.className = 'ni-linkish';
@@ -1527,17 +1533,7 @@
     box.appendChild(save);
     // Or the way `gh auth login` does it, where that is possible here.
     if (window.GitHubSignIn) {
-      window.GitHubSignIn.available().then((ok) => {
-        if (!ok || !box.isConnected) return;
-        const gh = document.createElement('button');
-        gh.textContent = 'Sign in with GitHub';
-        gh.style.margin = '8px 8px 0 0';
-        gh.onclick = async () => {
-          const r = await window.GitHubSignIn.open();
-          if (r && r.success) { logEl.textContent += '\nSigned in. Trying again…\n'; retry(); }
-        };
-        box.insertBefore(gh, save);
-      });
+      window.GitHubSignIn.mount(box, null, () => { logEl.textContent += '\nSigned in. Trying again…\n'; retry(); });
     }
     form.appendChild(box);
   }

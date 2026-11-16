@@ -28,25 +28,22 @@ check("and nothing is made up when there is none", gha.codeFromGhOutput("error c
     "GitHub would show 'GitHub CLI wants access' for something that is not GitHub CLI");
 }
 
-// The device flow, against a stand-in GitHub -- only if the launcher has an
-// app registered, since without one it is not offered at all.
-if (gha.GITHUB_CLIENT_ID) {
-  let polls = 0, shown = null;
-  const r = await gha.signInDeviceFlow({
-    sleep: async () => { },
-    onCode: (c) => { shown = c; },
-    fetchImpl: async (url) => ({
-      json: async () => /device\/code/.test(url)
-        ? { device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://github.com/login/device", interval: 5, expires_in: 900 }
-        : (++polls < 3 ? { error: "authorization_pending" } : { access_token: "gho_x" }),
-    }),
-  });
-  check("the code is shown before anything is waited for", shown, { code: "ABCD-1234", url: "https://github.com/login/device" });
-  check("and the token arrives once it is approved", [r.ok, r.token, polls], [true, "gho_x", 3]);
-} else {
-  const r = await gha.signInDeviceFlow({});
-  check("without the launcher's own app, the device flow is not attempted", r.ok, false);
-  check("and is not offered", gha.methods().native, false);
+// Who gh is signed in as, from what `gh auth status` prints.
+check("gh 2.40+: the active account is the one named",
+  gha.loginFromGhStatus(`github.com
+  ✓ Logged in to github.com account someone-else (keyring)
+  - Active account: false
+  ✓ Logged in to github.com account TGdoesCode (keyring)
+  - Active account: true
+  - Git operations protocol: https`), "TGdoesCode");
+check("older gh: 'as NAME'",
+  gha.loginFromGhStatus("github.com\n  ✓ Logged in to github.com as octocat (oauth_token)\n"), "octocat");
+check("signed out is nobody", gha.loginFromGhStatus("You are not logged into any GitHub hosts. To log in, run: gh auth login"), null);
+
+// There is no OAuth app of the launcher's own any more: gh is the way.
+{
+  const src = fs.readFileSync(path.join(ROOT, "backend", "github-auth.js"), "utf8");
+  check("no device flow of the launcher's own is left behind", /login\/oauth\/access_token|GITHUB_CLIENT_ID/.test(src), false);
 }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

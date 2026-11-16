@@ -167,6 +167,29 @@ const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
     "a sync that pushes every time is a sync nobody can tell is working");
 }
 
+// ── settling a conflict while something else is going ──
+{
+  const impl = sharedDrive();
+  const pc = launcher(impl, { name: "Desktop", settings: { greeting: "one" } });
+  await pc.c.syncNow();
+  const laptop = launcher(impl, { name: "Laptop" });
+  await laptop.c.syncNow();
+  pc.s.set("greeting", "desktop");
+  laptop.s.set("greeting", "laptop");
+  await laptop.c.syncNow();
+  await pc.c.syncNow();                      // conflict
+
+  // Pressed twice, with the automatic sync arriving at the same moment.
+  const [a, b, sync] = await Promise.all([
+    pc.c.keepMine("settings"), pc.c.keepMine("settings"), pc.c.syncNow(),
+  ]);
+  check("settling it twice at once, beside a sync, settles it",
+    [a.ok, b.ok, did(sync, "settings")], [true, true, "nothing"],
+    "run side by side, the sync read a Drive the first click was still writing and reported the conflict again");
+  const later = await pc.c.syncNow();
+  check("and it does not come back", did(later, "settings"), "nothing");
+}
+
 // ── both changed ──
 {
   const impl = sharedDrive();
