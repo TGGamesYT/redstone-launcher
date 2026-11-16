@@ -92,12 +92,39 @@
     url(o).then(r => {
       if (img.__headToken !== token || !img.isConnected) return;
       if (r && r.url) {
+        // Already showing a face and this is a different one -- switching
+        // account, say: fade across rather than swapping in a single frame.
+        // A head being drawn for the first time just appears, so a list
+        // that is rebuilt does not shimmer.
+        const was = img.getAttribute('src');
+        if (was && was !== r.url && img.complete && img.naturalWidth && img.animate
+            && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+          crossfade(img, r.url, () => img.__headToken === token, () => { img.dataset.head = r.from; });
+          return;
+        }
         img.src = r.url;
         img.dataset.head = r.from;
       } else {
         img.removeAttribute('src');
         img.dataset.head = 'none';
       }
+    });
+  }
+
+  // Out, swap, back in. The new picture is decoded before the fade starts, so
+  // the swap at the bottom of it is never a blank frame.
+  function crossfade(img, to, stillMine, after) {
+    const next = new Image();
+    next.src = to;
+    const ready = next.decode ? next.decode().catch(() => {}) : Promise.resolve();
+    ready.then(() => {
+      if (!stillMine()) return;
+      const out = img.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 130, easing: 'ease-in', fill: 'forwards' });
+      out.onfinish = () => {
+        if (stillMine()) { img.src = to; after(); }
+        out.cancel();
+        img.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 170, easing: 'ease-out' });
+      };
     });
   }
 

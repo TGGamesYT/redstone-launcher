@@ -31,6 +31,7 @@ import skinSources from './skin-sources.js';
 import credits from './credits.js';
 import git from './git.js';
 import githubAuth from './github-auth.js';
+import genderMod from './gender-mod.js';
 import totem from './totem.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
@@ -1245,6 +1246,30 @@ function instanceRoot(profileId) {
   return projectDirs().get(String(profileId))
     || path.join(dataDir, "client", String(profileId));
 }
+// A cheap summary of what an instance's tabs show from disk: the names, sizes
+// and times of what is in its content folders, and the files the game
+// rewrites (servers, options). The instances page compares one taken when
+// you leave the window with one taken when you come back, and rebuilds the
+// open tab only if they differ -- rather than every time you were away long
+// enough, which rebuilt it for nothing.
+ipcMain.handle("instance:fingerprint", (event, { profileId } = {}) => {
+  const root = instanceRoot(profileId);
+  const parts = [];
+  for (const sub of ["mods", "resourcepacks", "shaderpacks", "saves", "datapacks", "screenshots"]) {
+    let names = [];
+    try { names = fs.readdirSync(path.join(root, sub)).sort(); } catch { parts.push(`${sub}:-`); continue; }
+    for (const n of names) {
+      try { const st = fs.statSync(path.join(root, sub, n)); parts.push(`${sub}/${n}:${st.size}:${Math.round(st.mtimeMs)}`); }
+      catch { parts.push(`${sub}/${n}:?`); }
+    }
+  }
+  for (const f of ["servers.dat", "options.txt"]) {
+    try { const st = fs.statSync(path.join(root, f)); parts.push(`${f}:${st.size}:${Math.round(st.mtimeMs)}`); }
+    catch { parts.push(`${f}:-`); }
+  }
+  return crypto.createHash("sha1").update(parts.join("\n")).digest("hex");
+});
+
 // The project behind a dev instance, or null for an ordinary one.
 function instanceProject(profileId) {
   try {
@@ -16814,6 +16839,147 @@ function offlineUuid(name) {
   md5[8] = (md5[8] & 0x3f) | 0x80;   // IETF variant
   return md5.toString("hex");
 }
+
+// ── An easter egg: the Female Gender Mod on the launcher's own renders ──────
+//
+// When an instance with Wildfire's Female Gender Mod in it is running, or ran
+// in the last ten minutes, the player renders in the launcher wear what that
+// instance has the mod set to (frontend/gender-render.js draws it, and
+// backend/gender-mod.js reads the mod's files). A setting can then keep it
+// on for good -- from the last settings seen -- or turn it off for good.
+//
+// Polled rather than hooked into every way a game can end: the tracker is
+// asked what is running, and each instance is remembered as having run then.
+// That is also what keeps the ten minutes across a launcher restart.
+const GENDER_WINDOW_MS = 10 * 60 * 1000;
+const genderSeenPath = path.join(dataDir, "gender-seen.json");
+const genderSavedPath = path.join(dataDir, "gender-configs.json");
+const readJsonOr = (file, dflt) => { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return dflt; } };
+let genderSeen = readJsonOr(genderSeenPath, {});      // instance id -> last seen running
+let genderLive = {};                                   // uuid -> { config, at, instanceId }
+let genderSig = null;
+const genderJarCache = new Map();                      // jar path -> { sig, is }
+
+function genderMode() {
+  const m = settings.get("genderModRender", "auto");
+  return m === "always" || m === "never" ? m : "auto";
+}
+
+function instanceHasGenderMod(id) {
+  const dir = path.join(instanceRoot(id), "mods");
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return false; }
+  for (const n of names) {
+    if (!/\.jar$/i.test(n)) continue;                  // a .disabled one is not loaded
+    if (genderMod.looksLikeGenderModJar(n)) return true;
+    const file = path.join(dir, n);
+    let sig = null;
+    try { const st = fs.statSync(file); sig = st.size + ":" + st.mtimeMs; } catch { continue; }
+    const was = genderJarCache.get(file);
+    if (was && was.sig === sig) { if (was.is) return true; continue; }
+    const info = readJarModInfo(file);
+    const is = !!(info && info.id === genderMod.MOD_ID);
+    genderJarCache.set(file, { sig, is });
+    if (is) return true;
+  }
+  return false;
+}
+
+function genderTick() {
+  const now = Date.now();
+  let seenChanged = false;
+  for (const r of getRunningInstances()) {
+    if (!r || r.id == null) continue;
+    genderSeen[String(r.id)] = now;
+    seenChanged = true;
+  }
+  for (const [id, at] of Object.entries(genderSeen)) {
+    if (now - at > GENDER_WINDOW_MS) { delete genderSeen[id]; seenChanged = true; }
+  }
+  if (seenChanged) { try { fs.writeFileSync(genderSeenPath, JSON.stringify(genderSeen)); } catch { /* next time */ } }
+
+  const live = {};
+  for (const id of Object.keys(genderSeen)) {
+    if (!instanceHasGenderMod(id)) continue;
+    const found = genderMod.readInstanceConfigs(instanceRoot(id));
+    for (const [uuid, e] of Object.entries(found)) {
+      if (!live[uuid] || live[uuid].at < e.at) live[uuid] = { config: e.config, at: e.at, instanceId: id };
+    }
+  }
+  genderLive = live;
+  // What was seen is kept, so "keep it on" has something to show once the
+  // ten minutes are over.
+  if (Object.keys(live).length) {
+    const saved = readJsonOr(genderSavedPath, {});
+    let changed = false;
+    for (const [uuid, e] of Object.entries(live)) {
+      if (!saved[uuid] || saved[uuid].at !== e.at) { saved[uuid] = { config: e.config, at: e.at }; changed = true; }
+    }
+    if (changed) { try { fs.writeFileSync(genderSavedPath, JSON.stringify(saved)); } catch { /* next time */ } }
+  }
+  const sig = JSON.stringify([genderMode(), live]);
+  if (sig !== genderSig) {
+    const first = genderSig === null;
+    genderSig = sig;
+    if (!first) sendEverywhere("gender-changed", genderStatus());
+  }
+}
+
+function genderStatus() {
+  return {
+    mode: genderMode(),
+    // Whether it can be seen right now without the setting: the window the
+    // setting is offered in.
+    available: Object.keys(genderLive).length > 0,
+    saved: Object.keys(readJsonOr(genderSavedPath, {})).length > 0,
+  };
+}
+
+// Every uuid an account can have played as: its Microsoft one, and for an
+// offline account the one the game derives from its name.
+function genderUuidsFor({ uuid, name, offline, playerId, selected } = {}) {
+  const out = [];
+  let p = null;
+  try {
+    const players = loadPlayers();
+    if (selected) p = players.find(x => String(x.id) === String(storage.get("selectedPlayerId", null)));
+    else if (playerId != null) p = players.find(x => String(x.id) === String(playerId));
+  } catch { /* none */ }
+  if (p) {
+    if (p.auth && p.auth.uuid) out.push(p.auth.uuid);
+    if (p.uuid) out.push(p.uuid);
+    const nm = (p.auth && p.auth.name) || p.username;
+    if (nm) out.push(offlineUuid(nm));
+  }
+  if (uuid) out.push(uuid);
+  if (offline && name) out.push(offlineUuid(name));
+  return [...new Set(out.map(u => String(u).replace(/-/g, "").toLowerCase()).filter(Boolean))];
+}
+
+function genderConfigFor(who) {
+  const mode = genderMode();
+  if (mode === "never") return null;
+  const ids = genderUuidsFor(who);
+  for (const id of ids) if (genderLive[id]) return genderLive[id].config;
+  if (mode === "always") {
+    const saved = readJsonOr(genderSavedPath, {});
+    for (const id of ids) if (saved[id]) return saved[id].config;
+  }
+  return null;
+}
+
+ipcMain.handle("gender:get", (event, who = {}) => {
+  try { const c = genderConfigFor(who); return { config: c && c.shows ? c : null }; }
+  catch { return { config: null }; }
+});
+ipcMain.handle("gender:status", () => genderStatus());
+ipcMain.handle("gender:setMode", (event, { mode } = {}) => {
+  settings.set("genderModRender", mode === "always" || mode === "never" ? mode : "auto");
+  genderSig = "";            // say so everywhere on the next look, which is now
+  genderTick();
+  return genderStatus();
+});
+setTimeout(() => { try { genderTick(); } catch { } setInterval(() => { try { genderTick(); } catch { /* next tick */ } }, 5000); }, 4000);
 
 // The identity to pick a default skin by: the real uuid for a premium account,
 // the offline one for an account that only has a name.

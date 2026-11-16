@@ -329,9 +329,8 @@ html[data-smoothing="smooth"] {
   transition: all 0.2s ease-in-out;
 }
 
-.profile-item.selected img {
-  filter: brightness(1.2);
-}
+/* (The selected row's face used to be brightened as well, which made the
+   one account you were looking at the one whose face looked wrong.) */
 
 .profile-item.selected:hover {
   background-color: var(--base-color);
@@ -1540,10 +1539,31 @@ a:hover {
   border-color: var(--accent);
 }
 
+/* The selected colour is a gradient, and a gradient background cannot be
+   transitioned -- it switched on in one frame, so picking an account had no
+   sign of lighting up. It is drawn on a layer of its own behind the row's
+   content instead, and that layer's opacity fades in and out. */
+.profile-item {
+  position: relative;
+  isolation: isolate;
+}
+.profile-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--base-color) 0%, var(--third-color) 100%);
+  opacity: 0;
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+.profile-item.selected::before {
+  opacity: 1;
+}
 .profile-item.selected {
   border: 2px solid var(--accent);
   box-shadow: 0 0 16px color-mix(in srgb, var(--base-color) 50%, transparent);
-  background: linear-gradient(135deg, var(--base-color) 0%, var(--third-color) 100%);
 }
 
 .profile-item.selected:hover {

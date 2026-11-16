@@ -1239,25 +1239,25 @@
     // When the launcher regains focus after being away (e.g. you tabbed out to
     // the running game and changed its servers / resource packs), re-render the
     // currently-open instance tab so the launcher reflects those on-disk
-    // changes.
-    //
-    // The bar for that is deliberately high. At 1.2s every alt-tab rebuilt the
-    // open tab, which is the most visible thing on the page — you looked away
-    // for a second and came back to it reloading. On-disk changes only happen
-    // when the GAME has been running, so that is what it waits for; failing
-    // that, a long absence (half a minute) is the only other reason to bother.
-    let _instLastBlur = 0;
-    const AWAY_LONG_MS = 30000;
-    window.addEventListener('blur', () => { _instLastBlur = Date.now(); });
+    // changes -- but only if there ARE changes. It used to re-render whenever
+    // the game had been running or you had been away for half a minute, so
+    // tabbing out for a while and coming back found the open instance being
+    // rebuilt for nothing. What its tabs show from disk is summarised when
+    // the window is left and again when it comes back, and only a difference
+    // rebuilds anything.
+    let _instAwayPrint = null;
+    const instPrint = (id) => ipcRenderer.invoke('instance:fingerprint', { profileId: id }).catch(() => null);
+    window.addEventListener('blur', async () => {
+      const id = currentDetailId;
+      _instAwayPrint = id ? { id, print: await instPrint(id) } : null;
+    });
     window.addEventListener('focus', async () => {
-      const away = Date.now() - _instLastBlur;
-      if (away < 2000) return;
-      let gameWasRunning = false;
-      try {
-        const running = await ipcRenderer.invoke('get-running-instances');
-        gameWasRunning = (running || []).some(r => String(r.id) === String(currentDetailId));
-      } catch { /* treat as not running */ }
-      if (!gameWasRunning && away < AWAY_LONG_MS) return;
+      const was = _instAwayPrint;
+      _instAwayPrint = null;
+      if (!was || !was.print || String(was.id) !== String(currentDetailId)) return;
+      const now = await instPrint(was.id);
+      if (!now || now === was.print) return;
+      if (String(was.id) !== String(currentDetailId)) return;
       const activeTab = document.querySelector('.instance-tab-btn.active');
       if (activeTab) activeTab.click();
     });

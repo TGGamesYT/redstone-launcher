@@ -701,6 +701,7 @@
   <!-- Discards the pending skin/cape and goes back to what's actually applied. -->
   <button id="undoSkinBtn" title="Go back to the skin &amp; cape you had" style="display:none; position:fixed; bottom:20px; left:190px; z-index:1500; background:var(--secondary-color); color:var(--text-color); border:none; border-radius:var(--border-radius); padding:12px 18px; font-family:var(--text-font); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.4);">Undo</button>
   <script src="skinview3d.bundle.js"></script>
+  <script src="gender-render.js"></script>
   <!-- Optional hand-made animations; falls back to skinview3d's own if empty. -->
   <script src="skin-animations.js"></script>
   <script>
@@ -1232,6 +1233,8 @@
         const canvas = document.createElement("canvas");
         const v = new skinview3d.SkinViewer({ canvas, width: 150, height: 300, preserveDrawingBuffer: true });
         v.zoom = 0.9; v.autoRotate = false; v.renderPaused = true;
+        // The Female Gender Mod easter egg, at rest, in every still.
+        if (window.GenderRender) window.GenderRender.attachStill(v);
         _still = { v, canvas };
       } catch { _still = false; }
       return _still;
@@ -1249,7 +1252,9 @@
     // its own data, so a cache hit is always correct.
     const _stillCache = new Map();
     const STILL_CACHE_MAX = 300;
-    const stillKey = (src, model, w, h) => `${w}x${h}|${model || "default"}|${src}`;
+    // What the gender easter egg is showing is part of what a still is of.
+    const genderSig = () => { try { const g = _still && _still.v && _still.v.__gender; return (g && g.sig) || ""; } catch { return ""; } };
+    const stillKey = (src, model, w, h) => `${w}x${h}|${model || "default"}|${genderSig()}|${src}`;
 
     function renderStill(src, model, w, h) {
       const key = stillKey(src, model, w, h);
@@ -1258,12 +1263,13 @@
       const run = async () => {
         const s = ensureStill(); if (!s) return null;
         try {
+          if (s.v.__gender) await s.v.__gender.ready;
           s.v.setSize(w * STILL_SCALE, h * STILL_SCALE);
           await s.v.loadSkin(src, { model: model === "slim" ? "slim" : "default" });
           spinTarget(s.v).rotation.y = 0;
           s.v.render();
           const url = s.canvas.toDataURL();
-          if (url) {
+          if (url && key === stillKey(src, model, w, h)) {
             // Bound it: a long browsing session would otherwise hold every skin
             // it has ever previewed.
             if (_stillCache.size >= STILL_CACHE_MAX) {
@@ -1301,6 +1307,7 @@
       canvas.style.display = "block";
       host.appendChild(canvas);
       const v = new skinview3d.SkinViewer({ canvas, width: 150, height: 300 });
+      if (window.GenderRender) window.GenderRender.attach(v);
       v.zoom = 0.9; v.autoRotate = false;
       try { v.controls.enableZoom = false; } catch { }   // wheel scrolls the page
       limitPitch(v);
@@ -1655,6 +1662,21 @@
       return holder;
     }
 
+    // The gender easter egg came on, went off or changed: every still on the
+    // page is redrawn in place. The cache is keyed by it, so nothing old is
+    // reused; nothing else about the list has to be rebuilt.
+    try {
+      require("electron").ipcRenderer.on("gender-changed", () => {
+        setTimeout(() => {
+          for (const holder of document.querySelectorAll(".skin-still")) {
+            const info = holder._spin, img = holder._still;
+            if (!info || !img) continue;
+            renderStill(info.src, info.model, info.w, info.h).then(url => { if (url && holder.isConnected) img.src = url; });
+          }
+        }, 300);   // after the still viewer has fetched the new settings
+      });
+    } catch { /* stays as drawn */ }
+
     // Hover wiring: spin while hovered, ease back to front on leave, then hand the
     // card back its still image.
     function wireSpin(hoverEl, holder) {
@@ -1931,6 +1953,7 @@
             width: vw,
             height: vh
           });
+          if (window.GenderRender) window.GenderRender.attach(window.skinViewer);
           // Hidden until it wears the skin, which it does not at first: a
           // fresh viewer draws a plain white player until the texture loads.
           if (window.SkinAnimations && window.SkinAnimations.revealWhenSkinned) {

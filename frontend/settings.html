@@ -777,6 +777,19 @@
         </div>
       </div>
 
+      <!-- An easter egg, and so only here while it is happening: shown when a
+           game with the Female Gender Mod ran in the last ten minutes, or once
+           it has been set to always or never. -->
+      <div id="genderSection" style="display:none;">
+        <h3>Female Gender Mod</h3>
+        <p id="genderSay" style="font-size:13px;opacity:0.8;"></p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:30px;">
+          <button type="button" class="sync-mode gender-mode" data-mode="auto">Only after playing</button>
+          <button type="button" class="sync-mode gender-mode" data-mode="always">Always show it</button>
+          <button type="button" class="sync-mode gender-mode" data-mode="never">Never show it</button>
+        </div>
+      </div>
+
       <h3>Getting started</h3>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:50px;">
         <button id="runTourBtn" data-tip="The tour that runs the first time you open the launcher.">Run the tour again</button>
@@ -2706,6 +2719,34 @@
           return syncing;
         }
         syncBtn.addEventListener('click', () => doSync());
+
+        // The Female Gender Mod easter egg's setting.
+        (() => {
+          const section = document.getElementById('genderSection');
+          const say = document.getElementById('genderSay');
+          const SAY = {
+            auto: 'A game you played in the last ten minutes has the Female Gender Mod, so the player renders here show what it is set to there. They stop ten minutes after the game closes.',
+            always: 'The player renders show what the Female Gender Mod was last set to, whether or not you have played lately.',
+            never: 'The player renders never show the Female Gender Mod.',
+          };
+          const show = (st) => {
+            if (!st) return;
+            section.style.display = (st.available || st.mode !== 'auto') ? '' : 'none';
+            say.textContent = SAY[st.mode] || SAY.auto;
+            for (const b of section.querySelectorAll('.gender-mode')) {
+              b.classList.toggle('active', b.dataset.mode === st.mode);
+              // Keeping it needs something to keep.
+              b.disabled = b.dataset.mode === 'always' && !st.available && !st.saved && st.mode !== 'always';
+            }
+          };
+          for (const b of section.querySelectorAll('.gender-mode')) {
+            b.addEventListener('click', async () => {
+              show(await ipcRenderer.invoke('gender:setMode', { mode: b.dataset.mode }).catch(() => null));
+            });
+          }
+          ipcRenderer.invoke('gender:status').then(show).catch(() => {});
+          ipcRenderer.on('gender-changed', (_e, st) => show(st));
+        })();
 
         document.getElementById('cloud-signin').addEventListener('click', async () => {
           signInState.textContent = 'Waiting for your browser…';

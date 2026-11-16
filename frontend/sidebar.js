@@ -442,6 +442,26 @@ async function updateLoginIcon() {
   if (li.dataset.renderedFor === drawnFrom) return;
   li.dataset.renderedFor = drawnFrom;
 
+  if (player) {
+    const username = player.type === 'microsoft' ? (player.auth?.name ?? 'MS Account') : (player.username ?? 'Offline');
+    // Already showing an account: change the face and the name in place, so
+    // the face fades from one account to the other (see playerhead.js)
+    // instead of the whole entry being thrown away and drawn again.
+    const shownImg = document.getElementById('playerIconSiderbar');
+    const shownName = document.getElementById('playerIconTextSidebar');
+    if (shownImg && shownName && li.contains(shownImg)) {
+      setPlayerHead(shownImg, {
+        uuid: player.auth?.uuid || player.uuid,
+        name: username,
+        size: 24,
+        offline: player.type !== 'microsoft',
+        playerId: player.type !== 'microsoft' ? player.id : null,
+      });
+      shownName.textContent = username;
+      return;
+    }
+  }
+
   li.innerHTML = '';
 
   if (player) {

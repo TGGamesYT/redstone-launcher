@@ -410,6 +410,7 @@
   <!-- The details page shows a player as a 3D render, the same as the skins
        page's main one. -->
   <script src="skinview3d.bundle.js"></script>
+  <script src="gender-render.js"></script>
   <script src="skin-animations.js"></script>
 </head>
 
@@ -731,6 +732,7 @@
             // The same proportions and zoom as every other player render in
             // the launcher, so this one looks like the rest of them.
             const v = new skinview3d.SkinViewer({ canvas, width: 110, height: 210 });
+            if (window.GenderRender) window.GenderRender.attach(v, { uuid: a.uuid || null, name: a.username });
             _ipViewers.push(v);
             v.zoom = 0.9;
             v.autoRotate = false;
@@ -1058,6 +1060,9 @@
         if (!ov.isConnected) return;
         if (!skin || !skin.base64) { canvas.remove(); return; }
         _pdViewer = new skinview3d.SkinViewer({ canvas, width: 230, height: 380 });
+        // Only ever shows anything for a player whose settings are on this
+        // computer -- one of your own accounts.
+        if (window.GenderRender) window.GenderRender.attach(_pdViewer, { uuid, name });
         // The handle skin-animations.js's devtools helpers look for, so
         // playerRenderAnimPlay() and friends work on this render too.
         window.skinViewer = _pdViewer;

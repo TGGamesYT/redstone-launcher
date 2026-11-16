@@ -851,6 +851,9 @@
 
       const first = wanted();
       const v = new skinview3d.SkinViewer({ canvas, width: first.w, height: first.h });
+      // The Female Gender Mod easter egg (gender-render.js): nothing at all
+      // unless an instance with it ran in the last ten minutes.
+      if (window.GenderRender) window.GenderRender.attach(v);
       // Not shown -- and the loading screen not taken down -- until it is
       // wearing the skin: until then it is a plain white figure.
       if (window.SkinAnimations && window.SkinAnimations.revealWhenSkinned) {

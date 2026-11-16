@@ -9,6 +9,41 @@ started.
 
 ---
 
+## 0. Round 65
+
+- [x] **Easter egg: the Female Gender Mod on the player renders.** — *When an
+      instance with Wildfire's Female Gender Mod in it is running or ran in
+      the last ten minutes, the renders of your account (home page, skins
+      page -- its big render, the cards and their hover spin -- and the
+      accounts page) wear what the mod is set to in that instance. The mod's
+      file is read from the instance's config/FemaleGenderMod/<uuid>.json
+      (or the older config/WildfireGender), in both shapes it has written,
+      for the account's Microsoft uuid or the one the game gives an offline
+      name. The drawing is a port of the mod's own: the same two 4x5x3 boxes
+      cut from the same part of the skin, its offsets, tilt, cleavage,
+      jacket layer and breathing, and its physics at 20 ticks a second --
+      turning the figure, or dragging it round, is the body turning; the
+      legs' swing is the walk; a fast arm is a swing. A still shows it at
+      rest. While it is showing, Settings has a Female Gender Mod section:
+      keep it on for good (from the last settings seen), turn it off for
+      good, or only after playing. The skin editor is left alone: its
+      render is for painting on.*
+- [x] **Accounts page: picking an account does not light it up.** — *The
+      selected row's colour is a gradient, which cannot be transitioned, so
+      it switched on in a frame. It is drawn on a layer behind the row that
+      fades in and out.*
+- [x] **The selected account's face is brighter than the rest.** — *A
+      brightness(1.2) filter on the selected row's picture. Gone.*
+- [x] **The account's face in the sidebar and in the friends section change
+      instantly.** — *A face that changes to someone else's fades across now
+      (playerhead.js), and the sidebar changes its face and name in place
+      rather than rebuilding the entry, so there is a face to fade from.*
+- [x] **Leaving the launcher and coming back rebuilds the open instance.** —
+      *Coming back after half a minute, or after the game had run, re-opened
+      the instance's tab whether or not anything had changed. What its tabs
+      show from disk is now summarised when the window is left and again on
+      return, and only a difference rebuilds anything.*
+
 ## 0. Round 64
 
 - [x] **Skin cards: stretched while hovered, and not filling the card when
