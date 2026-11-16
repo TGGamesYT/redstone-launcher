@@ -14,13 +14,21 @@ first submission, which has to be made by hand.
 
 ## 1. A Partner Center developer account
 
-1. Go to <https://partner.microsoft.com/dashboard/registration> and sign in
-   with the Microsoft account that should own the app.
-2. Register as an **individual** or a **company**. Check the sign-up page
-   for the current fee: Microsoft has charged a small one-time fee in the
-   past and has made individual registration free more recently.
-3. Finish the identity verification it asks for. Company accounts can take
-   a few days.
+1. **As an individual** (free): go to <https://storedeveloper.microsoft.com>,
+   press **Get started for free** and pick **Individual developer**. Sign in
+   with a **personal** Microsoft account (outlook.com, hotmail, Xbox and so
+   on). A work or school account does not work for this.
+   **As a company**: the same page, **Company**, and here it is a work
+   (Entra ID) account.
+2. Keep using that same account. Only the account that signed up owns the
+   developer account: any other one gets **"Access restricted"** on every
+   Partner Center page, and so does the old
+   `partner.microsoft.com/dashboard/registration` link, which is not the way
+   in for individuals any more.
+3. Finish the identity verification it asks for. **Apps & Games** can take
+   5 to 30 minutes to appear afterwards; refresh until it does. Company
+   accounts can take a few days. Problems with the sign-up itself go to
+   storesupport@service.microsoft.com.
 
 ## 2. Reserve the app and read its identity
 
