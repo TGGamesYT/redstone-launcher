@@ -58,7 +58,16 @@ if (doc) {
   const wf = fs.readFileSync(path.join(ROOT, ".github", "workflows", "build.yml"), "utf8");
   check("the Windows build packs the MSIX", /node scripts\/build-msix\.mjs/.test(wf), true);
   check("and submits it only once everything it needs is set",
-    /if: env\.MS_STORE_PRODUCT_ID != '' && env\.MS_STORE_CLIENT_SECRET != ''[^\n]*\n\s+shell: pwsh\n\s+run: \|\n\s+msstore reconfigure/.test(wf), true);
+    /if: env\.MS_STORE_PRODUCT_ID != '' && env\.MS_STORE_CLIENT_SECRET != ''[^\n]*\n(\s+[\w-]+:[^\n]*\n)*?\s+run: \|\n\s+msstore reconfigure/.test(wf), true);
+  check("and a failed submission does not fail the release",
+    /name: Submit to the Microsoft Store[\s\S]{0,200}continue-on-error: true/.test(wf), true);
+}
+{
+  const wf = fs.readFileSync(path.join(ROOT, ".github", "workflows", "msix.yml"), "utf8");
+  check("the MSIX can be built by hand, for the first submission",
+    /workflow_dispatch/.test(wf) && /node scripts\/build-msix\.mjs/.test(wf) && /redstone-launcher-msix/.test(wf), true);
+  check("and that run submits only when asked to", /if: inputs\.submit &&/.test(wf), true);
+  check("and releases nothing", /action-gh-release|gh release/.test(wf), false);
 }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

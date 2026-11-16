@@ -50,6 +50,22 @@ first submission, which has to be made by hand.
 The Store CLI uses the Partner Center submission API, which signs in as an
 Entra ID application rather than as you.
 
+> **An individual account has no Entra directory**, so User management says
+> to sign in with Microsoft Entra ID and then turns your personal account
+> away ("You can't sign in here with a personal account"). Two ways on:
+>
+> - **Skip this part.** Set only the three variables in step 4, leave the
+>   secrets out, and every release still builds the MSIX as a workflow
+>   artifact (`redstone-launcher-msix`), which you upload in Partner Center
+>   on a new submission. Nothing else changes.
+> - **Make a directory of your own** and associate it: a free Azure account
+>   (<https://azure.microsoft.com/free>) creates one; in
+>   <https://entra.microsoft.com> add a user such as
+>   `admin@<directory>.onmicrosoft.com` with the Global Administrator role;
+>   then in Partner Center **Account settings → Tenants → Associate**, sign in
+>   as that user. It is not certain an individual account accepts one; if it
+>   does not, the first way is what is left.
+
 1. Partner Center → the gear icon → **Account settings** → **User
    management** → **Microsoft Entra applications** → **Create Microsoft
    Entra application**. If it asks you to associate a tenant first, follow
@@ -95,8 +111,10 @@ With the secrets set as well, it is submitted.
 The submission API can only *update* an app that already has a submission.
 The first one is done in Partner Center:
 
-1. Set the three variables from step 4 and let a release run, or re-run the
-   last one. Download the `redstone-launcher-msix` artifact from that run.
+1. GitHub → **Actions** → **Build the MSIX (by hand)** → **Run workflow**
+   (leave "submit" unticked). When it finishes (about ten minutes), open the
+   run and download **redstone-launcher-msix** under Artifacts; the
+   `.msix` is inside the zip.
 2. Partner Center → the product → **Start your submission**, and fill in:
    - **Pricing and availability**: Free; the markets.
    - **Properties**: category *Utilities & tools* or *Games → Simulation*.
