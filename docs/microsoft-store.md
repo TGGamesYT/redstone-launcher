@@ -111,8 +111,10 @@ With the secrets set as well, it is submitted.
 The submission API can only *update* an app that already has a submission.
 The first one is done in Partner Center:
 
-1. Set the three variables from step 4 and let a release run, or re-run the
-   last one. Download the `redstone-launcher-msix` artifact from that run.
+1. GitHub → **Actions** → **Build the MSIX (by hand)** → **Run workflow**
+   (leave "submit" unticked). When it finishes (about ten minutes), open the
+   run and download **redstone-launcher-msix** under Artifacts; the
+   `.msix` is inside the zip.
 2. Partner Center → the product → **Start your submission**, and fill in:
    - **Pricing and availability**: Free; the markets.
    - **Properties**: category *Utilities & tools* or *Games → Simulation*.

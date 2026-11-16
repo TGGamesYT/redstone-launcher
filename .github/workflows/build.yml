@@ -169,8 +169,12 @@ jobs:
         if: env.MS_STORE_PRODUCT_ID != '' && env.MS_STORE_CLIENT_SECRET != '' && env.MS_STORE_IDENTITY_NAME != ''
         uses: microsoft/setup-msstore-cli@v1
 
+      # A Store submission that fails -- before the first one was made by
+      # hand, or while one is still in certification -- must not fail the
+      # release: the installers are already built and uploaded.
       - name: Submit to the Microsoft Store
         if: env.MS_STORE_PRODUCT_ID != '' && env.MS_STORE_CLIENT_SECRET != '' && env.MS_STORE_IDENTITY_NAME != ''
+        continue-on-error: true
         shell: pwsh
         run: |
           msstore reconfigure --tenantId $env:MS_STORE_TENANT_ID --sellerId $env:MS_STORE_SELLER_ID --clientId $env:MS_STORE_CLIENT_ID --clientSecret $env:MS_STORE_CLIENT_SECRET

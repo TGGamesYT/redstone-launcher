@@ -1,0 +1,88 @@
+name: Build the MSIX (by hand)
+
+# The Microsoft Store package on its own, started from the Actions tab.
+#
+# The release workflow (build.yml) builds the MSIX only when there is a new
+# version to release. The first Store submission has to be made by hand in
+# Partner Center, with a package -- usually before there is a new version --
+# so this builds one from whatever is on main, keeps it with the run, and
+# releases nothing. Ticking "submit" also sends it to the Store, which works
+# only once the first submission has been made. See docs/microsoft-store.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      submit:
+        description: "Also submit it to the Microsoft Store (only after the first submission was made by hand)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    name: Build the MSIX
+    runs-on: windows-latest
+    env:
+      MS_STORE_IDENTITY_NAME: ${{ vars.MS_STORE_IDENTITY_NAME || secrets.MS_STORE_IDENTITY_NAME }}
+      MS_STORE_PUBLISHER: ${{ vars.MS_STORE_PUBLISHER || secrets.MS_STORE_PUBLISHER }}
+      MS_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.MS_STORE_PUBLISHER_DISPLAY_NAME || secrets.MS_STORE_PUBLISHER_DISPLAY_NAME }}
+      MS_STORE_PRODUCT_ID: ${{ secrets.MS_STORE_PRODUCT_ID }}
+      MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_TENANT_ID }}
+      MS_STORE_SELLER_ID: ${{ secrets.MS_STORE_SELLER_ID }}
+      MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_CLIENT_ID }}
+      MS_STORE_CLIENT_SECRET: ${{ secrets.MS_STORE_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sidecar/quiclime/target
+          key: ${{ runner.os }}-sidecar-${{ hashFiles('sidecar/quiclime/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-sidecar-
+
+      - name: Install dependencies
+        run: npm i
+
+      - name: Build Windows
+        run: npm run buildWin
+
+      - name: Check the Store identity is set
+        shell: pwsh
+        run: |
+          foreach ($n in 'MS_STORE_IDENTITY_NAME','MS_STORE_PUBLISHER','MS_STORE_PUBLISHER_DISPLAY_NAME') {
+            if (-not [Environment]::GetEnvironmentVariable($n)) { Write-Error "$n is not set. See docs/microsoft-store.md, step 4."; exit 1 }
+          }
+
+      - name: Pack the MSIX
+        run: node scripts/build-msix.mjs --out dist/Redstone-Launcher.msix
+
+      - name: Upload the MSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: redstone-launcher-msix
+          path: dist/Redstone-Launcher.msix
+
+      - name: Set up the Microsoft Store CLI
+        if: inputs.submit && env.MS_STORE_PRODUCT_ID != '' && env.MS_STORE_CLIENT_SECRET != ''
+        uses: microsoft/setup-msstore-cli@v1
+
+      - name: Submit to the Microsoft Store
+        if: inputs.submit && env.MS_STORE_PRODUCT_ID != '' && env.MS_STORE_CLIENT_SECRET != ''
+        shell: pwsh
+        run: |
+          msstore reconfigure --tenantId $env:MS_STORE_TENANT_ID --sellerId $env:MS_STORE_SELLER_ID --clientId $env:MS_STORE_CLIENT_ID --clientSecret $env:MS_STORE_CLIENT_SECRET
+          msstore publish "dist/Redstone-Launcher.msix" -id $env:MS_STORE_PRODUCT_ID
