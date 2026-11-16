@@ -83,7 +83,7 @@ sudo ln -s /usr/lib/x86_64-linux-gnu/libvips-cpp.so.42 /usr/lib/x86_64-linux-gnu
 
 ### 3. How to Launch (Fixing Sandbox issues)
 
-On Kali Linux, the launcher must be started with the --no-sandbox flag to work correctly:
+On older Linux systems, the launcher must be started with the --no-sandbox flag to work correctly:
 Bash
 
 ```bash
