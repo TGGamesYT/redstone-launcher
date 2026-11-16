@@ -26,6 +26,12 @@ started.
       has the game's lighting instead -- ambient 0.4 and two lights of 0.6
       from above-front and above-behind -- so tops, fronts, sides and
       undersides differ, and the shapes stand out (viewer-light.js).*
+- [x] **The shaded renders are too dark next to the unshaded ones; shaded
+      but as bright.** — *The game's lights give a face turned to the viewer
+      74% of full, so at skinview3d's old brightness everything was dimmed.
+      The lights are scaled up until that face is as bright as before; sides
+      and undersides keep the game's proportions below it. A render's average
+      brightness is now within a few percent of the unshaded one.*
 - [x] **A skin render held still and then let go still flings.** — *The
       speed at release was the turn between the last two pointer events,
       however long ago they were. It is now how far it turned in the last

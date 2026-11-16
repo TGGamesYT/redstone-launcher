@@ -21,9 +21,14 @@
   const Orig = window.skinview3d.SkinViewer;
   if (typeof Orig !== 'function') return;
 
-  // The same overall brightness skinview3d had (its ambient light is 3), cut
-  // the way the game cuts it.
-  const FULL = 3;
+  // As bright as skinview3d's flat light (its ambient is 3) where it counts:
+  // a face turned to the viewer. The game's lights give that face 0.4 + 0.6 *
+  // 0.56 = 0.74 of full, which at a full of 3 left the whole figure looking
+  // dimmed next to the unshaded one -- so full is raised until the front is
+  // where it was, and the sides and undersides keep the game's proportions
+  // below it. A top goes past full and is simply at its brightest.
+  const FRONT = 0.4 + 0.6 * (0.7 / Math.hypot(0.2, 1, 0.7));
+  const FULL = 3 / FRONT;
   const AMBIENT = 0.4 * FULL;
   const DIFFUSE = 0.6 * FULL;
   // In the camera's space: x right, y up, z towards the viewer.
