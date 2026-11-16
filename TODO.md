@@ -43,8 +43,14 @@ started.
       *They start on for an instance made from a mod project (switching them
       off is remembered), and the setting is shown for one whether or not
       Developer mode is on.*
-- [ ] **"also if I checkout to another branch or click the play"** — the
-      sentence was cut off; asked what happens.
+- [x] **Checking out another branch, or pressing Play, reloads the open
+      instance's page.** — *Play writes the instance's last-played time and a
+      checkout writes its new version and loader; each was broadcast as "the
+      instances changed", and the instances page answered every such
+      broadcast by rebuilding the open instance from nothing -- tabs, mod
+      list, Git tab -- for one line of its header. When nothing but those
+      changed, the line is updated where it is and the page is left alone;
+      any other change still rebuilds.*
 - [x] **No GitHub OAuth app; show who gh is signed in as.** — *The launcher's
       own device flow and its empty client id are gone: signing in is GitHub
       CLI's `gh auth login` only. Where it is offered, a line says who gh is

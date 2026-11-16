@@ -874,7 +874,46 @@
     // Fetch profiles
     ipcRenderer.send("get-profiles");
     ipcRenderer.once("profiles-list", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); maybeLaunchFromShortcut(); });
-    ipcRenderer.on("profiles-updated", (e, newProfiles) => { profiles = newProfiles; renderListOrDetail(); });
+    ipcRenderer.on("profiles-updated", (e, newProfiles) => {
+      if (patchShownInstance(newProfiles)) { profiles = newProfiles; return; }
+      profiles = newProfiles;
+      renderListOrDetail();
+    });
+
+    // An instance that is open, changed only in what its header line says.
+    //
+    // Pressing Play writes the instance's last-played time, and checking out
+    // a branch of a mod project writes its version and loader. Each is
+    // broadcast as "the instances changed", and that rebuilt the whole open
+    // instance -- tabs, mod list, Git tab and all -- for one line of text.
+    // Those are updated where they are shown instead, and the instance object
+    // the page's handlers hold is brought up to date, so a launch or a
+    // settings dialog opened afterwards reads the new version. Anything else
+    // changed still rebuilds.
+    const PATCHABLE = new Set(["lastUsed", "version", "loader", "project"]);
+    function patchShownInstance(newProfiles) {
+      const id = new URLSearchParams(window.location.search).get("i");
+      if (!id || id === "NEWINSTANCE" || String(id) !== String(lastShownInstance)) return false;
+      if (!document.getElementById("instanceLoaderVersion")) return false;
+      const was = (profiles || []).find(p => String(p.id) === String(id));
+      const now = (newProfiles || []).find(p => String(p.id) === String(id));
+      if (!was || !now) return false;
+      const keys = new Set([...Object.keys(was), ...Object.keys(now)]);
+      for (const k of keys) {
+        if (PATCHABLE.has(k)) continue;
+        if (JSON.stringify(was[k]) !== JSON.stringify(now[k])) return false;
+      }
+      Object.assign(was, now);
+      // `was` is the object the open instance's handlers hold; it now reads
+      // the same as the new list's copy, and the list moves to the new one.
+      const lv = document.getElementById("instanceLoaderVersion");
+      if (lv) lv.textContent = `${now.loader} ${now.version}`;
+      const lp = document.getElementById("instanceLastPlayed");
+      if (lp) lp.textContent = now.lastUsed ? new Date(now.lastUsed).toLocaleString() : "Never";
+      const i = newProfiles.findIndex(p => String(p.id) === String(id));
+      if (i >= 0) newProfiles[i] = was;
+      return true;
+    }
 
     // The main process put something in an instance's mods folder -- a dev
     // mod added or rebuilt. The list used to have no idea until Refresh was
@@ -2237,10 +2276,10 @@
         <div style="font-size:1.2em;font-weight:bold">${profile.name}</div>
         <div style="font-size:0.9em;color:var(--text-color)">
             <span class="material-icons" style="vertical-align:middle;font-size:16px">sports_esports</span>
-            ${profile.loader} ${profile.version}<span id="instancePlaytime"></span>
+            <span id="instanceLoaderVersion">${profile.loader} ${profile.version}</span><span id="instancePlaytime"></span>
         </div>
         <div style="font-size:0.8em;opacity:0.6;margin-top:2px">
-            Last played ${lastPlayed} &middot; Created ${created}
+            Last played <span id="instanceLastPlayed">${lastPlayed}</span> &middot; Created ${created}
         </div>
     `;
         left.appendChild(info);
