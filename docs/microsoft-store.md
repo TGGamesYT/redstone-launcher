@@ -50,6 +50,22 @@ first submission, which has to be made by hand.
 The Store CLI uses the Partner Center submission API, which signs in as an
 Entra ID application rather than as you.
 
+> **An individual account has no Entra directory**, so User management says
+> to sign in with Microsoft Entra ID and then turns your personal account
+> away ("You can't sign in here with a personal account"). Two ways on:
+>
+> - **Skip this part.** Set only the three variables in step 4, leave the
+>   secrets out, and every release still builds the MSIX as a workflow
+>   artifact (`redstone-launcher-msix`), which you upload in Partner Center
+>   on a new submission. Nothing else changes.
+> - **Make a directory of your own** and associate it: a free Azure account
+>   (<https://azure.microsoft.com/free>) creates one; in
+>   <https://entra.microsoft.com> add a user such as
+>   `admin@<directory>.onmicrosoft.com` with the Global Administrator role;
+>   then in Partner Center **Account settings → Tenants → Associate**, sign in
+>   as that user. It is not certain an individual account accepts one; if it
+>   does not, the first way is what is left.
+
 1. Partner Center → the gear icon → **Account settings** → **User
    management** → **Microsoft Entra applications** → **Create Microsoft
    Entra application**. If it asks you to associate a tenant first, follow
