@@ -39,6 +39,13 @@ started.
       is set only in a built launcher -- from source it gave Windows a second,
       cached picture to show -- and Explorer is told to drop its cached icons
       after a shortcut changes. Not tried on Windows yet.*
+- [~] **Every desktop icon reloads on a theme change, and the launcher's
+      icon is not even among the ones that change.** — *Telling Explorer to
+      drop its cached icons (SHCNE_ASSOCCHANGED) reloads all of them, and it
+      was sent even when no shortcut had changed, as from source. Gone: only
+      the shortcuts actually changed are refreshed, one at a time, and with
+      none changed nothing is said. Each change already uses a newly named
+      .ico, which is what gets past the cache.*
 
 ## 0. Round 66
 

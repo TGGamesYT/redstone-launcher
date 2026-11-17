@@ -196,12 +196,21 @@ function nudgeScript(links) {
     + "int wEventId,uint uFlags,string dwItem1,IntPtr dwItem2);';"
     + "$t=Add-Type -MemberDefinition $sig -Name Sh -Namespace W -PassThru;"
     // 0x00002000 = SHCNE_UPDATEITEM, 0x0005 = SHCNF_PATHW
-    + paths.map(p2 => `$t::SHChangeNotify(0x00002000,0x0005,'${q(p2)}',[IntPtr]::Zero);`).join("")
-    // And SHCNE_ASSOCCHANGED, which is what makes Explorer drop the icons it
-    // has cached. A pinned taskbar button keeps its cached picture through a
-    // plain update of its shortcut, which is why the button changed only
-    // some of the time.
-    + "$t::SHChangeNotify(0x08000000,0x0000,$null,[IntPtr]::Zero);";
+    + paths.map(p2 => `$t::SHChangeNotify(0x00002000,0x0005,'${q(p2)}',[IntPtr]::Zero);`).join("");
+    // Not SHCNE_ASSOCCHANGED: that makes Explorer reload every icon it has,
+    // which flashed the whole desktop on every theme change.
+}
+
+// The same, for whichever of the shortcuts the script actually changed:
+// they are collected in $u as it goes. Nothing changed, nothing is said --
+// a run from source changes none of them and has no reason to disturb the
+// desktop at all.
+function nudgeChangedScript() {
+  return "if($u.Count -gt 0){"
+    + "$sig='[DllImport(\"shell32.dll\",CharSet=CharSet.Unicode)]public static extern void SHChangeNotify("
+    + "int wEventId,uint uFlags,string dwItem1,IntPtr dwItem2);';"
+    + "$t=Add-Type -MemberDefinition $sig -Name Sh -Namespace W -PassThru;"
+    + "foreach($p in $u){$t::SHChangeNotify(0x00002000,0x0005,$p,[IntPtr]::Zero)}}";
 }
 
 // The app's icon as a new .ico, for a window's taskbar button. The previous
@@ -279,12 +288,12 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
         // shortcuts of its own -- rewrote the installed launcher's pinned and
         // Start menu shortcuts, while its own taskbar button stayed as it was.
         const target = q(exec || process.execPath);
-        const ps = "$sh=New-Object -ComObject WScript.Shell;"
+        const ps = "$sh=New-Object -ComObject WScript.Shell;$u=@();"
           + links.map(lnk => `try{$s=$sh.CreateShortcut('${q(lnk)}');`
-            + `if([IO.Path]::GetFullPath($s.TargetPath) -ieq [IO.Path]::GetFullPath('${target}')){$s.IconLocation='${q(ico)},0';$s.Save();Write-Output ('OK ' + '${q(lnk)}')}`
+            + `if([IO.Path]::GetFullPath($s.TargetPath) -ieq [IO.Path]::GetFullPath('${target}')){$s.IconLocation='${q(ico)},0';$s.Save();$u+='${q(lnk)}';Write-Output ('OK ' + '${q(lnk)}')}`
             + `else{Write-Output ('SKIP ' + '${q(lnk)}')}`
             + `}catch{Write-Output ('FAIL ' + '${q(lnk)}' + ': ' + $_.Exception.Message)};`).join("")
-          + nudgeScript(links);
+          + nudgeChangedScript();
         try {
           const { stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps],
             { windowsHide: true, timeout: 30000 });
