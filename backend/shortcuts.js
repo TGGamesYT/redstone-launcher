@@ -196,7 +196,12 @@ function nudgeScript(links) {
     + "int wEventId,uint uFlags,string dwItem1,IntPtr dwItem2);';"
     + "$t=Add-Type -MemberDefinition $sig -Name Sh -Namespace W -PassThru;"
     // 0x00002000 = SHCNE_UPDATEITEM, 0x0005 = SHCNF_PATHW
-    + paths.map(p2 => `$t::SHChangeNotify(0x00002000,0x0005,'${q(p2)}',[IntPtr]::Zero);`).join("");
+    + paths.map(p2 => `$t::SHChangeNotify(0x00002000,0x0005,'${q(p2)}',[IntPtr]::Zero);`).join("")
+    // And SHCNE_ASSOCCHANGED, which is what makes Explorer drop the icons it
+    // has cached. A pinned taskbar button keeps its cached picture through a
+    // plain update of its shortcut, which is why the button changed only
+    // some of the time.
+    + "$t::SHChangeNotify(0x08000000,0x0000,$null,[IntPtr]::Zero);";
 }
 
 // The app's icon as a new .ico, for a window's taskbar button. The previous
@@ -269,18 +274,27 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
         // name survives; doubling a single quote is how PowerShell escapes one
         // inside a single-quoted string.
         const q = (v) => String(v).replace(/'/g, "''");
+        // Only a shortcut that starts THIS program. Picked by name alone, a
+        // launcher run from its source folder -- which is Electron, with no
+        // shortcuts of its own -- rewrote the installed launcher's pinned and
+        // Start menu shortcuts, while its own taskbar button stayed as it was.
+        const target = q(exec || process.execPath);
         const ps = "$sh=New-Object -ComObject WScript.Shell;"
-          + links.map(lnk => `try{$s=$sh.CreateShortcut('${q(lnk)}');$s.IconLocation='${q(ico)},0';$s.Save()}catch{Write-Output ('FAIL ' + '${q(lnk)}' + ': ' + $_.Exception.Message)};`).join("")
+          + links.map(lnk => `try{$s=$sh.CreateShortcut('${q(lnk)}');`
+            + `if([IO.Path]::GetFullPath($s.TargetPath) -ieq [IO.Path]::GetFullPath('${target}')){$s.IconLocation='${q(ico)},0';$s.Save();Write-Output ('OK ' + '${q(lnk)}')}`
+            + `else{Write-Output ('SKIP ' + '${q(lnk)}')}`
+            + `}catch{Write-Output ('FAIL ' + '${q(lnk)}' + ': ' + $_.Exception.Message)};`).join("")
           + nudgeScript(links);
         try {
           const { stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps],
             { windowsHide: true, timeout: 30000 });
-          const failed = new Set();
           for (const line of String(stdout || "").split(/\r?\n/)) {
-            const m = /^FAIL (.*?): (.*)$/.exec(line.trim());
-            if (m) { failed.add(m[1]); skipped.push(`${path.basename(m[1])}: ${m[2]}`); }
+            const t = line.trim();
+            const fail = /^FAIL (.*?): (.*)$/.exec(t);
+            if (fail) { skipped.push(`${path.basename(fail[1])}: ${fail[2]}`); continue; }
+            if (t.startsWith("OK ")) updated.push(t.slice(3));
+            else if (t.startsWith("SKIP ")) skipped.push(`${path.basename(t.slice(5))}: starts another copy of the launcher`);
           }
-          for (const lnk of links) if (!failed.has(lnk)) updated.push(lnk);
         } catch (e) {
           skipped.push(String(e && e.message || e));
         }

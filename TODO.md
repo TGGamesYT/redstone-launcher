@@ -30,6 +30,15 @@ started.
       as its taskbar relaunch icon, and the window starts with the icon the
       launcher last drew. Its starting icon also pointed outside the app
       (resources/frontend, which a build does not have).*
+- [~] **Run from source, changing the theme or icon changed the INSTALLED
+      launcher's icon, and the taskbar button updated only sometimes.** —
+      *Shortcuts were picked by name alone, so a run from the source folder
+      rewrote the installed launcher's pinned and Start menu shortcuts. Only
+      a shortcut whose target is the running program is changed now (from
+      source that is Electron, which has none). The per-window relaunch icon
+      is set only in a built launcher -- from source it gave Windows a second,
+      cached picture to show -- and Explorer is told to drop its cached icons
+      after a shortcut changes. Not tried on Windows yet.*
 
 ## 0. Round 66
 

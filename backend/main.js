@@ -7825,7 +7825,10 @@ function updateDesktopIconSoon(png) {
 // are rewritten as well, pinned ones included, a moment later
 // (updateDesktopIconSoon).
 function setTaskbarIcon(win, png) {
-  if (process.platform !== "win32" || !win || win.isDestroyed()) return;
+  // A built launcher only. Run from its source folder the window's own icon
+  // is what the taskbar shows, and a relaunch icon on top of that only gave
+  // Windows a second, cached picture to show instead of the new one.
+  if (process.platform !== "win32" || !app.isPackaged || !win || win.isDestroyed()) return;
   try {
     const buf = png || (fs.existsSync(ICON_OUT()) ? fs.readFileSync(ICON_OUT()) : null);
     if (!buf) return;
