@@ -7809,7 +7809,18 @@ function updateDesktopIconSoon(png) {
     // Not awaited and never blocking: rewriting a shortcut means starting a
     // shell, and the main process is the one that answers every window.
     Promise.resolve(shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher" }))
-      .catch(() => { /* the window icon is already right; this is the one outside */ });
+      .then((r) => {
+        // Said in the console, because "the desktop icon did not change" has
+        // two very different answers: no shortcut starts THIS program (a run
+        // from source, whose desktop shortcut is the installed launcher's),
+        // or one does and could not be changed.
+        if (!r) return;
+        const said = [];
+        if (r.updated && r.updated.length) said.push(`changed ${r.updated.map(f => path.basename(f)).join(", ")}`);
+        if (r.skipped && r.skipped.length) said.push(`left ${r.skipped.join("; ")}`);
+        devtoolsLog(`[icon] shortcuts (this program is ${process.execPath}): ${said.join(" -- ") || "none found"}`);
+      })
+      .catch((e) => devtoolsLog("[icon] shortcuts could not be changed:", e && e.message || e));
   }, DESKTOP_ICON_SETTLE);
 }
 
