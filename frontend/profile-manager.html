@@ -1638,11 +1638,23 @@
     // `holder._ready` resolves false when the texture couldn't be rendered at all
     // (MineSkin hands out plenty of URLs that now 404), so a caller can drop the
     // card instead of showing a broken-image box.
+    // A picture address with no picture in it -- "data:image/png;base64," and
+    // then undefined, from a skin whose image never arrived. Loading one only
+    // logs ERR_INVALID_URL and leaves a blank card.
+    const noPicture = (src) => !src || /base64,(undefined|null)?$/.test(String(src));
+
     function skin3dPreview(src, model, w, h) {
       w = w || 150; h = h || 300;
       const holder = document.createElement("div");
       holder.className = "skin-still";
       holder.style.cssText = `position:relative; width:100%; aspect-ratio:${w}/${h};`;
+      if (noPicture(src)) {
+        // Said so the caller can drop the card, the same as a skin that will
+        // not render.
+        holder._dead = true;
+        holder._ready = Promise.resolve(false);
+        return holder;
+      }
       const img = document.createElement("img");
       img.className = "card-image";
       img.style.cssText = "width:100%; height:100%; display:block; object-fit:contain;";
@@ -2899,6 +2911,8 @@
     // waiting on the network every time.
     let _cnCreateSkin = null, _cnImageSkin = null;
     try { _cnCreateSkin = JSON.parse(localStorage.getItem('cnCreatePreview') || 'null'); } catch { }
+    // A cached one with no picture in it is no preview at all.
+    if (!_cnCreateSkin || typeof _cnCreateSkin.base64 !== 'string' || !_cnCreateSkin.base64) _cnCreateSkin = null;
 
     // Fetch both showcased skins as soon as the page loads rather than when the
     // modal opens, so the tiles are already filled by the time anyone clicks +.
@@ -2919,7 +2933,7 @@
     async function showCreateNewModal() {
       document.getElementById('createNewModal').style.display = 'flex';
       // Template preview is local — always instant.
-      miniViewer(document.getElementById('cnTemplatePrev'), 'assets/template.png', 'classic');
+      miniViewer(document.getElementById('cnTemplatePrev'), 'assets/skins/template.png', 'classic');
       // The other two were started at page load; render each the moment it lands.
       cnCreatePromise.then(sk => {
         if (sk) miniViewer(document.getElementById('cnCreatePrev'), 'data:image/png;base64,' + sk.base64, sk.variant);
@@ -2939,7 +2953,7 @@
     document.getElementById('cnTemplate').onclick = () => openSkinEditor({ mode: 'new', template: 1 });
 
     // The convert-image preview is a ready-made skin shipped with the app.
-    function sampleWrappedSkin() { return Promise.resolve('assets/rick.png'); }
+    function sampleWrappedSkin() { return Promise.resolve('assets/skins/rick.png'); }
 
     // ---- By username ----
     let usernameFetched = null;

@@ -199,6 +199,21 @@ function nudgeScript(links) {
     + paths.map(p2 => `$t::SHChangeNotify(0x00002000,0x0005,'${q(p2)}',[IntPtr]::Zero);`).join("");
 }
 
+// The app's icon as a new .ico, for a window's taskbar button. The previous
+// ones are swept, but only those of this kind, so a shortcut's .ico that is
+// still being pointed at is left alone.
+let _lastWindowIco = null;
+export function writeFreshAppIco(pngBuffer) {
+  if (!pngBuffer) return null;
+  const dir = path.join(iconsDir(), "window");
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* written below or not at all */ }
+  const ico = freshIconPath(dir, ".ico");
+  fs.writeFileSync(ico, pngToIco(pngBuffer));
+  if (_lastWindowIco !== ico) sweepOldIcons(dir, ".ico", ico);
+  _lastWindowIco = ico;
+  return ico;
+}
+
 export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", exec } = {}) {
   if (!pngBuffer) return { updated: [], skipped: ["no icon given"] };
   const updated = [], skipped = [];
@@ -212,11 +227,28 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
       fs.writeFileSync(ico, pngToIco(pngBuffer));
       // Wherever an installer puts them: the desktop, and the Start menu for
       // this user and for everybody.
-      const places = [
-        desktop,
+      const startMenus = [
         path.join(home, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs"),
         path.join(process.env.ProgramData || "C:\\ProgramData", "Microsoft", "Windows", "Start Menu", "Programs"),
+      ];
+      const places = [
+        desktop,
+        ...startMenus,
+        // A shortcut pinned to the taskbar is its own .lnk, here, and it is
+        // what draws the taskbar button of an installed launcher. Leaving it
+        // out is why the button never changed.
+        path.join(home, "AppData", "Roaming", "Microsoft", "Internet Explorer", "Quick Launch", "User Pinned", "TaskBar"),
+        path.join(home, "AppData", "Roaming", "Microsoft", "Internet Explorer", "Quick Launch", "User Pinned", "StartMenu"),
       ].filter(Boolean);
+      // An installer may also put its shortcut in a folder of its own in the
+      // Start menu.
+      for (const sm of startMenus) {
+        let subs = [];
+        try { subs = fs.readdirSync(sm, { withFileTypes: true }); } catch { continue; }
+        for (const d of subs) {
+          if (d.isDirectory() && d.name.toLowerCase().includes(appName.toLowerCase().split(" ")[0])) places.push(path.join(sm, d.name));
+        }
+      }
       const links = [];
       for (const place of places) {
         let names = [];
@@ -297,4 +329,4 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
   }
 }
 
-export default { createShortcut, rewriteIcon, setAppShortcutIcon };
+export default { createShortcut, rewriteIcon, setAppShortcutIcon, writeFreshAppIco };

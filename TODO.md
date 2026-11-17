@@ -9,6 +9,28 @@ started.
 
 ---
 
+## 0. Round 67
+
+- [x] **Things that worked in development do not in a built launcher:
+      assets/template.png and assets/rick.png not found.** — *Both were moved
+      into assets/skins/ and three references were not; a development copy
+      with old files still lying at the old place hid it. Pointed at the new
+      place, and a test now checks every assets/ path the frontend names
+      against what the repository actually has.*
+- [~] **"data:image/png;base64,undefined" errors.** — *A skin preview built
+      from a skin whose picture never arrived (it came with Mojang
+      rate-limiting). Which caller sent it could not be told from the code;
+      a preview with no picture is now refused and left out rather than
+      loaded, and a cached "create" preview with no picture is not used.*
+- [x] **The taskbar icon never changes in a built launcher.** — *An
+      installed launcher's taskbar button is drawn from its shortcut -- the
+      pinned one or the Start menu one -- and the pinned shortcut, in
+      Quick Launch\User Pinned\TaskBar, was not among the ones rewritten.
+      It is now (and Start menu folders too), each window also gets the icon
+      as its taskbar relaunch icon, and the window starts with the icon the
+      launcher last drew. Its starting icon also pointed outside the app
+      (resources/frontend, which a build does not have).*
+
 ## 0. Round 66
 
 - [~] **The home page sometimes left empty, with "Attempted to get the

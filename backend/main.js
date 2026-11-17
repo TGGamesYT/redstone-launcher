@@ -1363,7 +1363,14 @@ ipcMain.handle("players:reorder", (event, { order }) => {
   } catch (err) { return { success: false, error: err.message }; }
 });
 let mainWindow;
-const iconPath = path.join(process.resourcesPath, 'frontend', 'assets', 'icon', 'redstone_logo.png');
+// The launcher's own logo, inside the app -- app.getAppPath() is the app.asar
+// in a build and the project folder in development. It was resourcesPath, which
+// is neither: the folder BESIDE app.asar, where there is no frontend, so a
+// built launcher's window started with no icon of its own.
+const iconPath = path.join(app.getAppPath(), 'frontend', 'assets', 'icon', 'redstone_logo.png');
+// The icon the window starts with: the one the launcher last drew (the theme's
+// colour, the picked block or picture), else its logo.
+const startIcon = () => { try { if (fs.existsSync(ICON_OUT())) return ICON_OUT(); } catch { } return iconPath; };
 const color = settings.get('baseColor', "#FF0000");
 
 function createAdminWindow() {
@@ -1387,7 +1394,7 @@ function createWindow() {
     height: 800,
     minWidth: 1000,
     minHeight: 800,
-    icon: path.join(iconPath),
+    icon: startIcon(),
     frame: false,
     webPreferences: {
       nodeIntegration: true,
@@ -1401,6 +1408,7 @@ function createWindow() {
     }
   });
   applyAccentColour(color, win);
+  setTaskbarIcon(win);
   // Developer tools are gated behind the "Developer mode" setting: block the
   // F12 / Ctrl+Shift+I shortcuts unless it's on (and toggle them when it is).
   win.webContents.on("before-input-event", (event, input) => {
@@ -7805,6 +7813,33 @@ function updateDesktopIconSoon(png) {
   }, DESKTOP_ICON_SETTLE);
 }
 
+// The taskbar button, on Windows.
+//
+// setIcon changes the window's icon, and in development that is what the
+// taskbar shows. An installed launcher's button belongs to its shortcut --
+// the Start menu one, or the pinned one -- and Windows draws it with THAT
+// icon, which is why a built launcher's button never changed. A window's
+// "relaunch" icon is the one Windows takes for its button over the
+// shortcut's, so it is set too, from a fresh .ico (Windows caches an icon by
+// its path, so a changed picture needs a new name). The shortcuts themselves
+// are rewritten as well, pinned ones included, a moment later
+// (updateDesktopIconSoon).
+function setTaskbarIcon(win, png) {
+  if (process.platform !== "win32" || !win || win.isDestroyed()) return;
+  try {
+    const buf = png || (fs.existsSync(ICON_OUT()) ? fs.readFileSync(ICON_OUT()) : null);
+    if (!buf) return;
+    const ico = shortcuts.writeFreshAppIco(buf);
+    if (!ico) return;
+    win.setAppDetails({
+      appIconPath: ico,
+      appIconIndex: 0,
+      relaunchCommand: `"${process.execPath}"`,
+      relaunchDisplayName: app.getName() || "Redstone Launcher",
+    });
+  } catch { /* the window's own icon is still right */ }
+}
+
 async function applyAppIcon(icon, { desktop = true } = {}) {
   try {
     // Remembered first, because the icon is drawn FROM the setting: a
@@ -7821,6 +7856,7 @@ async function applyAppIcon(icon, { desktop = true } = {}) {
     const img = nativeImage.createFromBuffer(png);
     for (const w of BrowserWindow.getAllWindows()) {
       try { if (!w.isDestroyed()) w.setIcon(img); } catch { /* not every platform takes one */ }
+      setTaskbarIcon(w, png);
     }
     // A window's icon is the taskbar and nothing else, which is why the one
     // on the desktop stayed as it was. That entry is told separately, and
