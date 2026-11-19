@@ -194,6 +194,22 @@
     if (attach === 'scroll') root.classList.add('bg-scrolls');
     root.classList.add('custom-bg');
   }
+  const interfaceBlur = cached.interfaceBlur || {};
+  const panels = interfaceBlur.panels || {};
+  const blur = Math.max(0, Math.min(20, Number(interfaceBlur.amount) || 0));
+  const blurOn = (area) => !!interfaceBlur.all || !!panels[area]
+    || (area === 'cards' && !interfaceBlur.panels && !!interfaceBlur.enabled);
+  set('--interface-backdrop-blur', `${blur}px`);
+  for (const [area, className] of [
+    ['cards', 'blur-cards'],
+    ['instanceLogs', 'blur-instance-logs'],
+    ['instanceFiles', 'blur-instance-files'],
+    ['search', 'blur-search'],
+    ['friends', 'blur-friends'],
+    ['settings', 'blur-settings'],
+  ]) {
+    if (blurOn(area) && blur > 0) root.classList.add(className);
+  }
 
   // ── a style sheet of the user's own ──
   // Last in the document, so it beats the page's own styles and can move or

@@ -4503,7 +4503,7 @@
               tabContent.classList.add("tab-fade-in");
             }
 
-            tabContent.classList.remove("logs-active");
+            tabContent.classList.remove("logs-active", "files-active");
             tabContent.style.height = ""; // reset (the Files tab sets its own)
             clearInterval(window.__logTailTimer); // stop log tailing from a prior Logs view
             if (!refreshing) tabContent.innerHTML = "Loading...";
@@ -5407,6 +5407,7 @@
                 onChanged: () => { try { renderListOrDetail(); } catch { /* the page moved on */ } },
               });
             } else if (tab.toLowerCase() === "files") {
+              tabContent.classList.add("files-active");
               logsEl.style.display = "none";
               tabContent.innerHTML = "";
               // No hardcoded height here: tabContent carries data-fit-height and

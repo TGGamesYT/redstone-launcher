@@ -27,6 +27,12 @@ const check = (label, got, want, note) => {
 const page = `<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="${path.join(FE, "server.css")}">
 </head><body>
+<li class="profile-item" id="sample-card">Instance card</li>
+<pre id="logs">Instance log</pre>
+<div id="instance-tab-content" class="files-active">Instance files</div>
+<input id="searchInput" type="text">
+<aside id="friendsPanel">Friends</aside>
+<div class="settings-container"><section class="section">Settings</section></div>
 <div id="scroller" data-fit-height style="height:300px; overflow-y:auto;">
   <div style="height:3000px;"></div>
 </div>
@@ -108,6 +114,39 @@ await scrollTo(96);
 const stillDown = await shot("still-down");
 check("and held still it stays exactly where it was",
   Buffer.compare(stillTop, stillDown), 0);
+
+// ── optional panel blur ──
+await p.evaluate(() => {
+  window.LauncherBlur.apply({
+    interfaceBlur: {
+      amount: 8,
+      panels: { cards: true, instanceLogs: true, instanceFiles: false, search: false, friends: false, settings: false },
+    },
+  });
+});
+check("selected areas blur their panels",
+  await p.evaluate(() => [
+    document.documentElement.classList.contains("blur-cards"),
+    document.documentElement.classList.contains("blur-instance-logs"),
+    document.documentElement.classList.contains("blur-instance-files"),
+    getComputedStyle(document.getElementById("sample-card")).backdropFilter,
+    getComputedStyle(document.getElementById("logs")).backdropFilter,
+  ]), [true, true, false, "blur(8px)", "blur(8px)"]);
+await p.evaluate(() => window.LauncherBlur.apply({ interfaceBlur: { all: true, amount: 8, panels: {} } }));
+check("the all-panels option enables every area",
+  await p.evaluate(() => [
+    ["cards", "instance-logs", "instance-files", "search", "friends", "settings"]
+      .every(area => document.documentElement.classList.contains(`blur-${area}`)),
+    getComputedStyle(document.getElementById("instance-tab-content")).backdropFilter,
+    getComputedStyle(document.getElementById("searchInput")).backdropFilter,
+    getComputedStyle(document.getElementById("friendsPanel")).backdropFilter,
+    getComputedStyle(document.querySelector(".settings-container .section")).backdropFilter,
+  ]), [true, "blur(8px)", "blur(8px)", "blur(8px)", "blur(8px)"]);
+await p.evaluate(() => window.LauncherBlur.apply({ interfaceBlur: { all: false, amount: 8, panels: {} } }));
+check("clearing all areas removes every blur panel",
+  await p.evaluate(() => [
+    "cards", "instance-logs", "instance-files", "search", "friends", "settings",
+  ].some(area => document.documentElement.classList.contains(`blur-${area}`))), false);
 
 
 

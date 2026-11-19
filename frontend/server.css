@@ -48,6 +48,7 @@ html[data-smoothing="smooth"] {
   --app-bg-repeat: no-repeat;
   --app-bg-render: auto;
   --app-bg-attach: fixed;
+  --interface-backdrop-blur: 0px;
   /* What a sticky header paints.
      A sticky strip has to be opaque or the rows scroll past behind it, and it
      was painted in the panel's own dark shade -- a solid block that hid the
@@ -1568,6 +1569,140 @@ a:hover {
 
 .profile-item.selected:hover {
   box-shadow: 0 0 20px color-mix(in srgb, var(--base-color) 70%, transparent);
+}
+
+html.blur-cards .profile-item,
+html.blur-cards .card,
+html.blur-cards .hs-card,
+html.blur-cards .hs-item,
+html.blur-cards .hs-face,
+html.blur-cards .hs-news,
+html.blur-cards .project-card,
+html.blur-cards .ni-card,
+html.blur-cards .ni-row,
+html.blur-cards .mpi-card {
+  -webkit-backdrop-filter: blur(var(--interface-backdrop-blur));
+  backdrop-filter: blur(var(--interface-backdrop-blur));
+}
+
+html.blur-cards .profile-item {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--secondary-color) 50%, transparent),
+    color-mix(in srgb, var(--menu-bg) 72%, transparent)
+  );
+}
+
+html.blur-cards .profile-item:hover {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--secondary-color) 58%, transparent),
+    color-mix(in srgb, var(--menu-bg) 80%, transparent)
+  );
+}
+
+html.blur-cards .profile-item.selected {
+  background: transparent;
+}
+
+html.blur-cards .profile-item.selected::before {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--base-color) 76%, transparent),
+    color-mix(in srgb, var(--third-color) 76%, transparent)
+  );
+}
+
+html.blur-cards .card {
+  background: color-mix(in srgb, var(--base-color) 76%, transparent);
+}
+
+html.blur-cards .hs-card,
+html.blur-cards .hs-item,
+html.blur-cards .hs-face,
+html.blur-cards .hs-news {
+  background: color-mix(in srgb, var(--menu-bg) 74%, transparent);
+}
+
+html.blur-cards .project-card {
+  background: color-mix(in srgb, var(--menu-bg) 76%, transparent);
+}
+
+html.blur-cards .project-card:hover {
+  background: color-mix(in srgb, var(--menu-hover-bg) 76%, transparent);
+}
+
+html.blur-cards .ni-card,
+html.blur-cards .mpi-card {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--third-color) 76%, transparent),
+    color-mix(in srgb, var(--third-color) 66%, transparent)
+  );
+}
+
+html.blur-cards .ni-row {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--secondary-color) 48%, transparent),
+    color-mix(in srgb, var(--menu-bg) 76%, transparent)
+  );
+}
+
+html.blur-instance-logs #logs {
+  background: color-mix(in srgb, var(--very-dark) 72%, transparent);
+  -webkit-backdrop-filter: blur(var(--interface-backdrop-blur));
+  backdrop-filter: blur(var(--interface-backdrop-blur));
+}
+
+html.blur-instance-files #instance-tab-content.files-active {
+  background: color-mix(in srgb, var(--very-dark) 24%, transparent);
+  -webkit-backdrop-filter: blur(var(--interface-backdrop-blur));
+  backdrop-filter: blur(var(--interface-backdrop-blur));
+}
+
+html.blur-instance-files #instance-tab-content.files-active .fb-area,
+html.blur-instance-files #instance-tab-content.files-active .fb-list {
+  background: color-mix(in srgb, var(--very-dark) 72%, transparent);
+  -webkit-backdrop-filter: blur(var(--interface-backdrop-blur));
+  backdrop-filter: blur(var(--interface-backdrop-blur));
+}
+
+html.blur-search :is(
+  input[type="search"],
+  input[id*="search" i],
+  input[class*="search" i],
+  .findbar,
+  #search-sort .ss-row,
+  #server-search-sort .ss-row
+) {
+  background: color-mix(in srgb, var(--menu-bg) 76%, transparent);
+  -webkit-backdrop-filter: blur(var(--interface-backdrop-blur));
+  backdrop-filter: blur(var(--interface-backdrop-blur));
+}
+
+html.blur-friends #friendsPanel {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--secondary-color) 45%, transparent),
+    color-mix(in srgb, var(--menu-bg) 70%, transparent)
+  );
+  -webkit-backdrop-filter: blur(var(--interface-backdrop-blur));
+  backdrop-filter: blur(var(--interface-backdrop-blur));
+}
+
+html.blur-settings .settings-container .section {
+  background: color-mix(in srgb, var(--secondary-color) 62%, transparent);
+  -webkit-backdrop-filter: blur(var(--interface-backdrop-blur));
+  backdrop-filter: blur(var(--interface-backdrop-blur));
+}
+
+html.blur-settings .settings-container .color-input,
+html.blur-settings .settings-container .bg-panel,
+html.blur-settings .settings-container .theme-btn {
+  background: color-mix(in srgb, var(--menu-bg) 72%, transparent);
+  -webkit-backdrop-filter: blur(var(--interface-backdrop-blur));
+  backdrop-filter: blur(var(--interface-backdrop-blur));
 }
 
 .profile-item img {

@@ -1007,6 +1007,18 @@ const DEFAULT_SETTINGS = {
     image: { file: null, fit: "cover", followColors: false },
     block: { id: null, name: null, url: null, size: 64, scroll: false, followColors: false },
   },
+  interfaceBlur: {
+    all: false,
+    amount: 8,
+    panels: {
+      cards: false,
+      instanceLogs: false,
+      instanceFiles: false,
+      search: false,
+      friends: false,
+      settings: false,
+    },
+  },
   predefinedThemeSync: false,
   // Keep the cloud folder and this computer in step without being asked.
   // Off by default: syncing on a timer is a thing to opt into.

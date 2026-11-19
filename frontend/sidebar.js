@@ -296,6 +296,23 @@ function applyBackground(settings) {
 // The settings page previews with these, and so does its own head script.
 window.LauncherBackground = { css: backgroundCss, apply: applyBackground, FALLBACK: BG_FALLBACK, layers: imageLayers };
 
+function applyInterfaceBlur(settings) {
+  const filter = settings && settings.interfaceBlur || {};
+  const panels = filter.panels || {};
+  const amount = Math.max(0, Math.min(20, Number(filter.amount) || 0));
+  const root = document.documentElement;
+  const enabled = (area) => !!filter.all || !!panels[area]
+    || (area === 'cards' && !filter.panels && !!filter.enabled);
+  root.style.setProperty('--interface-backdrop-blur', `${amount}px`);
+  root.classList.toggle('blur-cards', enabled('cards') && amount > 0);
+  root.classList.toggle('blur-instance-logs', enabled('instanceLogs') && amount > 0);
+  root.classList.toggle('blur-instance-files', enabled('instanceFiles') && amount > 0);
+  root.classList.toggle('blur-search', enabled('search') && amount > 0);
+  root.classList.toggle('blur-friends', enabled('friends') && amount > 0);
+  root.classList.toggle('blur-settings', enabled('settings') && amount > 0);
+}
+window.LauncherBlur = { apply: applyInterfaceBlur };
+
 // Light text wants a dark outline, dark text a light one. Rec. 709
 // luminance, which is what "does this look light" comes down to.
 function outlineFor(textColor) {
@@ -332,6 +349,7 @@ function dimmed(hex, by) {
 
 function applyTheme(settings) {
   settings = { ...THEME_FALLBACK, ...(settings || {}) };
+  applyInterfaceBlur(settings);
   const textColor = settings.textColor;
   const textFont = settings.font;
   const by = brightnessOf(settings);

@@ -934,6 +934,23 @@
       </div>
       </div>
       <label class="setting-toggle" data-tip="Works the middle colour out from the base and the secondary. Turn it off to pick one yourself."><input type="checkbox" id="auto-third" checked> Automatic third colour</label>
+      <h4 style="margin-top:24px;">Blur</h4>
+      <p class="bg-hint">Choose which panels get a frosted-glass backdrop. Their text and controls stay sharp.</p>
+      <label class="setting-toggle" style="margin-top:10px;"
+        data-tip="Turns blur on for every panel below."><input type="checkbox" id="interface-blur-all"> All panels</label>
+      <div style="margin:8px 0 0 24px;">
+        <label class="setting-toggle"><input type="checkbox" data-blur-panel="cards"> Instance cards and other cards</label>
+        <label class="setting-toggle"><input type="checkbox" data-blur-panel="instanceLogs"> Instance logs</label>
+        <label class="setting-toggle"><input type="checkbox" data-blur-panel="instanceFiles"> Instance files</label>
+        <label class="setting-toggle"><input type="checkbox" data-blur-panel="search"> Search fields and bars</label>
+        <label class="setting-toggle"><input type="checkbox" data-blur-panel="friends"> Friends list</label>
+        <label class="setting-toggle"><input type="checkbox" data-blur-panel="settings"> Settings panels</label>
+      </div>
+      <label for="interface-blur-amount" style="margin-top:12px;display:block;">Blur amount</label>
+      <div class="bg-blockrow">
+        <input type="range" id="interface-blur-amount" min="0" max="20" step="1" style="width:200px;" value="8">
+        <span class="slider-value" id="interface-blur-amount-value">8px</span>
+      </div>
       <br>
       <label style="margin-top: 40px;">Font</label>
       <select id="font-selector" class="narrow-select">
@@ -1990,6 +2007,68 @@
           localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
         });
       }
+
+      const BLUR_AREAS = ['cards', 'instanceLogs', 'instanceFiles', 'search', 'friends', 'settings'];
+      const BLUR_DEFAULT = {
+        all: false,
+        amount: 8,
+        panels: Object.fromEntries(BLUR_AREAS.map(area => [area, false])),
+      };
+      const normalizeBlur = (saved = {}) => {
+        const panels = { ...BLUR_DEFAULT.panels, ...(saved.panels || {}) };
+        if (!saved.panels && saved.enabled) panels.cards = true;
+        if (saved.all) for (const area of BLUR_AREAS) panels[area] = true;
+        const amount = Number(saved.amount);
+        const all = BLUR_AREAS.every(area => !!panels[area]);
+        return {
+          all,
+          amount: Number.isFinite(amount) ? Math.round(Math.max(0, Math.min(20, amount))) : BLUR_DEFAULT.amount,
+          panels,
+        };
+      };
+      let interfaceBlur = normalizeBlur(getSetting('interfaceBlur') || {});
+      const blurAll = document.getElementById('interface-blur-all');
+      const blurPanels = [...document.querySelectorAll('[data-blur-panel]')];
+      const blurAmount = document.getElementById('interface-blur-amount');
+      const blurAmountValue = document.getElementById('interface-blur-amount-value');
+      const updateBlurControls = () => {
+        blurAll.checked = BLUR_AREAS.every(area => !!interfaceBlur.panels[area]);
+        interfaceBlur.all = blurAll.checked;
+        for (const input of blurPanels) {
+          input.checked = !!interfaceBlur.panels[input.dataset.blurPanel];
+        }
+        blurAmount.value = interfaceBlur.amount;
+        blurAmount.disabled = !blurPanels.some(input => input.checked);
+        blurAmountValue.innerText = `${blurAmount.value}px`;
+      };
+      const saveBlurSettings = () => {
+        const updateObj = {
+          interfaceBlur: { ...interfaceBlur, panels: { ...interfaceBlur.panels } },
+        };
+        known.interfaceBlur = updateObj.interfaceBlur;
+        if (window.LauncherBlur) window.LauncherBlur.apply(updateObj);
+        ipcRenderer.send('save-settings', updateObj);
+        const cached = JSON.parse(localStorage.getItem('launcherTheme') || '{}');
+        localStorage.setItem('launcherTheme', JSON.stringify({ ...cached, ...updateObj }));
+      };
+      updateBlurControls();
+      blurAll.addEventListener('change', () => {
+        for (const area of BLUR_AREAS) interfaceBlur.panels[area] = blurAll.checked;
+        updateBlurControls();
+        saveBlurSettings();
+      });
+      for (const input of blurPanels) {
+        input.addEventListener('change', () => {
+          interfaceBlur.panels[input.dataset.blurPanel] = input.checked;
+          updateBlurControls();
+          saveBlurSettings();
+        });
+      }
+      blurAmount.addEventListener('input', () => {
+        interfaceBlur.amount = parseInt(blurAmount.value, 10);
+        updateBlurControls();
+        saveBlurSettings();
+      });
 
       // ── What a setting does, on hover ──
       //
@@ -3312,6 +3391,11 @@
         if (borderRadius && got('borderRadius') !== undefined) {
           borderRadius.value = got('borderRadius');
           if (borderValue) borderValue.innerText = borderRadius.value;
+        }
+        if (got('interfaceBlur') !== undefined) {
+          interfaceBlur = normalizeBlur(got('interfaceBlur') || {});
+          known.interfaceBlur = interfaceBlur;
+          updateBlurControls();
         }
 
         // The background section keeps its own copy of the settings, so it
