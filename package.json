@@ -46,6 +46,7 @@
   },
   "build": {
     "appId": "com.redstone-launcher.app",
+    "npmRebuild": false,
     "productName": "Redstone Launcher",
     "directories": {
       "output": "dist"
