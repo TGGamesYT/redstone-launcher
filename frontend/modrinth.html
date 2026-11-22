@@ -210,6 +210,12 @@
       // Persist + reflect the provider in the sidebar globally.
       localStorage.setItem('modProvider', v);
       if (typeof applyModProviderIcon === 'function') applyModProviderIcon();
+      // And the shell's sidebar, which is the one actually on screen.
+      try {
+        if (window.parent && window.parent !== window && typeof window.parent.applyModProviderIcon === 'function') {
+          window.parent.applyModProviderIcon();
+        }
+      } catch { /* the storage event gets it there instead */ }
     }
     apiToggle.onclick = () => {
       apiSelector.value = apiSelector.value === 'modrinth' ? 'curseforge' : 'modrinth';

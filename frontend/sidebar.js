@@ -642,6 +642,14 @@ window.PROVIDER_SVG = {
 
 // The sidebar's mod-browser entry shows the currently-selected provider's logo
 // and updates everywhere the provider is switched.
+// The mod browser is a page in the frame and this icon is the shell's, so the
+// page changing the provider redrew only its own hidden copy: the sidebar's
+// icon caught up the next time something else happened to redraw it. A change
+// to the stored choice, made anywhere, redraws it here.
+try {
+  window.addEventListener('storage', (e) => { if (e.key === 'modProvider') applyModProviderIcon(); });
+} catch { /* no storage events: the page's direct call below still reaches it */ }
+
 function applyModProviderIcon() {
   const provider = localStorage.getItem('modProvider') === 'curseforge' ? 'curseforge' : 'modrinth';
   const svg = (window.PROVIDER_SVG && window.PROVIDER_SVG[provider]) || '';
@@ -914,11 +922,24 @@ ipcRenderer.on("window-unmaximized", () => updateMaxIcon(false));
       updateText.textContent = `Update to ${result.version}`;
       updateEl.onclick = async () => {
         updateText.textContent = "Downloading...";
-        const res = await ipcRenderer.invoke(
-          "download-and-install",
-          result.assetURL,
-          result.assetName
-        );
+        // How much of it has come, as it comes.
+        const onProgress = (_e, p) => {
+          if (!p) return;
+          updateText.textContent = p.pct != null
+            ? `Downloading… ${p.pct}%`
+            : `Downloading… ${(p.got / 1048576).toFixed(1)} MB`;
+        };
+        ipcRenderer.on("update-progress", onProgress);
+        let res;
+        try {
+          res = await ipcRenderer.invoke(
+            "download-and-install",
+            result.assetURL,
+            result.assetName
+          );
+        } finally {
+          ipcRenderer.removeListener("update-progress", onProgress);
+        }
         if (!res.success) {
           updateText.textContent = "Update failed!";
           console.error(res.error);

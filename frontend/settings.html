@@ -2533,13 +2533,16 @@
           ov.className = 'modal-overlay active';
           ov.style.zIndex = 7000;
           ov.innerHTML = `
-            <div class="modal-content" style="max-width:720px; width:94%;">
+            <!-- A fixed height, with the picker scrolling inside it. Sized by
+                 its contents it was centred on a height that changed several
+                 times while the blocks loaded, so it jumped up and down. -->
+            <div class="modal-content" style="max-width:720px; width:94%; height:min(82vh, 680px); display:flex; flex-direction:column;">
               <div class="modal-header"><h2>Pick a block</h2><button class="modal-close" id="bgbX">✕</button></div>
-              <label class="bg-hint" style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+              <label class="bg-hint" style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex:0 0 auto;">
                 Blocks from
                 <select id="bgbFrom" style="flex:0 1 auto;"></select>
               </label>
-              <div id="bgbPicker"></div>
+              <div id="bgbPicker" style="flex:1 1 auto; min-height:0; overflow:auto;"></div>
             </div>`;
           document.body.appendChild(ov);
           const close = (picked) => { ov.remove(); resolve(picked || null); };

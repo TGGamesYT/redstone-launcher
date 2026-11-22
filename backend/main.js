@@ -9306,7 +9306,7 @@ async function checkForUpdate(force = false) {
 }
 
 /* ---------- Download the update ---------- */
-async function downloadUpdate(assetURL, assetName, destDir = app.getPath("temp")) {
+async function downloadUpdate(assetURL, assetName, destDir = app.getPath("temp"), onProgress = null) {
   fs.mkdirSync(destDir, { recursive: true });
   const downloadPath = path.join(destDir, assetName);
 
@@ -9325,6 +9325,17 @@ async function downloadUpdate(assetURL, assetName, destDir = app.getPath("temp")
           return reject(new Error(`Download failed. Status: ${res.statusCode}`));
         }
 
+        // How far it has got, for the button that started it. Said at most a
+        // few times a second, and only when the whole percent changes.
+        if (onProgress) {
+          const total = Number(res.headers["content-length"]) || 0;
+          let got = 0, lastPct = -1;
+          res.on("data", (chunk) => {
+            got += chunk.length;
+            const pct = total ? Math.floor((got / total) * 100) : null;
+            if (pct !== lastPct) { lastPct = pct; try { onProgress({ got, total, pct }); } catch { /* the window went */ } }
+          });
+        }
         // Pipe into file
         res.pipe(file);
         file.on("finish", () => file.close(() => resolve(downloadPath)));
@@ -9453,7 +9464,8 @@ ipcMain.handle("apply-staged-update", async () => {
 ipcMain.handle("download-and-install", async (event, assetURL, assetName) => {
   if (FROM_THE_STORE) return { success: false, error: "This copy is updated by the Microsoft Store." };
   try {
-    const path = await downloadUpdate(assetURL, assetName);
+    const path = await downloadUpdate(assetURL, assetName, app.getPath("temp"),
+      (p) => { try { event.sender.send("update-progress", p); } catch { /* gone */ } });
     devtoolsLog(path)
     await installUpdate(path);
     return { success: true };
