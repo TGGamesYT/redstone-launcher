@@ -1,4 +1,4 @@
-// "Sign in with GitHub", through GitHub CLI -- `gh auth login --web`, which
+// "Sign in with GitHub", through the launcher's own GitHub CLI -- `gh auth login --web`, which
 // is the device flow: a short code shown here, typed in at
 // github.com/login/device and approved there. See backend/github-auth.js.
 //
@@ -17,9 +17,10 @@
   }
   async function available() { return !!(await account()).gh; }
 
-  // Who gh is signed in as, said where the sign-in is offered: the button
-  // does something different depending on it, and gh can be signed in or
-  // out from a terminal without the launcher being told.
+  // Who the LAUNCHER is signed in to GitHub as, said where the sign-in is
+  // offered. The sign-in is the launcher's own (its own GitHub CLI and its
+  // own config folder), so a gh used in a terminal neither shows here nor is
+  // changed by this.
   function mount(parent, before, onSignedIn) {
     const wrap = document.createElement('div');
     wrap.className = 'gh-account';
@@ -31,25 +32,31 @@
       wrap.innerHTML = '';
       const line = document.createElement('span');
       line.style.opacity = '0.8';
-      if (!a.gh) {
-        line.textContent = 'GitHub CLI is not installed. With it (cli.github.com), you can sign in here instead of making a token.';
-        wrap.appendChild(line);
-        return;
-      }
-      line.textContent = a.login ? `GitHub CLI is signed in as ${a.login}` : 'GitHub CLI is not signed in';
+      const signedIn = !!(a.login && a.hasToken);
+      line.textContent = signedIn ? `Signed in to GitHub as ${a.login}`
+        : a.login ? `GitHub CLI here is signed in as ${a.login}`
+          : a.gh ? 'Not signed in to GitHub'
+            : 'Not signed in to GitHub. Signing in fetches GitHub CLI for the launcher first.';
       wrap.appendChild(line);
-      // Signed in to gh and the launcher already has its token: nothing to do.
-      if (a.login && a.hasToken) return;
       const b = document.createElement('button');
       b.type = 'button';
-      b.textContent = a.login ? `Use ${a.login}` : 'Sign in with GitHub';
-      b.onclick = async () => {
-        b.disabled = true;
-        const r = await open();
-        b.disabled = false;
-        await paint();
-        if (r && r.success && onSignedIn) onSignedIn(r);
-      };
+      if (signedIn) {
+        b.textContent = 'Sign out';
+        b.onclick = async () => {
+          b.disabled = true;
+          try { await ipcRenderer.invoke('github:signOut'); } catch { }
+          await paint();
+        };
+      } else {
+        b.textContent = a.login ? `Use ${a.login}` : 'Sign in with GitHub';
+        b.onclick = async () => {
+          b.disabled = true;
+          const r = await open();
+          b.disabled = false;
+          await paint();
+          if (r && r.success && onSignedIn) onSignedIn(r);
+        };
+      }
       wrap.appendChild(b);
     };
     paint();
@@ -79,6 +86,8 @@
       try { if (window.Loading) loader = window.Loading.mount(ov.querySelector('.gh-spin'), { size: 40 }); } catch { }
       let url = 'https://github.com/login/device';
       const onCode = (_e, m) => {
+        // Fetching GitHub CLI first, when the launcher has none yet.
+        if (m && m.line && !m.code) { say.textContent = m.line; return; }
         if (!m || !m.code) return;
         url = m.url || url;
         codeEl.textContent = m.code;
@@ -104,7 +113,7 @@
         if (!ov.isConnected) return;
         if (r && r.success) {
           say.textContent = r.login ? `Signed in as ${r.login}.` : 'Signed in.';
-          if (r.gitHelper) say.textContent += ' Git on this computer uses it too.';
+          say.textContent += ' The launcher uses it for its own Git requests.';
           codeEl.style.display = 'none';
           openBtn.style.display = 'none';
           ov.querySelector('.gh-wait').style.display = 'none';

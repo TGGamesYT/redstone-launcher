@@ -35,7 +35,7 @@ import genderMod from './gender-mod.js';
 import totem from './totem.js';
 import AdmZip from 'adm-zip';
 import Store from 'electron-store';
-import { exec, execSync, spawn } from "child_process";
+import { exec, execFile, execSync, spawn } from "child_process";
 import crypto from "crypto";
 import nbt from "prismarine-nbt";
 import RPC from "discord-rpc";
@@ -15401,28 +15401,76 @@ ipcMain.handle("git:setToken", (event, { token } = {}) => {
   return { success: true, hasToken: true };
 });
 
-// Signing in to GitHub through GitHub CLI: a code shown here and typed in at
-// github.com/login/device. See backend/github-auth.js.
-//
-// Who gh is signed in as is asked of gh each time rather than remembered:
-// `gh auth login` or `gh auth logout` in a terminal changes it under us.
+// Signing in to GitHub through a GitHub CLI of the launcher's own: a code
+// shown here and typed in at github.com/login/device. The sign-in is kept by
+// the launcher, for the launcher's Git requests, apart from any gh on the
+// computer. See backend/github-auth.js.
+githubAuth.configure({ dataDir });
+
 ipcMain.handle("github:account", async () => {
   try { return { success: true, ...(await githubAuth.ghAccount()), hasToken: !!gitToken() }; }
   catch (e) { return { success: false, gh: false, login: null, error: e.message }; }
 });
+
+// Fetch GitHub CLI for the launcher, from its own releases on GitHub.
+async function fetchOwnGh(say) {
+  say("Asking GitHub CLI's releases which version is current…");
+  const release = await new Promise((resolve) => {
+    https.get("https://api.github.com/repos/cli/cli/releases/latest", {
+      headers: { "User-Agent": "minecraft-launcher", Accept: "application/vnd.github+json" }, timeout: 30000,
+    }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+      let body = ""; res.setEncoding("utf8");
+      res.on("data", (c) => { body += c; });
+      res.on("end", () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
+    }).on("error", () => resolve(null)).on("timeout", function () { this.destroy(); resolve(null); });
+  });
+  const asset = githubAuth.ghAsset(release);
+  if (!asset || !asset.browser_download_url) throw new Error("No GitHub CLI download was found for this computer.");
+  const home = githubAuth.ownGhDir();
+  const archive = path.join(dataDir, "gh-download" + (/\.tar\.gz$/.test(asset.name) ? ".tar.gz" : ".zip"));
+  say(`Downloading ${asset.name}…`);
+  await downloadFile(asset.browser_download_url, archive);
+  say("Unpacking it…");
+  fs.rmSync(home, { recursive: true, force: true });
+  fs.mkdirSync(home, { recursive: true });
+  if (archive.endsWith(".zip")) {
+    new AdmZip(archive).extractAllTo(home, true);
+  } else {
+    await new Promise((resolve, reject) => execFile("tar", ["-xzf", archive, "-C", home], (e) => (e ? reject(e) : resolve())));
+  }
+  fs.rmSync(archive, { force: true });
+  const exe = githubAuth.ownGh();
+  if (!exe) throw new Error("GitHub CLI was downloaded but its program is not in it.");
+  if (process.platform !== "win32") { try { fs.chmodSync(exe, 0o755); } catch { /* it may already be */ } }
+  say("GitHub CLI is ready.");
+  return exe;
+}
+
 let _githubSigningIn = null;
 ipcMain.handle("github:signIn", async (event) => {
   if (_githubSigningIn) return _githubSigningIn;
   const tell = (m) => { try { event.sender.send("github-signin", m); } catch { /* the page went */ } };
   const opts = { onCode: (c) => tell(c), openUrl: (u) => shell.openExternal(u) };
   _githubSigningIn = (async () => {
-    if (!githubAuth.ghOnPath()) return { success: false, error: "GitHub CLI is not installed: get it from cli.github.com, or paste a token." };
+    // No gh anywhere: the launcher gets its own first.
+    if (!githubAuth.ghBin()) {
+      try { await fetchOwnGh((line) => tell({ line })); }
+      catch (e) { return { success: false, error: "GitHub CLI could not be fetched: " + (e && e.message || e) + " You can paste a token instead." }; }
+    }
     const r = await githubAuth.signInWithGh(opts);
     if (!r.ok) return { success: false, error: r.error };
+    // Kept for the launcher's own Git requests, which hand it over themselves.
     if (r.token) settings.set(GIT_TOKEN_KEY, r.token);
-    return { success: true, via: r.via, login: r.login || null, gitHelper: !!r.gitHelper };
+    return { success: true, via: r.via, login: r.login || null, gitHelper: false };
   })();
   try { return await _githubSigningIn; } finally { _githubSigningIn = null; }
+});
+
+ipcMain.handle("github:signOut", async () => {
+  try { await githubAuth.signOutOfGh(); } catch { /* the token below is what matters */ }
+  settings.delete ? settings.delete(GIT_TOKEN_KEY) : settings.set(GIT_TOKEN_KEY, "");
+  return { success: true };
 });
 
 ipcMain.handle("git:info", async (event, { profileId, dir } = {}) => {

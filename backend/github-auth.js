@@ -1,12 +1,19 @@
-// Signing in to GitHub, through GitHub CLI.
+// Signing in to GitHub, through a GitHub CLI of the launcher's own.
 //
 // `gh auth login --web` is the OAuth "device flow": a short code shown in the
 // launcher, typed in at github.com/login/device, and approved there. No
 // password goes anywhere near the launcher and no browser is embedded in it.
-// `gh auth setup-git` then makes the system Git use gh for its credentials, so
-// every clone, fetch and pull works afterwards, from the launcher or from a
-// terminal. The launcher keeps only a copy of the token for its own GitHub API
-// calls (the credits).
+//
+// The sign-in is the LAUNCHER'S. gh is run with a config folder of the
+// launcher's own (GH_CONFIG_DIR) and told to keep the token in that folder
+// rather than in the system keyring, which a gh installed on the computer
+// shares -- so signing in here neither changes nor is changed by a gh you use
+// in a terminal. And Git is not told about it (no `gh auth setup-git`, which
+// rewrote the computer's global Git settings): the launcher hands the token to
+// its own Git requests itself, and nothing else on the computer sees it.
+//
+// If there is no gh at all, the launcher fetches one of its own from GitHub
+// CLI's releases, the way it fetches its own Git on Windows.
 //
 // There is no OAuth app of the launcher's own, and gh's client id is not
 // borrowed for one: GitHub would then show "GitHub CLI wants access" for a
@@ -15,6 +22,35 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 
+let DATA_DIR = null;
+/** Where the launcher keeps its gh and gh's sign-in. Set once by main.js. */
+export function configure({ dataDir }) { DATA_DIR = dataDir || null; }
+export const ownGhDir = () => (DATA_DIR ? path.join(DATA_DIR, "gh") : null);
+export const ghConfigDir = () => (DATA_DIR ? path.join(DATA_DIR, "gh-config") : null);
+
+const EXE = process.platform === "win32" ? "gh.exe" : "gh";
+
+/** gh's executable somewhere under `dir`, as its archives lay it out. */
+export function ghExeIn(dir) {
+  if (!dir) return null;
+  const stack = [dir];
+  for (let i = 0; i < 4000 && stack.length; i++) {
+    const d = stack.pop();
+    let entries = [];
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      const at = path.join(d, e.name);
+      if (e.isDirectory()) stack.push(at);
+      else if (e.name === EXE && path.basename(path.dirname(at)) === "bin") return at;
+    }
+  }
+  return null;
+}
+
+/** The launcher's own gh, if it has fetched one. */
+export function ownGh() { return ghExeIn(ownGhDir()); }
+
+/** A gh installed on the computer, if there is one. */
 export function ghOnPath() {
   const names = process.platform === "win32" ? ["gh.exe", "gh.cmd"] : ["gh"];
   for (const dir of String(process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
@@ -23,8 +59,6 @@ export function ghOnPath() {
       try { if (fs.existsSync(at) && fs.statSync(at).isFile()) return at; } catch { /* unreadable */ }
     }
   }
-  // Where the Windows installer puts it, which a launcher started before the
-  // PATH was updated does not see.
   if (process.platform === "win32") {
     for (const at of [
       path.join(process.env.ProgramFiles || "C:\\Program Files", "GitHub CLI", "gh.exe"),
@@ -34,11 +68,47 @@ export function ghOnPath() {
   return null;
 }
 
+/**
+ * The gh to run: the launcher's own, else one on the computer. Either way it
+ * is run with the launcher's config folder, so the sign-in is the
+ * launcher's and not the computer's.
+ */
+export function ghBin() { return ownGh() || ghOnPath(); }
+
+/**
+ * Which file of a GitHub CLI release is for this computer.
+ * `release` is the GitHub API's answer for cli/cli's latest release.
+ */
+export function ghAsset(release, platform = process.platform, arch = process.arch) {
+  const assets = (release && Array.isArray(release.assets)) ? release.assets : [];
+  const cpu = arch === "arm64" ? "arm64" : arch === "ia32" ? "386" : "amd64";
+  const want = platform === "win32" ? new RegExp(`_windows_${cpu}\\.zip$`)
+    : platform === "darwin" ? /_macOS_(universal|amd64|arm64)\.zip$/
+      : new RegExp(`_linux_${cpu}\\.tar\\.gz$`);
+  // On a Mac, universal first, then the one for this processor.
+  const ranked = platform === "darwin"
+    ? [/_macOS_universal\.zip$/, new RegExp(`_macOS_${cpu}\\.zip$`)]
+    : [want];
+  for (const re of ranked) {
+    const hit = assets.find(a => a && re.test(String(a.name || "")));
+    if (hit) return hit;
+  }
+  return null;
+}
 
 const run = (bin, args, { input = null, onText = null, timeout = 15 * 60 * 1000 } = {}) => new Promise((resolve) => {
   let child;
+  const env = { ...process.env, GH_PROMPT_DISABLED: "1", NO_COLOR: "1", GH_NO_UPDATE_NOTIFIER: "1" };
+  const cfg = ghConfigDir();
+  if (cfg) {
+    try { fs.mkdirSync(cfg, { recursive: true }); } catch { /* gh makes it itself */ }
+    env.GH_CONFIG_DIR = cfg;
+  }
+  // A token in the environment would be used instead of the sign-in, and be
+  // somebody else's; this is the launcher's own sign-in.
+  delete env.GH_TOKEN; delete env.GITHUB_TOKEN;
   try {
-    child = spawn(bin, args, { windowsHide: true, shell: false, env: { ...process.env, GH_PROMPT_DISABLED: "1", NO_COLOR: "1" } });
+    child = spawn(bin, args, { windowsHide: true, shell: false, env });
   } catch (e) { return resolve({ ok: false, out: "", err: String(e.message || e) }); }
   let out = "", err = "";
   const timer = setTimeout(() => { try { child.kill(); } catch { } }, timeout);
@@ -75,30 +145,30 @@ export function loginFromGhStatus(text) {
   return pick ? pick.login : null;
 }
 
-/** Whether gh is here, and who it is signed in to github.com as. */
+/** Whether the launcher has a gh, and who the LAUNCHER is signed in as. */
 export async function ghAccount() {
-  const gh = ghOnPath();
-  if (!gh) return { gh: false, login: null };
+  const gh = ghBin();
+  if (!gh) return { gh: false, own: false, login: null };
   // gh writes the status to stderr, and exits non-zero when signed out.
   const r = await run(gh, ["auth", "status", "--hostname", "github.com"], { timeout: 20000 });
-  return { gh: true, login: r.ok ? loginFromGhStatus(r.out + "\n" + r.err) : null };
+  return { gh: true, own: gh === ownGh(), login: r.ok ? loginFromGhStatus(r.out + "\n" + r.err) : null };
 }
 
 /**
- * Sign in through GitHub CLI.
+ * Sign the launcher in through GitHub CLI.
  *
  * `onCode({ code, url })` is called as soon as gh prints the code, so the
  * launcher can show it while gh waits for it to be entered.
  */
 export async function signInWithGh({ onCode, openUrl } = {}) {
-  const gh = ghOnPath();
-  if (!gh) return { ok: false, error: "GitHub CLI is not installed." };
-  // Already signed in: nothing to do but make sure Git uses it.
+  const gh = ghBin();
+  if (!gh) return { ok: false, error: "GitHub CLI is not here yet." };
   const status = await run(gh, ["auth", "status", "--hostname", "github.com"], { timeout: 20000 });
   let login = status.ok ? loginFromGhStatus(status.out + "\n" + status.err) : null;
   if (!status.ok) {
     let told = false;
-    const login = await run(gh, ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--scopes", "repo"], {
+    const r = await run(gh, ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web",
+      "--scopes", "repo", "--insecure-storage"], {
       // gh asks for Enter before it opens the browser; it is given one, and
       // the launcher opens the page itself so it is the launcher's window
       // that says what is happening.
@@ -113,14 +183,23 @@ export async function signInWithGh({ onCode, openUrl } = {}) {
         if (openUrl) { try { openUrl(url); } catch { /* they can click it */ } }
       },
     });
-    if (!login.ok) return { ok: false, error: (login.err || login.out || "GitHub CLI could not sign in").trim().split("\n").slice(-2).join(" ") };
+    if (!r.ok) return { ok: false, error: (r.err || r.out || "GitHub CLI could not sign in").trim().split("\n").slice(-2).join(" ") };
   }
-  // Git uses gh for github.com from now on, from anywhere.
-  await run(gh, ["auth", "setup-git", "--hostname", "github.com"], { timeout: 20000 });
   const tok = await run(gh, ["auth", "token", "--hostname", "github.com"], { timeout: 20000 });
   const token = tok.ok ? tok.out.trim() : null;
   if (!login) login = (await ghAccount()).login;
-  return { ok: true, via: "gh", token, login, gitHelper: true };
+  return { ok: true, via: "gh", token, login, gitHelper: false };
 }
 
-export default { ghOnPath, ghAccount, loginFromGhStatus, signInWithGh, codeFromGhOutput };
+/** Sign the launcher out of GitHub. The computer's own gh is not touched. */
+export async function signOutOfGh() {
+  const gh = ghBin();
+  if (!gh) return { ok: true };
+  const r = await run(gh, ["auth", "logout", "--hostname", "github.com"], { input: "y\n", timeout: 20000 });
+  return { ok: r.ok || /not logged in/i.test(r.err + r.out) };
+}
+
+export default {
+  configure, ownGhDir, ghConfigDir, ghExeIn, ownGh, ghOnPath, ghBin, ghAsset,
+  ghAccount, loginFromGhStatus, signInWithGh, signOutOfGh, codeFromGhOutput,
+};
