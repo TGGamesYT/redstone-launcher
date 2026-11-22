@@ -1927,7 +1927,16 @@
           capes: [],
         };
       } else {
-        profile = await ipcRenderer.invoke("mc:getProfile", { force: forceProfile });
+        // Never left on the spinner: whatever goes wrong, the page comes up
+        // with what it has, and says so.
+        try {
+          profile = await ipcRenderer.invoke("mc:getProfile", { force: forceProfile });
+        } catch (e) {
+          profile = { skins: [], capes: [] };
+          if (window.notify) window.notify("The account's skins could not be loaded from Mojang", "error");
+        }
+        if (!profile || !Array.isArray(profile.skins)) profile = { skins: [], capes: [], ...(profile || {}) };
+        if (!Array.isArray(profile.capes)) profile.capes = [];
         // A stale profile means Mojang wouldn't answer (usually rate limiting)
         // and we're showing the last good copy rather than an empty list.
         if (profile && profile.stale && forceProfile && window.notify) {

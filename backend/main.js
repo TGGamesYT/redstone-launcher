@@ -17782,7 +17782,10 @@ ipcMain.handle("mc:getProfile", async (event, opts) => {
     // stamp it sets so the throttle survives a restart.
     try {
       const before = obj1.lastRefresh || 0;
-      obj1 = await refreshPlayer(obj1);
+      obj1 = await Promise.race([
+        refreshPlayer(obj1),
+        new Promise((_, no) => setTimeout(() => no(new Error("the sign-in refresh did not answer")), 20000)),
+      ]);
       if ((obj1.lastRefresh || 0) !== before) {
         const allPlayers = await loadPlayers();
         const pIdx = allPlayers.findIndex(p => p.id === obj1.id);
@@ -17792,11 +17795,11 @@ ipcMain.handle("mc:getProfile", async (event, opts) => {
         }
       }
     } catch (e) {
-      if (e.response?.status === 429) {
-        console.warn("Too many requests during player refresh, using existing token");
-      } else {
-        throw e;
-      }
+      // Whatever went wrong with the refresh, the token there is still the
+      // best thing to try -- the profile request says soon enough whether it
+      // works. Throwing here left the skins page on its loading spinner for
+      // good, since nothing on the page was waiting for an error.
+      devtoolsLog("Player refresh failed, trying the token there is:", e && (e.response?.status || e.message) || e);
     }
   }
 
@@ -17813,9 +17816,12 @@ ipcMain.handle("mc:getProfile", async (event, opts) => {
   if (accessToken) {
     // 3️⃣ Fetch Mojang profile
     try {
+      // With a time limit: a request Mojang never answers is the skins page
+      // loading for ever.
       const response = await fetch("https://api.minecraftservices.com/minecraft/profile", {
         method: "GET",
-        headers: { "Authorization": `Bearer ${accessToken}` }
+        headers: { "Authorization": `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(15000),
       });
 
       if (response.ok) {
@@ -17850,8 +17856,8 @@ ipcMain.handle("mc:getProfile", async (event, opts) => {
     try {
       await fsp.access(filePath);
     } catch {
-      const img = await fetch(skin.url);
-      if (img.ok) {
+      const img = await fetch(skin.url, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+      if (img && img.ok) {
         const buffer = Buffer.from(await img.arrayBuffer());
         await fsp.writeFile(filePath, buffer);
       }
@@ -17869,8 +17875,8 @@ ipcMain.handle("mc:getProfile", async (event, opts) => {
     try {
       await fsp.access(filePath);
     } catch {
-      const img = await fetch(cape.url);
-      if (img.ok) {
+      const img = await fetch(cape.url, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+      if (img && img.ok) {
         const buffer = Buffer.from(await img.arrayBuffer());
         await fsp.writeFile(filePath, buffer);
       }
