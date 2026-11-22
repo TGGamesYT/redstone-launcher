@@ -24,7 +24,7 @@
 // the colour underneath that changes. That works for a grey, a white or a
 // black theme as well as a red one, where rotating a hue towards a colour
 // that has no hue did nothing at all.
-import sharp from "sharp";
+import sharp from "./sharp-asar.js";
 
 export const PART_FILES = {
   whole: "redstone_logo.png",

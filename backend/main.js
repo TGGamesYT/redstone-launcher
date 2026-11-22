@@ -8,7 +8,7 @@ import zlib from "zlib";
 import fs from 'fs';
 const fsp = fs.promises;
 import { ssim } from "ssim.js";
-import sharp from "sharp";
+import sharp from "./sharp-asar.js";
 import { shell, app, BrowserWindow, ipcMain, dialog, utilityProcess, nativeImage } from 'electron';
 import { vanilla, fabric, quilt, forge, neoforge } from 'tomate-loaders';
 import { getLaunchConfig, resolveNeoForgeVersion, resolveForgeVersion, neoPrefix, compareVersions as loaderCompareVersions } from './loader-versions.js';
@@ -1420,7 +1420,6 @@ function createWindow() {
     }
   });
   applyAccentColour(color, win);
-  setTaskbarIcon(win);
   // Developer tools are gated behind the "Developer mode" setting: block the
   // F12 / Ctrl+Shift+I shortcuts unless it's on (and toggle them when it is).
   win.webContents.on("before-input-event", (event, input) => {
@@ -1915,7 +1914,10 @@ function retintAppIconSoon() {
   if (_retintSoon) clearTimeout(_retintSoon);
   _retintSoon = setTimeout(() => {
     _retintSoon = null;
-    applyAppIcon({ kind: 'theme' }).catch(() => { /* non-fatal */ });
+    // The icon as it is set, redrawn in the new colours -- not a fresh
+    // { kind: 'theme' }, which threw away whether the mark is drawn and how a
+    // picture behind it is framed on every colour change.
+    applyAppIcon(settings.get("appIcon", null) || { kind: 'theme' }).catch(() => { /* non-fatal */ });
   }, RETINT_SETTLE);
 }
 
@@ -7415,7 +7417,10 @@ ipcMain.handle("theme:apply", async (event, { id } = {}) => {
     // was saved in. The theme is the statement that the crop belongs to the
     // background it ships with, so it is re-pointed at where that
     // background has just landed.
-    let wantIcon = t.icon || { kind: "theme" };
+    // Everything the icon is, from the theme. Whether the background shows
+    // through it is part of that: a theme that does not say means no, rather
+    // than whatever the theme before it had.
+    let wantIcon = { mergeBlock: false, ...(t.icon || { kind: "theme" }) };
     if (wantIcon.backCrop) {
       wantIcon = { ...wantIcon, backCropOf: backgroundStackKey(settings.get("background", null) || {}) || null };
     }
@@ -7836,36 +7841,11 @@ function updateDesktopIconSoon(png) {
   }, DESKTOP_ICON_SETTLE);
 }
 
-// The taskbar button, on Windows.
-//
-// setIcon changes the window's icon, and in development that is what the
-// taskbar shows. An installed launcher's button belongs to its shortcut --
-// the Start menu one, or the pinned one -- and Windows draws it with THAT
-// icon, which is why a built launcher's button never changed. A window's
-// "relaunch" icon is the one Windows takes for its button over the
-// shortcut's, so it is set too, from a fresh .ico (Windows caches an icon by
-// its path, so a changed picture needs a new name). The shortcuts themselves
-// are rewritten as well, pinned ones included, a moment later
-// (updateDesktopIconSoon).
-function setTaskbarIcon(win, png) {
-  // A built launcher only. Run from its source folder the window's own icon
-  // is what the taskbar shows, and a relaunch icon on top of that only gave
-  // Windows a second, cached picture to show instead of the new one.
-  if (process.platform !== "win32" || !app.isPackaged || !win || win.isDestroyed()) return;
-  try {
-    const buf = png || (fs.existsSync(ICON_OUT()) ? fs.readFileSync(ICON_OUT()) : null);
-    if (!buf) return;
-    const ico = shortcuts.writeFreshAppIco(buf);
-    if (!ico) return;
-    win.setAppDetails({
-      appIconPath: ico,
-      appIconIndex: 0,
-      relaunchCommand: `"${process.execPath}"`,
-      relaunchDisplayName: app.getName() || "Redstone Launcher",
-    });
-  } catch { /* the window's own icon is still right */ }
-}
-
+// The taskbar button follows the window's own icon (setIcon, below), and a
+// pinned one follows its shortcut, which updateDesktopIconSoon rewrites. A
+// per-window "relaunch icon" was tried on top of that and taken out again: it
+// gave Windows a second picture to hold on to, and the button stopped
+// changing after the first time.
 async function applyAppIcon(icon, { desktop = true } = {}) {
   try {
     // Remembered first, because the icon is drawn FROM the setting: a
@@ -7882,7 +7862,6 @@ async function applyAppIcon(icon, { desktop = true } = {}) {
     const img = nativeImage.createFromBuffer(png);
     for (const w of BrowserWindow.getAllWindows()) {
       try { if (!w.isDestroyed()) w.setIcon(img); } catch { /* not every platform takes one */ }
-      setTaskbarIcon(w, png);
     }
     // A window's icon is the taskbar and nothing else, which is why the one
     // on the desktop stayed as it was. That entry is told separately, and
