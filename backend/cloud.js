@@ -132,7 +132,36 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     save({ refreshToken: got.refreshToken, email: got.email, at: Date.now() });
     accessToken = got.accessToken;
     accessUntil = got.expiresAt;
-    return { ok: true, email: got.email };
+
+    const { turnedOn, firstSync } = await takeWhatTheDriveHas();
+    return { ok: true, email: got.email, turnedOn, firstSync };
+  }
+
+
+  // A launcher that syncs nothing yet -- just installed, or never set up --
+  // signing in to a Drive that already has things in it wants those things.
+  // So everything the Drive holds is switched on and brought down now,
+  // rather than leaving somebody to find the switches and press Sync on a
+  // launcher that is empty. Signed-in accounts only when their key can
+  // actually be had, which needs a Microsoft account on this computer;
+  // otherwise that one stays off and everything else still comes.
+  async function takeWhatTheDriveHas() {
+    const turnedOn = [];
+    let firstSync = null;
+    if (Object.values(kinds()).some(Boolean)) return { turnedOn, firstSync };
+    try {
+      const m = await syncer().readManifest();
+      for (const kind of Object.keys(WHAT)) {
+        if (!m.items[kind]) continue;
+        if (kind === "accounts") {
+          try { await relayHalf(); } catch { continue; }
+        }
+        setKind(kind, true);
+        turnedOn.push(kind);
+      }
+      if (turnedOn.length) firstSync = await syncNow();
+    } catch { /* signed in all the same; the switches are there to use */ }
+    return { turnedOn, firstSync };
   }
 
   /**
@@ -620,7 +649,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     plan: planFor, push, pull, pushOver, unsync,
     list: () => syncer().list(),
     unsyncAll: async () => { const r = await syncer().unsyncAll(); settings.set("cloudAgreed", {}); return r; },
-    kinds, setKind, device, autoSync, setAutoSync,
+    kinds, setKind, device, autoSync, setAutoSync, takeWhatTheDriveHas,
     // For the tests and for anything that needs the raw pieces.
     _syncer: syncer, _drive: driveFor,
   };

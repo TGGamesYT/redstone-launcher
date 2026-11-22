@@ -61,7 +61,11 @@ export const MANIFEST = "manifest.json";
 export const KEY_FILE = "key.json";
 
 /** Things there is one of for the whole launcher. */
-export const SINGLE = ["settings", "themes", "servers", "accounts"];
+// Skins are one library for the whole launcher too. They were left out of
+// this list, so a sync filed them under "skins/null" while everything that
+// asked about them looked for "skins": they were never found, every sync
+// tried to push, and every push was refused as a conflict.
+export const SINGLE = ["settings", "themes", "servers", "accounts", "skins"];
 /** Things there are many of, each with an id of its own. */
 export const MANY = ["instances", "worlds"];
 export const KINDS = [...SINGLE, ...MANY];
@@ -187,7 +191,17 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
     if (!f) return { ...EMPTY };
     const bytes = await drive.get(f.id);
     const got = JSON.parse((await open("manifest", bytes)).toString("utf8"));
-    return { ...EMPTY, ...got, items: got.items || {}, devices: got.devices || {} };
+    const items = got.items || {};
+    // A single thing filed under "<kind>/null" by the build that did not
+    // count it as single (skins) is forgotten rather than moved: its file is
+    // in a sub-folder, where a single thing is never looked for, so moving
+    // the entry would only point at nothing. Forgotten, the next sync from
+    // any computer sends its library to the right place, and the merge
+    // brings the others' back together with it.
+    for (const kind of SINGLE) {
+      for (const stray of [`${kind}/null`, `${kind}/undefined`]) delete items[stray];
+    }
+    return { ...EMPTY, ...got, items, devices: got.devices || {} };
   }
 
   async function writeManifest(m) {

@@ -1349,6 +1349,21 @@ function handleControl(sock) {
       send(T.WELCOME, 0, Buffer.from(JSON.stringify({ address: fullHost, port: MC_PORT })));
       return;
     }
+    // The one question answered before any account is proved: which Google
+    // client to sign in with. It is the same for everyone and every installed
+    // copy carries it, so it needs no identity -- and requiring one meant
+    // Cloud syncing could not even start without a Microsoft account, though
+    // only the accounts file's key has anything to do with one. Over this
+    // TLS connection, not plain HTTP, so nobody in between can swap in a
+    // client of their own.
+    if (!state.authed && type === T.CLOUD) {
+      let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }
+      const out = String(req.op || "") === "config"
+        ? handleCloud({ op: "config" }, null)
+        : { ok: false, error: "Sign in with a Microsoft account first." };
+      send(T.CLOUD_DATA, streamId, Buffer.from(JSON.stringify(out)));
+      return;
+    }
     if (!state.authed) return sock.destroy();
     if (type === T.SUGGEST) {
       let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }

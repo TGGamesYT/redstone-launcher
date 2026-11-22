@@ -2662,9 +2662,17 @@
           const spot = document.getElementById('cloud-checking-spin');
           if (spot && window.Loading && window.Loading.mount) checkingSpin = window.Loading.mount(spot, { size: 28 });
         } catch { /* the words are enough */ }
+        // Only the newest paint is drawn. Each one asks Google about the
+        // folder, which takes a second, and they overlap: a switch flipped
+        // while the page's first paint was still out came back to where it
+        // had been when that older answer landed, and only flipped to where
+        // it was put once the newer one did.
+        let paintSeq = 0;
         async function paint() {
+          const mine = ++paintSeq;
           let r = null;
           try { r = await ipcRenderer.invoke('cloud:status'); } catch { r = null; }
+          if (mine !== paintSeq) return;
           if (checking) checking.style.display = 'none';
           if (checkingSpin) { try { checkingSpin.stop(); } catch { } checkingSpin = null; }
           const on = r && r.ok && r.signedIn;
@@ -2831,7 +2839,15 @@
           signInState.textContent = 'Waiting for your browser…';
           const r = await ipcRenderer.invoke('cloud:signIn');
           signInState.textContent = (r && r.ok) ? '' : ((r && r.error) || 'Could not sign in.');
-          paint();
+          await paint();
+          // A launcher that synced nothing yet took everything the Drive had
+          // the moment it signed in; say what came.
+          if (r && r.ok && r.firstSync && r.firstSync.results) {
+            showResults(r.firstSync.results);
+            if (r.turnedOn && r.turnedOn.length && window.notify) {
+              notify(`Brought down from your Drive: ${r.turnedOn.join(', ')}`, 'success');
+            }
+          }
         });
         document.getElementById('cloud-signout').addEventListener('click', async () => {
           await ipcRenderer.invoke('cloud:signOut', {});

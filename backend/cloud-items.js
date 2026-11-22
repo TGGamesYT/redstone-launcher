@@ -318,9 +318,15 @@ export function mergeSkins(local, incoming) {
   }
 
   const added = [];
+  // In the incoming order first, then anything only this computer has. A
+  // merge is a pull, and what is pulled is the newer arrangement; taking
+  // this computer's order instead left the two computers with the same
+  // skins in different orders, each pushing its order over the other's on
+  // every sync, for ever.
+  const inOrder = [incoming || {}, local || {}];
   for (const uuid of uuids) {
     const by = new Map();
-    for (const side of sides) {
+    for (const side of inOrder) {
       for (const s of (Array.isArray(side[uuid]) ? side[uuid] : [])) {
         const key = skinKeyOf(s);
         if (!key) continue;
@@ -340,9 +346,10 @@ export function mergeSkins(local, incoming) {
 
   // The order the pooled list is shown in: whichever side has one, with
   // anything it does not name left to fall where it falls.
-  const order = (Array.isArray(local && local[SKIN_ORDER_KEY]) && local[SKIN_ORDER_KEY].length)
-    ? local[SKIN_ORDER_KEY]
-    : (Array.isArray(incoming && incoming[SKIN_ORDER_KEY]) ? incoming[SKIN_ORDER_KEY] : null);
+  // The incoming one first, for the same reason as above.
+  const order = (Array.isArray(incoming && incoming[SKIN_ORDER_KEY]) && incoming[SKIN_ORDER_KEY].length)
+    ? incoming[SKIN_ORDER_KEY]
+    : (Array.isArray(local && local[SKIN_ORDER_KEY]) ? local[SKIN_ORDER_KEY] : null);
   if (order) out[SKIN_ORDER_KEY] = order;
   if (Object.keys(graves).length) out[SKIN_DELETED_KEY] = graves;
 

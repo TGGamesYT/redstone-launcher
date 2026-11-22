@@ -99,14 +99,14 @@ function sharedDrive() {
 }
 
 /** One launcher: its own settings store, themes, accounts and files on disk. */
-function launcher(impl, { name, settings = {}, themes = [], players = [], profiles = [], root = null } = {}) {
+function launcher(impl, { name, settings = {}, themes = [], players = [], profiles = [], root = null, skins = null } = {}) {
   const store = { ...settings, cloudGoogle: { refreshToken: "rt", email: "me@example.com" } };
   const s = {
     store,
     get: (k, d) => (k in store ? store[k] : d),
     set: (k, v) => { store[k] = v; },
   };
-  const state = { themes: [...themes], players: [...players], profiles: [...profiles] };
+  const state = { themes: [...themes], players: [...players], profiles: [...profiles], skins: skins ? JSON.parse(JSON.stringify(skins)) : null };
   const c = makeCloud({
     settings: s,
     relayCall: async (req) => (req.op === "secret"
@@ -119,6 +119,8 @@ function launcher(impl, { name, settings = {}, themes = [], players = [], profil
       readPlayers: () => state.players,
       writePlayers: (l) => { state.players = l; },
       readProfiles: () => state.profiles,
+      readSkins: () => state.skins,
+      writeSkins: (l) => { state.skins = l; return true; },
       instanceDir: (id) => path.join(root, String(id)),
       worldDir: (id, world) => path.join(root, String(id), "saves", String(world)),
       listWorlds: (id) => {
@@ -137,6 +139,46 @@ function launcher(impl, { name, settings = {}, themes = [], players = [], profil
 }
 
 const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
+
+// ── a fresh launcher signing in to a Drive that already has things ──
+{
+  const png = (n) => "data:image/png;base64," + Buffer.from("skin" + n).toString("base64");
+  const impl = sharedDrive();
+  const old = launcher(impl, { name: "Desktop", settings: { greeting: "hi" }, themes: [{ id: "t1", name: "Mine" }],
+    skins: { u1: [{ id: "a1", name: "A", base64: png(1), variant: "classic", pixelHash: "h1", addedAt: 1 }] } });
+  old.c.setKind("skins", true);
+  await old.c.syncNow();
+  const fresh = launcher(impl, { name: "New laptop", skins: {} });
+  fresh.store.cloudKinds = {};            // just installed: nothing switched on
+  const r = await fresh.c.takeWhatTheDriveHas();
+  check("everything the Drive has is switched on", [...r.turnedOn].sort(), ["accounts", "settings", "skins", "themes"],
+    "rather than a fresh launcher signing in and then sitting there empty");
+  check("and brought down at once", [fresh.s.get("greeting"), fresh.state.themes.map(t => t.name), Object.values(fresh.state.skins).flat().map(s => s.name)],
+    ["hi", ["Mine"], ["A"]]);
+  const again = await fresh.c.takeWhatTheDriveHas();
+  check("a launcher that already syncs something is left as it is", again.turnedOn, []);
+}
+
+// ── skins: every skin, from both computers ──
+{
+  const png = (n) => "data:image/png;base64," + Buffer.from("skin" + n).toString("base64");
+  const a = { id: "a1", name: "A", base64: png(1), variant: "classic", pixelHash: "h1", addedAt: 1 };
+  const b = { id: "b1", name: "B", base64: png(2), variant: "classic", pixelHash: "h2", addedAt: 2 };
+  const impl = sharedDrive();
+  const desk = launcher(impl, { name: "Desktop", skins: { u1: [a] } });
+  const lap = launcher(impl, { name: "Laptop", skins: { u1: [b] } });
+  desk.c.setKind("skins", true); lap.c.setKind("skins", true);
+  await desk.c.syncNow();
+  const first = await lap.c.syncNow();
+  check("a computer syncing skins for the first time takes the Drive's, it is not told they clash",
+    did(first, "skins"), "pulled",
+    "skins were filed as skins/null and looked for as skins: never found, every push refused");
+  check("and keeps its own alongside them", Object.values(lap.state.skins).flat().map(s => s.name).sort(), ["A", "B"]);
+  check("then sends the two together", did(await lap.c.syncNow(), "skins"), "pushed");
+  await desk.c.syncNow();
+  check("and the first computer ends up with both", Object.values(desk.state.skins).flat().map(s => s.name).sort(), ["A", "B"]);
+  check("after which there is nothing more to do", did(await desk.c.syncNow(), "skins"), "nothing");
+}
 
 // ── one computer up, the other down ──
 {

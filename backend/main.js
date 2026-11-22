@@ -6673,15 +6673,37 @@ function cloudService() {
     // Every call proves the Minecraft account to the relay with Mojang's
     // hasJoined, which is what makes the relay's key half this account's.
     relayCall: async (req) => {
+      const rejectUnauthorized0 = settings.get("relayVerifyTls", true) !== false;
+      // Which Google client to sign in with needs no account at all, and
+      // asking it that way is what lets Cloud syncing start without a
+      // Microsoft account. Kept once known; an older relay that will not
+      // answer it without an account falls through to the verified way.
+      if (req && req.op === "config") {
+        const kept = settings.get("cloudGoogleClient", null);
+        if (kept && kept.clientId) return { ok: true, ...kept };
+        try {
+          const r = await relayClient.cloudConfigAnonymous({
+            host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort, rejectUnauthorized: rejectUnauthorized0,
+          });
+          if (r && r.ok && r.clientId) {
+            settings.set("cloudGoogleClient", { clientId: r.clientId, clientSecret: r.clientSecret || "" });
+            return r;
+          }
+        } catch { /* an older relay: ask the verified way below */ }
+      }
       const account = await relayAccountForSync();
       if (!account) {
         return { ok: false, error: "Sign in with a Microsoft account first — the key for your synced data is tied to it." };
       }
       const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
-      return relayClient.cloudRelay({
+      const out = await relayClient.cloudRelay({
         host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
         account, rejectUnauthorized, req,
       });
+      if (req && req.op === "config" && out && out.ok && out.clientId) {
+        settings.set("cloudGoogleClient", { clientId: out.clientId, clientSecret: out.clientSecret || "" });
+      }
+      return out;
     },
     // Reading and writing the launcher's own files is handed in, so cloud.js
     // stays about syncing rather than about where anything is kept.

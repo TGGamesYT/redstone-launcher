@@ -182,6 +182,36 @@ function askRelay({ host, controlPort, account, req, ask, reply, rejectUnauthori
 }
 
 /**
+ * The Google client for Cloud syncing, asked without proving any account.
+ *
+ * It is the one thing the relay answers before a Minecraft account is
+ * verified (see handleControl), so Cloud syncing can be set up by somebody
+ * with no Microsoft account. An older relay drops the connection instead,
+ * which comes back here as an error and the caller asks the verified way.
+ */
+export function cloudConfigAnonymous({ host, controlPort, rejectUnauthorized = true }) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (fn, v) => { if (done) return; done = true; fn(v); try { sock.end(); } catch { /* ignore */ } };
+    const sock = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () =>
+      sock.write(encodeFrame(T.CLOUD, 1, Buffer.from(JSON.stringify({ op: "config" })))));
+    const decode = createDecoder(async (type, streamId, payload) => {
+      if (type === T.CLOUD_DATA) {
+        let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }
+        finish(resolve, info);
+      } else if (type === T.ERROR) {
+        let m = "relay error"; try { m = JSON.parse(payload.toString()).message; } catch { /* ignore */ }
+        finish(reject, new Error(m));
+      }
+    });
+    sock.on("data", decode);
+    sock.on("close", () => finish(reject, new Error("The relay would not say without an account")));
+    sock.on("error", (e) => finish(reject, e));
+    sock.setTimeout(15000, () => { sock.destroy(); finish(reject, new Error("Relay timed out")); });
+  });
+}
+
+/**
  * One verified connection, asked many things.
  *
  * askRelay above connects, proves the account with Mojang, asks one thing
@@ -496,4 +526,4 @@ export function openRelay({ host, controlPort, subdomain, domain, localPort, acc
 // exporting a theme died on "relayClient.themeRelay is not a function" even
 // though the function was right there -- main.js reaches these through the
 // default import.
-export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, themeRelay, aliasRelay, adminRelay, cloudRelay, relaySession };
+export default { openRelay, queryRelay, syncRelay, seenRelay, suggestRelay, themeRelay, aliasRelay, adminRelay, cloudRelay, cloudConfigAnonymous, relaySession };
