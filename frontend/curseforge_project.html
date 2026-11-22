@@ -101,6 +101,37 @@ async function cfDownloadUrl(projectID, fileID, fileName) {
 let profiles = [];
 let servers = [];
 
+// A mod's required dependencies (CurseForge's relationType 3), and theirs, in
+// files for this game version and loader. Installed into the same place the
+// mod went. A mod put in without them does not start -- the game stops with
+// "Some of your mods are incompatible" and a list of what is missing.
+async function installCfRequiredDeps({ target, server, file, version, loader, seen = new Set() }) {
+  const lc = (x) => String(x || '').toLowerCase();
+  for (const d of (file && file.dependencies) || []) {
+    if (!d || d.relationType !== 3 || !d.modId || seen.has(d.modId)) continue;
+    seen.add(d.modId);
+    let files = [];
+    try {
+      const res = await fetch(`https://curseforge.tgdoescode.workers.dev/files?projectID=${d.modId}`);
+      const data = await res.json();
+      files = Array.isArray(data.data) ? data.data : [];
+    } catch { continue; }
+    const dep = files.find(f => {
+      const gv = (f.gameVersions || []).map(lc);
+      return gv.includes(lc(version)) && (!loader || gv.includes(lc(loader)));
+    });
+    if (!dep) continue;
+    const url = (await cfDownloadUrl(d.modId, dep.id, dep.fileName)).url;
+    if (!url) continue;
+    // Already there, as this exact file: nothing to add.
+    const have = await ipcRenderer.invoke("check-file-exists", String(target), !server, url).catch(() => false);
+    if (!have) {
+      await ipcRenderer.invoke("mod-download", { server: !!server, id: target, fileUrl: url, projectType: "mod" });
+    }
+    await installCfRequiredDeps({ target, server, file: dep, version, loader, seen });
+  }
+}
+
 // Description / Gallery tabs (whatever CurseForge exposes).
 function setupCfTabs(proj) {
   const desc = document.getElementById("projectDescription");
@@ -378,6 +409,10 @@ async function openInstallScreenCF(mod) {
               fileUrl,
               projectType: selectedType,
             });
+            if (selectedType === "mod") {
+              installBtn.textContent = "Adding what it needs…";
+              await installCfRequiredDeps({ target: p.id, server: false, file: compatibleFile, version: p.version, loader: p.loader });
+            }
             installBtn.textContent = "Installed";
           };
         }
@@ -422,6 +457,10 @@ async function openInstallScreenCF(mod) {
               fileUrl: usableFile.fileUrl,
               projectType: selectedType,
             });
+            if (selectedType === "mod") {
+              installBtn.textContent = "Adding what it needs…";
+              await installCfRequiredDeps({ target: p.id, server: false, file: usableFile.file, version: p.version, loader: p.loader });
+            }
 
             installBtn.textContent = "Installed";
           };
@@ -487,6 +526,10 @@ async function openInstallScreenCF(mod) {
           fileUrl,
           projectType: selectedType,
         });
+        if (selectedType === "mod") {
+          installBtn.textContent = "Adding what it needs…";
+          await installCfRequiredDeps({ target: s.name, server: true, file: matchedFile, version: s.version, loader: s.type });
+        }
 
         installBtn.textContent = "Installed";
       };

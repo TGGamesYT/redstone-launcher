@@ -600,6 +600,12 @@ if (downloadBtn.textContent == "Back") {
 
   // Pick the NEWEST compatible version's primary file (the old code walked the
   // list and kept overwriting, ending up on the oldest compatible version).
+  // The dependencies of the version a file belongs to, for the install to
+  // bring the required ones along.
+  function dependenciesOf(fileUrl) {
+    const v = validVersions.find(x => (x.files || []).some(f => f.url === fileUrl));
+    return (v && v.dependencies) || [];
+  }
   function newestCompatibleFile(instanceVersion, loader, requireLoader = true) {
     const compatible = validVersions
       .filter(v =>
@@ -668,6 +674,7 @@ if (downloadBtn.textContent == "Back") {
               if (want) {
                 await ipcRenderer.invoke("mod-download", {
                   server: false, id: made.id, fileUrl: want, projectType: selectedType,
+                  dependencies: dependenciesOf(want), gameVersion: made.version, loader: made.loader,
                 });
               }
               // Straight to what was just made, with the mod in it.
@@ -760,7 +767,9 @@ const installBtn = document.createElement("button");
         server: false,
         id: p.id,
         fileUrl,
-        projectType: selectedType
+        projectType: selectedType,
+        // And what it needs to start, in versions for this instance.
+        dependencies: dependenciesOf(fileUrl), gameVersion: p.version, loader: p.loader,
       });
 
       installBtn.textContent = "Installed";
@@ -838,7 +847,8 @@ installArea.appendChild(li);
           server: true,
           id: s.name,
           fileUrl,
-          projectType: selectedType
+          projectType: selectedType,
+          dependencies: matchedVersion.dependencies || [], gameVersion: s.version, loader: s.type,
         });
 
         installBtn.textContent = "Installed";
