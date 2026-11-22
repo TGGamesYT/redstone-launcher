@@ -2223,7 +2223,7 @@ ipcMain.on('create-cracked-player', (event, username) => {
   const newPlayer = { id, type: 'cracked', username };
   players.push(newPlayer);
   savePlayers(players);
-  event.reply('players-updated', players);
+  sendEverywhere("players-updated", players);
 
   // Set as selected player
   setSelectedPlayer(id);
@@ -2252,7 +2252,7 @@ ipcMain.on('delete-player', (event, playerToBeDeleted) => {
   if (updatedPlayers[0] != null && updatedPlayers[0].id != null) {
     setSelectedPlayer(updatedPlayers[0].id)
   }
-  event.reply('players-updated', updatedPlayers);
+  sendEverywhere("players-updated", updatedPlayers);
 });
 
 // Start Microsoft login flow
@@ -2277,8 +2277,11 @@ ipcMain.on("login-microsoft", async (event) => {
       refresh: msToken
     });
     savePlayers(players);
-    event.reply("players-updated", players);
-    setSelectedPlayer(id)
+    // Selected first and then said, so that everything hearing about the new
+    // list already knows which account in it is the one in use.
+    storage.set("selectedPlayerId", id);
+    sendEverywhere("players-updated", players);
+    setSelectedPlayer(id);
   } catch (err) {
     devtoolsLog("MS login failed:", err);
     event.reply("login-error", "MS login failed: " + (err?.message || JSON.stringify(err) || String(err)));
@@ -2495,7 +2498,7 @@ ipcMain.on("login-microsoft-qr", async (event) => {
     setSelectedPlayer(id);
 
     reply({ status: "success", username: auth.name });
-    event.reply("players-updated", players);
+    sendEverywhere("players-updated", players);
   } catch (err) {
     if (myAbort.aborted || (err && err.message === "__aborted__")) {
       reply({ status: "cancelled" });

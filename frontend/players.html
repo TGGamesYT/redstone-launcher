@@ -1366,6 +1366,10 @@
       players = newPlayers;
       renderPlayers();
     });
+    // Which account is in use changed somewhere else -- signing in picks the
+    // new account, and so does the sidebar. The highlight, the friends list
+    // and its face are all that account's.
+    ipcRenderer.on("selected-player-changed", () => { try { renderPlayers(); } catch { /* going away */ } });
     // The account this page is about just went stale — reflect it here too.
     ipcRenderer.on("account-needs-signin", () => { _friendsLoadedFor = null; renderPlayers(); });
     // A skin that was drawn as a default because Mojang could not be asked.
@@ -1534,11 +1538,16 @@
       playersList.innerHTML = "";
 
       const emptyState = document.getElementById('emptyPlayerState');
+      // The friends panel belongs to an account. With none signed in it was
+      // a panel of nothing, with a blank face, floating in the corner.
+      const friendsPanel = document.getElementById('friendsPanel');
       if (!players || players.length === 0) {
         emptyState.style.display = 'block';
         playersList.style.display = 'none';
+        if (friendsPanel) friendsPanel.style.display = 'none';
         return;
       }
+      if (friendsPanel) friendsPanel.style.display = '';
 
       emptyState.style.display = 'none';
       playersList.style.display = 'block';
