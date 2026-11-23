@@ -9,6 +9,21 @@ started.
 
 ---
 
+## 0. Round 75
+
+- [x] **Remove every crash explanation that could be made up.** Not filtered
+      further -- removed. Gone: the table of what each exit code "means"
+      (access violation, "killed -- out of memory, most likely", and the rest),
+      the four guesses read off patterns in the log (a server's resource pack,
+      a pack for another version, a file with a bad hash, NeoForge's error
+      window), and the "It fell over in: ..." line summarised from Java's crash
+      file. Each was a plausible story rather than something the log
+      established, and the server-pack one was blamed in a single-player world.
+      The crash window now shows the exit code and what the game and Java
+      actually wrote, in full.
+
+---
+
 ## 0. Round 74
 
 - [x] **e4mc sharing: "This relay has no DNS credentials", and the relay logs

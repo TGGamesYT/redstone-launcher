@@ -587,33 +587,6 @@ function extractCrashFromLog(lines) {
   return { text: text.slice(from).join("\n"), kind: "log-trace" };
 }
 
-// What an exit code means, where it means anything.
-//
-// A JVM that dies on a bad memory access does not write a Minecraft crash
-// report and does not print a Java stack trace -- there is no Java left to
-// print one. All that reaches the launcher is a number, and "it exited with
-// code 3221225477" is not something anybody can act on. These are the codes
-// that come up, in the form Windows and POSIX actually report them.
-const EXIT_MEANING = new Map([
-  // No guess at what caused it. The hs_err log beside the game names the
-  // library that actually fell over, and that is printed when there is one;
-  // inventing a culprit for the times there is not was wrong far more often
-  // than it was right.
-  [3221225477, "Access violation (0xC0000005) — the game read or wrote memory it does not own."],
-  [-1073741819, "Access violation (0xC0000005) — the game read or wrote memory it does not own."],
-  [3221225781, "A DLL it needs is missing (0xC0000135)."],
-  [-1073741515, "A DLL it needs is missing (0xC0000135)."],
-  [3221225725, "Stack overflow (0xC00000FD)."],
-  [-1073741571, "Stack overflow (0xC00000FD)."],
-  [3221226505, "Buffer overrun, caught by Windows (0xC0000409)."],
-  [-1073740791, "Buffer overrun, caught by Windows (0xC0000409)."],
-  [3221225786, "Interrupted (0xC000013A) — Ctrl+C, or the console it was started from closed."],
-  [-1073741510, "Interrupted (0xC000013A) — Ctrl+C, or the console it was started from closed."],
-  [1, "The game stopped itself. The log usually says why."],
-  [137, "Killed — out of memory, most likely."],
-  [139, "Segmentation fault — the game read or wrote memory it does not own."],
-  [134, "Aborted by the JVM."],
-]);
 
 // The JVM's own crash file. When the virtual machine dies on a bad memory
 // access it writes hs_err_pid<n>.log next to the game, and the top of that
@@ -748,65 +721,17 @@ function reportInstanceCrash(profileId, cfg, code) {
       }
     }
 
-    // Something the log says outright, rather than a guess at a culprit: a
-    // resource pack that could not be read this run. The crash itself is
-    // inside native code and names nothing, but a pack whose every blockstate
-    // failed to load WAS in the resource reload that preceded it, and that is
-    // worth saying because it is actionable and the exit code is not.
-    const notes = [];
-    const sawAll = lines.join("\n");
-    const blockstates = (sawAll.match(/Exception loading blockstate definition/g) || []).length;
-    // Only what the log shows. A server's pack is named as one only when the
-    // log says it is (the game files those under "server/"); otherwise these
-    // lines come from a mod or a pack of your own, and talking about servers
-    // to somebody who never joined one is just wrong.
-    if (blockstates > 4) {
-      const which = /Exception loading blockstate definition: '[^'/]*\/((?:server|file)\/[^']*)'/.exec(sawAll);
-      const fromServer = !!(which && /^server\//.test(which[1]));
-      notes.push(`${blockstates} blockstate definitions in this run could not be read`
-        + (which ? `, all from the resource pack "${which[1]}"` : "")
-        + "."
-        + (fromServer
-          ? " That is a server's pack the game downloaded; the launcher checks those before each"
-            + " launch and throws away any that are not the file they claim to be, so it will be fetched again."
-          : " Something loaded this run -- a mod or a resource pack -- has files the game could not read."));
-    }
-    if (/not found or had mismatched hash/.test(sawAll)) {
-      notes.push("A file the game had cached did not match its own hash. Those are thrown away"
-        + " before the next launch rather than being used again.");
-    }
-    // A pack that names models it does not carry. Said separately from the
-    // blockstates above because it has a different cause: not half a pack,
-    // but a whole one built for a different version of the game.
-    const missingModels = (sawAll.match(/Missing block model:/g) || []).length;
-    if (missingModels > 4 || /Attempted to load a non-existent post effect/.test(sawAll)) {
-      notes.push("Something loaded this run names things this version of the game does not have"
-        + (missingModels ? ` (${missingModels} block models were missing)` : "")
-        + ": a mod or a resource pack built for a different version of the game, most likely.");
-    }
-
-    // FML's own error window, falling over while reporting the error.
-    //
-    // `displayFatalErrorAndExit` builds a window to show what went wrong,
-    // and when the early display has not started yet the renderer it waits
-    // for is null -- so the only thing that reaches anybody is a
-    // NullPointerException inside the reporter, with the actual reason
-    // nowhere. The game's own log has it (and is read above); turning the
-    // early window off makes the next run print it to the console instead.
-    if (/displayFatalErrorAndExit|DisplayWindow\.shutdownAutomaticRenderer/.test(sawAll)) {
-      notes.push("NeoForge hit a fatal error before the window opened, and its own error"
-        + " display crashed while trying to show it -- which is why the stack trace above is"
-        + " about a null renderer and not about the error. The reason is in the instance's"
-        + " logs/latest.log, and adding -Dfml.earlyprogresswindow=false to this instance's"
-        + " Java arguments makes the next run print it in the console here.");
-    }
-
+    // No explanations. There used to be a table of what each exit code
+    // "means" and a handful of guesses read off patterns in the log (a
+    // server's resource pack, a pack for another version, a bad cache...).
+    // Each was a plausible story rather than something the log established,
+    // and wrong often enough -- a server's packs blamed in a single-player
+    // world -- to be worse than saying nothing. What is shown is what the
+    // game and Java actually wrote.
     const payload = {
       profileId: String(profileId),
       name: (cfg && cfg.name) || String(profileId),
       code,
-      meaning: EXIT_MEANING.get(Number(code)) || null,
-      notes,
       tail,
       report,
       reportKind,
