@@ -44,5 +44,36 @@ check("only e4mc's names may be forwarded to by anybody",
   ["a.e4mc.link", "e4mc.link", "evil.com", "e4mc.link.evil.com", "xe4mc.link"].map(n => FORWARD_OK.test(n)),
   [true, true, false, false, false]);
 
+// ── asked to send a name on, with NO Cloudflare token ──
+//
+// The relay refused "no DNS credentials" before it ever reached the
+// forwarding, which needs none. The real handleAlias, with everything it
+// reaches for stubbed: no Cloudflare at all.
+{
+  const asyncFn = (name) => {
+    const i = src.indexOf(`async function ${name}(`);
+    return src.slice(i, src.indexOf("\n}\n", i) + 3);
+  };
+  const make = new Function("CF", "DOMAIN", "log", "forwards", "FORWARD_OK", "cfClearAlias",
+    [fn("subLabelSafe"), fn("nonAdminSubAllowed"), asyncFn("handleAlias")].join("\n") + "\nreturn handleAlias;");
+  const forwards = new Map();
+  const said = [];
+  const handleAlias = make({ enabled: false }, "redstonemc.net", (...a) => said.push(a.join(" ")), forwards, FORWARD_OK,
+    async () => { throw new Error("Cloudflare was asked"); });
+  const who = { uuid: "u1", name: "TGdoesCode" };
+  const r = await handleAlias({ op: "set", subdomain: "tgdoescode", host: "relay-eu.e4mc.link", port: 25565, name: "quick-fox.e4mc.link" }, who, false);
+  check("with no DNS credentials a share over e4mc still gets our name", [r.ok, r.host], [true, "tgdoescode.redstonemc.net"],
+    r.error || "");
+  check("and players for it are sent on to e4mc's name",
+    forwards.get("tgdoescode.redstonemc.net") && forwards.get("tgdoescode.redstonemc.net").name, "quick-fox.e4mc.link");
+  check("which the relay says in its log", said.some(l => /tgdoescode\.redstonemc\.net on to quick-fox/.test(l)), true);
+  const no = await handleAlias({ op: "set", subdomain: "tgdoescode", host: "example.com", port: 25565 }, who, false);
+  check("somewhere that is not e4mc is refused for a non-admin, and logged", [no.ok, said.some(l => /refused/.test(l))], [false, true]);
+  const theirs = await handleAlias({ op: "set", subdomain: "someoneelse", host: "relay-eu.e4mc.link", name: "x.e4mc.link" }, who, false);
+  check("and so is somebody else's name", theirs.ok, false);
+  const cleared = await handleAlias({ op: "clear", subdomain: "tgdoescode" }, who, false);
+  check("clearing it stops the forwarding", [cleared.ok, forwards.has("tgdoescode.redstonemc.net")], [true, false]);
+}
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);

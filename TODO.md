@@ -9,6 +9,24 @@ started.
 
 ---
 
+## 0. Round 74
+
+- [x] **e4mc sharing: "This relay has no DNS credentials", and the relay logs
+      nothing.** The relay was asked, and refused before it reached the
+      forwarding added in Round 73: the Cloudflare check still came first,
+      though forwarding needs no DNS at all. Taken out. Every name request is
+      now in the relay's log (refusals too), and the relay says at start
+      whether it has a Cloudflare token and where from (a token exported in a
+      shell is not one a systemd service sees). The test runs the real
+      handleAlias with no token at all.
+- [x] **A crash says "a server's packs are checked for that when the launcher
+      merges them" when no server was involved.** The hints read "Missing
+      block model" and unreadable blockstates as a server's pack. They only
+      say "server" now when the log names a server pack (the game files those
+      under server/); otherwise it is a mod or a resource pack of your own.
+
+---
+
 ## 0. Round 73
 
 - [x] **Sharing over e4mc shows e4mc's address, not the redstonemc one.** Two

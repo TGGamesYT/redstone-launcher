@@ -756,13 +756,20 @@ function reportInstanceCrash(profileId, cfg, code) {
     const notes = [];
     const sawAll = lines.join("\n");
     const blockstates = (sawAll.match(/Exception loading blockstate definition/g) || []).length;
+    // Only what the log shows. A server's pack is named as one only when the
+    // log says it is (the game files those under "server/"); otherwise these
+    // lines come from a mod or a pack of your own, and talking about servers
+    // to somebody who never joined one is just wrong.
     if (blockstates > 4) {
       const which = /Exception loading blockstate definition: '[^'/]*\/((?:server|file)\/[^']*)'/.exec(sawAll);
+      const fromServer = !!(which && /^server\//.test(which[1]));
       notes.push(`${blockstates} blockstate definitions in this run could not be read`
         + (which ? `, all from the resource pack "${which[1]}"` : "")
-        + ". A pack the game cannot read is a pack the resource loader is working from half of."
-        + " The launcher checks the server packs it has cached before each launch and throws away"
-        + " any that are not the file they claim to be, so this one will be fetched again.");
+        + "."
+        + (fromServer
+          ? " That is a server's pack the game downloaded; the launcher checks those before each"
+            + " launch and throws away any that are not the file they claim to be, so it will be fetched again."
+          : " Something loaded this run -- a mod or a resource pack -- has files the game could not read."));
     }
     if (/not found or had mismatched hash/.test(sawAll)) {
       notes.push("A file the game had cached did not match its own hash. Those are thrown away"
@@ -773,11 +780,9 @@ function reportInstanceCrash(profileId, cfg, code) {
     // but a whole one built for a different version of the game.
     const missingModels = (sawAll.match(/Missing block model:/g) || []).length;
     if (missingModels > 4 || /Attempted to load a non-existent post effect/.test(sawAll)) {
-      notes.push("The resource pack in this run names things this version of the game does not"
-        + " have" + (missingModels ? ` (${missingModels} block models were missing)` : "")
-        + ", which is what a pack built for a different version looks like."
-        + " A server's packs are checked for that when the launcher merges them, and it says so"
-        + " in that server's log.");
+      notes.push("Something loaded this run names things this version of the game does not have"
+        + (missingModels ? ` (${missingModels} block models were missing)` : "")
+        + ": a mod or a resource pack built for a different version of the game, most likely.");
     }
 
     // FML's own error window, falling over while reporting the error.

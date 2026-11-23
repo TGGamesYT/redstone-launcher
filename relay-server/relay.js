@@ -181,39 +181,47 @@ async function cfClearAlias(fullHost, domain) {
 async function handleAlias(req, who, isAdmin) {
   const op = String(req?.op || "");
   const sub = subLabelSafe(req?.subdomain);
-  if (!sub) return { ok: false, error: "No name was given." };
+  // Every request is said in the log, refusals included: "the server logs
+  // nothing" left no way to tell a refusal from a request that never came.
+  const refuse = (error) => { log(`alias: ${who && who.name} asked to ${op || "?"} ${sub || "(no name)"} -- refused: ${error}`); return { ok: false, error }; };
+  if (!sub) return refuse("No name was given.");
   if (!isAdmin && !nonAdminSubAllowed(sub, who.name)) {
-    return { ok: false, error: `${sub} is not yours to point anywhere.` };
+    return refuse(`${sub} is not yours to point anywhere.`);
   }
-  if (!CF.enabled) return { ok: false, error: "This relay has no DNS credentials, so it cannot point a name anywhere." };
+  // No DNS credentials needed: the name already resolves here (the wildcard),
+  // and the relay itself sends the players on. This check used to come
+  // first, so a share over e4mc was refused with "no DNS credentials" before
+  // the forwarding below was ever reached.
   const fullHost = `${sub}.${DOMAIN}`;
   if (op === "clear") {
     forwards.delete(fullHost);
-    return CF.enabled ? cfClearAlias(fullHost, DOMAIN) : { ok: true };
+    log(`alias: ${who && who.name} cleared ${fullHost}`);
+    if (CF.enabled) { try { await cfClearAlias(fullHost, DOMAIN); } catch { /* the wildcard covers it */ } }
+    return { ok: true };
   }
-  if (op !== "set") return { ok: false, error: `Unknown alias op "${op}".` };
+  if (op !== "set") return refuse(`Unknown alias op "${op}".`);
 
   const target = String(req?.host || "").trim().toLowerCase();
   // A hostname, and nothing that could be anything else. This becomes a DNS
   // record, so it is checked rather than trusted.
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(target) || target.length > 253) {
-    return { ok: false, error: "That is not a hostname this can point at." };
+    return refuse("That is not a hostname this can point at.");
   }
   if (target.endsWith("." + DOMAIN) || target === DOMAIN) {
-    return { ok: false, error: "A name here cannot be pointed at itself." };
+    return refuse("A name here cannot be pointed at itself.");
   }
   const port = Number(req?.port) || 25565;
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return { ok: false, error: "That is not a port." };
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return refuse("That is not a port.");
   // The name e4mc knows the world by -- what goes in the handshake. The host
   // above may be the machine its SRV record points at, which is a different
   // name and one e4mc does not route by.
   const name = String(req?.name || target).trim().toLowerCase();
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(name) || name.length > 253) {
-    return { ok: false, error: "That is not a name this can send players to." };
+    return refuse("That is not a name this can send players to.");
   }
   // Not an open proxy: anybody else may only send players on to e4mc.
   if (!isAdmin && !(FORWARD_OK.test(name) && FORWARD_OK.test(target))) {
-    return { ok: false, error: "A name here can only be sent on to e4mc." };
+    return refuse("A name here can only be sent on to e4mc.");
   }
   // Players come HERE, as for any other name of ours, and are sent on.
   //
@@ -224,6 +232,7 @@ async function handleAlias(req, who, isAdmin) {
   // without them the launcher quietly showed e4mc's name instead.) Here the
   // handshake is rewritten to e4mc's name on the way through.
   forwards.set(fullHost, { host: target, port, name, owner: who && who.uuid, at: Date.now() });
+  log(`alias: ${who && who.name} sends ${fullHost} on to ${name} (${target}:${port})`);
   // Anything that used to point this name elsewhere goes, so it resolves to
   // the relay like every other name of ours.
   if (CF.enabled) { try { await cfClearAlias(fullHost, DOMAIN); } catch { /* the wildcard covers it */ } }
@@ -1714,3 +1723,8 @@ const mc = net.createServer((client) => {
   client.on("error", () => {});
 });
 mc.listen(MC_PORT, () => log(`public Minecraft on :${MC_PORT} for *.${DOMAIN} (auth ${adminUuids.size} admins)`));
+// Whether there is a Cloudflare token, and where it came from: a token
+// exported in a shell is not one a service started by systemd can see.
+log(CF.enabled
+  ? `Cloudflare DNS: token set (from ${process.env.CF_API_TOKEN ? "CF_API_TOKEN" : "config.json / the admin panel"})`
+  : "Cloudflare DNS: no token (CF_API_TOKEN, or cloudflareToken in the admin panel) -- direct connections are off; names still work through the relay");
