@@ -9,6 +9,17 @@ started.
 
 ---
 
+## 0. Round 76
+
+- [x] **Remove the server resource pack checksum sweep.** Before every launch
+      the launcher hashed each file in the game's `downloads` folder and
+      deleted any whose contents did not match its name. That was a fix for a
+      problem that was never shown to exist, and it threw away packs that
+      worked. Removed with its test (`tests/packcache-test.mjs`); the game's
+      downloaded packs are left alone.
+
+---
+
 ## 0. Round 75
 
 - [x] **Remove every crash explanation that could be made up.** Not filtered

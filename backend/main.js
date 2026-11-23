@@ -3822,47 +3822,6 @@ async function withRetry(fn, { tries = 3, base = 800, label = "op", profileId = 
 // -- that is what a second launcher window does -- so the guard below is a
 // guard against ACCIDENTS, not a rule, and asking for it explicitly skips it.
 // The double-click guard is not skipped: that one is never deliberate.
-// Every file in <gameDir>/downloads whose name is a SHA-1, checked against its
-// own contents. A mismatch is a download the game kept after it was cut short;
-// it is thrown away rather than handed to the resource loader again.
-//
-// Only files named after a hash are touched, and only when the hash disagrees
-// -- so nothing the game put there on purpose is ever removed.
-function sweepServerPackCache(rootDir, profileId, run) {
-  const root = path.join(rootDir, "downloads");
-  if (!fs.existsSync(root)) return;
-  const HASH = /^[0-9a-f]{40}$/i;
-  let dropped = 0, checked = 0;
-
-  const look = (dir, depth) => {
-    if (depth > 3) return;
-    let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) { look(full, depth + 1); continue; }
-      if (!HASH.test(e.name)) continue;
-      checked++;
-      let got = null;
-      try {
-        got = crypto.createHash("sha1").update(fs.readFileSync(full)).digest("hex");
-      } catch { continue; }
-      if (got.toLowerCase() === e.name.toLowerCase()) continue;
-      try {
-        fs.unlinkSync(full);
-        dropped++;
-        broadcastLog(profileId,
-          `[packs] A cached server resource pack was not the file it claims to be and has been removed (${e.name.slice(0, 12)}…).`, run);
-      } catch { /* it will be caught again next launch */ }
-    }
-  };
-  look(root, 0);
-  if (dropped) {
-    broadcastLog(profileId,
-      `[packs] ${dropped} of ${checked} cached server pack${checked === 1 ? "" : "s"} were damaged; the server will send them again.`, run);
-  }
-}
-
 async function launchProfileCore({ profileId, playerId, quickplaybool, quickplayip, quickPlay, shortcutArgs, again }) {
   const now = Date.now();
   const lastLaunch = launchingProfiles.get(profileId);
@@ -4031,27 +3990,6 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
       }
     }
 
-    // ── A server's resource pack that arrived broken ──
-    //
-    // The launcher's own downloads cannot leave a truncated file behind any
-    // more (see verifyDownloads in launcher-worker.js), but this folder is not
-    // the launcher's: the GAME downloads a server's resource pack into
-    // <gameDir>/downloads/<world uuid>/<sha1 of the pack>, and nothing checks
-    // it afterwards. A pack that arrived short is kept, and every launch from
-    // then on says
-    //
-    //   Existing file …/downloads/<uuid>/<sha1> not found or had mismatched hash
-    //
-    // and then loads it anyway -- which is the flood of
-    //
-    //   Exception loading blockstate definition: 'minecraft:stone/server/00000000/<uuid>'
-    //
-    // and a resource reload that is working from a half-read zip. The file is
-    // named after its own SHA-1, so whether it is the file it claims to be is
-    // answerable without asking anybody. One that is not is deleted, and the
-    // game fetches it again on the next join.
-    try { sweepServerPackCache(rootDir, profileId, run); }
-    catch (e) { broadcastLog(profileId, "[WARN] Could not check the cached server packs: " + e.message, run); }
 
     // Do the actual (heavy, CPU-bound) launch in a utility process so the app's
     // main event loop — and therefore the whole UI — stays responsive.
