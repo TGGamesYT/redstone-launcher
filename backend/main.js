@@ -5031,13 +5031,20 @@ const HOME_DEFAULT = [
 // Every type the page can draw, and what each one takes. The editor is built
 // from this, so a new segment type is described once and the editor picks it
 // up -- rather than being spelled out again in the window.
+//
+// How big a segment is and how big what is in it is drawn are the same for
+// every type and are not options of any of them: the segment's width and
+// height (dragged, or set under "How big"), and one "size of what is inside".
+// Types used to have their own on top -- a height in pixels for the player
+// and for pictures, a size in pixels for the greeting, the clock and the
+// countdown -- which was three units for one idea, and settings that fought
+// each other.
 const HOME_TYPES = [
   {
     type: "greeting", name: "Greeting", icon: "waving_hand",
     about: "The line at the top of the page.",
     options: [
       { id: "text", label: "What it says (blank for a different one each time)", kind: "text", default: "" },
-      { id: "size", label: "Size", kind: "number", default: 32, min: 12, max: 90 },
       {
         id: "align", label: "Where", kind: "choice", default: "left",
         choices: [{ value: "left", label: "Left" }, { value: "center", label: "Middle" }, { value: "right", label: "Right" }],
@@ -5070,7 +5077,6 @@ const HOME_TYPES = [
     about: "The signed-in account, as a render you can turn.",
     options: [
       { id: "title", label: "Heading", kind: "text", default: "" },
-      { id: "height", label: "Height", kind: "number", default: 320, min: 120, max: 700 },
       {
         id: "animation", label: "Doing", kind: "choice", default: "clips",
         choices: [
@@ -5085,7 +5091,9 @@ const HOME_TYPES = [
       { id: "movable", label: "Let it be turned by dragging", kind: "toggle", default: true },
       { id: "physics", label: "Keep spinning when let go, and swing with it", kind: "toggle", default: true },
       { id: "settle", label: "Settle back to facing forward when left alone", kind: "toggle", default: true },
-      { id: "settleAfter", label: "After how long (ms)", kind: "number", default: 3500, min: 500, max: 60000 },
+      // Kept in milliseconds, shown in seconds: a number in thousands was
+      // one more unit on a window that already had pixels, rows and percent.
+      { id: "settleAfter", label: "After", unit: "seconds", factor: 1000, step: 0.5, kind: "number", default: 3500, min: 500, max: 60000 },
       { id: "spin", label: "Turn slowly on its own", kind: "toggle", default: false },
       {
         id: "align", label: "Where in its space", kind: "choice", default: "center",
@@ -5202,7 +5210,6 @@ const HOME_TYPES = [
       { id: "seconds", label: "Show seconds", kind: "toggle", default: false },
       { id: "hour12", label: "12-hour clock", kind: "toggle", default: false },
       { id: "showDate", label: "Show the date", kind: "toggle", default: true },
-      { id: "size", label: "Size", kind: "number", default: 44, min: 14, max: 160 },
     ],
   },
   {
@@ -5211,7 +5218,6 @@ const HOME_TYPES = [
     options: [
       { id: "title", label: "What it counts to", kind: "text", default: "Something" },
       { id: "target", label: "When (YYYY-MM-DD HH:MM)", kind: "text", default: "" },
-      { id: "size", label: "Size", kind: "number", default: 36, min: 14, max: 160 },
       { id: "afterText", label: "What to say once it has passed", kind: "text", default: "It's here" },
     ],
   },
@@ -5236,7 +5242,6 @@ const HOME_TYPES = [
         id: "fit", label: "How it fills its space", kind: "choice", default: "cover",
         choices: [{ value: "cover", label: "Covered" }, { value: "contain", label: "Fitted" }, { value: "fill", label: "Stretched" }],
       },
-      { id: "height", label: "Height", kind: "number", default: 220, min: 60, max: 800 },
       { id: "loop", label: "Loop a video", kind: "toggle", default: true },
       { id: "muted", label: "Silent", kind: "toggle", default: true },
     ],

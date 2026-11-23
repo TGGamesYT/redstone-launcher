@@ -579,8 +579,18 @@ for (const [what, rule] of [
 }
 const homeSrc = fs.readFileSync(path.join(FE, "home.js"), "utf8");
 check("the player render is scaled by it too",
-  /const scale = \(Number\(seg\.scale\)/.test(homeSrc) && /Number\(seg\.height\) \|\| 320\)\) \* scale/.test(homeSrc),
+  /const scale = Math\.min\(1, \(Number\(seg\.scale\)/.test(homeSrc) && /hh = Math\.round\(hh \* scale\)/.test(homeSrc),
   true, "the setting did nothing here: the render was the height option and no more");
+check("and fills its segment rather than having a height of its own", /seg\.height/.test(homeSrc), false,
+  "a height in pixels on top of the segment's own height was two settings for one thing");
+{
+  const mainSrc = fs.readFileSync(path.join(ROOT, "backend", "main.js"), "utf8");
+  const types = mainSrc.slice(mainSrc.indexOf("const HOME_TYPES = ["), mainSrc.indexOf("];", mainSrc.indexOf("const HOME_TYPES = [")));
+  check("no segment type has a size or height of its own in pixels",
+    /id: "(size|height)"/.test(types), false, "the segment's size and the one inside size are the settings for that");
+  check("and times are given in seconds", /unit: "seconds", factor: 1000/.test(types), true);
+}
+check("what does not fit is drawn smaller rather than scrolled", /zoom: var\(--fit, 1\)/.test(homeSrc) && /function fitInside/.test(homeSrc), true);
 
 // Every segment's contents stay inside it.
 check("nothing hangs over the edge of its segment",

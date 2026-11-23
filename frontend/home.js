@@ -286,6 +286,10 @@
          segments did not have. */
       .hs > .hs-body, .hs > .hs-list, .hs > .hs-row,
       .hs > .hs-grid, .hs > .hs-player { overflow:auto; min-height:0; }
+      /* What does not fit is drawn smaller until it does (fitInside), rather
+         than scrolling inside its segment. Only past the smallest it will go
+         does the scrolling above come back into it. */
+      .hs > :not(.hs-tools):not(.hs-grip):not(.hs-size) { zoom: var(--fit, 1); }
       /* A render is a fixed-size canvas; it is scaled down to the room there
          is rather than hanging over the side of its segment. */
       /* Scaled DOWN to fit, never squashed. The player box is a flex column, so
@@ -557,6 +561,10 @@
       .he-opt { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
       .he-opt label { font-size:12px; opacity:0.8; }
       .he-opt input[type="text"], .he-opt input[type="number"], .he-opt select { width:100%; box-sizing:border-box; }
+      /* A number and what it is in, on one line. */
+      .he-num { display:flex; align-items:center; gap:8px; }
+      .he-num input[type="number"] { width:90px !important; flex:0 0 auto; }
+      .he-unit { font-size:12px; opacity:0.75; white-space:nowrap; }
       .he-opt.row { flex-direction:row; align-items:center; gap:8px; }
       .he-opt.row input { width:auto; margin:0; }
       .he-size { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end;
@@ -694,7 +702,9 @@
       const said = String(seg.text || '').trim()
         || (window.__homeGreeting || (window.__homeGreeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)]));
       const h = el('h1', 'hs-greet', said);
-      h.style.fontSize = (Number(seg.size) || 32) + 'px';
+      // The size a layout saved before there was one setting for it is still
+      // honoured, scaled by the inside size like everything else.
+      h.style.fontSize = `calc(${Number(seg.size) || 32}px * var(--s, 1))`;
       h.style.textAlign = seg.align || 'left';
       node.appendChild(h);
     },
@@ -804,8 +814,10 @@
       // The inside-size setting did nothing here: the render was whatever
       // the height option said and no more. It is a multiplier on that, the
       // same as everything else inside a segment.
-      const scale = (Number(seg.scale) || 100) / 100;
-      const h = Math.round(Math.max(120, Math.min(700, Number(seg.height) || 320)) * scale);
+      // As big as the segment has room for -- the segment's own height is the
+      // one setting for that now -- and the inside size makes it smaller.
+      const scale = Math.min(1, (Number(seg.scale) || 100) / 100);
+      const h = 4000;
       const ASPECT = 0.6;              // a player is this much wider than tall
 
       // How big the render can be in the room there is.
@@ -846,6 +858,10 @@
           }
           if (availH > 80 && hh > availH) { hh = Math.floor(availH); ww = Math.round(hh * ASPECT); }
         }
+        // Not laid out yet, so nothing clamped it: a sensible size until the
+        // segment has been measured.
+        if (hh >= h) { hh = 320; ww = Math.round(hh * ASPECT); }
+        hh = Math.round(hh * scale); ww = Math.round(ww * scale);
         return { w: Math.max(60, ww), h: Math.max(100, hh) };
       };
 
@@ -893,24 +909,31 @@
         //
         // A one-off change still takes effect at once: only a size that is
         // still moving is waited out.
-        let settleSoon = null, lastAt = 0;
+        //
+        // Not waited out to the end, though: that left the render behind for
+        // the whole of a slow drag -- any change within a quarter of a second
+        // of the last counted as still moving, so it hardly moved at all until
+        // the drag stopped. It now follows along, resized at most every 80ms
+        // (about twelve times a second, which the render keeps up with), and
+        // always once more for the size it ends on.
+        const EVERY = 80;
+        let settleSoon = null, lastDone = 0;
         const resizeTo = (want) => {
           atW = want.w; atH = want.h;
+          lastDone = Date.now();
           try { v.setSize(want.w, want.h); } catch { /* an older bundle */ }
         };
         const ro = new ResizeObserver(() => {
           const want = wanted();
           if (want.w === atW && want.h === atH) return;
-          const now = Date.now();
-          const moving = now - lastAt < 250;
-          lastAt = now;
-          if (settleSoon) clearTimeout(settleSoon);
-          if (!moving) { resizeTo(want); return; }
+          const since = Date.now() - lastDone;
+          if (since >= EVERY) { resizeTo(want); return; }
+          if (settleSoon) return;          // one is already due
           settleSoon = setTimeout(() => {
             settleSoon = null;
             const end = wanted();
             if (end.w !== atW || end.h !== atH) resizeTo(end);
-          }, 140);
+          }, EVERY - since);
         });
         ro.observe(node);
         onGone(node, () => {
@@ -1193,7 +1216,7 @@
     clock(seg, node) {
       titleOf(seg, node);
       const big = el('div', 'hs-big');
-      big.style.fontSize = (Number(seg.size) || 44) + 'px';
+      big.style.fontSize = `calc(${Number(seg.size) || 44}px * var(--s, 1))`;
       node.appendChild(big);
       const sub = el('div', 'hs-sub');
       node.appendChild(sub);
@@ -1222,7 +1245,7 @@
 
     countdown(seg, node) {
       const big = el('div', 'hs-big');
-      big.style.fontSize = (Number(seg.size) || 36) + 'px';
+      big.style.fontSize = `calc(${Number(seg.size) || 36}px * var(--s, 1))`;
       const label = el('div', 'hs-sub', seg.title || '');
       node.appendChild(big);
       node.appendChild(label);
@@ -1294,11 +1317,11 @@
       titleOf(seg, node);
       const src = String(seg.src || '').trim();
       if (!src) { node.appendChild(el('div', 'hs-empty', 'Choose a picture or video for this segment.')); return; }
-      const h = Math.max(60, Math.min(800, Number(seg.height) || 220));
       const video = /\.(mp4|webm|ogv|mov)(\?|$)/i.test(src);
       const m = el(video ? 'video' : 'img', 'hs-media');
       m.src = src;
-      m.style.height = h + 'px';
+      // The rest of the segment, however tall it is made.
+      m.style.cssText += 'flex:1 1 auto; min-height:0; height:auto; width:100%;';
       m.style.objectFit = seg.fit || 'cover';
       if (video) {
         m.autoplay = true;
@@ -1325,6 +1348,53 @@
   // loop -- is collected on the node itself rather than in one list for the
   // whole page, so a single segment can be thrown away and redrawn without
   // stopping everything else.
+  // Shrink what is in a segment until it fits, instead of letting it scroll.
+  //
+  // A list of eight friends in a segment with room for five scrolled inside
+  // it, which on a page you arrange yourself reads as the segment being
+  // broken. So the contents are measured as they would be at full size and
+  // drawn smaller, evenly, until they fit -- down to 55%, past which they
+  // would be too small to read and scrolling comes back. A player render and
+  // a picture size themselves to their space already and are left alone.
+  const FIT_MIN = 0.55;
+  function fitInside(node) {
+    if (!node.isConnected) return;
+    if (node.querySelector(':scope > .hs-player, :scope > .hs-media, :scope > .hs-mediabox')) {
+      node.style.setProperty('--fit', '1');
+      return;
+    }
+    node.style.setProperty('--fit', '1');
+    const cs = getComputedStyle(node);
+    const room = node.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+    if (!(room > 20)) return;
+    let need = 0;
+    for (const kid of node.children) {
+      if (kid.classList.contains('hs-tools') || kid.classList.contains('hs-grip') || kid.classList.contains('hs-size')) continue;
+      const k = getComputedStyle(kid);
+      if (k.position === 'absolute' || k.display === 'none') continue;
+      // The height it wants, not the height the column squeezed it to.
+      need += Math.max(kid.scrollHeight, kid.getBoundingClientRect().height)
+        + (parseFloat(k.marginTop) || 0) + (parseFloat(k.marginBottom) || 0);
+    }
+    const fit = need > room ? Math.max(FIT_MIN, room / need) : 1;
+    node.style.setProperty('--fit', String(Math.floor(fit * 1000) / 1000));
+  }
+  function watchFit(node) {
+    let due = 0;
+    const soon = () => { if (!due) due = requestAnimationFrame(() => { due = 0; fitInside(node); }); };
+    let ro = null, mo = null;
+    try { ro = new ResizeObserver(soon); ro.observe(node); } catch { /* fitted once below */ }
+    // Contents that arrive later -- a list fetched, a picture loaded.
+    try { mo = new MutationObserver(soon); mo.observe(node, { childList: true, subtree: true }); } catch { }
+    node.addEventListener('load', soon, true);
+    soon();
+    (node._own || (node._own = [])).push(() => {
+      try { ro && ro.disconnect(); } catch { }
+      try { mo && mo.disconnect(); } catch { }
+      if (due) cancelAnimationFrame(due);
+    });
+  }
+
   function drawInto(node, seg) {
     node._own = [];
     // Run once, and emptied as it runs: a node can be torn down from more than
@@ -1335,6 +1405,7 @@
       node._own = [];
       for (const fn of list) { try { fn(); } catch { /* going anyway */ } }
     };
+    watchFit(node);
     try {
       const r = (DRAW[seg.type] || (() => { }))(seg, node);
       if (r && typeof r.catch === 'function') {
@@ -1737,6 +1808,41 @@
     document.addEventListener('mouseup', endDrag, true);
   }
 
+  // A segment that has just been added, carried by the pointer until a click
+  // puts it down. Clicks go to this alone while it is being carried, so the
+  // click that places it does not also press whatever is under it.
+  function placeNew(seg, ev) {
+    const host = document.querySelector('.hs[data-id="' + seg.id + '"]');
+    if (!host) { editSegment(seg.id); return; }
+    const x = ev && ev.clientX != null ? ev.clientX : window.innerWidth / 2;
+    const y = ev && ev.clientY != null ? ev.clientY : window.innerHeight / 2;
+    startDrag(host, seg, { clientX: x, clientY: y });
+    // Held by its middle, whatever the pointer happened to be over.
+    const r = host.getBoundingClientRect();
+    drag.dx = Math.min(r.width, 300) / 2;
+    drag.dy = 30;
+    drag.gx = Math.floor(wOf(seg) / 2);
+    drag.gy = 0;
+    onDragMove({ clientX: x, clientY: y });
+    // startDrag listens for the mouseup that ends a drag; here a whole click
+    // does it, so that one is swapped for a mousedown.
+    document.removeEventListener('mouseup', endDrag, true);
+    const swallow = (e) => { e.preventDefault(); e.stopPropagation(); };
+    const finish = (place) => {
+      document.removeEventListener('mousedown', down, true);
+      document.removeEventListener('click', swallow, true);
+      document.removeEventListener('keydown', key, true);
+      if (!place) dropAt = null;          // leaves it where it was put
+      endDrag();
+      setTimeout(() => editSegment(seg.id), 0);
+    };
+    const down = (e) => { swallow(e); finish(true); };
+    const key = (e) => { if (e.key === 'Escape') { swallow(e); finish(false); } };
+    document.addEventListener('mousedown', down, true);
+    document.addEventListener('click', swallow, true);
+    document.addEventListener('keydown', key, true);
+  }
+
   function addTools(node, seg) {
     const tools = el('div', 'hs-tools');
     const cog = el('button', '', '⚙'); cog.title = 'Settings';
@@ -1869,14 +1975,21 @@
           const dx = Math.round((ev.clientX - startX) / Math.max(1, colW));
           const dy = Math.round((ev.clientY - startY) / UNIT);
 
+          // The limits are worked out from where the segment is NOW, not
+          // where it was when the drag began: a segment made narrower in the
+          // same drag could not then grow up into the gap that opened above
+          // it -- whatever stood over its old width still stopped it -- until
+          // the drag was let go and started again. Across is measured at its
+          // current height, and up and down at its current width.
+          const across = { ...was, y: seg.y, h: seg.h };
           // Across. The edge being dragged moves; the other stays put.
           if (east) {
-            const stop = edgeLimit(was, 'e', seg.id);
+            const stop = edgeLimit(across, 'e', seg.id);
             const right = Math.max(was.x + MIN_W,
               Math.min(stop, snapCol(was.x + was.w + dx, cols)));
             seg.x = was.x; seg.w = right - was.x;
           } else {
-            const stop = edgeLimit(was, 'w', seg.id);
+            const stop = edgeLimit(across, 'w', seg.id);
             const left = Math.min(was.x + was.w - MIN_W,
               Math.max(stop, snapCol(was.x + dx, cols)));
             seg.x = left; seg.w = (was.x + was.w) - left;
@@ -1886,13 +1999,14 @@
           // bottom edge down grows INTO the space below if there is any and
           // stops where there is not; dragging the top edge up does the
           // same upwards. Nothing is pushed and no rows are merged.
+          const upDown = { ...was, x: seg.x, w: seg.w };
           if (south) {
-            const stop = edgeLimit(was, 's', seg.id);
+            const stop = edgeLimit(upDown, 's', seg.id);
             const bottom = Math.max(was.y + MIN_H,
               Math.min(stop, Math.min(MAX_Y, snapCol(was.y + was.h + dy, rows, 1))));
             seg.y = was.y; seg.h = bottom - was.y;
           } else {
-            const stop = edgeLimit(was, 'n', seg.id);
+            const stop = edgeLimit(upDown, 'n', seg.id);
             const top = Math.min(was.y + was.h - MIN_H,
               Math.max(stop, snapCol(was.y + dy, rows, 1)));
             seg.y = top; seg.h = (was.y + was.h) - top;
@@ -2095,21 +2209,21 @@
         const say = () => { about.textContent = t.about || t.name; };
         b.addEventListener('mouseenter', say);
         b.addEventListener('focus', say);
-        b.onclick = () => {
+        b.onclick = (ev) => {
           close();
-          // A row of its own at the bottom, which is somewhere definite --
-          // without a row of its own a new segment landed wherever the
-          // wrapping happened to put it.
-          // Under everything there is, across the page, which is the one
-          // place that is certainly empty.
+          // Put first under everything there is, which is certainly empty,
+          // and then picked straight up: it follows the pointer and lands
+          // where it is clicked down, the same as dragging one. Half the
+          // page wide rather than all of it, so there is a gap it fits.
+          // Escape leaves it where it was put.
           const below = LAYOUT.reduce((n, x) => Math.max(n, yOf(x) + hOf(x)), 0);
           const seg = {
             id: `${t.type}-${Date.now().toString(36)}`, type: t.type,
-            x: 0, y: below, w: COLUMNS, h: t.rows || 14, scale: 100,
+            x: 0, y: below, w: Math.max(MIN_W, Math.round(COLUMNS / 2)), h: t.rows || 14, scale: 100,
           };
           for (const o of t.options || []) seg[o.id] = o.default;
           LAYOUT.push(seg);
-          save().then(() => editSegment(seg.id));
+          save().then(() => placeNew(seg, ev)).catch((e) => { console.error('[home] placing the new segment failed:', e); editSegment(seg.id); });
         };
         tiles.push({ b, t });
         grid.appendChild(b);
@@ -2128,6 +2242,22 @@
 
   // The settings for one segment, built from the type's own option list -- so
   // a new option is declared once in the main process and turns up here.
+  // A number box with what it is in written after it, the same for every
+  // number in the settings window.
+  function numberWithUnit({ value, min, max, step, unit, onValue }) {
+    const row = el('div', 'he-num');
+    const input = el('input');
+    input.type = 'number';
+    if (min != null) input.min = String(min);
+    if (max != null) input.max = String(max);
+    if (step != null) input.step = String(step);
+    input.value = value;
+    input.oninput = () => onValue(parseFloat(input.value));
+    row.appendChild(input);
+    if (unit) row.appendChild(el('span', 'he-unit', unit));
+    return row;
+  }
+
   function editSegment(id) {
     const seg = LAYOUT.find(s => s.id === id);
     if (!seg) return;
@@ -2198,18 +2328,29 @@
           };
           row.append(input, pick);
           wrap.appendChild(row);
+        } else if (o.kind === 'number') {
+          wrap.appendChild(el('label', '', o.label));
+          // Shown in the unit it is spoken of in (seconds), stored in the one
+          // the code uses (milliseconds).
+          const f = Number(o.factor) || 1;
+          const shown = (v) => (v == null || v === '' ? '' : String(Math.round((Number(v) / f) * 100) / 100));
+          wrap.appendChild(numberWithUnit({
+            value: shown(values[o.id] == null ? o.default : values[o.id]),
+            min: o.min != null ? o.min / f : null, max: o.max != null ? o.max / f : null,
+            step: o.step || (f === 1 ? 1 : 0.5), unit: o.unit || '',
+            onValue: (n) => {
+              let v = Number.isFinite(n) ? n * f : o.default;
+              if (o.min != null) v = Math.max(o.min, v);
+              if (o.max != null) v = Math.min(o.max, v);
+              values[o.id] = f === 1 ? Math.round(v) : v;
+            },
+          }));
         } else {
           wrap.appendChild(el('label', '', o.label));
           const input = el('input');
-          input.type = o.kind === 'number' ? 'number' : 'text';
-          if (o.kind === 'number') {
-            if (o.min != null) input.min = o.min;
-            if (o.max != null) input.max = o.max;
-          }
+          input.type = 'text';
           input.value = values[o.id] == null ? '' : values[o.id];
-          input.oninput = () => {
-            values[o.id] = o.kind === 'number' ? (parseInt(input.value, 10) || o.default) : input.value;
-          };
+          input.oninput = () => { values[o.id] = input.value; };
           wrap.appendChild(input);
         }
         const into = toggle ? switches : fields;
@@ -2224,42 +2365,32 @@
       const sizeGroup = group('How big', 'he-size');
       sizeGroup.used = true;
       const sizeRow = sizeGroup.inner;
+      // Every number here says what it is in, beside it, the same way.
       const wWrap = el('div', 'he-opt');
-      wWrap.appendChild(el('label', '', 'Width (% of the page)'));
-      const wIn = el('input');
-      wIn.type = 'number'; wIn.min = MIN_W; wIn.max = COLUMNS;
-      wIn.value = String(values.w || COLUMNS);
-      wIn.oninput = () => { values.w = Math.max(MIN_W, Math.min(COLUMNS, parseInt(wIn.value, 10) || COLUMNS)); };
-      wWrap.appendChild(wIn);
+      wWrap.appendChild(el('label', '', 'Width'));
+      wWrap.appendChild(numberWithUnit({
+        value: String(values.w || COLUMNS), min: MIN_W, max: COLUMNS, step: 1, unit: '% of the page',
+        onValue: (n) => { values.w = Math.max(MIN_W, Math.min(COLUMNS, Math.round(n) || COLUMNS)); },
+      }));
 
-      // In grid rows, not pixels. A height in pixels was a height nothing
-      // else on the page had to agree about, which is why 0 had to mean
-      // "however tall its contents are" and why the row it was in had to be
-      // as tall as the tallest thing in it. A segment is a rectangle in the
-      // page's grid now, so its height is the same kind of number as its
-      // width and there is no such thing as not having one.
+      // In grid rows, not pixels: a segment is a rectangle in the page's
+      // grid, so its height is the same kind of number as its width.
       const hWrap = el('div', 'he-opt');
-      hWrap.appendChild(el('label', '', `Height (rows of ${UNIT}px)`));
-      const hIn = el('input');
-      hIn.type = 'number'; hIn.min = MIN_H; hIn.max = MAX_H;
-      hIn.value = String(hOf(values));
-      hIn.oninput = () => {
-        values.h = Math.max(MIN_H, Math.min(MAX_H, parseInt(hIn.value, 10) || MIN_H));
-      };
-      hWrap.appendChild(hIn);
+      hWrap.appendChild(el('label', '', 'Height'));
+      hWrap.appendChild(numberWithUnit({
+        value: String(hOf(values)), min: MIN_H, max: MAX_H, step: 1, unit: `rows (${UNIT} px each)`,
+        onValue: (n) => { values.h = Math.max(MIN_H, Math.min(MAX_H, Math.round(n) || MIN_H)); },
+      }));
 
-      // How big the things inside are drawn. There was no way to change this
-      // at all, and after the page became a grid a list row came out far
-      // smaller than it used to be.
+      // How big the things inside are drawn: the one setting for it, for
+      // every type. What does not fit is shrunk to fit, so this is how big
+      // things are when there IS room.
       const sWrap = el('div', 'he-opt');
-      sWrap.appendChild(el('label', '', 'Size of what is inside (%)'));
-      const sIn = el('input');
-      sIn.type = 'number'; sIn.min = 50; sIn.max = 220; sIn.step = 5;
-      sIn.value = String(values.scale || 100);
-      sIn.oninput = () => {
-        values.scale = Math.max(50, Math.min(220, parseInt(sIn.value, 10) || 100));
-      };
-      sWrap.appendChild(sIn);
+      sWrap.appendChild(el('label', '', 'Size of what is inside'));
+      sWrap.appendChild(numberWithUnit({
+        value: String(values.scale || 100), min: 50, max: 220, step: 5, unit: '% (100 is normal)',
+        onValue: (n) => { values.scale = Math.max(50, Math.min(220, Math.round(n) || 100)); },
+      }));
 
       // Where what is in it sits, up and down. It matters more than it did:
       // every segment has a height of its own now and most are taller than
