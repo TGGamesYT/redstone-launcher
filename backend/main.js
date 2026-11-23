@@ -7154,9 +7154,12 @@ const THEME_FIELDS = [
 // page -- so a theme should only bring them with it if that is what was meant.
 // They are still read when a theme that has them is applied, which is what
 // keeps themes saved before this working: `background` always travelled.
-const THEME_OPTIONAL = { background: "background", layout: "homeLayout" };
+// The blur is part of the look as much as the colours are, and the look
+// travels between computers as a saved theme -- so a theme that left it out
+// put your colours on the other computer and left its blur as it was.
+const THEME_OPTIONAL = { background: "background", layout: "homeLayout", blur: "interfaceBlur" };
 const THEME_ALL_FIELDS = [...THEME_FIELDS, ...Object.values(THEME_OPTIONAL)];
-const DEFAULT_INCLUDE = { background: true, layout: false, wallpaper: false };
+const DEFAULT_INCLUDE = { background: true, layout: false, wallpaper: false, blur: true };
 const themesPath = path.join(dataDir, "themes.json");
 const loadThemes = () => { try { return JSON.parse(fs.readFileSync(themesPath, "utf8")) || []; } catch { return []; } };
 const saveThemes = (list) => {
@@ -7475,7 +7478,13 @@ ipcMain.handle("theme:apply", async (event, { id } = {}) => {
   }
   // Every frame re-reads the settings and repaints itself, the same way it
   // does when a colour is changed in the settings page.
-  sendEverywhere("settings-updated", applied);
+  //
+  // ALL of them, not only what the theme set. Every page draws itself from
+  // this object as though it were the whole of the settings, and caches it
+  // as such for the next page to boot from -- so sending just the theme's
+  // fields switched off everything a theme does not carry: the blur went
+  // every time a theme was applied, and stayed gone on the next page.
+  sendEverywhere("settings-updated", { ...DEFAULT_SETTINGS, ...settings.store });
   // A theme that carries the home page's shape has just changed it, and the
   // home page listens for that rather than for a settings change.
   if ("homeLayout" in applied) {
@@ -7861,24 +7870,33 @@ async function iconPngFor(icon, opts = {}) {
   return roundIconCorners(png, want);
 }
 
-// The icon's corners, as round as the launcher's.
+// The icon's corners.
 //
 // The backing is drawn as a full square, so whatever it was filled with -- the
 // base colour, the background's colour or gradient, a picture -- the icon had
-// sharp corners while every corner in the launcher followed the "Corner
-// rounding" setting. Unless the icon says otherwise: `corner` on the icon
-// itself, or a framed picture (`backCrop`), whose framing already decided how
-// round it is. The logo as drawn ("plain") is left as drawn.
+// sharp corners. Two ways to round it:
 //
-// The setting is in pixels of a panel, up to 25; the icon takes it as a
-// share of its size, so the roundest setting is the rounded square of a
-// system app icon and 0 is a square.
-function iconCornerRadius(icon, size = 256) {
+//   `corner` on the icon     its own setting, the "Corners" slider by the
+//                            icon: a share of the icon's size from 0 (a
+//                            square) to 50 (a circle).
+//   nothing set              the launcher's "Corner rounding", read on the
+//                            same scale: its 0..25 is the icon's 0..50, so
+//                            the roundest launcher is a round icon. (It
+//                            used to stop at a rounded square, which is not
+//                            what "as round as it goes" means.)
+//
+// A framed picture (`backCrop`) that has no corner of its own set keeps the
+// shape its framing gave it. The logo as drawn ("plain") is left alone.
+function iconCornerShare(icon) {
   if (!icon || icon.kind === "plain") return 0;
+  const own = Number(icon.corner);
+  if (icon.corner != null && Number.isFinite(own)) return Math.max(0, Math.min(50, own)) / 100;
   if (icon.backCrop && icon.mergeBlock) return 0;
-  const px = Number.isFinite(Number(icon.corner)) ? Number(icon.corner) : Number(settings.get("borderRadius", 25));
-  const share = Math.max(0, Math.min(25, px || 0)) / 25;
-  return Math.round(size * 0.22 * share);
+  const px = Number(settings.get("borderRadius", 25));
+  return Math.max(0, Math.min(25, Number.isFinite(px) ? px : 25)) / 25 * 0.5;
+}
+function iconCornerRadius(icon, size = 256) {
+  return Math.round(size * iconCornerShare(icon));
 }
 async function roundIconCorners(png, icon) {
   try {
@@ -7903,13 +7921,30 @@ async function roundIconCorners(png, icon) {
 let _desktopIconSoon = null;
 const DESKTOP_ICON_SETTLE = 1500;
 
+// One rewrite at a time, and only the newest icon. Two used to run side by
+// side whenever the icon changed again before the last PowerShell had
+// finished: each wrote its own .ico, pointed the shortcuts at it and then
+// swept away every OTHER .ico -- so whichever finished last deleted the file
+// the shortcuts had just been pointed at, and the taskbar was left holding
+// the picture it had cached, for good.
+let _desktopIconBusy = null;
+let _desktopIconNext = null;
 function updateDesktopIconSoon(png) {
   if (_desktopIconSoon) clearTimeout(_desktopIconSoon);
   _desktopIconSoon = setTimeout(() => {
     _desktopIconSoon = null;
-    // Not awaited and never blocking: rewriting a shortcut means starting a
-    // shell, and the main process is the one that answers every window.
-    Promise.resolve(shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher" }))
+    _desktopIconNext = png;
+    if (!_desktopIconBusy) _desktopIconBusy = rewriteDesktopIcons().finally(() => { _desktopIconBusy = null; });
+  }, DESKTOP_ICON_SETTLE);
+}
+async function rewriteDesktopIcons() {
+  while (_desktopIconNext) {
+    const png = _desktopIconNext;
+    _desktopIconNext = null;
+    // Not awaited by anyone and never blocking: rewriting a shortcut means
+    // starting a shell, and the main process is the one that answers every
+    // window.
+    await Promise.resolve(shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher" }))
       .then((r) => {
         // Said in the console, because "the desktop icon did not change" has
         // two very different answers: no shortcut starts THIS program (a run
@@ -7919,10 +7954,11 @@ function updateDesktopIconSoon(png) {
         const said = [];
         if (r.updated && r.updated.length) said.push(`changed ${r.updated.map(f => path.basename(f)).join(", ")}`);
         if (r.skipped && r.skipped.length) said.push(`left ${r.skipped.join("; ")}`);
+        if (r.refreshed) said.push(`icon cache refreshed (${r.refreshed})`);
         devtoolsLog(`[icon] shortcuts (this program is ${process.execPath}): ${said.join(" -- ") || "none found"}`);
       })
       .catch((e) => devtoolsLog("[icon] shortcuts could not be changed:", e && e.message || e));
-  }, DESKTOP_ICON_SETTLE);
+  }
 }
 
 // The taskbar button follows the window's own icon (setIcon, below), and a
@@ -8025,6 +8061,16 @@ ipcMain.handle("icon:backgroundPng", async () => {
 // the backing. Off leaves the backing on its own, which is how a picture or
 // the launcher's background becomes the icon; on puts the mark over whatever
 // the backing is, including a picture of your own.
+// The icon's own corners: 0..50 (a circle), or null to follow the
+// launcher's corner rounding.
+ipcMain.handle("icon:setCorner", async (event, { corner } = {}) => {
+  const icon = settings.get("appIcon", null) || { kind: "theme" };
+  const n = Number(corner);
+  const next = { ...icon };
+  if (corner == null || !Number.isFinite(n)) delete next.corner;
+  else next.corner = Math.max(0, Math.min(50, Math.round(n)));
+  return applyAppIcon(next);
+});
 ipcMain.handle("icon:setParts", async (event, { on } = {}) => {
   const icon = settings.get("appIcon", null) || { kind: "theme" };
   return applyAppIcon({ ...icon, parts: !!on });

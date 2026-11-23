@@ -501,8 +501,42 @@
   }
 
   // Add the spin reactions to the pose already on the model.
+  // A sudden change of speed, as a kick.
+  //
+  // The targets below are where each part hangs at a GIVEN speed, so a figure
+  // stopped dead only had its limbs eased back home -- as though they had
+  // stopped with it. They do not: a hand trailing a turn is still moving when
+  // the body under it stops, so it carries on round, swings past where it
+  // hangs and comes back. That is the trailing parts' momentum, and it is
+  // handed to them here as velocity in proportion to how much the speed just
+  // changed, in the direction the turn was going. Starting a spin is the same
+  // thing the other way round: the limbs are left behind at once.
+  //
+  // Only for a real jolt -- a change of more than KICK_FROM rad/s in one
+  // frame. A spin bleeding away gradually, and the jitter in a drag's
+  // readings, stay below it and are left to the springs.
+  // Sized against the springs: the damping that keeps a spinning figure from
+  // wobbling also eats a kick, and at 4 the arm barely made it back to where
+  // it hangs. At 16 it swings past by about two thirds of how far it was
+  // trailing, crossing rest within a few frames of the stop.
+  const KICK = 16;
+  const KICK_FROM = 2.5;
+  const KICKED = ['armLag', 'capeSway', 'headLag', 'bodyTwist', 'legLag'];
+  function kickOnJolt(state, w) {
+    const was = Number.isFinite(state.lastW) ? state.lastW : w;
+    state.lastW = w;
+    const dW = w - was;
+    if (Math.abs(dW) < KICK_FROM) return;
+    // A stop or a start -- not a drag's reading jumping about while it keeps
+    // going, which would shake the limbs on every pointer move.
+    const lo = Math.min(Math.abs(w), Math.abs(was)), hi = Math.max(Math.abs(w), Math.abs(was));
+    if (Math.sign(w) === Math.sign(was) && lo > hi / 3) return;
+    for (const n of KICKED) state[n].v += SPIN[n][0] * dW * KICK;
+  }
+
   function applySpin(state, rest, omega, dt) {
     const w = Number.isFinite(omega) ? omega : 0;
+    kickOnJolt(state, w);
     const sq = w * Math.abs(w);     // omega^2, keeping the sign for the sway
     const abs = Math.abs(sq);
     const t = {
@@ -515,7 +549,14 @@
       legLag: clamp(SPIN.legLag[0] * w, SPIN.legLag[1]),
     };
     const v = {};
-    for (const n of Object.keys(t)) v[n] = springTo(state[n], t[n], dt);
+    for (const n of Object.keys(t)) {
+      v[n] = springTo(state[n], t[n], dt);
+      // A kick may throw a part past where the spin alone ever takes it, but
+      // not round the back of the figure.
+      const lim = SPIN[n][1] * 1.4;
+      if (state[n].x > lim) { state[n].x = lim; v[n] = lim; if (state[n].v > 0) state[n].v = 0; }
+      if (state[n].x < -lim) { state[n].x = -lim; v[n] = -lim; if (state[n].v < 0) state[n].v = 0; }
+    }
 
     // Nothing to add once everything has settled back to zero.
     let moving = false;
@@ -612,6 +653,7 @@
       }
       state.moving = false;
       state.rested = true;
+      state.lastW = undefined;      // a new card is not a jolt
     };
     // Whether the limbs have finished reacting. The rotation coming home is
     // not the same thing: the arms are springs hanging off it and they are
@@ -992,6 +1034,12 @@
     const onStart = () => {
       dragging = true; restingSince = 0; cancelReturn(); homing = false; stopLoop();
       velTheta = velPhi = 0; lastTheta = lastPhi = null;
+      // Caught: it has stopped, and the limbs are told so NOW. Saying
+      // nothing left them believing the last speed for a moment and then
+      // letting it fade -- arms held still in mid-air, then drifting --
+      // where a figure grabbed mid-spin has its arms fly on round it.
+      lastW = 0; lastSpinAt = 0;
+      try { (opts.onSpin || setSpin)(0); } catch { /* not worth throwing over */ }
       flick.reset();
       try { const c = camSpherical(v.camera.position); flick.add(c.theta, c.phi); } catch { }
     };

@@ -135,5 +135,51 @@ const armOut = (rest) => {
     + "waiting for the second one is waiting for nothing anybody can see");
 }
 
+// ── stopped dead: the limbs carry on round ──
+//
+// Grabbing a spinning render stops the figure at once. The trailing parts are
+// still moving, so they swing PAST where they hang and come back -- rather
+// than holding still and drifting home, which is what was reported.
+{
+  const DT = 1 / 60;
+  const spinThenStop = (after) => {
+    const state = newSpinState();
+    for (let i = 0; i < 30; i++) applySpin(state, rig(), 6, DT);
+    const trailing = state.armLag.x;
+    let past = 0, at = -1;
+    for (let i = 0; i < 40; i++) {
+      applySpin(state, rig(), after(i), DT);
+      // Past rest means the other side from where the turn left it.
+      const over = -Math.sign(trailing) * state.armLag.x;
+      if (over > past) past = over;
+      if (over > 0 && at < 0) at = i;
+    }
+    return { trailing, past, at };
+  };
+  const dead = spinThenStop(() => 0);
+  check("stopped dead, the arms swing on past where they hang",
+    dead.past > Math.abs(dead.trailing) * 0.4, true,
+    `trailing ${dead.trailing.toFixed(2)} rad, then ${dead.past.toFixed(2)} rad the other way`);
+  check("and they do it at once, not after a pause",
+    dead.at >= 0 && dead.at <= 8, true, `past rest by frame ${dead.at}`);
+  // A spin that runs down on its own is not a jolt: no kick.
+  let w = 6;
+  const slow = spinThenStop(() => (w *= 0.9));
+  // A drag's readings jump about while it keeps going: no kicks from that.
+  {
+    const state = newSpinState();
+    let worst = 0;
+    for (let i = 0; i < 60; i++) {
+      applySpin(state, rig(), i % 2 ? 9 : 5, DT);
+      worst = Math.max(worst, Math.abs(state.armLag.v));
+    }
+    check("a drag whose speed jitters does not shake the arms",
+      worst < 2, true, `fastest the arm moved: ${worst.toFixed(2)} rad/s`);
+  }
+  check("a spin that slows down by itself gets no kick",
+    slow.past < dead.past * 0.5, true,
+    `${slow.past.toFixed(2)} rad past rest, against ${dead.past.toFixed(2)} when stopped dead`);
+}
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);

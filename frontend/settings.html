@@ -325,7 +325,10 @@
     #custom-css-state { font-size: 12px; opacity: 0.75; }
 
     .relay-backend-about { font-size: 12px; line-height: 1.6; opacity: 0.75; margin: 0 0 10px; max-width: 60ch; }
-    .relay-backend-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+    /* The same toggles as the rest of the page, one to a line -- they were
+       the browser's own radio buttons, spread across the row with gaps either
+       side, which nothing else here looks like. */
+    .relay-backend-row { margin-bottom: 8px; }
     #relay-backend-state { opacity: 0.6; }
 
     /* ── Saving and sharing a theme ── */
@@ -869,6 +872,8 @@
           data-tip="The picture itself, copied into the theme file so it still works on another computer. Up to 12 MB."><input type="checkbox" id="theme-inc-wallpaper"> its picture</label>
         <label class="setting-toggle"
           data-tip="Which segments the main page is made of, where they sit and how big they are."><input type="checkbox" id="theme-inc-layout"> the main page layout</label>
+        <label class="setting-toggle"
+          data-tip="Which panels are blurred and by how much. Part of the look, so it goes where the colours go -- applying this theme on another computer blurs the same panels."><input type="checkbox" id="theme-inc-blur" checked> the blur</label>
       </div>
 
       <h4 style="margin-top: 30px;">App icon</h4>
@@ -891,6 +896,17 @@
           </div>
           <label class="setting-toggle appicon-parts"
             data-tip="The gem and the cog, drawn over whatever is behind them. Off leaves what is behind as the whole icon."><input type="checkbox" id="app-icon-parts"> The gem and the cog over it</label>
+          <!-- How round the icon is. Its own, or the launcher's corner
+               rounding read on the icon's scale -- the roundest launcher is
+               a round icon. -->
+          <div class="appicon-corner" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;">
+            <span class="appicon-label" style="margin:0;">Corners</span>
+            <input type="range" id="app-icon-corner" min="0" max="50" step="1" style="width:140px;"
+              data-tip="0 is a square, the far end a circle.">
+            <span class="slider-value" id="app-icon-corner-value"></span>
+            <label class="setting-toggle" style="margin:0;"
+              data-tip="Follow Corner rounding below: the launcher at its roundest makes a round icon."><input type="checkbox" id="app-icon-corner-follow"> Same as the launcher</label>
+          </div>
           <!-- A whole wallpaper squashed into a 256-pixel circle is the
                picture seen from much too far away, so it can be framed:
                the same zoom, placing and rounding an instance's icon gets.
@@ -1096,6 +1112,20 @@
       <!-- Which relay carries a shared world. Only shown to an admin: for
            everybody else it is the launcher's decision, not a knob, and
            picking wrong means nobody can join. -->
+      <!-- The admin panel, for the same accounts that see the relay choice
+           below. It used to be reachable only by typing a command into the
+           developer console. The password is checked by the relay before any
+           window opens, and is not kept. -->
+      <div id="admin-open-wrap" style="display:none;">
+        <h3>Admin panel</h3>
+        <form id="admin-open-form" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 6px;">
+          <input type="password" id="admin-open-password" placeholder="Admin password" autocomplete="current-password"
+            style="width:220px;" data-tip="Checked by the relay before anything opens. Not saved.">
+          <button type="submit" id="admin-open-go">Open admin panel</button>
+          <span id="admin-open-state" class="relay-backend-about" style="margin:0;"></span>
+        </form>
+      </div>
+
       <div id="relay-backend-wrap" style="display:none;">
         <h3>Sharing over the internet</h3>
         <p class="relay-backend-about">
@@ -1105,11 +1135,11 @@
         </p>
         <div class="relay-backend-row">
           <label class="setting-toggle"
-            data-tip="e4mc when the helper that talks to them is installed, and the launcher's own relay when it is not. The right answer unless you are testing one of them."><input type="radio" name="relay-backend" value="auto"> Whichever works</label>
+            data-tip="e4mc when the helper that talks to them is installed, and the launcher's own relay when it is not. The right answer unless you are testing one of them."><input type="checkbox" name="relay-backend" value="auto"> Whichever works</label>
           <label class="setting-toggle"
-            data-tip="e4mc's relays, dialled over QUIC by the bundled helper. Theirs carry the traffic."><input type="radio" name="relay-backend" value="e4mc"> Always e4mc</label>
+            data-tip="e4mc's relays, dialled over QUIC by the bundled helper. Theirs carry the traffic."><input type="checkbox" name="relay-backend" value="e4mc"> Always e4mc</label>
           <label class="setting-toggle"
-            data-tip="The launcher's own relay, which you run. Nothing leaves your infrastructure."><input type="radio" name="relay-backend" value="own"> Always our own relay</label>
+            data-tip="The launcher's own relay, which you run. Nothing leaves your infrastructure."><input type="checkbox" name="relay-backend" value="own"> Always our own relay</label>
         </div>
         <div id="relay-backend-state" class="relay-backend-about"></div>
       </div>
@@ -1407,6 +1437,7 @@
         'textColor', 'font', 'fontSmoothing', 'borderRadius']) keys.add(k);
       if (t && t.include && t.include.background) keys.add('background');
       if (t && t.include && t.include.layout) keys.add('homeLayout');
+      if (t && t.include && t.include.blur !== false && t.theme && 'interfaceBlur' in t.theme) keys.add('interfaceBlur');
       return {
         done: (r) => {
           for (const k of Object.keys((r && r.theme) || {})) keys.add(k);
@@ -2155,6 +2186,29 @@
         } catch { /* not an admin, then */ }
         if (!admin) return;
 
+        // The admin panel's way in, for the same people.
+        const adminWrap = document.getElementById('admin-open-wrap');
+        const adminForm = document.getElementById('admin-open-form');
+        const adminPw = document.getElementById('admin-open-password');
+        const adminGo = document.getElementById('admin-open-go');
+        const adminState = document.getElementById('admin-open-state');
+        if (adminWrap && adminForm) {
+          adminWrap.style.display = '';
+          adminForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const password = adminPw.value;
+            if (!password) { adminState.textContent = 'Type the password first.'; adminPw.focus(); return; }
+            adminGo.disabled = true;
+            adminState.textContent = 'Checking…';
+            let r = null;
+            try { r = await ipcRenderer.invoke('admin:open', { password }); }
+            catch (err) { r = { ok: false, error: err && err.message }; }
+            adminGo.disabled = false;
+            if (r && r.ok) { adminState.textContent = 'Opened.'; adminPw.value = ''; }
+            else { adminState.textContent = (r && r.error) || 'Could not open it.'; adminPw.select(); }
+          });
+        }
+
         const show = (r) => {
           for (const el of wrap.querySelectorAll('input[name="relay-backend"]')) {
             el.checked = el.value === (r.setting || 'auto');
@@ -2167,9 +2221,14 @@
         try { now = await ipcRenderer.invoke('relay:backend'); } catch { /* defaults */ }
         wrap.style.display = '';
         show(now);
-        for (const el of wrap.querySelectorAll('input[name="relay-backend"]')) {
+        const choices = [...wrap.querySelectorAll('input[name="relay-backend"]')];
+        for (const el of choices) {
           el.addEventListener('change', async () => {
-            if (!el.checked) return;
+            // One of the three, always: they look like the toggles they are
+            // beside but only one can be on, so turning on one turns the
+            // others off and turning off the one that is on is undone.
+            if (!el.checked) { el.checked = true; return; }
+            for (const other of choices) if (other !== el) other.checked = false;
             const r = await ipcRenderer.invoke('relay:setBackend', { backend: el.value });
             if (r && r.success) show({ ...now, ...r, e4mcAvailable: now.e4mcAvailable });
           });
@@ -2232,6 +2291,7 @@
             inc.background !== false && ('background' in (t.theme || {})) ? 'background' : null,
             t.wallpaper ? 'picture' : null,
             'homeLayout' in (t.theme || {}) ? 'main page' : null,
+            'interfaceBlur' in (t.theme || {}) ? 'blur' : null,
           ].filter(Boolean);
           btn.innerHTML = `<span>${t.name}</span>${who}
             <div class="theme-colors">
@@ -2304,6 +2364,7 @@
         background: document.getElementById('theme-inc-background').checked,
         wallpaper: document.getElementById('theme-inc-wallpaper').checked,
         layout: document.getElementById('theme-inc-layout').checked,
+        blur: document.getElementById('theme-inc-blur').checked,
       });
       // A picture is only worth carrying if the background is.
       const incBg = document.getElementById('theme-inc-background');
@@ -2398,8 +2459,57 @@
         }
         iconHasCrop = !!icon.backCrop;
         if (window.__iconCropRowRefresh) window.__iconCropRowRefresh();
+        showCorner(icon);
       };
       window.__refreshAppIcon = refreshAppIcon;
+
+      // ── the icon's corners ──
+      const cornerSlider = document.getElementById('app-icon-corner');
+      const cornerValue = document.getElementById('app-icon-corner-value');
+      const cornerFollow = document.getElementById('app-icon-corner-follow');
+      // The launcher's 0..25 px on the icon's 0..50 scale.
+      const launcherCorner = () => Math.round(Math.max(0, Math.min(25, Number(getSetting('borderRadius')) || 0)) * 2);
+      const cornerText = (v) => (v >= 50 ? 'circle' : v <= 0 ? 'square' : v + '%');
+      function showCorner(icon) {
+        if (!cornerSlider || cornerSlider.matches(':active')) return;
+        const own = icon && icon.corner != null && Number.isFinite(Number(icon.corner));
+        cornerFollow.checked = !own;
+        cornerSlider.value = own ? Number(icon.corner) : launcherCorner();
+        cornerSlider.disabled = !own;
+        cornerValue.textContent = cornerText(Number(cornerSlider.value));
+      }
+      if (cornerSlider) {
+        // Drawn while dragging, a few times a second rather than on every
+        // step: each one is a fresh icon on the window.
+        let pending = null, busy = false;
+        const send = async () => {
+          if (busy) return;
+          busy = true;
+          while (pending !== null) {
+            const v = pending; pending = null;
+            try {
+              const r = await ipcRenderer.invoke('icon:setCorner', { corner: v });
+              if (r && r.success && r.dataUrl) iconPreview.src = r.dataUrl;
+            } catch { }
+          }
+          busy = false;
+        };
+        cornerSlider.addEventListener('input', () => {
+          cornerValue.textContent = cornerText(Number(cornerSlider.value));
+          pending = Number(cornerSlider.value);
+          send();
+        });
+        cornerFollow.addEventListener('change', async () => {
+          cornerSlider.disabled = cornerFollow.checked;
+          pending = cornerFollow.checked ? null : Number(cornerSlider.value);
+          if (cornerFollow.checked) {
+            const r = await ipcRenderer.invoke('icon:setCorner', { corner: null }).catch(() => null);
+            if (r && r.success && r.dataUrl) iconPreview.src = r.dataUrl;
+            cornerSlider.value = launcherCorner();
+            cornerValue.textContent = cornerText(Number(cornerSlider.value));
+          } else send();
+        });
+      }
 
       const setIcon = async (icon, said) => {
         const r = await ipcRenderer.invoke('icon:setApp', { icon });

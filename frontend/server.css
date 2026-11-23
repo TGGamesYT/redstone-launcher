@@ -1683,13 +1683,15 @@ html.blur-instance-files #instance-tab-content.files-active .fb-list {
   backdrop-filter: blur(var(--interface-backdrop-blur));
 }
 
+/* The search boxes themselves -- not the row they sit in. The instances and
+   servers pages' whole top row (+, search, loader, filters) was in this list,
+   which laid a blurred band behind everything on it that is not there with
+   blur off. */
 html.blur-search :is(
   input[type="search"],
   input[id*="search" i],
   input[class*="search" i],
-  .findbar,
-  #search-sort .ss-row,
-  #server-search-sort .ss-row
+  .findbar
 ) {
   background: color-mix(in srgb, var(--menu-bg) 76%, transparent);
   -webkit-backdrop-filter: blur(var(--interface-backdrop-blur));

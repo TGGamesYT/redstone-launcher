@@ -9,6 +9,44 @@ started.
 
 ---
 
+## 0. Round 71
+
+- [x] **Blur settings should sync.** They went with Settings already, but the
+      look travels between computers as a saved theme, and a theme did not
+      carry the blur. It does now ("the blur" in what a saved theme carries, on
+      by default).
+- [x] **Changing themes resets the blur.** Applying a theme broadcast only the
+      theme's own fields, and every page drew itself (and cached itself for the
+      next page) from that as though it were all the settings -- so whatever a
+      theme does not carry, the blur first, was switched off. The full settings
+      are sent now.
+- [x] **Blur puts a blurred band behind the instances and servers top row.**
+      The search-blur rule listed the whole row (+, search, loader, filters),
+      not just the search box.
+- [~] **The taskbar icon changes only the first time.** Two shortcut rewrites
+      could overlap, and whichever finished last deleted the .ico the
+      shortcuts had just been pointed at; they run one at a time now, newest
+      wins. The icon cache is refreshed after every rewrite, not only for a
+      pinned shortcut, and the log says what each step did. Not tried on
+      Windows from here.
+- [x] **The icon needs its own corner rounding, and the launcher's at its
+      roundest should be a circle.** A "Corners" slider by the icon (square to
+      circle) with "Same as the launcher"; following the launcher, 25 px is
+      now a circle rather than a rounded square.
+- [x] **A spinning render stopped by a click holds its arms still.** A grab
+      did not tell the limbs the figure had stopped: they kept the old speed
+      for 120 ms and then faded. Now they are told at once, and a sudden stop
+      (or start) gives the trailing parts the momentum they had, so the arms
+      swing on past where they hang and come back. Jitter in a drag's readings
+      does not count as a jolt.
+- [x] **An admin panel entry in Advanced, above sharing.** A password field
+      that opens the admin panel, for the same accounts that see the sharing
+      settings. It was only reachable from the developer console.
+- [x] **The sharing settings use the browser's own radio buttons.** They are
+      the page's own toggles now, one to a line, still one choice at a time.
+
+---
+
 ## 0. Round 70
 
 - [x] **An instance made from a mod still comes without its dependencies.**
