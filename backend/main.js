@@ -8613,57 +8613,7 @@ function getTypeFolder(type) {
 }
 
 // ---------------- mod-download ----------------
-// Which Modrinth projects the jars already in a folder are, by their hashes.
-async function modrinthProjectsIn(dir) {
-  const hashes = [];
-  let names = [];
-  try { names = fs.readdirSync(dir).filter(n => /\.jar$/i.test(n)); } catch { return new Set(); }
-  for (const n of names) {
-    try { hashes.push(crypto.createHash("sha1").update(fs.readFileSync(path.join(dir, n))).digest("hex")); } catch { /* unreadable */ }
-  }
-  if (!hashes.length) return new Set();
-  try {
-    const r = await fetch("https://api.modrinth.com/v2/version_files", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "User-Agent": LAUNCHER_UA },
-      body: JSON.stringify({ hashes, algorithm: "sha1" }),
-    });
-    if (!r.ok) return new Set();
-    const got = await r.json();
-    return new Set(Object.values(got || {}).map(v => v && v.project_id).filter(Boolean));
-  } catch { return new Set(); }
-}
-
-// A mod's REQUIRED dependencies, and theirs, in versions for this game version
-// and loader. A mod put into an instance without them does not start: the
-// Female Gender Mod without Fabric API was "Some of your mods are incompatible
-// with the game or each other". One already in the folder -- under whatever
-// file name -- is left as it is, since a second copy is its own crash.
-async function installRequiredDeps({ dir, dependencies, gameVersion, loader, onLine }) {
-  const have = await modrinthProjectsIn(dir);
-  const added = [], missing = [];
-  const seen = new Set(have);
-  const walk = async (deps, depth) => {
-    if (depth > 6) return;
-    for (const d of (deps || [])) {
-      if (!d || d.dependency_type !== "required" || !d.project_id || seen.has(d.project_id)) continue;
-      seen.add(d.project_id);
-      const v = await findCompatibleModVersion(d.project_id, gameVersion, loader, true);
-      if (!v || !v.url) { missing.push(d.project_id); continue; }
-      const name = decodeURIComponent(path.basename(new URL(v.url).pathname));
-      try {
-        if (onLine) onLine(`Adding ${name}, which it needs`);
-        await downloadFile(v.url, path.join(dir, name));
-        added.push(name);
-      } catch { missing.push(d.project_id); continue; }
-      await walk(v.dependencies, depth + 1);
-    }
-  };
-  await walk(dependencies, 0);
-  return { added, missing };
-}
-
-ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType, dependencies, gameVersion, loader }) => {
+ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType }) => {
   try {
     const baseDir = server
       ? path.join(dataDir, "servers", String(id))
@@ -8679,13 +8629,6 @@ ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType,
 
     await downloadFile(fileUrl, dest);
 
-    // Its required dependencies, when the caller knows what they are.
-    let deps = null;
-    if (projectType === "mod" && Array.isArray(dependencies) && dependencies.length && gameVersion && loader) {
-      try { deps = await installRequiredDeps({ dir: targetDir, dependencies, gameVersion, loader }); }
-      catch (e) { devtoolsLog("Could not add a mod's dependencies:", e && e.message || e); }
-    }
-
     // Server-side resource packs are now managed as an ordered, merged list
     // (hosted through the relay), so register the download in the pack order
     // rather than pointing server.properties straight at the Modrinth URL.
@@ -8693,7 +8636,7 @@ ipcMain.handle("mod-download", async (event, { server, id, fileUrl, projectType,
       try { const cfg = loadPackCfg(id); if (!cfg.order.includes(fileName)) { cfg.order.push(fileName); savePackCfg(id, cfg); } } catch { /* ignore */ }
     }
 
-    return { success: true, path: dest, dependencies: deps };
+    return { success: true, path: dest };
   } catch (err) {
     devtoolsLog("Failed to download file:", err);
     return { success: false, error: err.message };

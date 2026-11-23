@@ -2,6 +2,7 @@
 <html>
 
 <head>
+  <script src="dep-prompt.js"></script>
   <meta charset="UTF-8">
   <title>Redstone Launcher - Modrinth Browser</title>
   <script src="theme-boot.js"></script>
@@ -330,34 +331,9 @@
       return out;
     }
 
-    // Modal: let the user choose which dependencies to also install.
-    function promptDependencies(deps) {
-      return new Promise(resolve => {
-        const ov = document.createElement('div');
-        ov.className = 'modal-overlay active';
-        ov.style.zIndex = 5000;
-        const rows = deps.map((d, i) =>
-          `<label style="display:flex;align-items:center;gap:8px;margin:6px 0;${d.installed ? 'opacity:.6;' : ''}">
-             <input type="checkbox" data-i="${i}" ${d.installed ? 'checked disabled' : (d.type === 'required' ? 'checked' : '')} />
-             <span>${d.name} <span style="opacity:.6;">(${d.installed ? 'already installed' : d.type})</span></span>
-           </label>`).join('');
-        ov.innerHTML = `<div class="modal-content" style="max-width:420px;">
-          <div class="modal-header"><h2>Install dependencies?</h2></div>
-          <div>This add-on needs other mods to work. Choose which to install too:</div>
-          <div style="margin:10px 0;">${rows}</div>
-          <div class="modal-actions">
-            <button id="depGo">Install selected</button>
-            <button id="depSkip">Skip</button>
-          </div></div>`;
-        document.body.appendChild(ov);
-        ov.querySelector('#depSkip').onclick = () => { ov.remove(); resolve([]); };
-        ov.querySelector('#depGo').onclick = () => {
-          // Skip anything already installed — only download newly-chosen deps.
-          const chosen = [...ov.querySelectorAll('input[type=checkbox]')].filter(c => c.checked).map(c => deps[+c.dataset.i]).filter(d => d && !d.installed);
-          ov.remove(); resolve(chosen);
-        };
-      });
-    }
+    // The shared popup (dep-prompt.js), the same one a project's own page
+    // shows.
+    function promptDependencies(deps) { return window.DepPrompt.ask(deps); }
 
     async function installToInstance(projectId, btn) {
       btn.textContent = "Installing...";

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <script src="dep-prompt.js"></script>
 <meta charset="UTF-8">
 <title>Project Details</title>
 <script src="theme-boot.js"></script>
@@ -600,11 +601,17 @@ if (downloadBtn.textContent == "Back") {
 
   // Pick the NEWEST compatible version's primary file (the old code walked the
   // list and kept overwriting, ending up on the oldest compatible version).
-  // The dependencies of the version a file belongs to, for the install to
-  // bring the required ones along.
-  function dependenciesOf(fileUrl) {
-    const v = validVersions.find(x => (x.files || []).some(f => f.url === fileUrl));
-    return (v && v.dependencies) || [];
+  // The version a file belongs to, whose dependencies are offered after it
+  // is installed -- the same popup the mod browser in an instance shows.
+  function versionOf(fileUrl) {
+    return validVersions.find(x => (x.files || []).some(f => f.url === fileUrl)) || null;
+  }
+  async function offerDeps(fileUrl, target, gameVersion, loader) {
+    if (selectedType !== "mod" || !window.DepPrompt) return;
+    const v = versionOf(fileUrl);
+    if (!v) return;
+    const deps = await window.DepPrompt.fromModrinth({ version: v, gameVersion, loader, target });
+    await window.DepPrompt.offer(deps, target);
   }
   function newestCompatibleFile(instanceVersion, loader, requireLoader = true) {
     const compatible = validVersions
@@ -674,8 +681,8 @@ if (downloadBtn.textContent == "Back") {
               if (want) {
                 await ipcRenderer.invoke("mod-download", {
                   server: false, id: made.id, fileUrl: want, projectType: selectedType,
-                  dependencies: dependenciesOf(want), gameVersion: made.version, loader: made.loader,
                 });
+                await offerDeps(want, { id: made.id, isServer: false }, made.version, made.loader);
               }
               // Straight to what was just made, with the mod in it.
               window.location.href = `instances.html?i=${encodeURIComponent(made.id)}`;
@@ -768,9 +775,8 @@ const installBtn = document.createElement("button");
         id: p.id,
         fileUrl,
         projectType: selectedType,
-        // And what it needs to start, in versions for this instance.
-        dependencies: dependenciesOf(fileUrl), gameVersion: p.version, loader: p.loader,
       });
+      await offerDeps(fileUrl, { id: p.id, isServer: false }, p.version, p.loader);
 
       installBtn.textContent = "Installed";
     };
@@ -848,8 +854,11 @@ installArea.appendChild(li);
           id: s.name,
           fileUrl,
           projectType: selectedType,
-          dependencies: matchedVersion.dependencies || [], gameVersion: s.version, loader: s.type,
         });
+        if (selectedType === "mod" && window.DepPrompt) {
+          const deps = await window.DepPrompt.fromModrinth({ version: matchedVersion, gameVersion: s.version, loader: s.type, target: { id: s.name, isServer: true } });
+          await window.DepPrompt.offer(deps, { id: s.name, isServer: true });
+        }
 
         installBtn.textContent = "Installed";
       };

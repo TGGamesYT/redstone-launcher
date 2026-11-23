@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <script src="dep-prompt.js"></script>
 <meta charset="UTF-8">
 <title>CurseForge Project</title>
 <script src="theme-boot.js"></script>
@@ -101,35 +102,16 @@ async function cfDownloadUrl(projectID, fileID, fileName) {
 let profiles = [];
 let servers = [];
 
-// A mod's required dependencies (CurseForge's relationType 3), and theirs, in
-// files for this game version and loader. Installed into the same place the
-// mod went. A mod put in without them does not start -- the game stops with
-// "Some of your mods are incompatible" and a list of what is missing.
-async function installCfRequiredDeps({ target, server, file, version, loader, seen = new Set() }) {
-  const lc = (x) => String(x || '').toLowerCase();
-  for (const d of (file && file.dependencies) || []) {
-    if (!d || d.relationType !== 3 || !d.modId || seen.has(d.modId)) continue;
-    seen.add(d.modId);
-    let files = [];
-    try {
-      const res = await fetch(`https://curseforge.tgdoescode.workers.dev/files?projectID=${d.modId}`);
-      const data = await res.json();
-      files = Array.isArray(data.data) ? data.data : [];
-    } catch { continue; }
-    const dep = files.find(f => {
-      const gv = (f.gameVersions || []).map(lc);
-      return gv.includes(lc(version)) && (!loader || gv.includes(lc(loader)));
-    });
-    if (!dep) continue;
-    const url = (await cfDownloadUrl(d.modId, dep.id, dep.fileName)).url;
-    if (!url) continue;
-    // Already there, as this exact file: nothing to add.
-    const have = await ipcRenderer.invoke("check-file-exists", String(target), !server, url).catch(() => false);
-    if (!have) {
-      await ipcRenderer.invoke("mod-download", { server: !!server, id: target, fileUrl: url, projectType: "mod" });
-    }
-    await installCfRequiredDeps({ target, server, file: dep, version, loader, seen });
-  }
+// What a mod needs, offered after it is installed: the same popup the mod
+// browser in an instance shows (dep-prompt.js).
+async function offerCfDeps({ target, server, file, version, loader }) {
+  if (!window.DepPrompt) return;
+  const t = { id: target, isServer: !!server };
+  const deps = await window.DepPrompt.fromCurseForge({
+    file, gameVersion: version, loader, target: t,
+    downloadUrl: async (modId, fileId, fileName) => (await cfDownloadUrl(modId, fileId, fileName)).url,
+  });
+  await window.DepPrompt.offer(deps, t);
 }
 
 // Description / Gallery tabs (whatever CurseForge exposes).
@@ -410,8 +392,7 @@ async function openInstallScreenCF(mod) {
               projectType: selectedType,
             });
             if (selectedType === "mod") {
-              installBtn.textContent = "Adding what it needs…";
-              await installCfRequiredDeps({ target: p.id, server: false, file: compatibleFile, version: p.version, loader: p.loader });
+              await offerCfDeps({ target: p.id, server: false, file: compatibleFile, version: p.version, loader: p.loader });
             }
             installBtn.textContent = "Installed";
           };
@@ -458,8 +439,7 @@ async function openInstallScreenCF(mod) {
               projectType: selectedType,
             });
             if (selectedType === "mod") {
-              installBtn.textContent = "Adding what it needs…";
-              await installCfRequiredDeps({ target: p.id, server: false, file: usableFile.file, version: p.version, loader: p.loader });
+              await offerCfDeps({ target: p.id, server: false, file: usableFile.file, version: p.version, loader: p.loader });
             }
 
             installBtn.textContent = "Installed";
@@ -527,8 +507,7 @@ async function openInstallScreenCF(mod) {
           projectType: selectedType,
         });
         if (selectedType === "mod") {
-          installBtn.textContent = "Adding what it needs…";
-          await installCfRequiredDeps({ target: s.name, server: true, file: matchedFile, version: s.version, loader: s.type });
+          await offerCfDeps({ target: s.name, server: true, file: matchedFile, version: s.version, loader: s.type });
         }
 
         installBtn.textContent = "Installed";
