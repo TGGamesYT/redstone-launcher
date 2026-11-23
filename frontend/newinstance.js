@@ -642,14 +642,23 @@
           title: 'From another launcher',
           desc: 'Copy an instance out of Prism, MultiMC, CurseForge, the Modrinth App, Lunar Client or the vanilla launcher.',
           onClick: () => {
-            close();
             // One instance, picked by clicking it — not the bulk importer from
             // Settings. You came here to make ONE instance.
             if (!window.Onboarding) return;
-            window.Onboarding.openImport(null, {
+            // The darkened, blurred backdrop stays where it is and the import
+            // step goes on top of it. Closing this step took its backdrop
+            // away while the import brought its own, so for the length of the
+            // fade there were two -- twice as dark and twice as blurred --
+            // until the first one finished going.
+            const ov = openShell;
+            openShell = null;
+            if (ov) { if (window.ModalFX) window.ModalFX.close(ov, () => ov.remove()); else ov.remove(); }
+            window.Onboarding.openImport(() => hideBackdrop(), {
               single: true,
+              backdrop: false,
               onBack: reopen,
               onPick: async (entry) => {
+                hideBackdrop();
                 if (!entry) return;
                 if (!entry.version) {
                   return uiAlert('That instance does not say which Minecraft version it is. Type one in and pick it again.',

@@ -18,6 +18,7 @@
   <script src="console-commands.js"></script>
   <script src="loading.js"></script>
   <script src="modalfx.js"></script>
+  <script src="dep-prompt.js"></script>
   <script src="pixelart.js"></script>
   <script src="blockrender.js"></script>
   <script src="modelpicker.js"></script>
@@ -1498,8 +1499,11 @@
       } else {
         if (title) title.textContent = 'Create Instance';
         modalCreateBtn.textContent = 'Create Instance';
-        if (importSection) importSection.style.display = '';
-        if (importTabBtn) importTabBtn.style.display = '';
+        // Importing a pack is a choice in the new-instance chooser now ("A
+        // modpack file"); this form is only reached after choosing to set it
+        // up by hand, so it has no Import tab of its own any more.
+        if (importSection) importSection.style.display = 'none';
+        if (importTabBtn) importTabBtn.style.display = 'none';
         // Dev mods need an existing instance id — hidden while creating.
         const dms = document.getElementById('devModsSection'); if (dms) dms.style.display = 'none';
       }
@@ -1779,7 +1783,7 @@
       const versions = res.ok ? await res.json() : [];
       const first = versions[0];
       const file = first && ((first.files || []).find(f => f.primary) || first.files[0]);
-      return (file && file.url) || null;
+      return (file && file.url) ? { url: file.url, version: first } : null;
     }
 
     async function curseforgeModUrl(projectId, version, loader) {
@@ -1801,8 +1805,12 @@
       if (!pick) return null;
       const r = await ipcRenderer.invoke('curseforge:downloadUrl',
         { projectID: projectId, fileID: pick.id, fileName: pick.fileName });
-      return (r && r.success) ? r.url : null;
+      return (r && r.success) ? { url: r.url, file: pick } : null;
     }
+    const cfUrl = async (modId, fileId, fileName) => {
+      const r = await ipcRenderer.invoke('curseforge:downloadUrl', { projectID: modId, fileID: fileId, fileName });
+      return (r && r.success) ? r.url : null;
+    };
 
     // Auto-open a freshly created instance.
     ipcRenderer.on('profile-created', async (e, newProfile) => {
@@ -1813,14 +1821,25 @@
       modalCreateBtn._prefillProject = null;
       if (from) {
         try {
-          const fileUrl = from.source === 'curseforge'
+          const got = from.source === 'curseforge'
             ? await curseforgeModUrl(from.curseId, newProfile.version, newProfile.loader)
             : await modrinthModUrl(from.projectId, newProfile.version, newProfile.loader);
-          if (fileUrl) {
+          if (got) {
             await ipcRenderer.invoke('mod-download', {
-              server: false, id: newProfile.id, fileUrl, projectType: 'mod',
+              server: false, id: newProfile.id, fileUrl: got.url, projectType: 'mod',
             });
             if (window.notify) window.notify('Added the mod to the new instance', 'success');
+            // And what it needs: the same popup as installing into an
+            // instance. This used to rely on the download quietly fetching
+            // the required ones, which it no longer does -- so an instance
+            // made for a mod came out without its dependencies.
+            if (window.DepPrompt) {
+              const target = { id: newProfile.id, isServer: false };
+              const deps = from.source === 'curseforge'
+                ? await window.DepPrompt.fromCurseForge({ file: got.file, gameVersion: newProfile.version, loader: newProfile.loader, target, downloadUrl: cfUrl })
+                : await window.DepPrompt.fromModrinth({ version: got.version, gameVersion: newProfile.version, loader: newProfile.loader, target });
+              await window.DepPrompt.offer(deps, target);
+            }
           } else if (window.notify) {
             window.notify("The instance was created, but that mod has no build for this version", 'error');
           }
@@ -4855,11 +4874,10 @@
               logsEl.style.display = "none";
               const canQuickPlay = versionAtLeast(profile.version, "1.20");
 
-              const renderWorlds = async () => {
-                const worlds = await ipcRenderer.invoke("get-instance-worlds", { profileId: profile.id });
-                // What the cloud has, and who has a world open on another
-                // computer. Both are "if syncing is on" -- neither failing
-                // may stop the worlds list from being drawn.
+              // What the cloud has, and who has a world open on another
+              // computer. Both are "if syncing is on" -- neither failing may
+              // stop the worlds list from being drawn.
+              const loadCloud = async () => {
                 const cloud = await ipcRenderer.invoke("cloud:status").catch(() => null);
                 // Signed in is the whole condition. There used to be a
                 // "Worlds" switch in settings that this also asked about; it
@@ -4879,12 +4897,37 @@
                     if (String(inst) === String(profile.id)) openNow.set(rest.join(":"), o);
                   }
                 }
+                return { cloudOn, synced, openNow };
+              };
+              // The cloud's answer from the last time it came, for drawing
+              // with straight away the next time.
+              let lastCloud = null;
+              let drawSeq = 0;
+              const renderWorlds = async (cloudState = null) => {
+                const mine = ++drawSeq;
+                // Used as a callback too (after an import, say); whatever
+                // that hands it is not a cloud answer.
+                if (!(cloudState && cloudState.synced instanceof Map)) cloudState = null;
+                // The worlds on this computer, the buttons and the rest are
+                // drawn at once; asking the Drive takes seconds, and the tab
+                // used to show nothing but "Loading" for all of them. What
+                // the cloud says is filled in when it comes.
+                if (!cloudState) {
+                  loadCloud().then((st) => {
+                    lastCloud = st;
+                    if (ensureStillActive()) renderWorlds(st);
+                  }).catch(() => { });
+                }
+                const { cloudOn, synced, openNow } = cloudState || lastCloud
+                  || { cloudOn: false, synced: new Map(), openNow: new Map() };
+                const worlds = await ipcRenderer.invoke("get-instance-worlds", { profileId: profile.id });
                 // Playing a world IS launching the instance, so while the
                 // game is running there is nothing to play -- the same as the
                 // Servers tab, which already knew this.
                 const running = (await ipcRenderer.invoke("get-running-instances") || [])
                   .some(r => String(r.id) === String(profile.id));
-                if (!ensureStillActive()) return;
+                // A newer draw started while this one waited: it wins.
+                if (!ensureStillActive() || mine !== drawSeq) return;
                 tabContent.innerHTML = "";
 
                 const bar = document.createElement("div");

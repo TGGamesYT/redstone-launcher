@@ -9,6 +9,48 @@ started.
 
 ---
 
+## 0. Round 70
+
+- [x] **An instance made from a mod still comes without its dependencies.**
+      That path (the chooser's "A modpack or a mod", in `instances.html`)
+      relied on the download quietly fetching the required ones, which was
+      taken out in Round 69 when the project pages got the popup -- so it lost
+      them. It now offers the same popup once the mod is in.
+- [x] **The first launch of a new version takes ages doing "nothing".** The
+      launcher's own downloader let eight files through at a time, so the four
+      thousand assets of a version not played before went in five hundred round
+      trips; now 24. And the log says what each stage did ("Checking 4000
+      assets…", "Assets: 4000 checked, 3812 downloaded (21.4s)") instead of
+      going from "Using Java version" straight to the game.
+- [x] **"From another launcher" shows two blurs while it changes.** The
+      chooser's backdrop went away as the import step brought its own, so for
+      the length of the fade there were two. The import step now sits on the
+      chooser's backdrop.
+- [x] **The old creation form still has an Import tab.** Hidden when creating
+      (it is "A modpack file" in the chooser now); kept for a modpack instance's
+      settings, where it holds "Update modpack".
+- [x] **The Worlds tab shows only "Loading" while synced worlds load.** The
+      list, the buttons and the worlds on this computer are drawn at once; what
+      the Drive says is filled in when it comes.
+- [x] **The taskbar icon does not change.** A launcher started from a pinned
+      taskbar shortcut draws its button from that shortcut, and the taskbar keeps
+      its picture in the icon cache even after the shortcut is rewritten.
+      `ie4uinit -show` refreshes it when a pinned shortcut was changed, and the
+      window icon is handed over at the sizes Windows draws it at. Not tried on
+      Windows from here.
+- [x] **A colour or gradient background makes the icon darker than it is.**
+      Those colours were shifted the way a theme colour is (as a difference from
+      the colour the artwork was drawn for), which put them as much darker as
+      the artwork is. They are drawn as themselves now.
+- [x] **The icon's corners should follow "Corner rounding".** The backing is a
+      full square; the icon is now rounded by the setting (0 square, 25 the
+      roundness of a system app icon), unless a framed picture set its own.
+- [x] **The top of the sidebar has the toolbar's shadow on it.** The shadow
+      was the toolbar's box-shadow, which ran over the sidebar; it is drawn over
+      the page only.
+
+---
+
 ## 0. Round 69
 
 - [x] **Installing a mod from its own page offers its dependencies the same

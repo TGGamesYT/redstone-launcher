@@ -15,6 +15,8 @@ import { createRequire } from "module";
 import { Client } from "minecraft-launcher-core";
 import { getLaunchConfig } from "./loader-versions.js";
 const post = (m) => { try { process.parentPort.postMessage(m); } catch { /* ignore */ } };
+// How many files are fetched at once.
+const DOWNLOAD_SOCKETS = 24;
 const require_ = createRequire(import.meta.url);
 
 // ── Not hashing three hundred megabytes on every launch ─────────────────────
@@ -500,11 +502,13 @@ function verifyDownloads() {
   // and relied on `request`'s two-socket pool to queue them. fetch has no
   // such pool, so without a gate of our own that is four thousand concurrent
   // connections: descriptor exhaustion and a storm of resets, which is to
-  // say more truncated files. Eight at a time is both safe and four times
-  // what mclc managed.
+  // say more truncated files. A gate of DOWNLOAD_SOCKETS: assets are small,
+  // so a first launch is bound by round trips, not bandwidth -- at eight it
+  // was four thousand files in five hundred rounds, a minute or more of a
+  // launch that looked like it was doing nothing.
   let active = 0;
   const waiting = [];
-  const enter = () => active < 8 ? (active++, Promise.resolve()) : new Promise(r => waiting.push(r));
+  const enter = () => active < DOWNLOAD_SOCKETS ? (active++, Promise.resolve()) : new Promise(r => waiting.push(r));
   const leave = () => { const next = waiting.shift(); if (next) next(); else active--; };
 
   // Waiting on a write stream without leaving a listener behind.
@@ -675,8 +679,33 @@ async function runLaunch(cfg) {
   launcher.on("data", (m) => post({ type: "log", line: String(m) }));
   launcher.on("debug", (m) => post({ type: "log", line: String(m) }));
   launcher.on("error", (e) => post({ type: "log", line: "ERROR: " + (e?.message || e) }));
-  launcher.on("progress", (p) => post({ type: "progress", p }));
-  launcher.on("download-status", (s) => post({ type: "dl", s }));
+  launcher.on("progress", (p) => { post({ type: "progress", p }); narrate(p); });
+  launcher.on("download-status", (s) => {
+    post({ type: "dl", s });
+    if (s && s.total && s.current >= s.total) fetched.add(String(s.name));
+  });
+  // What each stage did, said in the log. The bar showed it, but the log --
+  // which is where anybody looks when a launch seems stuck -- went from
+  // "Using Java version" to the game minutes later with nothing between,
+  // so a first launch that was busy fetching a whole version read as one
+  // doing nothing.
+  const STAGE = { assets: "assets", natives: "natives", classes: "libraries", "classes-maven-custom": "loader libraries", "assets-copy": "legacy assets" };
+  const fetched = new Set();
+  let stage = null;
+  function narrate(p) {
+    if (!p || !STAGE[p.type] || !(Number(p.total) > 0)) return;
+    if (!stage || stage.type !== p.type) {
+      stage = { type: p.type, at: Date.now(), before: fetched.size, said: false };
+      post({ type: "log", line: `[redstone] Checking ${p.total} ${STAGE[p.type]}…` });
+    }
+    if (p.task >= p.total && !stage.said) {
+      stage.said = true;
+      const got = fetched.size - stage.before;
+      const secs = ((Date.now() - stage.at) / 1000).toFixed(1);
+      post({ type: "log", line: `[redstone] ${STAGE[p.type][0].toUpperCase()}${STAGE[p.type].slice(1)}: ${p.total} checked`
+        + (got ? `, ${got} downloaded` : ", all already here") + ` (${secs}s)` });
+    }
+  }
 
   // The loader's own JVM arguments, which are not optional: NeoForge needs
   // -DlibraryDirectory to find its libraries at all, and without it FML
@@ -690,7 +719,10 @@ async function runLaunch(cfg) {
     authorization: cfg.auth,
     memory: cfg.memory,
     javaPath: cfg.javaPath,
-    overrides: { assetRoot: cfg.assetRoot, detached: true },
+    // maxSockets: what mclc still fetches itself, outside downloadAsync
+    // (see verifyDownloads), goes through `request`'s pool, which is two
+    // connections unless told otherwise.
+    overrides: { assetRoot: cfg.assetRoot, detached: true, maxSockets: DOWNLOAD_SOCKETS },
     quickPlay: cfg.quickPlay || null,
   };
   const extraJvm = [...loaderJvm, ...(cfg.customArgs || [])];

@@ -190,6 +190,9 @@
     ensureStyle();
     const ov = document.createElement('div');
     ov.className = 'imp-overlay';
+    // Opened from a step that already darkens the page: its backdrop is
+    // kept, so this one brings none of its own.
+    if (opts.backdrop === false) { ov.style.background = 'transparent'; ov.style.backdropFilter = 'none'; }
     ov.innerHTML = `
       <div class="imp-card">
         <div class="imp-head">

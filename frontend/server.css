@@ -983,7 +983,22 @@ textarea::placeholder {
      clickable whatever is open. */
   z-index: 8001;
   -webkit-app-region: drag;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* The toolbar's shadow, over the page only. As a box-shadow it ran the whole
+   width of the bar, and the sidebar sits directly under the toolbar -- so the
+   top of the sidebar had the toolbar's shadow lying across it, which made the
+   two bars read as two pieces instead of one frame around the page. */
+#toolbar::after {
+  content: "";
+  position: absolute;
+  left: 70px;
+  right: 0;
+  top: 100%;
+  height: 8px;
+  background: linear-gradient(rgba(0, 0, 0, 0.3), transparent);
+  pointer-events: none;
+  -webkit-app-region: no-drag;
 }
 
 /* The title sits between two groups that each take an equal share of the

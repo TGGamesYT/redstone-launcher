@@ -1838,6 +1838,7 @@ ipcMain.on('save-settings', (event, newsettings) => {
   // the base colour meant changing either left the icon as it was.
   const wasSecond = settings.get('secondaryColor', "#ff4d4d");
   const wasBg = JSON.stringify(settings.get('background', null) || null);
+  const wasRound = settings.get('borderRadius', 25);
   settings.set(newsettings);
   const color = settings.get('baseColor', "#FF0000");
   applyAccentColour(color);
@@ -1856,6 +1857,9 @@ ipcMain.on('save-settings', (event, newsettings) => {
   // the icon it would draw from any one of them is made half of the new
   // theme and half of the old. The apply draws it itself when it is done.
   if ((color !== wasBase || second !== wasSecond || bgChanged) && icon.kind !== 'image' && !applyingTheme) retintAppIconSoon();
+  // The icon's corners follow the launcher's -- for a picture of your own as
+  // well, which is why this one is not limited to the themed kinds.
+  else if (settings.get('borderRadius', 25) !== wasRound && icon.kind !== 'plain' && !applyingTheme) retintAppIconSoon();
   tellEveryoneSettingsChanged();
 });
 
@@ -7764,10 +7768,15 @@ async function iconFills({ color, mergeBlock, picture } = {}) {
   }
   // The base colour, "supporting gradient": when the launcher's background IS
   // a gradient, the icon's background is that gradient.
+  // Colours taken from the background are drawn AS those colours (`asIs`,
+  // see shadeLayer), not shifted the way a theme colour is.
   if (String(bg.mode) === "gradient" && bg.gradient && (bg.gradient.colors || []).length > 1) {
-    background = { kind: "gradient", colors: bg.gradient.colors, angle: bg.gradient.angle };
+    background = { kind: "gradient", colors: bg.gradient.colors, angle: bg.gradient.angle, asIs: true };
   }
-  if (mergeBlock) background = (await backgroundAsFill()) || background;
+  if (mergeBlock) {
+    const fromBg = await backgroundAsFill();
+    if (fromBg) background = fromBg.kind === "texture" ? fromBg : { ...fromBg, asIs: true };
+  }
   return {
     background,
     // The gem is the second colour, and never the cog's business.
@@ -7840,13 +7849,47 @@ async function themedIconPng(opts = {}) {
 async function iconPngFor(icon, opts = {}) {
   const want = icon || {};
   const parts = opts.parts == null ? iconWantsParts(want) : !!opts.parts;
+  let png;
   if (want.kind === "image" && want.dataUrl && !parts) {
     const b64 = String(want.dataUrl).replace(/^data:image\/[\w+.-]+;base64,/, "");
-    return sharp(Buffer.from(b64, "base64"))
+    png = await sharp(Buffer.from(b64, "base64"))
       .resize(256, 256, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
       .png().toBuffer();
+  } else {
+    png = await themedIconPng({ ...opts, icon: want, parts });
   }
-  return themedIconPng({ ...opts, icon: want, parts });
+  return roundIconCorners(png, want);
+}
+
+// The icon's corners, as round as the launcher's.
+//
+// The backing is drawn as a full square, so whatever it was filled with -- the
+// base colour, the background's colour or gradient, a picture -- the icon had
+// sharp corners while every corner in the launcher followed the "Corner
+// rounding" setting. Unless the icon says otherwise: `corner` on the icon
+// itself, or a framed picture (`backCrop`), whose framing already decided how
+// round it is. The logo as drawn ("plain") is left as drawn.
+//
+// The setting is in pixels of a panel, up to 25; the icon takes it as a
+// share of its size, so the roundest setting is the rounded square of a
+// system app icon and 0 is a square.
+function iconCornerRadius(icon, size = 256) {
+  if (!icon || icon.kind === "plain") return 0;
+  if (icon.backCrop && icon.mergeBlock) return 0;
+  const px = Number.isFinite(Number(icon.corner)) ? Number(icon.corner) : Number(settings.get("borderRadius", 25));
+  const share = Math.max(0, Math.min(25, px || 0)) / 25;
+  return Math.round(size * 0.22 * share);
+}
+async function roundIconCorners(png, icon) {
+  try {
+    const meta = await sharp(png).metadata();
+    const size = meta.width || 256;
+    const r = iconCornerRadius(icon, size);
+    if (!r) return png;
+    const mask = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${meta.height || size}">`
+      + `<rect x="0" y="0" width="${size}" height="${meta.height || size}" rx="${r}" ry="${r}" fill="#fff"/></svg>`);
+    return await sharp(png).ensureAlpha().composite([{ input: mask, blend: "dest-in" }]).png().toBuffer();
+  } catch { return png; }
 }
 
 // Put an icon on the windows and remember it. `icon` is either
@@ -7887,6 +7930,22 @@ function updateDesktopIconSoon(png) {
 // per-window "relaunch icon" was tried on top of that and taken out again: it
 // gave Windows a second picture to hold on to, and the button stopped
 // changing after the first time.
+// The window icon at the sizes Windows actually draws it at. Given only the
+// 256px picture, the small icon of the taskbar button and the title bar is a
+// shrink Windows makes once and may keep; handing over each size is what
+// a proper .ico would have done.
+async function windowIconImage(png) {
+  const img = nativeImage.createFromBuffer(png);
+  if (process.platform !== "win32") return img;
+  try {
+    for (const size of [16, 20, 24, 32, 40, 48, 64]) {
+      const small = await sharp(png).resize(size, size).png().toBuffer();
+      img.addRepresentation({ scaleFactor: size / 256, width: size, height: size, buffer: small });
+    }
+  } catch { /* the one picture, then */ }
+  return img;
+}
+
 async function applyAppIcon(icon, { desktop = true } = {}) {
   try {
     // Remembered first, because the icon is drawn FROM the setting: a
@@ -7900,7 +7959,7 @@ async function applyAppIcon(icon, { desktop = true } = {}) {
     fs.writeFileSync(ICON_OUT(), png);
     // The window icon IS the taskbar button while the app is running, so this
     // is the one that has to happen now rather than in a moment.
-    const img = nativeImage.createFromBuffer(png);
+    const img = await windowIconImage(png);
     for (const w of BrowserWindow.getAllWindows()) {
       try { if (!w.isDestroyed()) w.setIcon(img); } catch { /* not every platform takes one */ }
     }

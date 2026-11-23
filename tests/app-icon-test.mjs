@@ -698,5 +698,28 @@ check("the settings page uses the icon picker's own cropper",
 check("and stores what it gives back",
   /icon:setBackCrop/.test(setSrc) && /icon:setBackCrop/.test(mainSrc), true);
 
+// ── a colour taken from the background is that colour ──
+{
+  const BG = "#3a6ea5";
+  const want = icon.rgbToHsl(...Object.values(icon.hexToRgb(BG)).slice(0, 3))[2];
+  const tinted = await raw(await icon.buildIcon(layers, { background: { kind: "color", hex: BG } }, SIZE, anchors));
+  const asIs = await raw(await icon.buildIcon(layers, { background: { kind: "color", hex: BG, asIs: true } }, SIZE, anchors));
+  check("the background's own colour, as a theme colour, comes out darker than it is",
+    meanLight(tinted.data, bgOnly) < want - 0.08, true,
+    `${meanLight(tinted.data, bgOnly).toFixed(3)} against ${want.toFixed(3)} -- what was reported`);
+  check("drawn as itself it is that colour on average",
+    Math.abs(meanLight(asIs.data, bgOnly) - want) < 0.03, true,
+    `${meanLight(asIs.data, bgOnly).toFixed(3)} against ${want.toFixed(3)}`);
+  check("and the backing keeps its light and shade", (() => {
+    let lo = 1, hi = 0;
+    for (let i = 0, p = 0; i < asIs.data.length; i += 4, p++) {
+      if (!bgOnly[p] || asIs.data[i + 3] < 200) continue;
+      const l = icon.rgbToHsl(asIs.data[i], asIs.data[i + 1], asIs.data[i + 2])[2];
+      lo = Math.min(lo, l); hi = Math.max(hi, l);
+    }
+    return hi - lo > 0.05;
+  })(), true);
+}
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);

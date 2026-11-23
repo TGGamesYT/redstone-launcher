@@ -167,8 +167,9 @@ export function normaliseFill(fill) {
   if (fill.kind === "gradient") {
     const colors = (fill.colors || []).filter(Boolean);
     if (!colors.length) return null;
-    if (colors.length === 1) return { kind: "color", hex: colors[0] };
-    return { kind: "gradient", colors, angle: Number.isFinite(fill.angle) ? fill.angle : 180 };
+    const asIs = fill.asIs ? { asIs: true } : {};
+    if (colors.length === 1) return { kind: "color", hex: colors[0], ...asIs };
+    return { kind: "gradient", colors, angle: Number.isFinite(fill.angle) ? fill.angle : 180, ...asIs };
   }
   if (fill.kind === "texture") return fill.png ? fill : null;
   if (fill.kind === "color") return fill.hex ? fill : null;
@@ -287,7 +288,14 @@ export async function shadeLayer(layerPng, fill, size, opts = {}) {
   // so a highlight that is a lighter, warmer red came out of a blue theme
   // with the same L, a hue most of the way round the circle, and nothing
   // left that read as a highlight -- still dark, just bluer.
-  const anchor = opts.anchor ? oklchOf(opts.anchor) : null;
+  //
+  // Except for a colour that is not a theme's at all but the very one the
+  // launcher shows behind itself (`asIs`): read as a difference from the
+  // artwork's colour, it came out as much darker than that background as the
+  // artwork is darker than the base colour -- an icon "in your background
+  // colour" that was visibly not. Such a fill is centred on itself instead:
+  // the layer keeps its light and shade, and on average IS that colour.
+  const anchor = opts.anchor && !want.asIs ? oklchOf(opts.anchor) : null;
 
   const px = await fillPixels(want, size);
   const out = Buffer.from(data);

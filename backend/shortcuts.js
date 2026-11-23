@@ -309,6 +309,16 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
         }
       }
       if (updated.length) sweepOldIcons(dir, ".ico", ico);
+      // The taskbar button of a PINNED launcher is drawn from the pinned
+      // shortcut, and the taskbar keeps the picture it read from it in the
+      // shell's icon cache -- which naming the shortcut as changed does not
+      // reach. So the desktop and the Start menu changed and the taskbar did
+      // not. `ie4uinit -show` is Windows' own way of having the icon cache
+      // refreshed in place; only run when a pinned one was actually changed.
+      if (updated.some(f => /User Pinned[\\/]TaskBar/i.test(f))) {
+        const ie4 = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "ie4uinit.exe");
+        run(ie4, ["-show"], { windowsHide: true, timeout: 15000 }).catch(() => { /* the next sign-in, then */ });
+      }
       return { updated, skipped, icon: ico };
     }
 
