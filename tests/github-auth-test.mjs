@@ -75,5 +75,42 @@ check("signed out is nobody", gha.loginFromGhStatus("You are not logged into any
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// Taking over the computer's gh sign-in, once, with a stand-in gh: signed in
+// as octocat in its own config, and empty in the launcher's until something
+// logs it in there.
+if (process.platform !== "win32") {
+  const os = await import("os");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gh-adopt-"));
+  const bin = path.join(tmp, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "gh"), `#!/bin/sh
+if [ -z "$GH_CONFIG_DIR" ]; then
+  case "$1 $2" in
+    "auth token") echo "gho_system_token"; exit 0;;
+    "auth status") echo "Logged in to github.com account octocat (keyring)" >&2; exit 0;;
+  esac
+  exit 1
+fi
+case "$1 $2" in
+  "auth status") if [ -f "$GH_CONFIG_DIR/tok" ]; then echo "Logged in to github.com account octocat (oauth_token)" >&2; exit 0; fi; exit 1;;
+  "auth login") cat > "$GH_CONFIG_DIR/tok"; exit 0;;
+  "auth token") cat "$GH_CONFIG_DIR/tok"; exit 0;;
+esac
+exit 1
+`, { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = bin + path.delimiter + oldPath;
+  gha.configure({ dataDir: path.join(tmp, "data") });
+  const first = await gha.adoptSystemSignIn();
+  check("the computer's gh sign-in is taken over when the launcher has none", [first.adopted, first.token], [true, "gho_system_token"]);
+  check("into the launcher's own config", fs.readFileSync(path.join(tmp, "data", "gh-config", "tok"), "utf8").trim(), "gho_system_token");
+  check("and the launcher then shows that account", (await gha.ghAccount()).login, "octocat");
+  fs.rmSync(path.join(tmp, "data", "gh-config", "tok"));          // signed out of the launcher
+  check("only once: signing out afterwards is not undone", (await gha.adoptSystemSignIn()).adopted, false);
+  process.env.PATH = oldPath;
+  gha.configure({ dataDir: null });
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
 process.exit(bad ? 1 : 0);

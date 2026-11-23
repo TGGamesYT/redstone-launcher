@@ -96,17 +96,19 @@ export function ghAsset(release, platform = process.platform, arch = process.arc
   return null;
 }
 
-const run = (bin, args, { input = null, onText = null, timeout = 15 * 60 * 1000 } = {}) => new Promise((resolve) => {
+const run = (bin, args, { input = null, onText = null, timeout = 15 * 60 * 1000, system = false } = {}) => new Promise((resolve) => {
   let child;
   const env = { ...process.env, GH_PROMPT_DISABLED: "1", NO_COLOR: "1", GH_NO_UPDATE_NOTIFIER: "1" };
-  const cfg = ghConfigDir();
+  // `system` runs gh as the computer's own, with its own config -- only ever
+  // to READ its sign-in, once, so the launcher can start from it.
+  const cfg = system ? null : ghConfigDir();
   if (cfg) {
     try { fs.mkdirSync(cfg, { recursive: true }); } catch { /* gh makes it itself */ }
     env.GH_CONFIG_DIR = cfg;
+    // A token in the environment would be used instead of the sign-in, and
+    // be somebody else's; this is the launcher's own sign-in.
+    delete env.GH_TOKEN; delete env.GITHUB_TOKEN;
   }
-  // A token in the environment would be used instead of the sign-in, and be
-  // somebody else's; this is the launcher's own sign-in.
-  delete env.GH_TOKEN; delete env.GITHUB_TOKEN;
   try {
     child = spawn(bin, args, { windowsHide: true, shell: false, env });
   } catch (e) { return resolve({ ok: false, out: "", err: String(e.message || e) }); }
@@ -145,10 +147,41 @@ export function loginFromGhStatus(text) {
   return pick ? pick.login : null;
 }
 
+/**
+ * The computer's gh sign-in, taken over once.
+ *
+ * Somebody already signed in to GitHub CLI should not have to sign in again
+ * for the launcher. So the first time the launcher looks, if its own sign-in
+ * is empty and the computer's gh is signed in, that token is read and the
+ * launcher's own copy is signed in with it. Once only: signing the launcher
+ * out afterwards is not undone by it quietly coming back. The computer's gh
+ * is only read, never changed.
+ */
+export async function adoptSystemSignIn() {
+  const cfg = ghConfigDir();
+  if (!cfg) return { adopted: false };
+  const marker = path.join(cfg, ".adopted-system-sign-in");
+  try { if (fs.existsSync(marker)) return { adopted: false }; } catch { /* look below */ }
+  const mark = () => { try { fs.mkdirSync(cfg, { recursive: true }); fs.writeFileSync(marker, new Date().toISOString()); } catch { /* next time, then */ } };
+  const system = ghOnPath();
+  const mine = ghBin();
+  if (!system || !mine) return { adopted: false };      // not settled: there may be a gh later
+  const own = await run(mine, ["auth", "status", "--hostname", "github.com"], { timeout: 20000 });
+  if (own.ok) { mark(); return { adopted: false }; }    // already signed in here
+  const tok = await run(system, ["auth", "token", "--hostname", "github.com"], { timeout: 20000, system: true });
+  const token = tok.ok ? String(tok.out || "").trim() : "";
+  if (!token) { mark(); return { adopted: false }; }
+  const r = await run(mine, ["auth", "login", "--hostname", "github.com", "--git-protocol", "https",
+    "--with-token", "--insecure-storage"], { input: token + "\n", timeout: 30000 });
+  mark();
+  return { adopted: r.ok, token: r.ok ? token : null };
+}
+
 /** Whether the launcher has a gh, and who the LAUNCHER is signed in as. */
 export async function ghAccount() {
   const gh = ghBin();
   if (!gh) return { gh: false, own: false, login: null };
+  try { await adoptSystemSignIn(); } catch { /* signed out, then */ }
   // gh writes the status to stderr, and exits non-zero when signed out.
   const r = await run(gh, ["auth", "status", "--hostname", "github.com"], { timeout: 20000 });
   return { gh: true, own: gh === ownGh(), login: r.ok ? loginFromGhStatus(r.out + "\n" + r.err) : null };
@@ -163,6 +196,7 @@ export async function ghAccount() {
 export async function signInWithGh({ onCode, openUrl } = {}) {
   const gh = ghBin();
   if (!gh) return { ok: false, error: "GitHub CLI is not here yet." };
+  try { await adoptSystemSignIn(); } catch { /* the sign-in below, then */ }
   const status = await run(gh, ["auth", "status", "--hostname", "github.com"], { timeout: 20000 });
   let login = status.ok ? loginFromGhStatus(status.out + "\n" + status.err) : null;
   if (!status.ok) {
@@ -201,5 +235,5 @@ export async function signOutOfGh() {
 
 export default {
   configure, ownGhDir, ghConfigDir, ghExeIn, ownGh, ghOnPath, ghBin, ghAsset,
-  ghAccount, loginFromGhStatus, signInWithGh, signOutOfGh, codeFromGhOutput,
+  ghAccount, adoptSystemSignIn, loginFromGhStatus, signInWithGh, signOutOfGh, codeFromGhOutput,
 };

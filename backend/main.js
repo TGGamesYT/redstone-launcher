@@ -15356,6 +15356,12 @@ ipcMain.handle("git:setToken", (event, { token } = {}) => {
 githubAuth.configure({ dataDir });
 
 ipcMain.handle("github:account", async () => {
+  // The computer's own gh sign-in, taken over the first time (see
+  // adoptSystemSignIn), is the launcher's sign-in from then on.
+  try {
+    const a = await githubAuth.adoptSystemSignIn();
+    if (a && a.adopted && a.token && !gitToken()) settings.set(GIT_TOKEN_KEY, a.token);
+  } catch { /* signed out, then */ }
   try { return { success: true, ...(await githubAuth.ghAccount()), hasToken: !!gitToken() }; }
   catch (e) { return { success: false, gh: false, login: null, error: e.message }; }
 });
