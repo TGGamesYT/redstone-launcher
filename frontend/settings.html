@@ -399,10 +399,19 @@
       margin-top: 10px;
     }
 
+    /* The icon sits INSIDE a larger frame, with room around it. The preview
+       used to be the icon itself with the launcher's rounded corners on it, so
+       the icon's own corners were clipped by the frame's and the Corners
+       slider seemed to do nothing until it went past the frame's rounding.
+       Smooth scaling, too: the icon is 256 pixels shown at 72, and pixelated
+       scaling turns a curve into a staircase. */
     .appicon-row img {
-      width: 64px;
-      height: 64px;
-      image-rendering: pixelated;
+      width: 72px;
+      height: 72px;
+      padding: 14px;
+      box-sizing: content-box;
+      image-rendering: auto;
+      object-fit: contain;
       border-radius: var(--border-radius);
       background: var(--menu-bg);
       border: 1px solid var(--border-dark);
@@ -2475,7 +2484,6 @@
         const own = icon && icon.corner != null && Number.isFinite(Number(icon.corner));
         cornerFollow.checked = !own;
         cornerSlider.value = own ? Number(icon.corner) : launcherCorner();
-        cornerSlider.disabled = !own;
         cornerValue.textContent = cornerText(Number(cornerSlider.value));
       }
       if (cornerSlider) {
@@ -2495,12 +2503,15 @@
           busy = false;
         };
         cornerSlider.addEventListener('input', () => {
+          // Always movable: moving it is choosing a rounding of its own, so
+          // "Same as the launcher" goes off by itself rather than the slider
+          // being locked until it is unticked.
+          cornerFollow.checked = false;
           cornerValue.textContent = cornerText(Number(cornerSlider.value));
           pending = Number(cornerSlider.value);
           send();
         });
         cornerFollow.addEventListener('change', async () => {
-          cornerSlider.disabled = cornerFollow.checked;
           pending = cornerFollow.checked ? null : Number(cornerSlider.value);
           if (cornerFollow.checked) {
             const r = await ipcRenderer.invoke('icon:setCorner', { corner: null }).catch(() => null);

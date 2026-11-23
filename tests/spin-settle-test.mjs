@@ -57,9 +57,10 @@ fs.writeFileSync(modFile,
     .replace(/^const SPIN/m, "export const SPIN")
     .replace(/^function newSpinState/m, "export function newSpinState")
     .replace(/^function applySpin/m, "export function applySpin")
+    .replace(/^function catchSpin/m, "export function catchSpin")
     // `clamp` is declared further up the real file, beside the other maths.
     .replace(/^const clamp[^\n]*\n/m, ""));
-const { applySpin, newSpinState } = await import("file://" + modFile + "?v=" + Date.now());
+const { applySpin, newSpinState, catchSpin } = await import("file://" + modFile + "?v=" + Date.now());
 
 // A rig, as far as applySpin touches one.
 const rotation = () => ({ x: 0, y: 0, z: 0 });
@@ -142,9 +143,10 @@ const armOut = (rest) => {
 // than holding still and drifting home, which is what was reported.
 {
   const DT = 1 / 60;
-  const spinThenStop = (after) => {
+  const spinThenStop = (after, { caught = true } = {}) => {
     const state = newSpinState();
     for (let i = 0; i < 30; i++) applySpin(state, rig(), 6, DT);
+    if (caught) catchSpin();
     const trailing = state.armLag.x;
     let past = 0, at = -1;
     for (let i = 0; i < 40; i++) {
@@ -156,6 +158,9 @@ const armOut = (rest) => {
     }
     return { trailing, past, at };
   };
+  // First, before anything has been caught in this run (a catch is good
+  // for a quarter of a second).
+  const unhover = spinThenStop(() => 0, { caught: false });
   const dead = spinThenStop(() => 0);
   check("stopped dead, the arms swing on past where they hang",
     dead.past > Math.abs(dead.trailing) * 0.4, true,
@@ -176,6 +181,11 @@ const armOut = (rest) => {
     check("a drag whose speed jitters does not shake the arms",
       worst < 2, true, `fastest the arm moved: ${worst.toFixed(2)} rad/s`);
   }
+  // Let go of rather than caught -- a card easing home as the pointer
+  // leaves it: just as sharp, and no burst.
+  check("a sharp stop that is not a catch (leaving a card) gets no kick",
+    unhover.past < dead.past * 0.5, true,
+    `${unhover.past.toFixed(2)} rad past rest, against ${dead.past.toFixed(2)} when caught`);
   check("a spin that slows down by itself gets no kick",
     slow.past < dead.past * 0.5, true,
     `${slow.past.toFixed(2)} rad past rest, against ${dead.past.toFixed(2)} when stopped dead`);

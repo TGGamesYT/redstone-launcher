@@ -7928,6 +7928,10 @@ const DESKTOP_ICON_SETTLE = 1500;
 // the shortcuts had just been pointed at, and the taskbar was left holding
 // the picture it had cached, for good.
 let _desktopIconBusy = null;
+// Whether the Start menu's and the pinned shortcuts still show an older icon
+// than the window does. They are brought up to date as the launcher quits.
+let _shortcutsOwed = false;
+let _shortcutsSettled = false;
 let _desktopIconNext = null;
 function updateDesktopIconSoon(png) {
   if (_desktopIconSoon) clearTimeout(_desktopIconSoon);
@@ -7944,7 +7948,10 @@ async function rewriteDesktopIcons() {
     // Not awaited by anyone and never blocking: rewriting a shortcut means
     // starting a shell, and the main process is the one that answers every
     // window.
-    await Promise.resolve(shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher" }))
+    // The desktop's only, while running: see setAppShortcutIcon's `scope`.
+    // The rest follow when the launcher closes.
+    _shortcutsOwed = true;
+    await Promise.resolve(shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher", scope: "desktop" }))
       .then((r) => {
         // Said in the console, because "the desktop icon did not change" has
         // two very different answers: no shortcut starts THIS program (a run
@@ -16954,6 +16961,25 @@ function headProfilesChanged() {
 }
 app.on("will-quit", () => { try { saveHeadProfiles(); } catch { /* going away anyway */ } });
 
+// The icon changed while running: the Start menu's and the pinned shortcut
+// are rewritten now, on the way out, when nothing is left for the taskbar to
+// latch on to. Held up for at most a few seconds -- a PowerShell run -- and
+// never more than once.
+app.on("before-quit", (e) => {
+  if (process.platform !== "win32" || !_shortcutsOwed || _shortcutsSettled) return;
+  _shortcutsSettled = true;
+  e.preventDefault();
+  let png = null;
+  try { png = fs.readFileSync(ICON_OUT()); } catch { /* nothing drawn */ }
+  const done = () => { try { app.quit(); } catch { /* going anyway */ } };
+  if (!png) return done();
+  const timer = setTimeout(done, 8000);
+  Promise.resolve(_desktopIconBusy)
+    .then(() => shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher", scope: "all" }))
+    .catch(() => { /* the next quit, then */ })
+    .finally(() => { clearTimeout(timer); done(); });
+});
+
 /**
  * One at a time, with a gap, and never the same question twice at once.
  *
@@ -18907,7 +18933,14 @@ function pooledSkinList(lib) {
 
 // What a handler should hand back after changing something: the pooled list
 // when pooling, this account's own otherwise.
-const skinViewFor = (lib, uuid) => poolingSkins() ? pooledSkinList(lib) : (lib[uuid] || []);
+//
+// Only skins, whatever the library holds: a record with no picture never
+// reaches a page. Checking on the way in from disk was not enough -- a skin
+// added or changed during the session is saved and handed back from memory,
+// and one whose picture never arrived went straight to the page as a card
+// called "undefined".
+const skinViewFor = (lib, uuid) => (poolingSkins() ? pooledSkinList(lib) : (lib[uuid] || []))
+  .filter(isSkinRecord).map(tidySkinRecord);
 
 // Find a skin by id. With pooling on it may be filed under another account, so
 // look there too — otherwise renaming a shared skin would silently do nothing.
@@ -18942,18 +18975,35 @@ function skinBucketsToScan(lib, uuid) {
 // turned up on the skins page as a card called "undefined" with nothing in it
 // -- and, having no id either, nothing could be done with it: renaming,
 // applying and deleting all look the skin up by id and found nothing.
+//
+// "Holds a picture" means an actual PNG, not a long enough string: a skin
+// added as 'data:image/png;base64,' + something that never arrived is the
+// text "data:image/png;base64,undefined" -- long enough to pass a length
+// check, and exactly the card called "undefined" that kept coming back. A
+// PNG's base64 always starts with its signature, iVBORw0KGgo.
+const skinPngPayload = (b64) => String(b64 || "").replace(/^data:image\/[\w+.-]+;base64,/, "");
+const isSkinPng = (b64) => {
+  const p = skinPngPayload(b64);
+  return p.length > 60 && p.startsWith("iVBORw0KGgo") && /^[A-Za-z0-9+/=\s]+$/.test(p);
+};
 const isSkinRecord = (s) => !!(s && typeof s === "object"
-  && typeof s.base64 === "string" && s.base64.length > 32);
+  && typeof s.base64 === "string" && isSkinPng(s.base64));
 
 // What a skin needs to be shown and acted on. An entry saved by an older
 // version may have no id or no name; both are filled in rather than left for
 // the page to print as "undefined".
+//
+// A name that is the WORD "undefined" or "null" -- what a missing value turns
+// into when it is put into a string -- counts as no name.
+const realSkinName = (n) => typeof n === "string" && n.trim() !== ""
+  && !/^(undefined|null|NaN)$/i.test(n.trim());
+const realSkinId = (id) => id != null && !/^(undefined|null|NaN)$/i.test(String(id).trim()) && String(id).trim() !== "";
 function tidySkinRecord(s, i) {
-  if (s.id != null && typeof s.name === "string" && s.name) return s;
+  if (realSkinId(s.id) && realSkinName(s.name)) return s;
   return {
     ...s,
-    id: s.id != null ? s.id : `old-${s.pixelHash || i}-${s.addedAt || 0}`,
-    name: (typeof s.name === "string" && s.name) ? s.name : "Skin",
+    id: realSkinId(s.id) ? s.id : `old-${s.pixelHash || i}-${s.addedAt || 0}`,
+    name: realSkinName(s.name) ? s.name : "Skin",
   };
 }
 
@@ -18983,6 +19033,15 @@ function loadSkinLib() {
 }
 function saveSkinLib(obj) {
   fs.mkdirSync(texturesDir, { recursive: true });
+  // Nothing that is not a skin is ever written, whoever is saving -- a
+  // handler that added one with no picture, or a sync that brought one.
+  // Cleaned in place, so whoever handed this in and goes on to use it is
+  // using the clean list too.
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (!Array.isArray(v) || k === POOL_ORDER_KEY || k === DELETED_KEY) continue;
+    const clean = v.filter(isSkinRecord).map(tidySkinRecord);
+    if (clean.length !== v.length || clean.some((x, i) => x !== v[i])) obj[k] = clean;
+  }
   fs.writeFileSync(skinLibraryPath, JSON.stringify(obj));
 }
 
@@ -19299,7 +19358,10 @@ ipcMain.handle("modrinth:findServerByIp", async (event, { ip }) => {
 // if a pixel-identical skin is already saved.
 ipcMain.handle("skins:add", async (event, { uuid, base64, variant, name, editorType, creatorState, layerState }) => {
   const b = String(base64 || "").replace(/^data:image\/\w+;base64,/, "");
-  if (!b || !uuid) return skinViewFor(loadSkinLib(), uuid);
+  // Not a picture (a fetch that never arrived, sent on as the text
+  // "undefined"): nothing is added.
+  if (!b || !uuid || !isSkinPng(b)) return skinViewFor(loadSkinLib(), uuid);
+  if (!realSkinName(name)) name = null;
   const pixelHash = await skinPixelHash(b);
   const lib = loadSkinLib();
   const arr = lib[uuid] || [];

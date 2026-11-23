@@ -522,15 +522,26 @@
   const KICK = 16;
   const KICK_FROM = 2.5;
   const KICKED = ['armLag', 'capeSway', 'headLag', 'bodyTwist', 'legLag'];
+  // Only a CATCH kicks. A render let go of, a card easing home as the
+  // pointer leaves it, the turn reversing on the way back -- those change
+  // speed sharply too, and gave the same burst of flailing on a simple
+  // unhover. So the kick is armed by catchSpin() (a grab, in orbitPhysics)
+  // and spent by the first render that sees the stop within CATCH_WINDOW.
+  const CATCH_WINDOW = 250;
+  let caughtAt = 0;
+  function catchSpin() { caughtAt = (typeof performance !== 'undefined' ? performance.now() : Date.now()); }
   function kickOnJolt(state, w) {
     const was = Number.isFinite(state.lastW) ? state.lastW : w;
     state.lastW = w;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (!caughtAt || now - caughtAt > CATCH_WINDOW || state.usedCatch === caughtAt) return;
     const dW = w - was;
     if (Math.abs(dW) < KICK_FROM) return;
     // A stop or a start -- not a drag's reading jumping about while it keeps
     // going, which would shake the limbs on every pointer move.
     const lo = Math.min(Math.abs(w), Math.abs(was)), hi = Math.max(Math.abs(w), Math.abs(was));
     if (Math.sign(w) === Math.sign(was) && lo > hi / 3) return;
+    state.usedCatch = caughtAt;
     for (const n of KICKED) state[n].v += SPIN[n][0] * dW * KICK;
   }
 
@@ -1039,6 +1050,7 @@
       // letting it fade -- arms held still in mid-air, then drifting --
       // where a figure grabbed mid-spin has its arms fly on round it.
       lastW = 0; lastSpinAt = 0;
+      catchSpin();
       try { (opts.onSpin || setSpin)(0); } catch { /* not worth throwing over */ }
       flick.reset();
       try { const c = camSpherical(v.camera.position); flick.add(c.theta, c.phi); } catch { }
@@ -1290,6 +1302,8 @@
 
   window.SkinAnimations = {
     revealWhenSkinned,
+    // "It has just been caught": the next sharp stop throws the limbs on.
+    catchSpin,
     clips,
     names,
     resetPose: resetToRest,

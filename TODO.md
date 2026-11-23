@@ -9,6 +9,37 @@ started.
 
 ---
 
+## 0. Round 72
+
+- [x] **The icon's Corners slider should work with "Same as the launcher" on.**
+      Always movable now; moving it turns "Same as the launcher" off.
+- [x] **The icon preview is itself rounded, so the icon's corners are hard to
+      judge.** The icon sits inside a larger padded frame, scaled smoothly, so
+      its own corners are what you see.
+- [~] **The taskbar icon still changes only the first time.** Every change sets
+      the window's icon at once (which is the change that showed), then
+      rewrote the shortcuts and told Explorer. The best fit for "first time
+      only, per session" is that being told the Start menu or pinned shortcut
+      changed makes the running button show that shortcut's cached icon from
+      then on, ignoring the window's. So while running only the desktop
+      shortcut is rewritten; the Start menu and pinned ones are brought up to
+      date as the launcher closes. Not tried on Windows from here.
+- [x] **Leaving a spinning skin card gives the same burst as catching one.**
+      The kick fired on any sharp change of speed, and a card easing home as
+      the pointer leaves is one. It now fires only on a catch (a grab of the
+      render), within a quarter of a second of it.
+- [x] **An "undefined" skin entry, again: make it impossible.** "Holds a
+      picture" meant "a string over 32 characters", and
+      'data:image/png;base64,' + a picture that never arrived is the text
+      "data:image/png;base64,undefined" -- which passes. A skin must now be an
+      actual PNG; a name or id that is the word "undefined"/"null" counts as
+      missing. Checked when a skin is added, whenever the library is saved
+      (whoever saves it, sync included), on load, and in every list handed to
+      a page -- not only on load, which missed anything made during a session.
+      `tests/skin-records-test.mjs`.
+
+---
+
 ## 0. Round 71
 
 - [x] **Blur settings should sync.** They went with Settings already, but the

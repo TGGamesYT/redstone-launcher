@@ -228,7 +228,16 @@ export function writeFreshAppIco(pngBuffer) {
   return ico;
 }
 
-export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", exec } = {}) {
+// `scope`:
+//   "all"      every shortcut that starts this program (the default)
+//   "desktop"  only the desktop's. While the launcher is running the Start
+//              menu's and the pinned one are left alone: once Explorer is told
+//              those changed, the running window's taskbar button stops
+//              following the window's own icon and shows the shortcut's cached
+//              one for the rest of the session -- which is "it changes the
+//              first time and never again". They are rewritten as the
+//              launcher closes instead (see main.js).
+export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", exec, scope = "all" } = {}) {
   if (!pngBuffer) return { updated: [], skipped: ["no icon given"] };
   const updated = [], skipped = [];
   const dir = iconsDir();
@@ -245,7 +254,8 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
         path.join(home, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs"),
         path.join(process.env.ProgramData || "C:\\ProgramData", "Microsoft", "Windows", "Start Menu", "Programs"),
       ];
-      const places = [
+      const onlyDesktop = scope === "desktop";
+      const places = onlyDesktop ? [desktop].filter(Boolean) : [
         desktop,
         ...startMenus,
         // A shortcut pinned to the taskbar is its own .lnk, here, and it is
@@ -256,7 +266,7 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
       ].filter(Boolean);
       // An installer may also put its shortcut in a folder of its own in the
       // Start menu.
-      for (const sm of startMenus) {
+      for (const sm of (onlyDesktop ? [] : startMenus)) {
         let subs = [];
         try { subs = fs.readdirSync(sm, { withFileTypes: true }); } catch { continue; }
         for (const d of subs) {
@@ -308,7 +318,10 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
           skipped.push(String(e && e.message || e));
         }
       }
-      if (updated.length) sweepOldIcons(dir, ".ico", ico);
+      // Only once every shortcut points at the new one: a desktop-only pass
+      // leaves the Start menu's pointing at an older .ico, and sweeping that
+      // away would blank it.
+      if (updated.length && !onlyDesktop) sweepOldIcons(dir, ".ico", ico);
       // The taskbar button is drawn from a shortcut -- the pinned one, or
       // while it runs the Start menu one that carries the same app id -- and
       // the taskbar keeps the picture it read in the shell's icon cache,
@@ -317,7 +330,7 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
       // Every time a shortcut changed, and waited for, so the next change
       // cannot start while this one is still going.
       let refreshed = null;
-      if (updated.length) {
+      if (updated.length && !onlyDesktop) {
         const ie4 = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "ie4uinit.exe");
         try { await run(ie4, ["-show"], { windowsHide: true, timeout: 15000 }); refreshed = "ok"; }
         catch (e) { refreshed = "failed: " + (e && e.message || e); }
