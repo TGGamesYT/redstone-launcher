@@ -1232,7 +1232,13 @@
           subdomain: _instFullSubdomain(), domain: _instSelectedDomain(),
           accountId: document.getElementById('instShareAccount').value,
         });
-        if (res && res.success) { document.getElementById('instShareModal').classList.remove('active'); o.onShared && o.onShared(res.address); }
+        if (res && res.success) {
+          document.getElementById('instShareModal').classList.remove('active');
+          o.onShared && o.onShared(res.address);
+          // Why the address is not the launcher's own name, when it is not --
+          // the servers page says so in its banner; this page said nothing.
+          if (res.note && window.notify) window.notify(res.note, 'warning');
+        }
         else alert("Couldn't share: " + (res?.error || 'unknown error'));
       } finally { btn.disabled = false; btn.textContent = 'Share'; }
     };

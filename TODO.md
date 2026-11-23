@@ -9,6 +9,29 @@ started.
 
 ---
 
+## 0. Round 73
+
+- [x] **Sharing over e4mc shows e4mc's address, not the redstonemc one.** Two
+      faults. Our name was a DNS CNAME to e4mc, which could only be made with
+      Cloudflare credentials on the relay -- without them the launcher quietly
+      showed e4mc's name -- and could never have carried a player anyway: a
+      Minecraft client puts the address it typed in its handshake and e4mc
+      routes by that, so a player who typed our name reached e4mc asking for a
+      world it did not know. Now our name resolves to our relay like every
+      other, and the relay sends those players on to e4mc with the handshake
+      rewritten to e4mc's name (Forge tag kept). No DNS credentials needed.
+      Only e4mc's names may be forwarded to, except by an admin, so the relay
+      is not an open proxy. When it still falls back to e4mc's name, both pages
+      say why. Needs the relay redeployed. `tests/relay-forward-test.mjs`.
+- [~] **The taskbar icon updated on closing the first time, then not again.**
+      The quit-time pass now also sends "associations changed", which makes
+      Explorer drop every cached icon (ie4uinit evidently reached the
+      taskbar's copy once), and has 25 s instead of 8 to finish. Every step,
+      including whether the quit pass ran at all, is written to
+      `<data>/logs/icon.log`. Not tried on Windows from here.
+
+---
+
 ## 0. Round 72
 
 - [x] **The icon's Corners slider should work with "Same as the launcher" on.**

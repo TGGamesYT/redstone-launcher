@@ -7931,6 +7931,20 @@ let _desktopIconBusy = null;
 // Whether the Start menu's and the pinned shortcuts still show an older icon
 // than the window does. They are brought up to date as the launcher quits.
 let _shortcutsOwed = false;
+// What happened to the shortcuts, in a file: the rewrite that matters most
+// runs as the launcher closes, when there is no console left to say anything
+// in. <data>/logs/icon.log, the last few hundred lines.
+function iconLog(line) {
+  try {
+    const dir = path.join(dataDir, "logs");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "icon.log");
+    let old = "";
+    try { old = fs.readFileSync(file, "utf8"); } catch { /* first */ }
+    const lines = (old + `${new Date().toISOString()} ${line}\n`).split("\n").slice(-400);
+    fs.writeFileSync(file, lines.join("\n"));
+  } catch { /* a log that cannot be written is not worth failing over */ }
+}
 let _shortcutsSettled = false;
 let _desktopIconNext = null;
 function updateDesktopIconSoon(png) {
@@ -7963,6 +7977,7 @@ async function rewriteDesktopIcons() {
         if (r.skipped && r.skipped.length) said.push(`left ${r.skipped.join("; ")}`);
         if (r.refreshed) said.push(`icon cache refreshed (${r.refreshed})`);
         devtoolsLog(`[icon] shortcuts (this program is ${process.execPath}): ${said.join(" -- ") || "none found"}`);
+        iconLog(`while running, desktop only: ${said.join(" -- ") || "none found"}`);
       })
       .catch((e) => devtoolsLog("[icon] shortcuts could not be changed:", e && e.message || e));
   }
@@ -8481,16 +8496,21 @@ async function openViaE4mc({ k, name, localPort, accountId, subdomain }) {
 
   // And a name of ours pointed at it. Only possible with an account, since the
   // relay will not let anybody point a name they have not proved is theirs.
+  // A name of ours that players can use instead of e4mc's. Players connect
+  // to OUR relay under it and are sent on to e4mc, with the handshake
+  // rewritten to e4mc's name (relay-server/relay.js, handleAlias). `name` is
+  // what e4mc routes by; `host` and `port` are where to send them.
   let ours = null, aliasNote = null;
   const account = await accountCredsByIdFresh(accountId);
+  const sub = account ? (subdomain || subLabel(account.name)) : null;
+  const pointName = async () => relayClient.aliasRelay({
+    host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+    account, rejectUnauthorized: settings.get("relayVerifyTls", true) !== false,
+    req: { op: "set", subdomain: sub, host: target.host, port: target.port, name: session.domain },
+  });
   if (account) {
-    const sub = subdomain || subLabel(account.name);
     try {
-      const r = await relayClient.aliasRelay({
-        host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
-        account, rejectUnauthorized: settings.get("relayVerifyTls", true) !== false,
-        req: { op: "set", subdomain: sub, host: target.host, port: target.port },
-      });
+      const r = await pointName();
       if (r && r.ok) ours = r.host;
       else aliasNote = (r && r.error) || "the name could not be pointed at it";
     } catch (e) { aliasNote = String(e && e.message || e); }
@@ -8498,16 +8518,26 @@ async function openViaE4mc({ k, name, localPort, accountId, subdomain }) {
   } else {
     aliasNote = "Sign in with a Microsoft account to get a name of your own; e4mc's works either way.";
   }
+  // Said in full when it is e4mc's name after all, so it is never a mystery
+  // why the address is not the one asked for.
+  if (!ours && aliasNote) aliasNote = `Showing e4mc's address: ${aliasNote}`;
+
+  // The relay forgets a name nobody has used for a day; a share that is open
+  // but quiet keeps it by saying so every hour.
+  const keepName = ours ? setInterval(() => { pointName().catch(() => { /* next hour */ }); }, 60 * 60 * 1000) : null;
 
   const shownAddr = ours || session.address;
+  // Our name is reached on our relay's own port, not on whichever one e4mc's
+  // record names.
+  const shownPort = ours ? 25565 : target.port;
   activeRelays.set(k, {
     shownAddr, directAddress: null, localPort, upnpMapped: false,
-    port: target.port, backend: "e4mc", e4mcDomain: session.domain,
+    port: shownPort, backend: "e4mc", e4mcDomain: session.domain,
     ourName: ours, aliasAccount: ours ? account : null, note: aliasNote,
-    close: () => { try { session.close(); } catch { /* already gone */ } },
+    close: () => { if (keepName) clearInterval(keepName); try { session.close(); } catch { /* already gone */ } },
   });
   return {
-    success: true, address: shownAddr, port: target.port, directAddress: null,
+    success: true, address: shownAddr, port: shownPort, directAddress: null,
     backend: "e4mc", e4mc: { domain: session.domain, relay: relay.host, srv: target.srv || null },
     note: aliasNote,
   };
@@ -16966,6 +16996,9 @@ app.on("will-quit", () => { try { saveHeadProfiles(); } catch { /* going away an
 // latch on to. Held up for at most a few seconds -- a PowerShell run -- and
 // never more than once.
 app.on("before-quit", (e) => {
+  if (process.platform === "win32" && !_shortcutsSettled) {
+    iconLog(`quitting: ${_shortcutsOwed ? "the icon changed this session, rewriting the other shortcuts" : "the icon did not change this session"}`);
+  }
   if (process.platform !== "win32" || !_shortcutsOwed || _shortcutsSettled) return;
   _shortcutsSettled = true;
   e.preventDefault();
@@ -16973,10 +17006,19 @@ app.on("before-quit", (e) => {
   try { png = fs.readFileSync(ICON_OUT()); } catch { /* nothing drawn */ }
   const done = () => { try { app.quit(); } catch { /* going anyway */ } };
   if (!png) return done();
-  const timer = setTimeout(done, 8000);
+  // The windows are already closed by now, so this wait is not seen; long
+  // enough for two PowerShell runs and ie4uinit on a slow machine.
+  const timer = setTimeout(done, 25000);
   Promise.resolve(_desktopIconBusy)
     .then(() => shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher", scope: "all" }))
-    .catch(() => { /* the next quit, then */ })
+    .then((r) => {
+      const said = [];
+      if (r && r.updated && r.updated.length) said.push(`changed ${r.updated.map(f => path.basename(f)).join(", ")}`);
+      if (r && r.skipped && r.skipped.length) said.push(`left ${r.skipped.join("; ")}`);
+      if (r && r.refreshed) said.push(r.refreshed);
+      iconLog(`on quit, all shortcuts: ${said.join(" -- ") || "none found"}`);
+    })
+    .catch((err) => { iconLog(`on quit, failed: ${err && err.message || err}`); })
     .finally(() => { clearTimeout(timer); done(); });
 });
 

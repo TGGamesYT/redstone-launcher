@@ -187,7 +187,10 @@ async function handleAlias(req, who, isAdmin) {
   }
   if (!CF.enabled) return { ok: false, error: "This relay has no DNS credentials, so it cannot point a name anywhere." };
   const fullHost = `${sub}.${DOMAIN}`;
-  if (op === "clear") return cfClearAlias(fullHost, DOMAIN);
+  if (op === "clear") {
+    forwards.delete(fullHost);
+    return CF.enabled ? cfClearAlias(fullHost, DOMAIN) : { ok: true };
+  }
   if (op !== "set") return { ok: false, error: `Unknown alias op "${op}".` };
 
   const target = String(req?.host || "").trim().toLowerCase();
@@ -201,7 +204,53 @@ async function handleAlias(req, who, isAdmin) {
   }
   const port = Number(req?.port) || 25565;
   if (!Number.isInteger(port) || port < 1 || port > 65535) return { ok: false, error: "That is not a port." };
-  return cfPointAlias(fullHost, DOMAIN, target, port);
+  // The name e4mc knows the world by -- what goes in the handshake. The host
+  // above may be the machine its SRV record points at, which is a different
+  // name and one e4mc does not route by.
+  const name = String(req?.name || target).trim().toLowerCase();
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(name) || name.length > 253) {
+    return { ok: false, error: "That is not a name this can send players to." };
+  }
+  // Not an open proxy: anybody else may only send players on to e4mc.
+  if (!isAdmin && !(FORWARD_OK.test(name) && FORWARD_OK.test(target))) {
+    return { ok: false, error: "A name here can only be sent on to e4mc." };
+  }
+  // Players come HERE, as for any other name of ours, and are sent on.
+  //
+  // It used to be a CNAME straight to e4mc, which cannot work: a Minecraft
+  // client puts the address it typed into its handshake, and e4mc routes by
+  // that -- so a player who typed our name reached e4mc asking for a world
+  // e4mc had never heard of. (And it needed DNS credentials besides, and
+  // without them the launcher quietly showed e4mc's name instead.) Here the
+  // handshake is rewritten to e4mc's name on the way through.
+  forwards.set(fullHost, { host: target, port, name, owner: who && who.uuid, at: Date.now() });
+  // Anything that used to point this name elsewhere goes, so it resolves to
+  // the relay like every other name of ours.
+  if (CF.enabled) { try { await cfClearAlias(fullHost, DOMAIN); } catch { /* the wildcard covers it */ } }
+  return { ok: true, host: fullHost, target: name, forwarded: true };
+}
+
+// Names of ours sent on to somewhere else (an e4mc share), by full host.
+// Kept while they are being used; one nobody has refreshed for a day is gone.
+const forwards = new Map();
+const FORWARD_OK = /(^|\.)e4mc\.link$/;
+const FORWARD_TTL = 24 * 60 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, f] of forwards) if (now - f.at > FORWARD_TTL) forwards.delete(k);
+}, 60 * 60 * 1000).unref();
+
+// A handshake asking for `address` instead, everything else as it was. A
+// Forge client's "\0FML…\0" tag on the end is kept: it is how the server
+// knows what the client is.
+function rewriteHandshake(hs, address) {
+  const raw = String(hs.address || "");
+  const tag = raw.includes("\0") ? raw.slice(raw.indexOf("\0")) : "";
+  const addr = Buffer.from(address + tag, "utf8");
+  const port = Buffer.alloc(2); port.writeUInt16BE(hs.port || 25565, 0);
+  return mcPacket(0x00, Buffer.concat([
+    writeVarInt(hs.protocol), writeVarInt(addr.length), addr, port, writeVarInt(hs.nextState),
+  ]));
 }
 
 // The same cleaning subLabel does, but refusing rather than mangling: a name
@@ -278,9 +327,10 @@ function parseHandshake(buf) {
   const proto = readVarInt(buf, off); off += proto.size;
   const addrLen = readVarInt(buf, off); off += addrLen.size;
   const address = buf.toString("utf8", off, off + addrLen.value); off += addrLen.value;
+  const port = buf.readUInt16BE(off);
   off += 2; // unsigned short port
   const nextState = readVarInt(buf, off); off += nextState.size;
-  return { protocol: proto.value, address, nextState: nextState.value, consumed: total };
+  return { protocol: proto.value, address, port, nextState: nextState.value, consumed: total };
 }
 
 // Full hostname the client connected to (strips Forge's \0FML\0 handshake tag).
@@ -1627,6 +1677,30 @@ const mc = net.createServer((client) => {
       client.on("data", (d) => host.send(T.DATA, streamId, d));
       client.on("close", () => { if (host.streams.delete(streamId)) host.send(T.CLOSE, streamId, null); });
       client.on("error", () => {});
+    } else if (forwards.has(fullHost)) {
+      // A name of ours sent on to e4mc: the same connection, onward, with
+      // the handshake now asking for e4mc's name.
+      const f = forwards.get(fullHost);
+      f.at = Date.now();
+      // Held until there is somewhere to send it: with the handshake reader
+      // taken off, anything the client sent meanwhile would be dropped.
+      client.pause();
+      const out = net.connect({ host: f.host, port: f.port });
+      try { out.setNoDelay(true); } catch { /* ignore */ }
+      out.on("connect", () => {
+        out.write(Buffer.concat([rewriteHandshake({ ...hs, port: f.port }, f.name), acc.subarray(hs.consumed)]));
+        client.pipe(out);
+        out.pipe(client);
+      });
+      const end = () => { client.destroy(); out.destroy(); };
+      out.on("error", () => {
+        // Somewhere to say so, rather than a bare disconnect.
+        if (!client.destroyed && !out.bytesWritten) servePlaceholder(client, hs, "offline");
+        else end();
+      });
+      out.on("close", end);
+      client.on("close", end);
+      client.on("error", end);
     } else {
       // Not live: "offline" if used recently, else "doesn't exist".
       const recent = Date.now() - recentSubUsed(fullHost) < RECENT_MS;

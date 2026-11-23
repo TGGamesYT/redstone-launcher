@@ -332,8 +332,21 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
       let refreshed = null;
       if (updated.length && !onlyDesktop) {
         const ie4 = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "ie4uinit.exe");
-        try { await run(ie4, ["-show"], { windowsHide: true, timeout: 15000 }); refreshed = "ok"; }
-        catch (e) { refreshed = "failed: " + (e && e.message || e); }
+        try { await run(ie4, ["-show"], { windowsHide: true, timeout: 15000 }); refreshed = "ie4uinit ok"; }
+        catch (e) { refreshed = "ie4uinit failed: " + (e && e.message || e); }
+        // And the heavy one. ie4uinit got the pinned button to change the
+        // first time and not again: the taskbar keeps its own copy of the
+        // pinned shortcut's picture, and only "associations changed" makes
+        // Explorer throw every cached icon away and read them again. It
+        // redraws the desktop's icons too, which is why it is not done while
+        // the launcher is running -- only here, on the way out.
+        const assoc = "$sig='[DllImport(\"shell32.dll\")]public static extern void SHChangeNotify(int e,uint f,IntPtr a,IntPtr b);';"
+          + "$t=Add-Type -MemberDefinition $sig -Name ShA -Namespace W -PassThru;"
+          + "$t::SHChangeNotify(0x08000000,0x0000,[IntPtr]::Zero,[IntPtr]::Zero)";
+        try {
+          await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", assoc], { windowsHide: true, timeout: 15000 });
+          refreshed += ", associations-changed sent";
+        } catch (e) { refreshed += ", associations-changed failed: " + (e && e.message || e); }
       }
       return { updated, skipped, icon: ico, refreshed };
     }

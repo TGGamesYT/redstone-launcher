@@ -1,0 +1,48 @@
+// A name of ours sent on to e4mc: the player's handshake asked for our name,
+// and e4mc routes by the name in the handshake, so it is rewritten on the way
+// through. The real functions are cut out of relay-server/relay.js.
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const src = fs.readFileSync(path.join(ROOT, "relay-server", "relay.js"), "utf8");
+let bad = 0;
+const check = (what, got, want, note) => {
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  if (!ok) bad++;
+  console.log(`${ok ? "ok  " : "FAIL"} ${what}${note ? "  — " + note : ""}`
+    + (ok ? "" : `\n       got  ${JSON.stringify(got)}\n       want ${JSON.stringify(want)}`));
+};
+const fn = (name) => {
+  const i = src.indexOf(`function ${name}(`);
+  if (i < 0) { console.log(`FAIL no ${name} in relay.js`); process.exit(1); }
+  // To the end of the function: the first line that is just "}".
+  const j = src.indexOf("\n}\n", i);
+  return src.slice(i, j + 3);
+};
+const { parseHandshake, rewriteHandshake, mcPacket, writeVarInt } = new Function(
+  ["readVarInt", "writeVarInt", "mcPacket", "parseHandshake", "rewriteHandshake"].map(fn).join("\n")
+  + "\nreturn { parseHandshake, rewriteHandshake, mcPacket, writeVarInt };")();
+const FORWARD_OK = new Function(src.match(/const FORWARD_OK = [^\n]+/)[0] + "\nreturn FORWARD_OK;")();
+
+const hello = (address, port = 25565, protocol = 767, next = 2) => {
+  const a = Buffer.from(address, "utf8");
+  const p = Buffer.alloc(2); p.writeUInt16BE(port, 0);
+  return mcPacket(0x00, Buffer.concat([writeVarInt(protocol), writeVarInt(a.length), a, p, writeVarInt(next)]));
+};
+
+const hs = parseHandshake(hello("tg.redstonemc.net", 25565));
+check("the player's handshake is read, port included", [hs.address, hs.port, hs.protocol, hs.nextState],
+  ["tg.redstonemc.net", 25565, 767, 2]);
+const out = parseHandshake(rewriteHandshake({ ...hs, port: 25566 }, "quick-fox.e4mc.link"));
+check("and sent on asking for e4mc's name, everything else kept",
+  [out.address, out.port, out.protocol, out.nextState], ["quick-fox.e4mc.link", 25566, 767, 2]);
+const forge = parseHandshake(rewriteHandshake(parseHandshake(hello("tg.redstonemc.net\0FML3\0")), "quick-fox.e4mc.link"));
+check("a Forge client's tag survives", forge.address, "quick-fox.e4mc.link\0FML3\0");
+check("only e4mc's names may be forwarded to by anybody",
+  ["a.e4mc.link", "e4mc.link", "evil.com", "e4mc.link.evil.com", "xe4mc.link"].map(n => FORWARD_OK.test(n)),
+  [true, true, false, false, false]);
+
+console.log(bad ? `\n${bad} FAILURES` : "\nall pass");
+process.exit(bad ? 1 : 0);
