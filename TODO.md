@@ -9,6 +9,34 @@ started.
 
 ---
 
+## 0. Round 69
+
+- [x] **Installing a mod from its own page offers its dependencies the same
+      way as from an instance.** The instance mod browser asked; the Modrinth
+      and CurseForge project pages either skipped them or installed the
+      required ones silently. One popup now (`frontend/dep-prompt.js`) for all
+      of them: required ticked, optional not, already-installed shown.
+- [x] **Synced accounts open on a fresh computer with only Google signed in.**
+      The relay's half of the key was derived from the Minecraft account, so a
+      new computer had nothing to ask for it with. Now it is derived from the
+      Google account: the launcher shows the relay a Google ID token (the
+      `openid` scope, which grants no Drive access), the relay has Google
+      confirm it was issued to this launcher and derives the half from the
+      account id. Files sealed the old way still open with the Minecraft-tied
+      half and are sealed again on the next sync; the manifest records which
+      key a file uses so unchanged ones are found too. Needs the relay
+      redeployed, and computers signed in to Google before this need to sign
+      in once more to get the `openid` grant.
+- [x] **The launcher's GitHub CLI starts from the computer's gh sign-in.** Read
+      once with `gh auth token` from the system gh and logged into the
+      launcher's own config; once only, so signing out here sticks.
+- [x] **Does building without the Windows SDK break Discord presence?** No:
+      discord-rpc uses Electron's own protocol registration inside Electron and
+      only needs `register-scheme` outside it; presence itself is Discord's IPC
+      socket.
+
+---
+
 ## 0. Round 68
 
 - [x] **`npm run buildWin` fails: Windows SDK 10.0.26100 not found, building

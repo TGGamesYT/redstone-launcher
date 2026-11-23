@@ -182,19 +182,20 @@ function askRelay({ host, controlPort, account, req, ask, reply, rejectUnauthori
 }
 
 /**
- * The Google client for Cloud syncing, asked without proving any account.
+ * The Google client for Cloud syncing -- or the key half tied to a Google
+ * sign-in -- asked without proving any Minecraft account.
  *
  * It is the one thing the relay answers before a Minecraft account is
  * verified (see handleControl), so Cloud syncing can be set up by somebody
  * with no Microsoft account. An older relay drops the connection instead,
  * which comes back here as an error and the caller asks the verified way.
  */
-export function cloudConfigAnonymous({ host, controlPort, rejectUnauthorized = true }) {
+export function cloudConfigAnonymous({ host, controlPort, rejectUnauthorized = true, req = { op: "config" } }) {
   return new Promise((resolve, reject) => {
     let done = false;
     const finish = (fn, v) => { if (done) return; done = true; fn(v); try { sock.end(); } catch { /* ignore */ } };
     const sock = tls.connect({ host, port: controlPort, servername: host, rejectUnauthorized }, () =>
-      sock.write(encodeFrame(T.CLOUD, 1, Buffer.from(JSON.stringify({ op: "config" })))));
+      sock.write(encodeFrame(T.CLOUD, 1, Buffer.from(JSON.stringify(req)))));
     const decode = createDecoder(async (type, streamId, payload) => {
       if (type === T.CLOUD_DATA) {
         let info = {}; try { info = JSON.parse(payload.toString()); } catch { /* ignore */ }

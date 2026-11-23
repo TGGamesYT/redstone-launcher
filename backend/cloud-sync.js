@@ -113,7 +113,12 @@ export function readableName(kind, id, name) {
  * says which computer this is, which is what makes a conflict detectable and
  * what the world locks are about.
  */
-export function sync({ drive, relayHalf, deviceId, deviceName }) {
+// What the manifest says of a sealed file whose relay half came from the
+// Google account. A file without it was sealed with the old, Minecraft-tied
+// half (or before the manifest said anything about keys).
+const KEY_NOW = "google-v1";
+
+export function sync({ drive, relayHalf, legacyRelayHalf = null, deviceId, deviceName }) {
   if (!deviceId) throw new Error("A sync has to know which computer it is.");
 
   let driveHalfCache = null;
@@ -160,6 +165,12 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
   }
 
   const keys = async () => ({ relayHalf: await relayHalf(), driveHalf: await driveHalf() });
+  // The relay's half used to come from the Minecraft account, so an accounts
+  // file written then opens only with that one. It is tried when the current
+  // half (from the Google account) does not open a file, and used to seal
+  // only when the current one cannot be had -- a relay not yet updated.
+  const legacyKeys = async () => ({ relayHalf: await legacyRelayHalf(), driveHalf: await driveHalf() });
+  const openedLegacy = new Set();
 
   const asBytes = (v) => (Buffer.isBuffer(v) ? v : Buffer.from(JSON.stringify(v, null, 2)));
 
@@ -170,15 +181,34 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
    * the folder is a folder of files somebody can download and use rather
    * than a private store that only this program can read.
    */
+  // Which kinds were last sealed with the old key, so the manifest can say
+  // so: then a file nobody has changed since can be found and sealed again,
+  // without downloading every one to see which key opens it.
+  const sealedLegacy = new Set();
   async function seal(kind, value) {
     if (!isSecret(kind)) return asBytes(value);
-    const k = await keys();
+    let k;
+    try { k = await keys(); sealedLegacy.delete(kind); }
+    catch (e) { if (!legacyRelayHalf) throw e; k = await legacyKeys(); sealedLegacy.add(kind); }
     return cc.seal({ ...k, kind, plaintext: asBytes(value) });
+  }
+  /** Whether the Drive's copy of a sealed kind may still be on the old key. */
+  async function onOldKey(kind, id = null) {
+    if (!isSecret(kind)) return false;
+    const it = (await readManifest()).items[keyOf(kind, id)];
+    return !!it && it.key !== KEY_NOW;
   }
   async function open(kind, bytes) {
     if (!isSecret(kind)) return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
-    const k = await keys();
-    return cc.open({ ...k, kind, sealed: bytes });
+    let first;
+    try { return cc.open({ ...(await keys()), kind, sealed: bytes }); }
+    catch (e) { first = e; }
+    if (!legacyRelayHalf) throw first;
+    let legacy;
+    try { legacy = await legacyKeys(); } catch { throw first; }
+    const out = cc.open({ ...legacy, kind, sealed: bytes });
+    openedLegacy.add(kind);
+    return out;
   }
 
   // ── the manifest ────────────────────────────────────────────────────────
@@ -326,6 +356,7 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
       file,
       at: Date.now(), deviceId, deviceName: deviceName || deviceId,
     };
+    if (isSecret(kind) && !sealedLegacy.has(kind)) m.items[k].key = KEY_NOW;
     await writeManifest(m);
     return { ok: true, version: next, hash };
   }
@@ -348,7 +379,9 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
     if (theirs.hash && hash !== theirs.hash) {
       throw new Error(`${theirs.name} in the Drive is not what the manifest says it is.`);
     }
-    return { ok: true, bytes: body, version: theirs.version, meta: theirs };
+    // Said when it took the old key, so the caller can seal it again with
+    // the current one and every computer can open it from then on.
+    return { ok: true, bytes: body, version: theirs.version, meta: theirs, legacyKey: openedLegacy.has(kind) };
   }
 
   /** Everything the Drive has, as the manifest sees it. */
@@ -413,7 +446,7 @@ export function sync({ drive, relayHalf, deviceId, deviceName }) {
   }
 
   return {
-    push, pull, list, unsync, unsyncAll, compare,
+    push, pull, list, unsync, unsyncAll, compare, onOldKey,
     // The same two-half encryption, for things that live in the folder but
     // are not items with versions -- the world claims, which are written and
     // thrown away constantly and have no history worth keeping.

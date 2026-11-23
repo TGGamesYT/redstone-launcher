@@ -35,7 +35,7 @@ check("and it names no scope the launcher does not ask for",
   (policy.match(/https:\/\/www\.googleapis\.com\/auth\/[\w.]+/g) || [])
     .filter(s => !google.SCOPES.includes(s)), [],
   "a policy that claims a narrower scope than the app requests is the bad direction");
-check("there are only two of them", google.SCOPES.length, 2);
+check("there are only three of them", google.SCOPES.length, 3);
 
 // ── what a switch sweeps up, and what it does not ──
 //

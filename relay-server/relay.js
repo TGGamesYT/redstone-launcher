@@ -1222,6 +1222,43 @@ function cloudRelayKey() {
   return Buffer.from(String(hex), "hex");
 }
 
+// The key half for synced accounts, for whoever is signed in to this Google
+// account with this launcher.
+//
+// It used to be tied to the Minecraft account, which meant a fresh computer
+// signed in to the same Google Drive -- and to nothing else yet -- could not
+// open the accounts it had synced. Now the launcher shows an ID token: Google's
+// signed word on which account signed in, and to which app. Google is asked
+// whether it is genuine, and only one issued to THIS relay's Google client
+// counts, so a token from some other app cannot be brought here to ask for
+// somebody's half. An ID token opens nothing -- it is not the access token
+// that reaches the Drive -- so the relay still never holds a way to the other
+// half. The answer is derived from the account's permanent id ("sub"), as the
+// Minecraft one was from the UUID: nothing is stored per account.
+async function googleKeyHalf(idToken) {
+  const tok = String(idToken || "");
+  if (!tok || tok.length > 8192) return { ok: false, error: "no Google sign-in" };
+  const clientId = config.get("googleClientId");
+  if (!clientId) return { ok: false, error: "This relay has no Google client set up yet." };
+  let info = null;
+  try {
+    const r = await fetch("https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(tok),
+      { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return { ok: false, error: "Google did not accept that sign-in" };
+    info = await r.json();
+  } catch { return { ok: false, error: "Google could not be asked about that sign-in" }; }
+  const iss = info && String(info.iss || "");
+  if (!info || info.aud !== clientId || !(iss === "accounts.google.com" || iss === "https://accounts.google.com")) {
+    return { ok: false, error: "That sign-in was not made with this launcher" };
+  }
+  if (!(Number(info.exp) * 1000 > Date.now())) return { ok: false, error: "That sign-in has run out" };
+  const sub = String(info.sub || "");
+  if (!/^\d{5,40}$/.test(sub)) return { ok: false, error: "Google did not say whose sign-in it is" };
+  const half = crypto.createHmac("sha256", cloudRelayKey())
+    .update("cloud-sync-google-v1:" + sub).digest("hex");
+  return { ok: true, half };
+}
+
 function handleCloud(req, who) {
   const op = String(req.op || "");
   if (op === "config") {
@@ -1356,11 +1393,19 @@ function handleControl(sock) {
     // only the accounts file's key has anything to do with one. Over this
     // TLS connection, not plain HTTP, so nobody in between can swap in a
     // client of their own.
+    //
+    // And the key half for synced accounts tied to a GOOGLE account, which
+    // proves itself differently: with the Google sign-in, which Google is
+    // asked about (see googleKeyHalf).
     if (!state.authed && type === T.CLOUD) {
       let req = {}; try { req = JSON.parse(payload.toString()); } catch { /* ignore */ }
-      const out = String(req.op || "") === "config"
-        ? handleCloud({ op: "config" }, null)
-        : { ok: false, error: "Sign in with a Microsoft account first." };
+      const op = String(req.op || "");
+      let out;
+      try {
+        out = op === "config" ? handleCloud({ op: "config" }, null)
+          : op === "secret-google" ? await googleKeyHalf(req.idToken)
+            : { ok: false, error: "Sign in with a Microsoft account first." };
+      } catch (e) { out = { ok: false, error: String(e && e.message || e) }; }
       send(T.CLOUD_DATA, streamId, Buffer.from(JSON.stringify(out)));
       return;
     }

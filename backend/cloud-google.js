@@ -34,7 +34,13 @@ const openInBrowser = async (url) => {
 //                this is somebody's whole document store.
 //   userinfo     the address, so the settings page can say which account is
 //                signed in rather than "signed in".
+//   openid       an ID token: Google's signed word on WHICH account this is,
+//                which the relay checks before handing out its half of the
+//                key for synced accounts. It is shown to the relay instead of
+//                the access token because it opens nothing: the relay never
+//                holds anything that can reach the Drive.
 export const SCOPES = [
+  "openid",
   "https://www.googleapis.com/auth/drive.file",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
@@ -143,6 +149,7 @@ export function signIn({ client, openBrowser = openInBrowser, timeoutMs = 5 * 60
         finish(resolve, {
           refreshToken: tok.refresh_token,
           accessToken: tok.access_token,
+          idToken: tok.id_token || null,
           expiresAt: Date.now() + (Number(tok.expires_in) || 3600) * 1000,
           email: await emailOf(tok.access_token, fetchImpl).catch(() => null),
         });
@@ -188,6 +195,8 @@ export async function refresh({ client, refreshToken, fetchImpl = fetch }) {
   }, fetchImpl);
   return {
     accessToken: tok.access_token,
+    // Only when the sign-in included "openid"; one made before it did not.
+    idToken: tok.id_token || null,
     expiresAt: Date.now() + (Number(tok.expires_in) || 3600) * 1000,
   };
 }

@@ -6696,9 +6696,20 @@ function cloudService() {
           }
         } catch { /* an older relay: ask the verified way below */ }
       }
+      // The key half tied to the Google account: proved with the Google
+      // sign-in itself, so no Minecraft account is involved. An older relay
+      // does not know it, and the caller falls back to the Minecraft-tied
+      // one.
+      if (req && req.op === "secret-google") {
+        try {
+          return await relayClient.cloudConfigAnonymous({
+            host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort, rejectUnauthorized: rejectUnauthorized0, req,
+          });
+        } catch (e) { return { ok: false, error: "The relay could not give the Google-tied key: " + (e && e.message || e) }; }
+      }
       const account = await relayAccountForSync();
       if (!account) {
-        return { ok: false, error: "Sign in with a Microsoft account first — the key for your synced data is tied to it." };
+        return { ok: false, error: "Sign in with a Microsoft account first." };
       }
       const rejectUnauthorized = settings.get("relayVerifyTls", true) !== false;
       const out = await relayClient.cloudRelay({

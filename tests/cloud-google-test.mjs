@@ -77,7 +77,7 @@ const browser = (tweak = (p) => p) => async (authUrl) => {
 
   check("it asks for only the files it makes, not the whole Drive",
     seen.searchParams.get("scope").split(" "),
-    ["https://www.googleapis.com/auth/drive.file",
+    ["openid", "https://www.googleapis.com/auth/drive.file",
       "https://www.googleapis.com/auth/userinfo.email"],
     "this is somebody's entire document store; drive.file cannot see anything the launcher did not create");
 

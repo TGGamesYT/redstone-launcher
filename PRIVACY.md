@@ -26,12 +26,13 @@ Contact: <contact@redstone-launcher.com>
 
 ## 2. What we ask Google for, and why
 
-When you turn on Cloud syncing, the launcher asks for exactly two permissions:
+When you turn on Cloud syncing, the launcher asks for exactly three permissions:
 
 | Scope | What it allows | Why we ask |
 |---|---|---|
 | `https://www.googleapis.com/auth/drive.file` | Access **only to files this application itself creates** in your Drive | To create one folder, named **Redstone Launcher**, and read and write the sync files inside it |
 | `https://www.googleapis.com/auth/userinfo.email` | Your Google account's email address | To show you which account is signed in, on the launcher's settings page |
+| `openid` | A signed statement from Google of *which* Google account signed in (an ID token) | So the relay server can hand out its half of the key for your synced accounts to that Google account (section 4). It gives no access to anything |
 
 We do not request any broader Drive scope. `drive.file` **cannot** see, list,
 open, modify or delete anything in your Drive that the launcher did not create
@@ -138,21 +139,36 @@ different places and belong to different accounts:
 
 - **One half lives in the Drive folder** (`key.json`), created on the first
   computer you sync from.
-- **The other half never touches Google.** It is derived by the Redstone
-  Launcher relay server from your *Minecraft* account's UUID, and is handed to
-  the launcher only over a connection on which Mojang has verified that you
-  are signed in as that Minecraft account.
+- **The other half is never stored in Google Drive.** It is derived by the
+  Redstone Launcher relay server from your Google account's permanent ID, and
+  is handed to the launcher only after the launcher shows the relay an *ID
+  token* — Google's signed statement of which account signed in — and Google
+  confirms to the relay that the token is genuine and was issued to this
+  launcher. So any computer you sign in to with the same Google account can
+  open your synced accounts, including a new one with no Minecraft account on
+  it yet.
+
+  An accounts file synced before this change was sealed with a half derived
+  from your *Minecraft* account's UUID instead. A computer that still has that
+  Minecraft account opens it that way, and seals it again with the
+  Google-tied half the next time it syncs.
 
 Neither half can decrypt anything on its own:
 
-- Someone who obtains your Drive folder — including Google — has the first
-  half and cannot get the second without being able to sign in to Minecraft as
-  you.
-- Someone who compromises our relay server has the second half for accounts
-  that have asked for it, and no Drive to take the first half from.
+- Someone who obtains a copy of your Drive folder has the first half and
+  cannot get the second without being able to sign in to your Google account
+  with this launcher.
+- Someone who compromises our relay server has the second half, and no way
+  into your Drive to take the first: an ID token proves who you are but
+  grants access to nothing, and the relay is never given the access token
+  that reaches your Drive.
+- Google, which holds both your Drive folder and your sign-in, could in
+  principle obtain both halves. If that matters to you, leave the
+  *Signed-in accounts* switch off; everything else syncs without it.
 
 The relay server never receives, stores or sees any of your synced data, your
-Google account, your Google email address, or your Google tokens.
+Google email address, or a Google token that can reach your Drive. It sees an
+ID token while checking it, and keeps nothing from it.
 
 ---
 

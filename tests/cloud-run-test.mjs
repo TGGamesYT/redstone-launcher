@@ -41,7 +41,8 @@ const check = (what, got, want, note) => {
   if (a === b) ok(what, note); else fail(what, `got  ${a}\n       want ${b}`);
 };
 
-const RELAY_HALF = crypto.randomBytes(32).toString("hex");
+const RELAY_HALF = crypto.randomBytes(32).toString("hex");        // the old, Minecraft-tied half
+const GOOGLE_HALF = crypto.randomBytes(32).toString("hex");       // the one tied to the Google account
 
 // ── one Drive, seen by both ──
 function sharedDrive() {
@@ -53,7 +54,7 @@ function sharedDrive() {
     const json = (v) => ({ ok: true, status: 200, json: async () => v, text: async () => JSON.stringify(v) });
     const unesc = (s) => (s == null ? s : String(s).replace(/\\(.)/g, "$1"));
     if (u.pathname.startsWith("/oauth2") || u.hostname === "oauth2.googleapis.com") {
-      return { ok: true, status: 200, text: async () => JSON.stringify({ access_token: "at", expires_in: 3600 }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ access_token: "at", id_token: "idt", expires_in: 3600 }) };
     }
     if (u.pathname.startsWith("/upload/drive/v3/files")) {
       const last = u.pathname.split("/").pop();
@@ -99,7 +100,10 @@ function sharedDrive() {
 }
 
 /** One launcher: its own settings store, themes, accounts and files on disk. */
-function launcher(impl, { name, settings = {}, themes = [], players = [], profiles = [], root = null, skins = null } = {}) {
+// `relay`: what the relay will answer. "both" is the current relay with a
+// Minecraft account signed in; "google" a computer with no Minecraft account
+// yet; "minecraft" a relay from before the Google-tied half.
+function launcher(impl, { name, settings = {}, themes = [], players = [], profiles = [], root = null, skins = null, relay = "both" } = {}) {
   const store = { ...settings, cloudGoogle: { refreshToken: "rt", email: "me@example.com" } };
   const s = {
     store,
@@ -109,9 +113,11 @@ function launcher(impl, { name, settings = {}, themes = [], players = [], profil
   const state = { themes: [...themes], players: [...players], profiles: [...profiles], skins: skins ? JSON.parse(JSON.stringify(skins)) : null };
   const c = makeCloud({
     settings: s,
-    relayCall: async (req) => (req.op === "secret"
-      ? { ok: true, half: RELAY_HALF }
-      : { ok: true, clientId: "id", clientSecret: "sec" }),
+    relayCall: async (req) => {
+      if (req.op === "secret") return relay !== "google" ? { ok: true, half: RELAY_HALF } : { ok: false, error: "Sign in with a Microsoft account first." };
+      if (req.op === "secret-google") return relay !== "minecraft" && req.idToken === "idt" && !req.accessToken ? { ok: true, half: GOOGLE_HALF } : { ok: false, error: "unknown op" };
+      return { ok: true, clientId: "id", clientSecret: "sec" };
+    },
     fetchImpl: impl,
     content: {
       readThemes: () => state.themes,
@@ -139,6 +145,29 @@ function launcher(impl, { name, settings = {}, themes = [], players = [], profil
 }
 
 const did = (r, kind) => (r.results.find(x => x.kind === kind) || {}).did;
+
+// ── accounts on a fresh computer with no Minecraft account yet ──
+{
+  const impl = sharedDrive();
+  // Synced before the relay knew the Google-tied half: sealed with the old one.
+  const before = launcher(impl, { name: "Desktop", relay: "minecraft", players: [{ id: "p1", username: "Steve", refresh: "t" }] });
+  await before.c.syncNow();
+  const blank = launcher(impl, { name: "Laptop", relay: "google", players: [] });
+  blank.store.cloudKinds = {};
+  await blank.c.takeWhatTheDriveHas();
+  check("an old accounts file cannot be opened by Google alone", blank.state.players, [],
+    "it was sealed with the Minecraft-tied half; that is what the reseal below is for");
+  // The relay is updated; the desktop syncs once and reseals it.
+  const desk = launcher(impl, { name: "Desktop", relay: "both", players: [{ id: "p1", username: "Steve", refresh: "t" }] });
+  await desk.c.syncNow();
+  const fresh = launcher(impl, { name: "New laptop", relay: "google", players: [] });
+  fresh.store.cloudKinds = {};
+  await fresh.c.takeWhatTheDriveHas();
+  check("after that a computer signed in to nothing but Google gets the accounts", fresh.state.players.map(p => p.username), ["Steve"],
+    "the accounts file is sealed with a half tied to the Google account, not the Minecraft one");
+  const r = await fresh.c.syncNow();
+  check("and syncs them from then on", did(r, "accounts"), "nothing");
+}
 
 // ── a fresh launcher signing in to a Drive that already has things ──
 {

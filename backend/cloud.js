@@ -35,7 +35,7 @@ import cloudLock from "./cloud-lock.js";
  */
 export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, content = {} }) {
   // Held only while the launcher is running.
-  let accessToken = null, accessUntil = 0, relayHalfCache = null, clientCache = null;
+  let accessToken = null, accessUntil = 0, idToken = null, relayHalfCache = null, clientCache = null;
 
   const saved = () => settings.get("cloudGoogle", null) || null;
   const save = (v) => settings.set("cloudGoogle", v);
@@ -48,15 +48,40 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     return (clientCache = { clientId: r.clientId, clientSecret: r.clientSecret });
   }
 
-  /** The relay's half of the key, for as long as this sync takes. */
+  /**
+   * The relay's half of the key, for as long as this sync takes.
+   *
+   * Tied to the GOOGLE account: the relay hands it out only after Google
+   * itself says the sign-in is real and came from this launcher -- shown an
+   * ID token, which says who and opens nothing, never the access token that
+   * reaches the Drive -- so any
+   * computer signed in to the same Google account can open the accounts file
+   * -- a fresh one with no Minecraft account included -- while somebody with
+   * just a copy of the folder still cannot.
+   */
   async function relayHalf() {
     if (relayHalfCache) return relayHalfCache;
-    const r = await relayCall({ op: "secret" });
+    await token();
+    if (!idToken) {
+      throw new Error("Sign in to Google again in Settings, so the relay can tell which Google account this is.");
+    }
+    const r = await relayCall({ op: "secret-google", idToken });
     if (!r || !r.ok || !r.half) {
-      throw new Error((r && r.error)
-        || "Could not get this account's key from the relay. Sign in with your Minecraft account first.");
+      throw new Error((r && r.error) || "Could not get the key for your synced accounts from the relay.");
     }
     return (relayHalfCache = r.half);
+  }
+  /**
+   * The half as it used to be, tied to the Minecraft account, which an
+   * accounts file written before opens with. Only ever tried after the one
+   * above, and only works on a computer with that Minecraft account.
+   */
+  let legacyHalfCache = null;
+  async function legacyRelayHalf() {
+    if (legacyHalfCache) return legacyHalfCache;
+    const r = await relayCall({ op: "secret" });
+    if (!r || !r.ok || !r.half) throw new Error((r && r.error) || "No Minecraft account to open the older accounts file with.");
+    return (legacyHalfCache = r.half);
   }
 
   /** A Google access token, refreshed when it is about to run out. */
@@ -68,6 +93,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     if (accessToken && accessUntil > Date.now() + 60_000) return accessToken;
     const r = await google.refresh({ client: await client(), refreshToken: now.refreshToken, fetchImpl });
     accessToken = r.accessToken;
+    idToken = r.idToken || null;
     accessUntil = r.expiresAt;
     return accessToken;
   }
@@ -95,7 +121,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
   const syncer = () => {
     const d = device();
     return cloudSync.sync({
-      drive: driveFor(), relayHalf, deviceId: d.id, deviceName: d.name,
+      drive: driveFor(), relayHalf, legacyRelayHalf, deviceId: d.id, deviceName: d.name,
     });
   };
 
@@ -131,6 +157,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     const got = await google.signIn({ client: await client(), fetchImpl, ...(openBrowser ? { openBrowser } : {}) });
     save({ refreshToken: got.refreshToken, email: got.email, at: Date.now() });
     accessToken = got.accessToken;
+    idToken = got.idToken || null;
     accessUntil = got.expiresAt;
 
     const { turnedOn, firstSync } = await takeWhatTheDriveHas();
@@ -142,9 +169,8 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
   // signing in to a Drive that already has things in it wants those things.
   // So everything the Drive holds is switched on and brought down now,
   // rather than leaving somebody to find the switches and press Sync on a
-  // launcher that is empty. Signed-in accounts only when their key can
-  // actually be had, which needs a Microsoft account on this computer;
-  // otherwise that one stays off and everything else still comes.
+  // launcher that is empty -- signed-in accounts included, whose key comes
+  // with the Google account.
   async function takeWhatTheDriveHas() {
     const turnedOn = [];
     let firstSync = null;
@@ -154,7 +180,10 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
       for (const kind of Object.keys(WHAT)) {
         if (!m.items[kind]) continue;
         if (kind === "accounts") {
-          try { await relayHalf(); } catch { continue; }
+          // The Google-tied key, which a fresh computer has; or, from a relay
+          // not yet updated, the Minecraft-tied one.
+          try { await relayHalf(); }
+          catch { try { await legacyRelayHalf(); } catch { continue; } }
         }
         setKind(kind, true);
         turnedOn.push(kind);
@@ -179,7 +208,7 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     await google.revoke({ refreshToken: now && now.refreshToken, fetchImpl }).catch(() => { });
     save(null);
     settings.set("cloudAgreed", {});
-    accessToken = null; accessUntil = 0; relayHalfCache = null;
+    accessToken = null; accessUntil = 0; idToken = null; relayHalfCache = null; legacyHalfCache = null;
     return { ok: true };
   }
 
@@ -586,16 +615,20 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
           if (r.ok) {
             spec.write(JSON.parse(r.bytes.toString("utf8")));
             out.push({ kind, did: "pulled", why: plan.why, first: !!plan.first });
+            await resealIfOld(kind, spec, r);
           }
           else out.push({ kind, did: "nothing", why: r.inManifest ? "it is missing from the Drive" : "there is nothing to take" });
         } else {
           out.push({ kind, did: plan.do, why: plan.why, mine: plan.mine, theirs: plan.theirs });
+          // Unchanged, but perhaps still sealed with the old key: sealed
+          // again, or a computer with only the Google account never gets it.
+          if (plan.do === "nothing") await resealIfOld(kind, spec, null, { check: true });
         }
       } catch (e) {
         out.push({ kind, did: "failed", why: String(e && e.message || e), signedOut: !!(e && e.signedOut) });
       }
     }
-    relayHalfCache = null;
+    relayHalfCache = null; legacyHalfCache = null;
     settings.set("cloudLastSync", Date.now());
     return { ok: true, results: out, at: Date.now() };
   }
@@ -612,7 +645,23 @@ export function cloud({ settings, relayCall, fetchImpl = fetch, openBrowser, con
     const r = await pull(kind, null);
     if (!r.ok) return { ok: false, why: "there is nothing in the Drive to take" };
     spec.write(JSON.parse(r.bytes.toString("utf8")));
+    await resealIfOld(kind, spec, r);
     return { ok: true };
+  }
+
+  // An accounts file that only the old, Minecraft-tied key opened is sent
+  // again sealed with the current one, so that from now on a computer with
+  // only the Google account can open it too. Quietly, and only when the
+  // current key can be had (the relay has been updated).
+  async function resealIfOld(kind, spec, pulled, { check = false } = {}) {
+    try {
+      if (check) { if (!(await syncer().onOldKey(kind))) return; }
+      else if (!pulled || !pulled.legacyKey) return;
+      await relayHalf();
+      const mine = spec.read();
+      if (mine == null) return;
+      await pushOver(kind, null, Buffer.from(JSON.stringify(mine)), { name: spec.name });
+    } catch { /* stays readable the old way until the next time */ }
   }
 
   /** Keep what is here, and make the Drive match it. */
