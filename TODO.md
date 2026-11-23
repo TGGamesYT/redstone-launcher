@@ -16,12 +16,17 @@ started.
       relied on the download quietly fetching the required ones, which was
       taken out in Round 69 when the project pages got the popup -- so it lost
       them. It now offers the same popup once the mod is in.
-- [x] **The first launch of a new version takes ages doing "nothing".** The
-      launcher's own downloader let eight files through at a time, so the four
-      thousand assets of a version not played before went in five hundred round
-      trips; now 24. And the log says what each stage did ("Checking 4000
-      assets…", "Assets: 4000 checked, 3812 downloaded (21.4s)") instead of
-      going from "Using Java version" straight to the game.
+- [x] **The first launch of a new instance sits silent after "Using Java
+      version".** Not the downloads (Round 70 guessed that, wrongly). The
+      natives step takes a lock file in `<instance>/natives/`, which does not
+      exist yet on a fresh instance: the write failed with "no such file", the
+      lock looked stale because there was no file to look at, and it went round
+      for the whole two-minute wait before carrying on without it. Measured
+      with the real worker: 120 s of silence on a fresh Fabric instance with
+      every asset present, 0.6 s after making the folder first. The lock also
+      stops waiting on any error other than "somebody holds it". (The download
+      gate went from 8 to 24 at the same time, and the log now says what each
+      stage checked and fetched; both are kept.)
 - [x] **"From another launcher" shows two blurs while it changes.** The
       chooser's backdrop went away as the import step brought its own, so for
       the length of the fade there were two. The import step now sits on the

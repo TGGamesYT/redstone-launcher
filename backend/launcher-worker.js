@@ -150,12 +150,24 @@ function releaseInUse() {
 async function withLock(file, fn, { waitMs = 120000 } = {}) {
   const started = Date.now();
   let held = false;
+  // The folder the lock sits in. On a fresh instance it does not exist yet
+  // (`<instance>/natives` is made by the very step this lock guards), so the
+  // write below failed with "no such file", the lock looked stale because
+  // there was no lock file to look at, and round it went -- for the whole two
+  // minutes of waitMs, in silence, before carrying on without the lock. That
+  // was the first launch of every new instance: "Using Java version", then
+  // nothing at all for two minutes.
+  try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch { /* the write says why */ }
   while (Date.now() - started < waitMs) {
     try {
       fs.writeFileSync(file, String(process.pid), { flag: "wx" });
       held = true;
       break;
-    } catch {
+    } catch (e) {
+      // Only "somebody else holds it" is worth waiting on. Anything else --
+      // a folder that cannot be made, no permission -- will not change by
+      // waiting, so go on without the lock rather than sit there.
+      if (e && e.code !== "EEXIST") break;
       let stale = false;
       try {
         const st = fs.statSync(file);
