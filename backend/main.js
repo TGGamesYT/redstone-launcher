@@ -920,6 +920,9 @@ const DEFAULT_SETTINGS = {
   // be round.
   borderRadius: 25,
   autoUpdates: true,
+  // Hash what is already on disk against Mojang's checksums before every
+  // launch. Off launches faster and trusts the files as they are.
+  verifyGameFiles: true,
   discordPresence: true,
   autoThird: true,
   gridView: false,
@@ -3998,6 +4001,7 @@ async function launchProfileCore({ profileId, playerId, quickplaybool, quickplay
       rootPath: rootDir, auth, memory: { max: maxRam, min: minRam }, javaPath,
       assetRoot: path.join(dataDir, 'assets'), quickPlay: quickplay,
       customArgs, customLaunchArgs, name: profile.name,
+      verifyFiles: settings.get("verifyGameFiles", true) !== false,
     }, run);
 
     launchingProfiles.delete(profileId);

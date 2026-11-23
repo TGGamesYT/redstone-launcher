@@ -9,6 +9,18 @@ started.
 
 ---
 
+## 0. Round 77
+
+- [x] **A setting to skip verifying game files.** Settings -> Advanced, "Verify
+      game files before launching", on by default. Off, files already on disk
+      are used as they are instead of being hashed against Mojang's checksums
+      (files downloaded during the launch are still checked as they arrive).
+      The tooltip says it launches faster but the game might crash on a file
+      that was not verified. Measured with the real launch worker on an
+      installed Fabric 1.21.1 with nothing remembered: 38 s on, 2 s off.
+
+---
+
 ## 0. Round 76
 
 - [x] **Remove the server resource pack checksum sweep.** Before every launch

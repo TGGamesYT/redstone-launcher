@@ -1118,6 +1118,9 @@
       <div class="slider-value" id="ram-servers-value"></div>
       <br><br><br>
 
+      <label class="setting-toggle"
+        data-tip="Checks the game's files against Mojang's checksums before every launch. Off launches instances faster, but the game might crash because of a damaged or incomplete file that was not verified."><input type="checkbox" id="verify-game-files"> Verify game files before launching</label>
+
       <!-- Which relay carries a shared world. Only shown to an admin: for
            everybody else it is the launcher's decision, not a knob, and
            picking wrong means nobody can join. -->
@@ -3574,6 +3577,7 @@
           ['discord-presence', 'discordPresence'],
           ['grid-view', 'gridView'],
           ['dev-mode', 'devMode'],
+          ['verify-game-files', 'verifyGameFiles'],
           ['servers-outlive', 'serversOutliveLauncher'],
           ['predefined-theme-sync', 'predefinedThemeSync'],
           ['cloud-auto', 'cloudAutoSync'],
@@ -3929,6 +3933,14 @@
           }
           window.Onboarding.openImport();
         };
+      }
+
+      const verifyFiles = document.getElementById('verify-game-files');
+      if (verifyFiles) {
+        verifyFiles.checked = getSetting('verifyGameFiles', true) !== false;
+        verifyFiles.addEventListener('change', () => {
+          ipcRenderer.send('save-settings', { verifyGameFiles: verifyFiles.checked });
+        });
       }
 
       const devMode = document.getElementById('dev-mode');

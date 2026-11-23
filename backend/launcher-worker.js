@@ -205,6 +205,17 @@ async function withLock(file, fn, { waitMs = 120000 } = {}) {
 // So: after mclc has done its pass, hash every library it was supposed to
 // have hashed and replace the ones that are wrong. The checksum memo above
 // means this costs a full read once and a stat per launch after that.
+// Every file mclc would hash, taken as fine if it is there at all.
+function trustFilesOnDisk() {
+  let Handler = null;
+  try { Handler = require_("minecraft-launcher-core/components/handler"); }
+  catch { return; }
+  Handler.prototype.checkSum = async function (hash, f) {
+    try { return fs.statSync(f).size > 0; } catch { return false; }
+  };
+  post({ type: "log", line: "[redstone] Not verifying game files (Settings -> Advanced): files already here are used as they are." });
+}
+
 function verifyLibraries() {
   let Handler = null;
   try { Handler = require_("minecraft-launcher-core/components/handler"); }
@@ -683,7 +694,14 @@ async function runLaunch(cfg) {
 
   const saveChecks = rememberChecksums(cfg.assetRoot || path.join(cfg.rootPath, "assets"));
   verifyDownloads();
-  verifyLibraries();
+  // "Verify game files" off (Settings -> Advanced): what is already on disk
+  // is taken as it is -- present means fine -- instead of every asset and
+  // library being hashed against Mojang's published checksums. Faster; a
+  // damaged file then goes to the game as it is. Files downloaded now are
+  // still checked as they arrive, which costs nothing extra.
+  const verify = cfg.verifyFiles !== false;
+  if (verify) verifyLibraries();
+  else trustFilesOnDisk();
   verifyNatives();
   fetchVersionJsonProperly();
 
