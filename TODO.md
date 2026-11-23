@@ -9,6 +9,70 @@ started.
 
 ---
 
+## 0. Round 68
+
+- [x] **`npm run buildWin` fails: Windows SDK 10.0.26100 not found, building
+      register-scheme.** — *electron-builder recompiled native modules for
+      Electron, and discord-rpc's optional register-scheme needs that SDK.
+      The launcher never uses it, and sharp ships binaries that run in
+      Electron as they are, so the rebuild step is switched off
+      (build.npmRebuild false).*
+- [x] **The app icon changes once and then never; your colour, pictures,
+      presets and the launcher's own icon do not apply; the taskbar never
+      changes.** — *In a build the launcher's files are inside app.asar, and
+      sharp opens files with native code that cannot see into it: every icon
+      built from the icon's layer files failed in a build, and only a bare
+      picture (passed as bytes) worked. sharp now goes through
+      backend/sharp-asar.js, which reads such paths with Electron's fs. The
+      per-window taskbar relaunch icon added in Round 67 is gone (it held the
+      button to one picture); a colour change redraws the icon as it is set
+      instead of resetting it, and a theme that does not say the background
+      shows through the icon means it does not.*
+- [x] **A new instance made from a mod does not get the mod's dependencies,
+      and crashes.** — *The Modrinth and CurseForge project pages downloaded
+      the mod alone. Required dependencies (and theirs) now come with it, for
+      that game version and loader, skipping any the folder already has under
+      any file name. Into an existing instance and a server as well.*
+- [x] **The skins page loads for ever until the account is switched.** —
+      *Mojang's requests had no time limit, and a failed sign-in refresh
+      threw to a page that was not catching it. Time limits, the refresh
+      failing softly, and the page coming up with what it has.*
+- [x] **Accounts page: a friends panel with no account; signing in does not
+      change the friends face or the sidebar.** — *Account changes were
+      answered with event.reply, which never reached the shell's sidebar. They
+      go everywhere now, the accounts page follows the selected account, and
+      the friends panel is hidden with no account.*
+- [x] **Cloud syncing: needs a Microsoft account; a fresh launcher does not
+      take what is in the Drive; skins always conflict and never sync; the
+      switches flip back for a moment.** — *Skins were not counted as a
+      single item, so they were filed under one name and looked for under
+      another -- never found, every push refused. Fixed, with the merge
+      keeping the incoming order so two computers stop swapping. The relay
+      now says which Google client to use before any account is proved
+      (needs the relay redeployed), so only the accounts file's key needs a
+      Microsoft account. A launcher syncing nothing switches on and brings
+      down everything the Drive has when it signs in. Only the newest redraw
+      of the section is applied.*
+- [x] **GitHub: the launcher's own gh, its own saved sign-in, used only for
+      the launcher's Git, with the code and link shown.** — *A gh of the
+      launcher's own is fetched when there is none; it runs with the
+      launcher's own config folder, keeps the token there rather than in the
+      shared keyring, and no longer runs gh auth setup-git.*
+- [x] **The update download shows no progress.** — *A percentage, as it
+      downloads.*
+- [x] **The block chooser jitters while loading.** — *A fixed height, the
+      picker scrolling inside it.*
+- [x] **The mod browser's icon does not change at once between Modrinth and
+      CurseForge.** — *The page redrew only its own hidden copy of the
+      sidebar; the shell's is told directly and by the storage event.*
+- [x] **Home: resizing into a gap above, placing a new segment, confusing
+      sizes, contents that scroll, a slow skin render.** — *Resize limits come
+      from the segment's current size; a new segment follows the pointer
+      until clicked down; one size system (width %, height in rows, one
+      inside size, seconds for times) with units shown; what does not fit is
+      drawn smaller down to 55% instead of scrolling; the render follows a
+      resize as it happens.*
+
 ## 0. Round 67
 
 - [x] **Things that worked in development do not in a built launcher:
