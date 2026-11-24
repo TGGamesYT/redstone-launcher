@@ -285,7 +285,12 @@ function createDecoder(onFrame, onError) {
       // A garbage length (e.g. an old/incompatible client, or something speaking
       // the wrong protocol at the control port) would otherwise buffer forever /
       // OOM. No legitimate control frame is anywhere near this big.
-      if (len > 8 * 1024 * 1024) { if (onError) onError(new Error("oversized frame")); return; }
+      if (len > 8 * 1024 * 1024) {
+        // The first bytes go with it, so whoever logs this can say what it
+        // was rather than just that it was wrong.
+        if (onError) onError(Object.assign(new Error("oversized frame"), { head: Buffer.from(buf.subarray(0, 24)) }));
+        return;
+      }
       if (buf.length < 9 + len) break;
       try {
         const r = onFrame(buf.readUInt8(0), buf.readUInt32BE(1), Buffer.from(buf.subarray(9, 9 + len)));
@@ -1572,7 +1577,24 @@ function handleControl(sock) {
       // Packs are served on the control port (separate from Minecraft's 25565).
       send(T.HTTP, 0, Buffer.from(JSON.stringify({ port: CONTROL_PORT })));
     }
-  }, (e) => { log("[control frame]", e && e.message); try { sock.destroy(); } catch { /* ignore */ } });
+  }, (e) => {
+    // Something that finished a TLS handshake and then did not speak the
+    // launcher's protocol. Nearly always a web client or an internet-wide
+    // scanner trying HTTPS on an open port: "GET / HTTP/1.1" read as a frame
+    // header has a length of hundreds of megabytes. Dropped either way; said
+    // with who it was and what it looked like, so nobody has to guess.
+    const head = e && e.head ? e.head : null;
+    const text = head ? head.toString("latin1") : "";
+    const web = /^(GET|POST|HEAD|PUT|OPTIONS|DELETE|PATCH|CONNECT|PRI) /.test(text);
+    const who = (sock.remoteAddress || "?").replace(/^::ffff:/, "");
+    if (e && e.message === "oversized frame") {
+      log(`[control] dropped a connection from ${who}: not the launcher's protocol`
+        + (web ? ` -- an HTTPS web request ("${text.split("\r")[0].slice(0, 40)}"), which is what port scanners send` : ` (began ${JSON.stringify(text.slice(0, 16))})`));
+    } else {
+      log(`[control frame] ${who}: ${e && e.message}`);
+    }
+    try { sock.destroy(); } catch { /* ignore */ }
+  });
 
   sock.on("data", decode);
   sock.on("close", () => {
