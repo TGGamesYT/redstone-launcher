@@ -244,6 +244,7 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
   if (!pngBuffer) return { updated: [], skipped: ["no icon given"] };
   const updated = [], skipped = [];
   const refs = new Set();          // every icon a shortcut points at, lower-cased
+  const seen = [];                 // every shortcut looked at, for the log
   const dir = iconsDir();
   const desktop = (() => { try { return app.getPath("desktop"); } catch { return null; } })();
   const home = os.homedir();
@@ -320,6 +321,9 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
             + `if($do){$s.IconLocation='${q(ico)},0';$s.Save();$u+='${q(lnk)}';$i='${q(ico)}';Write-Output ('OK ' + '${q(lnk)}')}`
             + `else{Write-Output ('SKIP ' + '${q(lnk)}')}`
             + `if($i){Write-Output ('REF ' + $i)}`
+            // What each one IS, for the log: which program it starts, which
+            // icon it shows and whether that file exists.
+            + `Write-Output ('SEEN ' + '${q(lnk)}' + '|' + $s.TargetPath + '|' + $s.IconLocation + '|' + $(if($i){Test-Path -LiteralPath $i}else{'no icon set'}))`
             + `}catch{Write-Output ('FAIL ' + '${q(lnk)}' + ': ' + $_.Exception.Message)};`).join("")
           + nudgeChangedScript();
         try {
@@ -330,6 +334,11 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
             const fail = /^FAIL (.*?): (.*)$/.exec(t);
             if (fail) { skipped.push(`${path.basename(fail[1])}: ${fail[2]}`); continue; }
             if (t.startsWith("REF ")) { refs.add(path.resolve(t.slice(4)).toLowerCase()); continue; }
+            if (t.startsWith("SEEN ")) {
+              const [lnk, tgt, iconLoc, exists] = t.slice(5).split("|");
+              seen.push({ link: lnk, target: tgt || "", icon: iconLoc || "", iconExists: exists });
+              continue;
+            }
             if (t.startsWith("OK ")) updated.push(t.slice(3));
             // Repairing, a shortcut left alone is simply one that was fine.
             else if (t.startsWith("SKIP ") && !onlyBroken) skipped.push(`${path.basename(t.slice(5))}: starts another copy of the launcher`);
@@ -370,7 +379,7 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
           refreshed += ", associations-changed sent";
         } catch (e) { refreshed += ", associations-changed failed: " + (e && e.message || e); }
       }
-      return { updated, skipped, icon: ico, refreshed };
+      return { updated, skipped, icon: ico, refreshed, seen, places: links.length ? null : places };
     }
 
     if (process.platform === "darwin") {

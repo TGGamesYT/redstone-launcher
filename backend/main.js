@@ -1599,9 +1599,19 @@ if (!gotTheLock) {
         try { png = fs.readFileSync(ICON_OUT()); } catch { return; }
         Promise.resolve(shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher", scope: "all", onlyBroken: true }))
           .then((r) => {
+            // Said every time, fixed or not: what each shortcut of ours starts
+            // and which icon it shows, which is what "the taskbar icon is
+            // wrong" comes down to.
+            const seen = (r && r.seen) || [];
+            if (!seen.length) iconLog(`at start: no launcher shortcut found${r && r.places ? ` (looked in ${r.places.join("; ")})` : ""}`);
+            for (const x of seen) {
+              iconLog(`at start: ${x.link} -> starts ${x.target || "(nothing)"}, icon ${x.icon || "(none)"}`
+                + `${x.iconExists === "True" ? "" : x.iconExists === "False" ? " -- THAT FILE IS MISSING" : ` (${x.iconExists})`}`);
+            }
             if (r && r.updated && r.updated.length) {
               iconLog(`at start, repaired shortcuts whose icon was missing: ${r.updated.map(f => path.basename(f)).join(", ")}`);
             }
+            if (r && r.skipped && r.skipped.length) iconLog(`at start, could not check: ${r.skipped.join("; ")}`);
           })
           .catch((e) => iconLog(`at start, the repair failed: ${e && e.message || e}`));
       }, 5000);
