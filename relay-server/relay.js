@@ -1697,12 +1697,14 @@ const mc = net.createServer((client) => {
       const out = net.connect({ host: f.host, port: f.port });
       try { out.setNoDelay(true); } catch { /* ignore */ }
       out.on("connect", () => {
+        log(`forward: a player for ${fullHost} sent on to ${f.name} (${hs.nextState === 1 ? "server list" : "joining"})`);
         out.write(Buffer.concat([rewriteHandshake({ ...hs, port: f.port }, f.name), acc.subarray(hs.consumed)]));
         client.pipe(out);
         out.pipe(client);
       });
       const end = () => { client.destroy(); out.destroy(); };
-      out.on("error", () => {
+      out.on("error", (err) => {
+        log(`forward: ${f.name} could not be reached for ${fullHost}: ${err && err.message || err}`);
         // Somewhere to say so, rather than a bare disconnect.
         if (!client.destroyed && !out.bytesWritten) servePlaceholder(client, hs, "offline");
         else end();
