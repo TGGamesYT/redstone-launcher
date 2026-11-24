@@ -192,11 +192,22 @@ async function handleAlias(req, who, isAdmin) {
   // and the relay itself sends the players on. This check used to come
   // first, so a share over e4mc was refused with "no DNS credentials" before
   // the forwarding below was ever reached.
-  const fullHost = `${sub}.${DOMAIN}`;
+  //
+  // Which domain: the relay's own, or for an admin any domain this relay's
+  // DNS token manages -- the same rule as a tunnel's.
+  let domain = DOMAIN;
+  const askedDomain = String(req?.domain || "").trim().toLowerCase();
+  if (askedDomain && askedDomain !== DOMAIN) {
+    if (!isAdmin) return refuse("Only an admin can use another domain.");
+    const zones = CF.enabled ? (await cfListZones()).map(z => z.name) : [];
+    if (!zones.includes(askedDomain)) return refuse(`${askedDomain} is not a domain this relay manages.`);
+    domain = askedDomain;
+  }
+  const fullHost = `${sub}.${domain}`;
   if (op === "clear") {
     forwards.delete(fullHost);
     log(`alias: ${who && who.name} cleared ${fullHost}`);
-    if (CF.enabled) { try { await cfClearAlias(fullHost, DOMAIN); } catch { /* the wildcard covers it */ } }
+    if (CF.enabled) { try { await cfClearAlias(fullHost, domain); } catch { /* the wildcard covers it */ } }
     return { ok: true };
   }
   if (op !== "set") return refuse(`Unknown alias op "${op}".`);
@@ -207,7 +218,7 @@ async function handleAlias(req, who, isAdmin) {
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(target) || target.length > 253) {
     return refuse("That is not a hostname this can point at.");
   }
-  if (target.endsWith("." + DOMAIN) || target === DOMAIN) {
+  if (target.endsWith("." + DOMAIN) || target === DOMAIN || target.endsWith("." + domain) || target === domain) {
     return refuse("A name here cannot be pointed at itself.");
   }
   const port = Number(req?.port) || 25565;
@@ -246,7 +257,7 @@ async function handleAlias(req, who, isAdmin) {
   // a client that does not look SRV records up or a relay with no DNS token.
   let direct = false;
   if (CF.enabled) {
-    try { direct = !!(await cfPointSrv(fullHost, DOMAIN, name, port)); }
+    try { direct = !!(await cfPointSrv(fullHost, domain, name, port)); }
     catch (e) { log(`alias: SRV for ${fullHost} failed: ${e && e.message || e}`); }
   }
   log(`alias: ${who && who.name} sends ${fullHost} on to ${name} (${target}:${port})`

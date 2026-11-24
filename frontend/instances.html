@@ -721,6 +721,8 @@
         <div style="display:flex;align-items:center;gap:4px;">
           <input id="instShareSub" style="flex:1;" placeholder="name" />
           <span id="instShareDomainSuffix" style="opacity:0.8;white-space:nowrap;">.redstonemc.net</span>
+          <!-- Admins only, and only with more than one domain to pick from. -->
+          <select id="instShareDomainPick" style="display:none;"></select>
         </div>
         <div style="font-size:12px;opacity:0.7;margin-top:4px;">Friends join at <b><span id="instSharePreview"></span></b></div>
       </div>
@@ -1146,7 +1148,10 @@
     // A multi-label path (dots allowed), for admins who control the whole subdomain.
     const _instSubPath = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/\.+/g, '.').replace(/(^[.-]+|[.-]+$)/g, '');
     function _instShareAccount() { return _instShare.accounts.find(a => a.id === document.getElementById('instShareAccount').value) || _instShare.accounts[0]; }
-    function _instSelectedDomain() { return _instShare.baseDomain; }   // always redstonemc.net
+    function _instSelectedDomain() {
+      const pick = document.getElementById('instShareDomainPick');
+      return (_instShare.admin.isAdmin && pick && pick.style.display !== 'none' && pick.value) ? pick.value : _instShare.baseDomain;
+    }
     function _instFullSubdomain() {
       const a = _instShareAccount(); if (!a) return '';
       const uname = _instSubLabel(a.name);
@@ -1168,8 +1173,17 @@
       const suffix = document.getElementById('instShareDomainSuffix');
       const subInput = document.getElementById('instShareSub');
       const baseSub = _instSubLabel((_instShare.opts && _instShare.opts.defaultSub) || '');
+      const pick = document.getElementById('instShareDomainPick');
+      const domains = (_instShare.admin.isAdmin && Array.isArray(_instShare.admin.domains)) ? _instShare.admin.domains : [];
+      if (domains.length > 1) {
+        const was = pick.value;
+        pick.innerHTML = '';
+        for (const d of domains) { const o = document.createElement('option'); o.value = d; o.textContent = '.' + d; pick.appendChild(o); }
+        pick.value = domains.includes(was) ? was : (domains.includes(_instShare.baseDomain) ? _instShare.baseDomain : domains[0]);
+        pick.style.display = '';
+      } else pick.style.display = 'none';
       if (_instShare.admin.isAdmin) {
-        suffix.textContent = `.${_instShare.baseDomain}`;
+        suffix.textContent = domains.length > 1 ? '.' : `.${_instShare.baseDomain}`;
         subInput.value = baseSub ? `${baseSub}.${uname}` : uname;
       } else {
         suffix.textContent = `.${uname}.${_instShare.baseDomain}`;
@@ -1197,6 +1211,7 @@
       portSec.style.display = opts.localPort ? 'none' : '';
       portInput.value = opts.localPort || '';
       document.getElementById('instShareSub').oninput = _instUpdateSharePreview;
+      document.getElementById('instShareDomainPick').onchange = _instUpdateSharePreview;
       sel.onchange = _instRefreshAdminInfo;
       document.getElementById('instShareModal').classList.add('active');
       setTimeout(() => document.getElementById('instShareSub').focus(), 60);

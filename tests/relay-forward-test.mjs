@@ -54,7 +54,7 @@ check("only e4mc's names may be forwarded to by anybody",
     const i = src.indexOf(`async function ${name}(`);
     return src.slice(i, src.indexOf("\n}\n", i) + 3);
   };
-  const make = new Function("CF", "DOMAIN", "log", "forwards", "FORWARD_OK", "cfClearAlias", "cfPointSrv",
+  const make = new Function("CF", "DOMAIN", "log", "forwards", "FORWARD_OK", "cfClearAlias", "cfPointSrv", "cfListZones",
     [fn("subLabelSafe"), fn("nonAdminSubAllowed"), asyncFn("handleAlias")].join("\n") + "\nreturn handleAlias;");
   const forwards = new Map();
   const said = [];
@@ -79,11 +79,22 @@ check("only e4mc's names may be forwarded to by anybody",
   // fallback for a client that does not look SRV records up.
   const srv = [];
   const withDns = make({ enabled: true }, "redstonemc.net", () => { }, new Map(), FORWARD_OK,
-    async () => ({ ok: true }), async (host, domain, target, port) => { srv.push([host, target, port]); return true; });
+    async () => ({ ok: true }), async (host, domain, target, port) => { srv.push([host, target, port]); return true; },
+    async () => [{ name: "redstonemc.net" }, { name: "other.net" }]);
   const d = await withDns({ op: "set", subdomain: "tgdoescode", host: "relay-eu.e4mc.link", port: 25565, name: "quick-fox.e4mc.link" }, who, false);
   check("with a DNS token, players are sent straight to e4mc by an SRV record",
     [d.ok, d.direct, srv[0]], [true, true, ["tgdoescode.redstonemc.net", "quick-fox.e4mc.link", 25565]],
     "to e4mc's NAME, which is what the client then puts in its handshake");
+
+  // Another of the relay's domains: an admin's choice, nobody else's.
+  const admin = { uuid: "a1", name: "Admin" };
+  const other = await withDns({ op: "set", subdomain: "event", domain: "other.net", host: "x.e4mc.link", port: 25565, name: "x.e4mc.link" }, admin, true);
+  check("an admin can put a share on another domain the relay manages",
+    [other.ok, other.host, srv[srv.length - 1][0]], [true, "event.other.net", "event.other.net"]);
+  const notMine = await withDns({ op: "set", subdomain: "tgdoescode", domain: "other.net", host: "x.e4mc.link", name: "x.e4mc.link" }, who, false);
+  check("somebody who is not an admin cannot", notMine.ok, false);
+  const unmanaged = await withDns({ op: "set", subdomain: "event", domain: "nope.org", host: "x.e4mc.link", name: "x.e4mc.link" }, admin, true);
+  check("nor can anybody use a domain the relay does not manage", unmanaged.ok, false);
 }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

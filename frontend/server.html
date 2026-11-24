@@ -390,6 +390,9 @@
           <div style="display:flex;align-items:center;gap:4px;">
             <input id="shareSub" style="flex:1;" placeholder="name" />
             <span id="shareDomainSuffix" style="opacity:0.8;white-space:nowrap;">.redstonemc.net</span>
+            <!-- Admins only, and only when the relay manages more than one
+                 domain: one entry is no choice, so there is no dropdown. -->
+            <select id="shareDomainPick" style="display:none;"></select>
           </div>
           <div style="font-size:12px;opacity:0.7;margin-top:4px;">Friends join at <b><span id="sharePreview"></span></b></div>
         </div>
@@ -797,7 +800,12 @@
     let shareAccounts = [], shareBaseDomain = 'redstonemc.net';
     let shareAdmin = { isAdmin: false, domains: [] };
     function shareAccount() { return shareAccounts.find(x => x.id === $('shareAccount').value) || shareAccounts[0]; }
-    function selectedDomain() { return shareBaseDomain; }        // always redstonemc.net
+    // The relay's own domain, or for an admin whichever of the relay's
+    // domains is picked.
+    function selectedDomain() {
+      const pick = $('shareDomainPick');
+      return (shareAdmin.isAdmin && pick && pick.style.display !== 'none' && pick.value) ? pick.value : shareBaseDomain;
+    }
     function fullSubdomain() {
       const a = shareAccount(); if (!a) return '';
       const uname = subLabel(a.name);
@@ -815,8 +823,18 @@
       const a = shareAccount(); if (!a) return;
       const uname = subLabel(a.name);
       const baseSub = subLabel(selectedServer.name);
+      const pick = $('shareDomainPick');
+      const domains = (shareAdmin.isAdmin && Array.isArray(shareAdmin.domains)) ? shareAdmin.domains : [];
+      if (domains.length > 1) {
+        const was = pick.value;
+        pick.innerHTML = '';
+        for (const d of domains) { const o = document.createElement('option'); o.value = d; o.textContent = '.' + d; pick.appendChild(o); }
+        pick.value = domains.includes(was) ? was : (domains.includes(shareBaseDomain) ? shareBaseDomain : domains[0]);
+        pick.style.display = '';
+      } else pick.style.display = 'none';
       if (shareAdmin.isAdmin) {
-        $('shareDomainSuffix').textContent = `.${shareBaseDomain}`;
+        // With a choice of domain the dropdown is the suffix.
+        $('shareDomainSuffix').textContent = domains.length > 1 ? '.' : `.${shareBaseDomain}`;
         $('shareSub').value = baseSub ? `${baseSub}.${uname}` : uname;
       } else {
         $('shareDomainSuffix').textContent = `.${uname}.${shareBaseDomain}`;
@@ -875,6 +893,7 @@
       $('sharePortSection').style.display = cfgPort ? 'none' : '';
       $('sharePort').value = cfgPort || '';
       $('shareSub').oninput = updateSharePreview;
+      $('shareDomainPick').onchange = updateSharePreview;
       sel.onchange = refreshAdminInfo;
       $('shareModal').classList.add('active');
       setTimeout(() => $('shareSub').focus(), 60);

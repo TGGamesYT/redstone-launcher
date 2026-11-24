@@ -9,6 +9,19 @@ started.
 
 ---
 
+## 0. Round 79
+
+- [x] **The admin panel's relay settings have no box to type in.** The form
+      was defined with `fields`, which the panel does not read; it uses
+      `inputs` and `with` now. Secrets get a password box.
+- [x] **Admins cannot pick another of the relay's domains when sharing.** Both
+      share dialogs had the domain fixed. An admin now gets a dropdown of the
+      domains the relay manages -- only when there is more than one -- and an
+      e4mc share honours it too (the relay's alias code always used its own
+      domain; it now accepts another of its zones from an admin only).
+
+---
+
 ## 0. Round 78
 
 - [x] **An e4mc share under our name is relayed twice.** Forwarding (Round 73)

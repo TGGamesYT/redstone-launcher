@@ -8332,7 +8332,7 @@ ipcMain.handle("relay:setBackend", (event, { backend } = {}) => {
   return { success: true, setting: want, inUse: relayBackendInUse() };
 });
 
-async function openViaE4mc({ k, name, localPort, accountId, subdomain }) {
+async function openViaE4mc({ k, name, localPort, accountId, subdomain, domain }) {
   if (!e4mc.available()) {
     return { success: false, error: "The part of the launcher that talks to e4mc is not installed in this copy." };
   }
@@ -8378,7 +8378,8 @@ async function openViaE4mc({ k, name, localPort, accountId, subdomain }) {
   const pointName = async () => relayClient.aliasRelay({
     host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
     account, rejectUnauthorized: settings.get("relayVerifyTls", true) !== false,
-    req: { op: "set", subdomain: sub, host: target.host, port: target.port, name: session.domain },
+    // The domain an admin picked; the relay checks they may use it.
+    req: { op: "set", subdomain: sub, domain: domain || DOMAIN_BASE, host: target.host, port: target.port, name: session.domain },
   });
   if (account) {
     try {
@@ -8406,6 +8407,7 @@ async function openViaE4mc({ k, name, localPort, accountId, subdomain }) {
     shownAddr, directAddress: null, localPort, upnpMapped: false,
     port: shownPort, backend: "e4mc", e4mcDomain: session.domain,
     ourName: ours, aliasAccount: ours ? account : null, note: aliasNote,
+    aliasSub: ours ? sub : null, aliasDomain: ours ? (domain || DOMAIN_BASE) : null,
     close: () => { if (keepName) clearInterval(keepName); try { session.close(); } catch { /* already gone */ } },
   });
   return {
@@ -8427,7 +8429,7 @@ async function openRelayFor({ key, name, localPort, subdomain, domain, accountId
 
     // Which relay carries it. The caller may say; otherwise it is the setting.
     const which = relayBackendInUse(backend);
-    if (which === "e4mc") return await openViaE4mc({ k, name, localPort, accountId, subdomain });
+    if (which === "e4mc") return await openViaE4mc({ k, name, localPort, accountId, subdomain, domain });
 
     const account = await accountCredsByIdFresh(accountId);
     if (!account) return { success: false, error: "Sharing over the internet needs a premium Minecraft account. Add one in the Login page first." };
@@ -8478,12 +8480,12 @@ ipcMain.handle("relay:close", async (event, { key, name }) => {
     // tunnel that is no longer there -- which looks exactly like a server that
     // is up and refusing connections.
     if (s.backend === "e4mc" && s.ourName && s.aliasAccount) {
-      const sub = String(s.ourName).replace(new RegExp(`\\.${DOMAIN_BASE.replace(/\./g, "\\.")}$`), "");
+      const sub = s.aliasSub || String(s.ourName).replace(new RegExp(`\\.${DOMAIN_BASE.replace(/\./g, "\\.")}$`), "");
       try {
         await relayClient.aliasRelay({
           host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
           account: s.aliasAccount, rejectUnauthorized: settings.get("relayVerifyTls", true) !== false,
-          req: { op: "clear", subdomain: sub },
+          req: { op: "clear", subdomain: sub, domain: s.aliasDomain || DOMAIN_BASE },
         });
       } catch (e) { devtoolsLog(`[e4mc] ${s.ourName} could not be unpointed: ${e.message}`); }
     }
