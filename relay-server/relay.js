@@ -20,6 +20,7 @@ import tls from "tls";
 import fs from "fs";
 import https from "https";
 import crypto from "crypto";
+import dns from "dns";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -170,9 +171,22 @@ async function cfPointAlias(fullHost, domain, target, port) {
 async function cfClearAlias(fullHost, domain) {
   const zoneId = await cfZoneIdFor(domain);
   if (!zoneId) return { ok: false, error: "This relay cannot edit that domain's DNS." };
+  await cfDeleteByName(zoneId, "A", fullHost);
+  await cfDeleteByName(zoneId, "AAAA", fullHost);
   await cfDeleteByName(zoneId, "CNAME", fullHost);
   await cfDeleteByName(zoneId, "SRV", `_minecraft._tcp.${fullHost}`);
   return { ok: true };
+}
+
+// An SRV record sending <fullHost> to `target`:`port`.
+async function cfPointSrv(fullHost, domain, target, port) {
+  const zoneId = await cfZoneIdFor(domain);
+  if (!zoneId) return { ok: false, error: "This relay cannot edit that domain's DNS." };
+  const res = await cfRequest("POST", `/zones/${zoneId}/dns_records`, {
+    type: "SRV", name: `_minecraft._tcp.${fullHost}`, ttl: 60,
+    data: { service: "_minecraft", proto: "_tcp", name: fullHost, priority: 0, weight: 5, port: Number(port) || 25565, target },
+  });
+  return res?.result?.id ? { ok: true } : { ok: false, error: (res?.errors?.[0]?.message) || "Cloudflare would not make the SRV record." };
 }
 
 // `who` is the Mojang-VERIFIED profile this connection proved, so the same
@@ -188,11 +202,6 @@ async function handleAlias(req, who, isAdmin) {
   if (!isAdmin && !nonAdminSubAllowed(sub, who.name)) {
     return refuse(`${sub} is not yours to point anywhere.`);
   }
-  // No DNS credentials needed: the name already resolves here (the wildcard),
-  // and the relay itself sends the players on. This check used to come
-  // first, so a share over e4mc was refused with "no DNS credentials" before
-  // the forwarding below was ever reached.
-  //
   // Which domain: the relay's own, or for an admin any domain this relay's
   // DNS token manages -- the same rule as a tunnel's.
   let domain = DOMAIN;
@@ -205,7 +214,6 @@ async function handleAlias(req, who, isAdmin) {
   }
   const fullHost = `${sub}.${domain}`;
   if (op === "clear") {
-    forwards.delete(fullHost);
     log(`alias: ${who && who.name} cleared ${fullHost}`);
     if (CF.enabled) { try { await cfClearAlias(fullHost, domain); } catch { /* the wildcard covers it */ } }
     return { ok: true };
@@ -234,56 +242,47 @@ async function handleAlias(req, who, isAdmin) {
   if (!isAdmin && !(FORWARD_OK.test(name) && FORWARD_OK.test(target))) {
     return refuse("A name here can only be sent on to e4mc.");
   }
-  // Players come HERE, as for any other name of ours, and are sent on.
+  // DNS only -- this relay never carries an e4mc share's traffic. Which kind
+  // of record is the launcher's choice (Settings -> Advanced), so each can be
+  // tried:
   //
-  // It used to be a CNAME straight to e4mc, which cannot work: a Minecraft
-  // client puts the address it typed into its handshake, and e4mc routes by
-  // that -- so a player who typed our name reached e4mc asking for a world
-  // e4mc had never heard of. (And it needed DNS credentials besides, and
-  // without them the launcher quietly showed e4mc's name instead.) Here the
-  // handshake is rewritten to e4mc's name on the way through.
-  forwards.set(fullHost, { host: target, port, name, owner: who && who.uuid, at: Date.now() });
-
-  // No SRV record pointing at e4mc, and any left from before is removed.
+  //   srv    _minecraft._tcp.<name> -> e4mc's name:port. The client connects
+  //          straight to e4mc; what it puts in its handshake is then up to
+  //          the client (vanilla is reported to keep the target's trailing
+  //          dot, which e4mc may not accept).
+  //   cname  <name> -> e4mc's name (plus SRV when the port is not 25565).
+  //          The handshake carries the name the player typed.
+  //   a      <name> -> the IPv4 address e4mc's name resolves to now. Same
+  //          handshake as a CNAME; and it goes stale if e4mc's address moves.
   //
-  // One was tried, to send players straight to e4mc instead of through this
-  // relay. It cannot work: a Minecraft client that follows an SRV record
-  // puts the target in its handshake as DNS spells it, WITH the trailing dot
-  // ("x.e4mc.link."), and e4mc looks the name up exactly -- so players got
-  // e4mc's "not found" message. (Proxies such as Velocity strip that dot for
-  // the same reason; e4mc does not.) The forwarding above rewrites the
-  // handshake to the exact name, which is the one way e4mc accepts.
-  if (CF.enabled) {
-    try { await cfClearAlias(fullHost, domain); }
-    catch (e) { log(`alias: could not clear old DNS records for ${fullHost}: ${e && e.message || e}`); }
+  // Whatever was on the name before is cleared first, so switching between
+  // them in testing never leaves two kinds on one name.
+  const mode = String(req?.mode || "srv").toLowerCase();
+  if (!["srv", "cname", "a"].includes(mode)) return refuse(`Unknown DNS mode "${mode}".`);
+  if (!CF.enabled) return refuse("This relay has no Cloudflare token, so it cannot point a name anywhere.");
+  try { await cfClearAlias(fullHost, domain); } catch { /* made below or refused below */ }
+  let r;
+  if (mode === "srv") r = await cfPointSrv(fullHost, domain, name, port);
+  else if (mode === "cname") r = await cfPointAlias(fullHost, domain, name, port);
+  else {
+    let ip = null;
+    try { ip = (await dns.promises.resolve4(name))[0] || null; } catch { /* below */ }
+    if (!ip) return refuse(`${name} has no IPv4 address to point at.`);
+    const rec = await cfPointDirect(fullHost, domain, ip);
+    r = rec ? { ok: true } : { ok: false, error: "Cloudflare would not make the A record." };
+    if (rec && Number(port) !== 25565) {
+      const srv = await cfPointSrv(fullHost, domain, fullHost, port);
+      if (!srv.ok) log(`alias: SRV for the port of ${fullHost} failed: ${srv.error}`);
+    }
   }
-  log(`alias: ${who && who.name} sends ${fullHost} on to ${name} (${target}:${port}) through this relay`);
-  return { ok: true, host: fullHost, target: name, forwarded: true };
+  if (!r || !r.ok) return refuse((r && r.error) || "The DNS record could not be made.");
+  log(`alias: ${who && who.name} points ${fullHost} at ${name}${port !== 25565 ? ":" + port : ""} by ${mode.toUpperCase()} record`);
+  return { ok: true, host: fullHost, target: name, mode };
 }
 
 
-// Names of ours sent on to somewhere else (an e4mc share), by full host.
-// Kept while they are being used; one nobody has refreshed for a day is gone.
-const forwards = new Map();
+// Who may point a name of ours where: anybody but an admin only at e4mc.
 const FORWARD_OK = /(^|\.)e4mc\.link$/;
-const FORWARD_TTL = 24 * 60 * 60 * 1000;
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, f] of forwards) if (now - f.at > FORWARD_TTL) forwards.delete(k);
-}, 60 * 60 * 1000).unref();
-
-// A handshake asking for `address` instead, everything else as it was. A
-// Forge client's "\0FML…\0" tag on the end is kept: it is how the server
-// knows what the client is.
-function rewriteHandshake(hs, address) {
-  const raw = String(hs.address || "");
-  const tag = raw.includes("\0") ? raw.slice(raw.indexOf("\0")) : "";
-  const addr = Buffer.from(address + tag, "utf8");
-  const port = Buffer.alloc(2); port.writeUInt16BE(hs.port || 25565, 0);
-  return mcPacket(0x00, Buffer.concat([
-    writeVarInt(hs.protocol), writeVarInt(addr.length), addr, port, writeVarInt(hs.nextState),
-  ]));
-}
 
 // The same cleaning subLabel does, but refusing rather than mangling: a name
 // that had to be changed to be safe is not the name that was asked for.
@@ -1756,32 +1755,6 @@ const mc = net.createServer((client) => {
       client.on("data", (d) => host.send(T.DATA, streamId, d));
       client.on("close", () => { if (host.streams.delete(streamId)) host.send(T.CLOSE, streamId, null); });
       client.on("error", () => {});
-    } else if (forwards.has(fullHost)) {
-      // A name of ours sent on to e4mc: the same connection, onward, with
-      // the handshake now asking for e4mc's name.
-      const f = forwards.get(fullHost);
-      f.at = Date.now();
-      // Held until there is somewhere to send it: with the handshake reader
-      // taken off, anything the client sent meanwhile would be dropped.
-      client.pause();
-      const out = net.connect({ host: f.host, port: f.port });
-      try { out.setNoDelay(true); } catch { /* ignore */ }
-      out.on("connect", () => {
-        log(`forward: a player for ${fullHost} sent on to ${f.name} (${hs.nextState === 1 ? "server list" : "joining"})`);
-        out.write(Buffer.concat([rewriteHandshake({ ...hs, port: f.port }, f.name), acc.subarray(hs.consumed)]));
-        client.pipe(out);
-        out.pipe(client);
-      });
-      const end = () => { client.destroy(); out.destroy(); };
-      out.on("error", (err) => {
-        log(`forward: ${f.name} could not be reached for ${fullHost}: ${err && err.message || err}`);
-        // Somewhere to say so, rather than a bare disconnect.
-        if (!client.destroyed && !out.bytesWritten) servePlaceholder(client, hs, "offline");
-        else end();
-      });
-      out.on("close", end);
-      client.on("close", end);
-      client.on("error", end);
     } else {
       // Not live: "offline" if used recently, else "doesn't exist".
       const recent = Date.now() - recentSubUsed(fullHost) < RECENT_MS;

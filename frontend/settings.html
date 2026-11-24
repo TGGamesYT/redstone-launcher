@@ -1154,6 +1154,22 @@
             data-tip="The launcher's own relay, which you run. Nothing leaves your infrastructure."><input type="checkbox" name="relay-backend" value="own"> Always our own relay</label>
         </div>
         <div id="relay-backend-state" class="relay-backend-about"></div>
+
+        <!-- How a name of ours reaches an e4mc share. DNS only: our relay
+             never carries e4mc's traffic. One of four, to try each. -->
+        <h4 style="margin-top:16px;">e4mc and our names</h4>
+        <p class="relay-backend-about">
+          Shared over e4mc, the world can still be given one of our names, by a DNS
+          record pointing at e4mc's. Players connect to e4mc directly either way.
+          Whether they get in depends on the name their game sends, which differs by
+          kind of record -- e4mc's own address is always shown beside ours.
+        </p>
+        <div class="relay-backend-row" id="e4mc-dns-row">
+          <label class="setting-toggle" data-tip="_minecraft._tcp.<our name> points at e4mc's name and port."><input type="checkbox" name="e4mc-dns" value="srv"> SRV record</label>
+          <label class="setting-toggle" data-tip="<our name> is a CNAME of e4mc's name. The game sends our name."><input type="checkbox" name="e4mc-dns" value="cname"> CNAME record</label>
+          <label class="setting-toggle" data-tip="<our name> is an A record of the IP e4mc's name has right now. The game sends our name."><input type="checkbox" name="e4mc-dns" value="a"> A record</label>
+          <label class="setting-toggle" data-tip="No name of ours: the address given out is e4mc's."><input type="checkbox" name="e4mc-dns" value="none"> None -- e4mc's address</label>
+        </div>
       </div>
 
       <h3>Developer</h3>
@@ -2229,6 +2245,19 @@
             ? `Using ${r.inUse === 'e4mc' ? "e4mc's relays" : "the launcher's own relay"} right now.`
             : "The e4mc helper is not installed in this copy, so the launcher's own relay is being used.";
         };
+        // How our names reach an e4mc share: one of four, like the above.
+        const dnsChoices = [...wrap.querySelectorAll('input[name="e4mc-dns"]')];
+        let dnsNow = 'srv';
+        try { dnsNow = (await ipcRenderer.invoke('relay:e4mcDnsMode', {})).mode || 'srv'; } catch { /* default */ }
+        for (const el of dnsChoices) {
+          el.checked = el.value === dnsNow;
+          el.addEventListener('change', async () => {
+            if (!el.checked) { el.checked = true; return; }
+            for (const other of dnsChoices) if (other !== el) other.checked = false;
+            await ipcRenderer.invoke('relay:e4mcDnsMode', { mode: el.value });
+          });
+        }
+
         let now = { setting: 'auto', inUse: 'own', e4mcAvailable: false };
         try { now = await ipcRenderer.invoke('relay:backend'); } catch { /* defaults */ }
         wrap.style.display = '';

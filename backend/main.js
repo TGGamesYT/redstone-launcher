@@ -923,6 +923,9 @@ const DEFAULT_SETTINGS = {
   // Hash what is already on disk against Mojang's checksums before every
   // launch. Off launches faster and trusts the files as they are.
   verifyGameFiles: true,
+  // How a name of ours is pointed at an e4mc share: "srv", "cname", "a", or
+  // "none" for e4mc's own address. DNS only, never through our relay.
+  e4mcDnsMode: "srv",
   discordPresence: true,
   autoThird: true,
   gridView: false,
@@ -8348,6 +8351,14 @@ function relayBackendInUse(asked) {
   return e4mc.available() ? "e4mc" : "own";
 }
 
+ipcMain.handle("relay:e4mcDnsMode", (event, { mode } = {}) => {
+  if (mode !== undefined) {
+    const m = String(mode || "").toLowerCase();
+    if (!["none", "srv", "cname", "a"].includes(m)) return { success: false, error: "Unknown mode" };
+    settings.set("e4mcDnsMode", m);
+  }
+  return { success: true, mode: settings.get("e4mcDnsMode", "srv") };
+});
 ipcMain.handle("relay:backend", () => ({
   setting: String(settings.get("relayBackend", "auto") || "auto"),
   inUse: relayBackendInUse(),
@@ -8395,54 +8406,50 @@ async function openViaE4mc({ k, name, localPort, accountId, subdomain, domain })
   try { target = await e4mc.resolveTarget(session.domain); }
   catch (e) { devtoolsLog(`[e4mc] ${session.domain} could not be looked up: ${e.message}`); }
 
-  // And a name of ours pointed at it. Only possible with an account, since the
-  // relay will not let anybody point a name they have not proved is theirs.
-  // A name of ours that players can use instead of e4mc's. Players connect
-  // to OUR relay under it and are sent on to e4mc, with the handshake
-  // rewritten to e4mc's name (relay-server/relay.js, handleAlias). `name` is
-  // what e4mc routes by; `host` and `port` are where to send them.
-  let ours = null, aliasNote = null;
-  const account = await accountCredsByIdFresh(accountId);
-  const sub = account ? (subdomain || subLabel(account.name)) : null;
-  const pointName = async () => relayClient.aliasRelay({
-    host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
-    account, rejectUnauthorized: settings.get("relayVerifyTls", true) !== false,
-    // The domain an admin picked; the relay checks they may use it.
-    req: { op: "set", subdomain: sub, domain: domain || DOMAIN_BASE, host: target.host, port: target.port, name: session.domain },
-  });
-  if (account) {
-    try {
-      const r = await pointName();
-      if (r && r.ok) ours = r.host;
-      else aliasNote = (r && r.error) || "the name could not be pointed at it";
-    } catch (e) { aliasNote = String(e && e.message || e); }
-    if (aliasNote) devtoolsLog(`[e4mc] ${aliasNote}`);
-  } else {
-    aliasNote = "Sign in with a Microsoft account to get a name of your own; e4mc's works either way.";
+  // A name of ours pointed at e4mc's by DNS -- never through our relay,
+  // which would be relaying e4mc's relay. Which kind of record is a setting
+  // (Settings -> Advanced, "e4mc and our names"), so each can be tried:
+  //
+  //   none   e4mc's own address, nothing of ours
+  //   srv    _minecraft._tcp.<ours> -> e4mc's name:port
+  //   cname  <ours> -> e4mc's name
+  //   a      <ours> -> the IP e4mc's name resolves to
+  //
+  // e4mc routes by the name in the player's handshake, so whether players
+  // get in depends on what the client puts there for each -- which is the
+  // thing being tested. e4mc's own address is offered beside ours either way.
+  const mode = String(settings.get("e4mcDnsMode", "srv") || "srv").toLowerCase();
+  let ours = null, aliasNote = null, sub = null;
+  const account = (mode !== "none") ? await accountCredsByIdFresh(accountId) : null;
+  if (mode !== "none") {
+    if (!account) aliasNote = "Sign in with a Microsoft account to get a name of your own; e4mc's works either way.";
+    else {
+      sub = subdomain || subLabel(account.name);
+      try {
+        const r = await relayClient.aliasRelay({
+          host: RELAY_DEFAULTS.host, controlPort: RELAY_DEFAULTS.controlPort,
+          account, rejectUnauthorized: settings.get("relayVerifyTls", true) !== false,
+          req: { op: "set", mode, subdomain: sub, domain: domain || DOMAIN_BASE, host: target.host, port: target.port, name: session.domain },
+        });
+        if (r && r.ok) ours = r.host;
+        else aliasNote = (r && r.error) || "the name could not be pointed at it";
+      } catch (e) { aliasNote = String(e && e.message || e); }
+      if (aliasNote) devtoolsLog(`[e4mc] ${aliasNote}`);
+    }
+    if (!ours && aliasNote) aliasNote = `Showing e4mc's address: ${aliasNote}`;
+    else if (ours) aliasNote = `${ours} points at e4mc by a ${mode.toUpperCase()} record (DNS takes up to a minute).`;
   }
-  // Said in full when it is e4mc's name after all, so it is never a mystery
-  // why the address is not the one asked for.
-  if (!ours && aliasNote) aliasNote = `Showing e4mc's address: ${aliasNote}`;
-
-  // The relay forgets a name nobody has used for a day; a share that is open
-  // but quiet keeps it by saying so every hour.
-  const keepName = ours ? setInterval(() => { pointName().catch(() => { /* next hour */ }); }, 60 * 60 * 1000) : null;
-
   const shownAddr = ours || session.address;
-  // Our name is reached on our relay's own port, not on whichever one e4mc's
-  // record names.
-  const shownPort = ours ? 25565 : target.port;
+  const shownPort = target.port;
+  const addresses = ours ? [ours, session.domain] : [session.address];
   activeRelays.set(k, {
     shownAddr, directAddress: null, localPort, upnpMapped: false,
     port: shownPort, backend: "e4mc", e4mcDomain: session.domain,
     ourName: ours, aliasAccount: ours ? account : null, note: aliasNote,
     aliasSub: ours ? sub : null, aliasDomain: ours ? (domain || DOMAIN_BASE) : null,
-    close: () => { if (keepName) clearInterval(keepName); try { session.close(); } catch { /* already gone */ } },
+    addresses,
+    close: () => { try { session.close(); } catch { /* already gone */ } },
   });
-  // Both, when there are two: ours, and e4mc's own, which works as well
-  // and skips our relay.
-  const addresses = ours ? [ours, session.domain] : [session.address];
-  activeRelays.get(k).addresses = addresses;
   return {
     success: true, address: shownAddr, port: shownPort, directAddress: null, addresses,
     backend: "e4mc", e4mc: { domain: session.domain, relay: relay.host, srv: target.srv || null },

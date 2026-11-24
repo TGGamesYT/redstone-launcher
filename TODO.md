@@ -9,6 +9,21 @@ started.
 
 ---
 
+## 0. Round 82
+
+- [x] **e4mc shares: DNS only, never re-relayed, and a choice of record to test.**
+      The relay no longer forwards anybody: the forwarding branch, its map and
+      the handshake rewrite are gone. A name of ours reaches an e4mc share only
+      by a DNS record, and which kind is a setting (Settings -> Advanced, "e4mc
+      and our names", admins): SRV, CNAME, A (e4mc's current IP), or none
+      (e4mc's address). The relay clears whatever was on the name and makes
+      the one asked for, and logs which. e4mc's own address is offered beside
+      ours in the banner either way. Whether a mode lets players in depends on
+      the name the client then puts in its handshake -- that is what this is
+      for testing.
+
+---
+
 ## 0. Round 81
 
 - [x] **Our name for an e4mc share gives e4mc's "not found".** The SRV record
