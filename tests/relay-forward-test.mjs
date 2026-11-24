@@ -54,7 +54,7 @@ check("only e4mc's names may be forwarded to by anybody",
     const i = src.indexOf(`async function ${name}(`);
     return src.slice(i, src.indexOf("\n}\n", i) + 3);
   };
-  const make = new Function("CF", "DOMAIN", "log", "forwards", "FORWARD_OK", "cfClearAlias",
+  const make = new Function("CF", "DOMAIN", "log", "forwards", "FORWARD_OK", "cfClearAlias", "cfPointSrv",
     [fn("subLabelSafe"), fn("nonAdminSubAllowed"), asyncFn("handleAlias")].join("\n") + "\nreturn handleAlias;");
   const forwards = new Map();
   const said = [];
@@ -73,6 +73,17 @@ check("only e4mc's names may be forwarded to by anybody",
   check("and so is somebody else's name", theirs.ok, false);
   const cleared = await handleAlias({ op: "clear", subdomain: "tgdoescode" }, who, false);
   check("clearing it stops the forwarding", [cleared.ok, forwards.has("tgdoescode.redstonemc.net")], [true, false]);
+  check("with no token it says players go through this relay", r.direct, false);
+
+  // With a token: an SRV record straight to e4mc, and the forward kept as the
+  // fallback for a client that does not look SRV records up.
+  const srv = [];
+  const withDns = make({ enabled: true }, "redstonemc.net", () => { }, new Map(), FORWARD_OK,
+    async () => ({ ok: true }), async (host, domain, target, port) => { srv.push([host, target, port]); return true; });
+  const d = await withDns({ op: "set", subdomain: "tgdoescode", host: "relay-eu.e4mc.link", port: 25565, name: "quick-fox.e4mc.link" }, who, false);
+  check("with a DNS token, players are sent straight to e4mc by an SRV record",
+    [d.ok, d.direct, srv[0]], [true, true, ["tgdoescode.redstonemc.net", "quick-fox.e4mc.link", 25565]],
+    "to e4mc's NAME, which is what the client then puts in its handshake");
 }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall pass");

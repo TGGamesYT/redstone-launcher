@@ -9,6 +9,23 @@ started.
 
 ---
 
+## 0. Round 78
+
+- [x] **An e4mc share under our name is relayed twice.** Forwarding (Round 73)
+      sends every byte through our relay and then e4mc's. With a Cloudflare
+      token the relay now also makes an SRV record for the name pointing at
+      e4mc's name: a Minecraft client follows it, connects straight to e4mc
+      and puts e4mc's name in its handshake (a CNAME keeps the typed name,
+      which is why that never worked). The forward stays as the fallback,
+      for no token or a client that ignores SRV. The relay's log says which
+      one a share got.
+- [x] **"[control frame] oversized frame" in the relay log.** A connection
+      that finished TLS and then did not speak the launcher's protocol --
+      an HTTPS web request or a port scanner. Still dropped; the log now
+      says who and what it sent.
+
+---
+
 ## 0. Round 77
 
 - [x] **A setting to skip verifying game files.** Settings -> Advanced, "Verify
