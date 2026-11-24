@@ -437,7 +437,10 @@
       const inputs = {};
       for (const spec of (block.inputs || [])) {
         const input = el('input', spec.grow ? 'grow' : '');
-        input.type = 'text';
+        // A secret (a token, a password) is typed into a box that does not
+        // show it; which rows are secret, the relay says.
+        input.type = (spec.secret || (spec.secretIf && row[spec.secretIf])) ? 'password' : 'text';
+        if (input.type === 'password') input.autocomplete = 'new-password';
         if (spec.placeholder) input.placeholder = spec.placeholder;
         const from = spec.from ? row[spec.from] : undefined;
         input.value = (from === undefined || from === null) ? (spec.value || '') : String(from);

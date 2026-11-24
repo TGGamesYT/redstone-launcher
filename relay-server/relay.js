@@ -1073,12 +1073,17 @@ const SETTINGS_PANEL = {
     { kind: "note", field: "state", label: "Now" },
     { kind: "note", field: "note", label: "Where it comes from" },
     {
+      // `inputs` and `with`, as every other form here: the panel draws
+      // `inputs` and sends what was typed in them through an action's
+      // `with`. This one was written with `fields`, which nothing reads, so
+      // it showed Save and Clear with nowhere to type -- and Save sent the
+      // row's own "value" (there is none) rather than anything typed.
       kind: "form", label: "Change it:",
-      fields: [{ id: "value", label: "New value", kind: "text" }],
+      inputs: [{ id: "value", placeholder: "New value", grow: true, from: "current", secretIf: "secret" }],
       actions: [
         {
           label: "Save", tone: "good", op: "settings.set",
-          send: { id: "id", value: "value" },
+          send: { id: "id" }, with: ["value"],
           refresh: true,
         },
         {
@@ -1108,8 +1113,13 @@ function settingRow(f) {
     file: `Set in ${path.basename(config.FILE)}.`,
     default: "Not set; the built-in default is in use.",
   }[f.source];
+  const secret = f.set !== undefined;
   return {
     id: f.id, label: f.label, help: f.help, source: f.source, note: where,
+    // Whether the box is a password box, and what it starts with: the
+    // current value for an ordinary setting, nothing ever for a secret.
+    secret,
+    current: secret ? "" : (Array.isArray(f.value) ? f.value.join(", ") : String(f.value == null ? "" : f.value)),
     // Never the value of a secret. The panel shows that there IS one.
     state: f.set !== undefined
       ? (f.set ? "Set" : "Not set")
