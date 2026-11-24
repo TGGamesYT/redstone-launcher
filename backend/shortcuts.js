@@ -162,7 +162,7 @@ export function rewriteIcon(iconPath, pngBuffer) {
 function freshIconPath(dir, ext) {
   return path.join(dir, `app-${Date.now().toString(36)}${ext}`);
 }
-function sweepOldIcons(dir, ext, keep) {
+function sweepOldIcons(dir, ext, keep, stillUsed = null) {
   let names = [];
   try { names = fs.readdirSync(dir); } catch { return; }
   // Exactly the names freshIconPath makes, plus the single fixed name used
@@ -173,6 +173,9 @@ function sweepOldIcons(dir, ext, keep) {
     if (!mine.test(n)) continue;
     const full = path.join(dir, n);
     if (full === keep) continue;
+    // A shortcut still points at it -- one this run did not change. Deleting
+    // it is the blank-page icon on the taskbar.
+    if (stillUsed && stillUsed.has(path.resolve(full).toLowerCase())) continue;
     // Still referenced by a shortcut that was not ours to change: leaving a
     // few stale files behind is better than blanking somebody's icon.
     try { fs.unlinkSync(full); } catch { /* it will go next time */ }
@@ -237,9 +240,10 @@ export function writeFreshAppIco(pngBuffer) {
 //              one for the rest of the session -- which is "it changes the
 //              first time and never again". They are rewritten as the
 //              launcher closes instead (see main.js).
-export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", exec, scope = "all" } = {}) {
+export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launcher", exec, scope = "all", onlyBroken = false } = {}) {
   if (!pngBuffer) return { updated: [], skipped: ["no icon given"] };
   const updated = [], skipped = [];
+  const refs = new Set();          // every icon a shortcut points at, lower-cased
   const dir = iconsDir();
   const desktop = (() => { try { return app.getPath("desktop"); } catch { return null; } })();
   const home = os.homedir();
@@ -298,10 +302,24 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
         // shortcuts of its own -- rewrote the installed launcher's pinned and
         // Start menu shortcuts, while its own taskbar button stayed as it was.
         const target = q(exec || process.execPath);
+        // Ours to change: a shortcut that starts this program -- or one whose
+        // icon is one of OURS that is no longer there, whatever it starts,
+        // because a missing icon is the blank page on the taskbar and the
+        // launcher is what deleted it. With `onlyBroken`, only the latter
+        // kind (and one of this program's own whose icon is missing).
+        //
+        // Every shortcut's icon is reported back (REF), changed or not, so the
+        // tidy-up below never deletes a file a shortcut still points at.
+        const mine = q(dir);
         const ps = "$sh=New-Object -ComObject WScript.Shell;$u=@();"
           + links.map(lnk => `try{$s=$sh.CreateShortcut('${q(lnk)}');`
-            + `if([IO.Path]::GetFullPath($s.TargetPath) -ieq [IO.Path]::GetFullPath('${target}')){$s.IconLocation='${q(ico)},0';$s.Save();$u+='${q(lnk)}';Write-Output ('OK ' + '${q(lnk)}')}`
+            + `$i=($s.IconLocation -split ',')[0];`
+            + `$gone=($i -and $i.ToLower().StartsWith('${mine}'.ToLower()) -and -not (Test-Path -LiteralPath $i));`
+            + `$ours=([IO.Path]::GetFullPath($s.TargetPath) -ieq [IO.Path]::GetFullPath('${target}'));`
+            + (onlyBroken ? `$do=$gone;` : `$do=($ours -or $gone);`)
+            + `if($do){$s.IconLocation='${q(ico)},0';$s.Save();$u+='${q(lnk)}';$i='${q(ico)}';Write-Output ('OK ' + '${q(lnk)}')}`
             + `else{Write-Output ('SKIP ' + '${q(lnk)}')}`
+            + `if($i){Write-Output ('REF ' + $i)}`
             + `}catch{Write-Output ('FAIL ' + '${q(lnk)}' + ': ' + $_.Exception.Message)};`).join("")
           + nudgeChangedScript();
         try {
@@ -311,17 +329,21 @@ export async function setAppShortcutIcon(pngBuffer, { appName = "Redstone Launch
             const t = line.trim();
             const fail = /^FAIL (.*?): (.*)$/.exec(t);
             if (fail) { skipped.push(`${path.basename(fail[1])}: ${fail[2]}`); continue; }
+            if (t.startsWith("REF ")) { refs.add(path.resolve(t.slice(4)).toLowerCase()); continue; }
             if (t.startsWith("OK ")) updated.push(t.slice(3));
-            else if (t.startsWith("SKIP ")) skipped.push(`${path.basename(t.slice(5))}: starts another copy of the launcher`);
+            // Repairing, a shortcut left alone is simply one that was fine.
+            else if (t.startsWith("SKIP ") && !onlyBroken) skipped.push(`${path.basename(t.slice(5))}: starts another copy of the launcher`);
           }
         } catch (e) {
           skipped.push(String(e && e.message || e));
         }
       }
+      // Nothing needed it: the fresh .ico written above is not kept.
+      if (!updated.length) { try { fs.unlinkSync(ico); } catch { /* never mind */ } }
       // Only once every shortcut points at the new one: a desktop-only pass
       // leaves the Start menu's pointing at an older .ico, and sweeping that
       // away would blank it.
-      if (updated.length && !onlyDesktop) sweepOldIcons(dir, ".ico", ico);
+      if (updated.length && !onlyDesktop) sweepOldIcons(dir, ".ico", ico, refs);
       // The taskbar button is drawn from a shortcut -- the pinned one, or
       // while it runs the Start menu one that carries the same app id -- and
       // the taskbar keeps the picture it read in the shell's icon cache,

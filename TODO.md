@@ -9,6 +9,23 @@ started.
 
 ---
 
+## 0. Round 80
+
+- [x] **The taskbar icon is a blank page.** The pinned shortcut pointed at an
+      .ico the launcher had deleted: after rewriting the shortcuts it swept
+      away every older icon of its own, including ones that shortcuts it did
+      not rewrite (target not this exe) still pointed at -- though the code's
+      own comment said it would not. The sweep now keeps every icon a shortcut
+      still points at, a shortcut whose icon of ours is missing is pointed at
+      the current one whatever it starts, and a few seconds after start the
+      launcher repairs any such shortcut on its own (logged to
+      `<data>/logs/icon.log`). Not tried on Windows from here.
+- [x] **The relay log fills with scanners' HTTPS requests.** Web requests to
+      the control port are dropped without a line; anything else unknown is
+      logged once an hour per address.
+
+---
+
 ## 0. Round 79
 
 - [x] **The admin panel's relay settings have no box to type in.** The form

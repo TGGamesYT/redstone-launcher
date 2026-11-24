@@ -1588,6 +1588,25 @@ if (!gotTheLock) {
       return;
     }
 
+    // A shortcut of ours whose icon file is gone -- the blank page on the
+    // taskbar -- is pointed at the current icon again, a few seconds in so it
+    // costs the start nothing. Only broken ones are touched, so nothing that
+    // is fine gets rewritten (and the taskbar is not given a reason to latch
+    // on to a shortcut's icon for the session).
+    if (process.platform === "win32") {
+      setTimeout(() => {
+        let png = null;
+        try { png = fs.readFileSync(ICON_OUT()); } catch { return; }
+        Promise.resolve(shortcuts.setAppShortcutIcon(png, { appName: app.getName() || "Redstone Launcher", scope: "all", onlyBroken: true }))
+          .then((r) => {
+            if (r && r.updated && r.updated.length) {
+              iconLog(`at start, repaired shortcuts whose icon was missing: ${r.updated.map(f => path.basename(f)).join(", ")}`);
+            }
+          })
+          .catch((e) => iconLog(`at start, the repair failed: ${e && e.message || e}`));
+      }, 5000);
+    }
+
     // Apply any update staged on a previous run BEFORE opening the window, so
     // updates never interrupt an active session.
     const applied = await maybeApplyStagedUpdate();
