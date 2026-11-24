@@ -1429,6 +1429,17 @@ function handleAdmin(req, who) {
 
 // The control-channel handler, run on a TLS socket (see the demuxing listener
 // below — the same port also serves plain-HTTP resource-pack requests).
+// Whether to say something about this address now: once an hour each.
+const _toldAbout = new Map();
+function quietlyOnce(who) {
+  const now = Date.now();
+  const last = _toldAbout.get(who) || 0;
+  if (now - last < 60 * 60 * 1000) return false;
+  _toldAbout.set(who, now);
+  if (_toldAbout.size > 5000) _toldAbout.clear();
+  return true;
+}
+
 function handleControl(sock) {
   // CRITICAL for latency: disable Nagle so muxed game packets aren't buffered.
   try { sock.setNoDelay(true); } catch { /* ignore */ }
@@ -1646,11 +1657,13 @@ function handleControl(sock) {
     const text = head ? head.toString("latin1") : "";
     const web = /^(GET|POST|HEAD|PUT|OPTIONS|DELETE|PATCH|CONNECT|PRI) /.test(text);
     const who = (sock.remoteAddress || "?").replace(/^::ffff:/, "");
-    if (e && e.message === "oversized frame") {
+    // A web request over TLS is a crawler or a port scanner (Censys, Shodan
+    // and the like sweep every open port, robots.txt included): dropped and
+    // not mentioned, because it is noise and there is a lot of it. Anything
+    // else that is not the launcher is said, once an hour per address.
+    if (!web && quietlyOnce(who)) {
       log(`[control] dropped a connection from ${who}: not the launcher's protocol`
-        + (web ? ` -- an HTTPS web request ("${text.split("\r")[0].slice(0, 40)}"), which is what port scanners send` : ` (began ${JSON.stringify(text.slice(0, 16))})`));
-    } else {
-      log(`[control frame] ${who}: ${e && e.message}`);
+        + (e && e.message === "oversized frame" ? ` (began ${JSON.stringify(text.slice(0, 16))})` : ` (${e && e.message})`));
     }
     try { sock.destroy(); } catch { /* ignore */ }
   });
