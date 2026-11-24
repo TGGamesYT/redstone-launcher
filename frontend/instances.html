@@ -1231,7 +1231,7 @@
         });
         if (res && res.success) {
           document.getElementById('instShareModal').classList.remove('active');
-          o.onShared && o.onShared(res.address);
+          o.onShared && o.onShared(res.address, res.addresses);
           // Why the address is not the launcher's own name, when it is not --
           // the servers page says so in its banner; this page said nothing.
           if (res.note && window.notify) window.notify(res.note, 'warning');
@@ -2522,8 +2522,23 @@
         const relayKey = `instance-${profile.id}`;
         let lanPort = null;
 
-        function showLanShared(address) {
-          lanMsg.innerHTML = `Friends can join at <b>${address}</b>`;
+        // Over e4mc under our own name there are two addresses that work --
+        // ours and e4mc's own -- so a dropdown, and Copy copies the one picked.
+        let lanAddrs = null;
+        function showLanShared(address, addresses) {
+          const list = Array.isArray(addresses) ? addresses.filter(Boolean) : [];
+          lanAddrs = list.length > 1 ? list : null;
+          if (lanAddrs) {
+            lanMsg.textContent = 'Friends can join at ';
+            const pick = document.createElement('select');
+            pick.className = 'lan-addr-pick';
+            pick.style.fontWeight = 'bold';
+            lanAddrs.forEach((a, i) => { const op = document.createElement('option'); op.value = a; op.textContent = i === 0 ? a : `${a}  (e4mc's own)`; pick.appendChild(op); });
+            lanMsg.appendChild(pick);
+          } else {
+            lanMsg.textContent = 'Friends can join at ';
+            const b = document.createElement('b'); b.textContent = address; lanMsg.appendChild(b);
+          }
           lanShareBtn.style.display = "none";
           lanCopyBtn.style.display = ""; lanStopBtn.style.display = "";
           lanBar.style.display = "flex";
@@ -2540,16 +2555,16 @@
             localPort: lanPort,
             relayKey,
             defaultSub: (profile.name || "instance"),
-            onShared: (address) => showLanShared(address),
+            onShared: (address, addresses) => showLanShared(address, addresses),
           });
         };
         lanStopBtn.onclick = async () => { await ipcRenderer.invoke("relay:close", { key: relayKey }); showLanAvailable(lanPort); };
-        lanCopyBtn.onclick = () => { try { navigator.clipboard.writeText(lanMsg.textContent.replace(/^.*join at\s*/i, "").trim()); lanCopyBtn.textContent = "Copied"; setTimeout(() => lanCopyBtn.textContent = "Copy", 1200); } catch { /* ignore */ } };
+        lanCopyBtn.onclick = () => { try { const pick = lanMsg.querySelector('.lan-addr-pick'); navigator.clipboard.writeText(pick ? pick.value : lanMsg.textContent.replace(/^.*join at\s*/i, "").trim()); lanCopyBtn.textContent = "Copied"; setTimeout(() => lanCopyBtn.textContent = "Copy", 1200); } catch { /* ignore */ } };
 
         // Reflect current state: already sharing? already open to LAN?
         (async () => {
           const st = await ipcRenderer.invoke("relay:status", { key: relayKey });
-          if (st && st.active) { const lp = await ipcRenderer.invoke("instance:lan-port", { profileId: profile.id }); lanPort = lp.port || lanPort; showLanShared(st.address); return; }
+          if (st && st.active) { const lp = await ipcRenderer.invoke("instance:lan-port", { profileId: profile.id }); lanPort = lp.port || lanPort; showLanShared(st.address, st.addresses); return; }
           const lp = await ipcRenderer.invoke("instance:lan-port", { profileId: profile.id });
           if (lp && lp.port) showLanAvailable(lp.port);
         })();

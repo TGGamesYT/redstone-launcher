@@ -24,6 +24,9 @@ const fn = (name) => {
 const { parseHandshake, rewriteHandshake, mcPacket, writeVarInt } = new Function(
   ["readVarInt", "writeVarInt", "mcPacket", "parseHandshake", "rewriteHandshake"].map(fn).join("\n")
   + "\nreturn { parseHandshake, rewriteHandshake, mcPacket, writeVarInt };")();
+const hostFromAddress = new Function(fn("hostFromAddress") + "\nreturn hostFromAddress;")();
+check("a handshake's trailing dot is ignored when finding the share",
+  hostFromAddress("Latest.TGdoesCode.redstonemc.net.\0FML3\0"), "latest.tgdoescode.redstonemc.net");
 const FORWARD_OK = new Function(src.match(/const FORWARD_OK = [^\n]+/)[0] + "\nreturn FORWARD_OK;")();
 
 const hello = (address, port = 25565, protocol = 767, next = 2) => {
@@ -73,24 +76,25 @@ check("only e4mc's names may be forwarded to by anybody",
   check("and so is somebody else's name", theirs.ok, false);
   const cleared = await handleAlias({ op: "clear", subdomain: "tgdoescode" }, who, false);
   check("clearing it stops the forwarding", [cleared.ok, forwards.has("tgdoescode.redstonemc.net")], [true, false]);
-  check("with no token it says players go through this relay", r.direct, false);
 
-  // With a token: an SRV record straight to e4mc, and the forward kept as the
-  // fallback for a client that does not look SRV records up.
-  const srv = [];
+  // With a token: still through this relay, and any old DNS record on the
+  // name removed. An SRV record straight to e4mc was tried and cannot work:
+  // the client puts the SRV target in its handshake WITH the trailing dot,
+  // and e4mc answers "not found".
+  const cleared2 = [];
   const withDns = make({ enabled: true }, "redstonemc.net", () => { }, new Map(), FORWARD_OK,
-    async () => ({ ok: true }), async (host, domain, target, port) => { srv.push([host, target, port]); return true; },
+    async (host, domain) => { cleared2.push([host, domain]); return { ok: true }; }, undefined,
     async () => [{ name: "redstonemc.net" }, { name: "other.net" }]);
   const d = await withDns({ op: "set", subdomain: "tgdoescode", host: "relay-eu.e4mc.link", port: 25565, name: "quick-fox.e4mc.link" }, who, false);
-  check("with a DNS token, players are sent straight to e4mc by an SRV record",
-    [d.ok, d.direct, srv[0]], [true, true, ["tgdoescode.redstonemc.net", "quick-fox.e4mc.link", 25565]],
-    "to e4mc's NAME, which is what the client then puts in its handshake");
+  check("with a DNS token, old records on the name are cleared and players still come through the relay",
+    [d.ok, d.forwarded, cleared2[0]], [true, true, ["tgdoescode.redstonemc.net", "redstonemc.net"]]);
+  check("and no SRV record is made", "cfPointSrv" in globalThis || /cfPointSrv/.test(src), false);
 
   // Another of the relay's domains: an admin's choice, nobody else's.
   const admin = { uuid: "a1", name: "Admin" };
   const other = await withDns({ op: "set", subdomain: "event", domain: "other.net", host: "x.e4mc.link", port: 25565, name: "x.e4mc.link" }, admin, true);
   check("an admin can put a share on another domain the relay manages",
-    [other.ok, other.host, srv[srv.length - 1][0]], [true, "event.other.net", "event.other.net"]);
+    [other.ok, other.host, cleared2[cleared2.length - 1]], [true, "event.other.net", ["event.other.net", "other.net"]]);
   const notMine = await withDns({ op: "set", subdomain: "tgdoescode", domain: "other.net", host: "x.e4mc.link", name: "x.e4mc.link" }, who, false);
   check("somebody who is not an admin cannot", notMine.ok, false);
   const unmanaged = await withDns({ op: "set", subdomain: "event", domain: "nope.org", host: "x.e4mc.link", name: "x.e4mc.link" }, admin, true);

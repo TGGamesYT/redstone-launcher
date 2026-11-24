@@ -8439,8 +8439,12 @@ async function openViaE4mc({ k, name, localPort, accountId, subdomain, domain })
     aliasSub: ours ? sub : null, aliasDomain: ours ? (domain || DOMAIN_BASE) : null,
     close: () => { if (keepName) clearInterval(keepName); try { session.close(); } catch { /* already gone */ } },
   });
+  // Both, when there are two: ours, and e4mc's own, which works as well
+  // and skips our relay.
+  const addresses = ours ? [ours, session.domain] : [session.address];
+  activeRelays.get(k).addresses = addresses;
   return {
-    success: true, address: shownAddr, port: shownPort, directAddress: null,
+    success: true, address: shownAddr, port: shownPort, directAddress: null, addresses,
     backend: "e4mc", e4mc: { domain: session.domain, relay: relay.host, srv: target.srv || null },
     note: aliasNote,
   };
@@ -8451,7 +8455,7 @@ async function openRelayFor({ key, name, localPort, subdomain, domain, accountId
   try {
     if (activeRelays.has(k)) {
       const s = activeRelays.get(k);
-      return { success: true, address: s.shownAddr || s.address, port: s.port, already: true };
+      return { success: true, address: s.shownAddr || s.address, port: s.port, already: true, addresses: s.addresses || null };
     }
     if (!localPort && name) { try { localPort = serverManager.getServerPort(name); } catch { /* ignore */ } }
     if (!localPort) return { success: false, error: "No local port to share" };
@@ -8534,6 +8538,7 @@ ipcMain.handle("relay:status", async (event, { key, name }) => {
       active: true, address: s.shownAddr || s.address, port: s.port,
       directAddress: s.directAddress || null,
       backend: s.backend || "own", e4mcDomain: s.e4mcDomain || null,
+      addresses: s.addresses || null,
       // Why the address is not the name that was asked for, when it is not.
       note: s.note || null,
     }

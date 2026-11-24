@@ -9,6 +9,24 @@ started.
 
 ---
 
+## 0. Round 81
+
+- [x] **Our name for an e4mc share gives e4mc's "not found".** The SRV record
+      from Round 78 was the cause: a Minecraft client that follows one puts the
+      target in its handshake as DNS spells it, with the trailing dot, and
+      e4mc looks names up exactly. Removed; the relay forwards (which rewrites
+      the handshake to the exact name) and clears any SRV it made earlier. It
+      also ignores a trailing dot on a handshake it receives.
+- [x] **Show e4mc's own address too.** Shared over e4mc under our name, the
+      address in both banners is a dropdown of the two; Copy copies the one
+      picked.
+- [x] **Verify the domain dropdown.** Checked on the real pages with a stubbed
+      admin answer: two domains show it and picking one changes the address;
+      one domain, or not an admin, shows none. It needs the relay to report the
+      account as an admin and more than one zone.
+
+---
+
 ## 0. Round 80
 
 - [x] **The taskbar icon is a blank page.** The pinned shortcut pointed at an

@@ -244,49 +244,23 @@ async function handleAlias(req, who, isAdmin) {
   // handshake is rewritten to e4mc's name on the way through.
   forwards.set(fullHost, { host: target, port, name, owner: who && who.uuid, at: Date.now() });
 
-  // And, when this relay may edit DNS, a way round the relay altogether.
+  // No SRV record pointing at e4mc, and any left from before is removed.
   //
-  // Forwarding puts every byte of the game through here and then through
-  // e4mc's relay as well: two relays where e4mc meant there to be one, and
-  // this server carrying traffic e4mc was supposed to carry. An SRV record
-  // avoids that. A Minecraft client looks one up for an address typed
-  // without a port, connects to the host it names, and puts THAT host's name
-  // in its handshake -- unlike a CNAME, which keeps the typed name and is why
-  // pointing a CNAME at e4mc never worked. So players go straight to e4mc and
-  // e4mc sees its own name. The forwarding above stays as the fallback, for
-  // a client that does not look SRV records up or a relay with no DNS token.
-  let direct = false;
+  // One was tried, to send players straight to e4mc instead of through this
+  // relay. It cannot work: a Minecraft client that follows an SRV record
+  // puts the target in its handshake as DNS spells it, WITH the trailing dot
+  // ("x.e4mc.link."), and e4mc looks the name up exactly -- so players got
+  // e4mc's "not found" message. (Proxies such as Velocity strip that dot for
+  // the same reason; e4mc does not.) The forwarding above rewrites the
+  // handshake to the exact name, which is the one way e4mc accepts.
   if (CF.enabled) {
-    try { direct = !!(await cfPointSrv(fullHost, domain, name, port)); }
-    catch (e) { log(`alias: SRV for ${fullHost} failed: ${e && e.message || e}`); }
+    try { await cfClearAlias(fullHost, domain); }
+    catch (e) { log(`alias: could not clear old DNS records for ${fullHost}: ${e && e.message || e}`); }
   }
-  log(`alias: ${who && who.name} sends ${fullHost} on to ${name} (${target}:${port})`
-    + (direct ? " -- by SRV record, players go straight to e4mc" : " -- through this relay (no DNS token, so no SRV record)"));
-  return { ok: true, host: fullHost, target: name, forwarded: true, direct };
+  log(`alias: ${who && who.name} sends ${fullHost} on to ${name} (${target}:${port}) through this relay`);
+  return { ok: true, host: fullHost, target: name, forwarded: true };
 }
 
-// An SRV record sending <fullHost> to `target`:`port`, and nothing else on the
-// name: an A or CNAME of its own (left by the direct-connect path, or by the
-// old CNAME aliases) goes, so a client that ignores SRV still falls through to
-// the wildcard and reaches the relay's forwarding.
-async function cfPointSrv(fullHost, domain, target, port) {
-  const zoneId = await cfZoneIdFor(domain);
-  if (!zoneId) return false;
-  const srvName = `_minecraft._tcp.${fullHost}`;
-  await cfDeleteByName(zoneId, "A", fullHost);
-  await cfDeleteByName(zoneId, "AAAA", fullHost);
-  await cfDeleteByName(zoneId, "CNAME", fullHost);
-  await cfDeleteByName(zoneId, "SRV", srvName);
-  const res = await cfRequest("POST", `/zones/${zoneId}/dns_records`, {
-    type: "SRV", name: srvName, ttl: 60,
-    data: { service: "_minecraft", proto: "_tcp", name: fullHost, priority: 0, weight: 5, port: Number(port) || 25565, target },
-  });
-  if (!res?.result?.id) {
-    log("alias: SRV for", fullHost, "was refused:", JSON.stringify(res?.errors || res));
-    return false;
-  }
-  return true;
-}
 
 // Names of ours sent on to somewhere else (an e4mc share), by full host.
 // Kept while they are being used; one nobody has refreshed for a day is gone.
@@ -398,8 +372,10 @@ function parseHandshake(buf) {
 
 // Full hostname the client connected to (strips Forge's \0FML\0 handshake tag).
 // Hosts are keyed by this so we can route multiple domains, not just the primary.
+// And without a trailing dot, which a client that found the name through an
+// SRV record keeps on it ("name.redstonemc.net.").
 function hostFromAddress(address) {
-  return (address || "").split("\0")[0].toLowerCase().trim();
+  return (address || "").split("\0")[0].toLowerCase().trim().replace(/\.$/, "");
 }
 
 // ───────────────────────── offline placeholder ──────────────────────────

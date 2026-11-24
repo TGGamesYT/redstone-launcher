@@ -251,6 +251,10 @@
       <div id="relayBanner" style="display:none; align-items:center; gap:10px; margin:0 0 10px 0; padding:8px 12px; border-radius:var(--border-radius); background:color-mix(in srgb, var(--base-color) 45%, black); border:1px solid var(--secondary-color);">
         <i class="material-icons" style="font-size:18px;">public</i>
         <span style="flex:1;">Friends can join at <b><span id="relayAddr"></span></b><!--
+          Shared over e4mc under our own name, there are two addresses that
+          work: ours, and e4mc's own. A dropdown in place of the address then,
+          and Copy copies the one picked.
+       --><select id="relayAddrPick" style="display:none;font-weight:bold;"></select><!--
           Why the address is not the one that was asked for. Sharing can
           succeed while the NAME fails -- the relay may not be able to edit
           DNS -- and when that happens the address handed out is the one the
@@ -779,8 +783,16 @@
     $('dMenuBtn').onclick = (e) => { e.stopPropagation(); $('dMenu').classList.toggle('open'); };
 
     // ---------- Relay sharing (join over the internet, no port-forwarding) ----------
-    function showRelayBanner(address, directAddress, note) {
+    function showRelayBanner(address, directAddress, note, addresses) {
       $('relayAddr').textContent = address + (directAddress ? `  (or directly: ${directAddress})` : '');
+      const pick = $('relayAddrPick');
+      const list = Array.isArray(addresses) ? addresses.filter(Boolean) : [];
+      if (list.length > 1) {
+        pick.innerHTML = '';
+        list.forEach((a, i) => { const o = document.createElement('option'); o.value = a; o.textContent = i === 0 ? a : `${a}  (e4mc's own)`; pick.appendChild(o); });
+        pick.value = list[0];
+        pick.style.display = ''; $('relayAddr').style.display = 'none';
+      } else { pick.style.display = 'none'; $('relayAddr').style.display = ''; }
       const noteEl = $('relayNote');
       if (noteEl) { noteEl.textContent = note || ''; noteEl.style.display = note ? 'block' : 'none'; }
       $('relayBanner').style.display = 'flex';
@@ -793,7 +805,7 @@
     async function refreshRelayStatus() {
       if (!selectedServer) return;
       const st = await ipcRenderer.invoke('relay:status', { name: selectedServer.name });
-      if (st && st.active) showRelayBanner(st.address, st.directAddress, st.note); else hideRelayBanner();
+      if (st && st.active) showRelayBanner(st.address, st.directAddress, st.note, st.addresses); else hideRelayBanner();
     }
     const subLabel = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
     const subPath = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/\.+/g, '.').replace(/(^[.-]+|[.-]+$)/g, '');
@@ -907,13 +919,13 @@
         const payload = { name: selectedServer.name, subdomain: fullSubdomain(), domain: selectedDomain(), accountId: $('shareAccount').value };
         if (cfgPort) payload.localPort = cfgPort;
         const res = await ipcRenderer.invoke('relay:open', payload);
-        if (res && res.success) { showRelayBanner(res.address, res.directAddress, res.note); $('shareModal').classList.remove('active'); }
+        if (res && res.success) { showRelayBanner(res.address, res.directAddress, res.note, res.addresses); $('shareModal').classList.remove('active'); }
         else alert("Couldn't share: " + (res?.error || 'unknown error'));
       } finally { $('shareGo').disabled = false; $('shareGo').textContent = 'Share'; }
     };
     $('dShare').onclick = openShareModal;
     $('relayStop').onclick = async () => { await ipcRenderer.invoke('relay:close', { name: selectedServer.name }); hideRelayBanner(); };
-    $('relayCopy').onclick = () => { try { navigator.clipboard.writeText($('relayAddr').textContent.split('  (')[0]); $('relayCopy').textContent = 'Copied'; setTimeout(() => ($('relayCopy').textContent = 'Copy'), 1200); } catch { /* ignore */ } };
+    $('relayCopy').onclick = () => { try { navigator.clipboard.writeText($('relayAddrPick').style.display !== 'none' ? $('relayAddrPick').value : $('relayAddr').textContent.split('  (')[0]); $('relayCopy').textContent = 'Copied'; setTimeout(() => ($('relayCopy').textContent = 'Copy'), 1200); } catch { /* ignore */ } };
     document.addEventListener('click', () => $('dMenu').classList.remove('open'));
     $('dFolder').onclick = () => { $('dMenu').classList.remove('open'); ipcRenderer.send('open-folder', { id: selectedServer.name, isClient: false }); };
     // ---------- Desktop shortcut ----------
