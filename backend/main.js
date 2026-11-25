@@ -1591,6 +1591,12 @@ if (!gotTheLock) {
       return;
     }
 
+    // The launcher's own Java runtimes onto the newest patch of their major
+    // version: a minute in, so it is not competing with the start, and then
+    // daily for a launcher left running.
+    setTimeout(() => { updateBundledJava().catch((e) => devtoolsLog(`[Java] update check failed: ${e.message}`)); }, 60 * 1000);
+    setInterval(() => { updateBundledJava().catch(() => { /* next day */ }); }, 24 * 60 * 60 * 1000);
+
     // A shortcut of ours whose icon file is gone -- the blank page on the
     // taskbar -- is pointed at the current icon again, a few seconds in so it
     // costs the start nothing. Only broken ones are touched, so nothing that
@@ -3733,12 +3739,15 @@ async function getJavaByMajor(javaVersion, { needJdk = false, label = "" } = {})
     }
   }
 
-  // 6️⃣ Check system Java
-  const systemJava = findSystemJava(javaVersion);
-  if (systemJava && (!needJdk || hasJavac(javaHomeOf(systemJava)))) {
-    devtoolsLog(`[Java] Found compatible system Java: ${systemJava}`);
-    return systemJava;
-  }
+  // A Java installed on the computer is only the FALLBACK now: it is
+  // whatever patch level that install happens to be, and nothing here can
+  // update it. The launcher's own (below) is kept on the newest patch of its
+  // major version, which is where Java's security fixes arrive. One you set
+  // yourself (above) is still used first: that is a deliberate choice.
+  const systemJava = () => {
+    const found = findSystemJava(javaVersion);
+    return (found && (!needJdk || hasJavac(javaHomeOf(found)))) ? found : null;
+  };
 
   // 7️⃣ Detect OS & Arch for download
   const platform = process.platform;
@@ -3757,15 +3766,35 @@ async function getJavaByMajor(javaVersion, { needJdk = false, label = "" } = {})
   const installPath = path.join(JAVA_DIR, `${javaVersion}_${osName}_${arch}${needJdk ? "_jdk" : ""}`);
   const exe = platform === "win32" ? (needJdk ? "bin/java.exe" : "bin/javaw.exe") : "bin/java";
   const javaBin = path.join(installPath, exe);
+  // An update of this very runtime may be being swapped in right now.
+  if (javaUpdating.has(installPath)) { try { await javaUpdating.get(installPath); } catch { /* use what is there */ } }
   if (fs.existsSync(javaBin) && (!needJdk || hasJavac(installPath))) {
     devtoolsLog(`[Java] Found existing bundled Java ${javaVersion} at ${javaBin}`);
     return javaBin;
   }
 
-  // 9️⃣ If no Java found and auto-download is disabled, stop
+  // Auto-download off: the computer's own, or nothing.
   if (settings.get('autoDownloadJava', true) === false) {
+    const sys = systemJava();
+    if (sys) { devtoolsLog(`[Java] Using the computer's Java ${javaVersion}: ${sys}`); return sys; }
     throw new Error(`No compatible Java ${javaVersion} found on your system, and auto-download is disabled in settings.`);
   }
+  try {
+    await installAdoptium({ javaVersion, osName, arch, needJdk, installPath, forWhat, want });
+    return javaBin;
+  } catch (e) {
+    // Adoptium unreachable: the computer's own Java is better than no game.
+    const sys = systemJava();
+    if (sys) { devtoolsLog(`[Java] Could not download Java ${javaVersion} (${e.message}); using the computer's: ${sys}`); return sys; }
+    throw e;
+  }
+}
+
+// Runtimes being replaced by a newer patch right now, by install folder.
+const javaUpdating = new Map();
+
+// The newest Adoptium build of a major version: { link, release, imageType }.
+async function adoptiumLatest({ javaVersion, osName, arch, needJdk }) {
 
   // 🔟 Fetch Adoptium API JSON. Try GA first, then early-access; and JRE first,
   // then JDK — so a brand-new major (e.g. Java 25 before a JRE/GA build exists)
@@ -3777,7 +3806,7 @@ async function getJavaByMajor(javaVersion, { needJdk = false, label = "" } = {})
       res.on("error", () => resolve(null));
     }).on("error", () => resolve(null));
   });
-  let downloadUrl = null;
+  let downloadUrl = null, downloadRelease = null;
   outer:
   for (const releaseType of ["ga", "ea"]) {
     // A JDK first when javac is wanted, since a JRE has none.
@@ -3785,14 +3814,20 @@ async function getJavaByMajor(javaVersion, { needJdk = false, label = "" } = {})
       const url = `https://api.adoptium.net/v3/assets/latest/${javaVersion}/hotspot?architecture=${arch}&os=${osName}&image_type=${imageType}&release_type=${releaseType}`;
       const apiData = await fetchAdoptium(url);
       const link = Array.isArray(apiData) && apiData[0]?.binary?.package?.link;
-      if (link) { downloadUrl = link; devtoolsLog(`[Java] Using Adoptium ${imageType}/${releaseType} for Java ${javaVersion}`); break outer; }
+      if (link) { downloadUrl = link; downloadRelease = String(apiData[0].release_name || apiData[0].version?.semver || link); devtoolsLog(`[Java] Using Adoptium ${imageType}/${releaseType} for Java ${javaVersion}`); break outer; }
     }
   }
   if (!downloadUrl) {
     throw new Error(`Could not find a downloadable Java ${javaVersion} build (Adoptium had no ga/ea jre/jdk).`);
   }
+  return { link: downloadUrl, release: downloadRelease };
+}
 
-  const tmpZip = path.join(os.tmpdir(), `java${javaVersion}${needJdk ? "jdk" : ""}.zip`);
+// Download and unpack the newest build into `installPath`, and record which
+// release it is (`.release`), so it can be told apart from a newer one later.
+async function installAdoptium({ javaVersion, osName, arch, needJdk, installPath, forWhat = "", want = "jre", latest = null }) {
+  const { link: downloadUrl, release } = latest || await adoptiumLatest({ javaVersion, osName, arch, needJdk });
+  const tmpZip = path.join(os.tmpdir(), `java${javaVersion}${needJdk ? "jdk" : ""}-${process.pid}-${Date.now().toString(36)}.zip`);
 
   // 10️⃣ Download
   devtoolsLog(`Downloading Java ${javaVersion} (${want})${forWhat} from Adoptium...`);
@@ -3822,8 +3857,63 @@ async function getJavaByMajor(javaVersion, { needJdk = false, label = "" } = {})
   }
 
   fs.unlinkSync(tmpZip);
+  try { fs.writeFileSync(path.join(installPath, ".release"), release); } catch { /* checked again next time */ }
+  return release;
+}
 
-  return javaBin;
+// ── Keeping the launcher's own Java up to date ──────────────────────────────
+//
+// A runtime used to be downloaded once and kept for ever: whatever patch of
+// Java 21 was current the day it was fetched is the one every game ran on
+// from then on, security fixes and all missed. Each one now records which
+// release it is, and this asks Adoptium for the newest of the same major
+// version; a newer one is unpacked beside it and swapped in by renaming.
+// A runtime a game is running from cannot be renamed on Windows, so it is
+// simply left until the next check -- nothing running is pulled out from
+// under it. Shortly after start, then once a day.
+const RUNTIME_DIR_NAME = /^(\d+)_(windows|mac|linux)_(x64|aarch64)(_jdk)?$/;
+async function updateBundledJava() {
+  if (settings.get('autoDownloadJava', true) === false) return;
+  let names = [];
+  try { names = fs.readdirSync(JAVA_DIR); } catch { return; }
+  for (const name of names) {
+    const m = RUNTIME_DIR_NAME.exec(name);
+    if (!m) continue;
+    const installPath = path.join(JAVA_DIR, name);
+    if (javaUpdating.has(installPath)) continue;
+    const [, major, osName, arch, jdk] = m;
+    const needJdk = !!jdk;
+    let had = null;
+    try { had = fs.readFileSync(path.join(installPath, ".release"), "utf8").trim(); } catch { /* from before releases were recorded */ }
+    let latest = null;
+    try { latest = await adoptiumLatest({ javaVersion: Number(major), osName, arch, needJdk }); }
+    catch (e) { devtoolsLog(`[Java] Could not check for a newer Java ${major}: ${e.message}`); continue; }
+    if (!latest || (had && had === latest.release)) continue;
+    const job = (async () => {
+      const fresh = `${installPath}.new`;
+      const old = `${installPath}.old-${Date.now().toString(36)}`;
+      try { fs.rmSync(fresh, { recursive: true, force: true }); } catch { /* none */ }
+      await installAdoptium({ javaVersion: Number(major), osName, arch, needJdk, installPath: fresh, latest, want: needJdk ? "jdk" : "jre" });
+      try {
+        fs.renameSync(installPath, old);
+      } catch (e) {
+        // In use by a running game (Windows), most likely. Next time.
+        fs.rmSync(fresh, { recursive: true, force: true });
+        devtoolsLog(`[Java] Java ${major} ${latest.release} is ready but the current one is in use; it is swapped in at the next check.`);
+        return;
+      }
+      fs.renameSync(fresh, installPath);
+      try { fs.rmSync(old, { recursive: true, force: true }); } catch { /* removed on a later check */ }
+      devtoolsLog(`[Java] Updated Java ${major}${needJdk ? " (JDK)" : ""}: ${had || "an older build"} -> ${latest.release}`);
+    })();
+    javaUpdating.set(installPath, job);
+    try { await job; } catch (e) { devtoolsLog(`[Java] Updating Java ${major} failed: ${e.message}`); }
+    finally { javaUpdating.delete(installPath); }
+  }
+  // Old copies a swap could not delete at the time.
+  for (const name of names) {
+    if (/\.old-[0-9a-z]+$/.test(name)) { try { fs.rmSync(path.join(JAVA_DIR, name), { recursive: true, force: true }); } catch { /* still in use */ } }
+  }
 }
 
 // Is this error a transient network/server hiccup worth retrying? (e.g. a 502

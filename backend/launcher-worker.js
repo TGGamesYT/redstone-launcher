@@ -17,6 +17,12 @@ import { getLaunchConfig } from "./loader-versions.js";
 const post = (m) => { try { process.parentPort.postMessage(m); } catch { /* ignore */ } };
 // How many files are fetched at once.
 const DOWNLOAD_SOCKETS = 24;
+// Whether files already on disk are checked against Mojang's checksums this
+// launch: the "Verify game files" setting -- or forced, whatever it says,
+// when Mojang has republished the version since it was downloaded.
+let verifyOn = true;
+let forceVerify = false;
+const checking = () => verifyOn || forceVerify;
 const require_ = createRequire(import.meta.url);
 
 // ── Not hashing three hundred megabytes on every launch ─────────────────────
@@ -210,7 +216,9 @@ function trustFilesOnDisk() {
   let Handler = null;
   try { Handler = require_("minecraft-launcher-core/components/handler"); }
   catch { return; }
+  const real = Handler.prototype.checkSum;
   Handler.prototype.checkSum = async function (hash, f) {
+    if (forceVerify) return real.call(this, hash, f);
     try { return fs.statSync(f).size > 0; } catch { return false; }
   };
   post({ type: "log", line: "[redstone] Not verifying game files (Settings -> Advanced): files already here are used as they are." });
@@ -225,6 +233,7 @@ function verifyLibraries() {
 
   Handler.prototype.downloadToDirectory = async function (directory, libraries, eventName) {
     const libs = await real.call(this, directory, libraries, eventName);
+    if (!checking()) return libs;
     let repaired = 0, broken = 0;
     await Promise.all((libraries || []).map(async (library) => {
       const art = library && library.downloads && library.downloads.artifact;
@@ -310,9 +319,9 @@ function fetchVersionJsonProperly() {
   if (Handler.__honestVersion) return;
   const real = Handler.prototype.getVersion;
 
-  const getJson = async (url, what) => {
+  const getJson = async (url, what, { raw = false, timeout = 60000 } = {}) => {
     const stop = new AbortController();
-    const timer = setTimeout(() => stop.abort(), 60000);
+    const timer = setTimeout(() => stop.abort(), timeout);
     let res;
     try {
       res = await fetch(url, { signal: stop.signal });
@@ -321,7 +330,7 @@ function fetchVersionJsonProperly() {
     } finally { clearTimeout(timer); }
     if (!res.ok) throw new Error(`${what}: the answer was ${res.status} ${res.statusText || ""} (${url})`);
     const body = await res.text();
-    try { return JSON.parse(body); } catch {
+    try { const json = JSON.parse(body); return raw ? { json, raw: body } : json; } catch {
       // The first line of it, because that is what says what it really was:
       // an HTML error page, a login portal, or nothing at all.
       const peek = body.trim().split("\n")[0].slice(0, 120) || "(it was empty)";
@@ -333,24 +342,63 @@ function fetchVersionJsonProperly() {
     const number = this.options.version.number;
     const file = this.options.overrides.versionJson
       || path.join(this.options.directory, `${number}.json`);
-    // Already here and readable: nothing to do, and this is the path mclc
-    // takes on every launch after the first.
-    try {
-      if (fs.existsSync(file)) { JSON.parse(fs.readFileSync(file, "utf8")); return real.call(this); }
-    } catch {
-      // Here but not readable. mclc would throw on it from inside the
-      // Promise executor, which does at least reject -- but the file is
-      // rubbish either way, so it goes and is fetched again.
+    const meta = (this.options.overrides.url && this.options.overrides.url.meta) || "https://launchermeta.mojang.com";
+    // The v2 list, which carries the SHA-1 of every version's details.
+    const listUrl = `${meta}/mc/game/version_manifest_v2.json`;
+
+    // Already here: still the version Mojang publishes?
+    //
+    // It used to be kept for ever once downloaded. But Mojang patches a
+    // version IN PLACE when it has to -- Log4Shell was fixed by republishing
+    // every affected version's details with new library versions and
+    // arguments, under the same version number -- and a launcher that never
+    // looks again keeps launching the vulnerable one. So every launch asks for
+    // the list (small, and quick to give up on) and compares the SHA-1 Mojang
+    // gives for this version with the file here. A difference means it was
+    // republished: the new one is fetched, and every file is checked this
+    // launch whatever the "verify" setting says, so patched libraries and a
+    // replaced game jar are picked up. With no network the file here is used.
+    let had = null;
+    try { if (fs.existsSync(file)) { had = fs.readFileSync(file); JSON.parse(had.toString("utf8")); } }
+    catch {
+      // Here but not readable: it goes and is fetched again.
+      had = null;
       try { fs.unlinkSync(file); } catch { /* it will be overwritten */ }
     }
-
-    const meta = (this.options.overrides.url && this.options.overrides.url.meta) || "https://launchermeta.mojang.com";
-    const manifest = await getJson(`${meta}/mc/game/version_manifest.json`, "Mojang's version list");
+    let manifest = null;
+    try { manifest = await getJson(listUrl, "Mojang's version list", { timeout: had ? 8000 : 60000 }); }
+    catch (e) {
+      if (!had) throw e;
+      post({ type: "log", line: `[redstone] Could not ask Mojang whether ${number} has been updated (${e.message}); using the copy here.` });
+      return real.call(this);
+    }
     const want = (manifest.versions || []).find(v => v && v.id === number);
     if (!want || !want.url) {
+      if (had) return real.call(this);          // a version the list no longer names: keep what works
       throw new Error(`Mojang's version list has no "${number}" in it.`);
     }
-    const version = await getJson(want.url, `the details of Minecraft ${number}`);
+    let stale = false;
+    if (had) {
+      const sha = require_("crypto").createHash("sha1").update(had).digest("hex");
+      if (!want.sha1 || sha === String(want.sha1).toLowerCase()) return real.call(this);
+      stale = true;
+    }
+    const got = await getJson(want.url, `the details of Minecraft ${number}`, { raw: true });
+    const version = got.json;
+    if (want.sha1 && require_("crypto").createHash("sha1").update(got.raw).digest("hex") !== String(want.sha1).toLowerCase()) {
+      throw new Error(`The details of Minecraft ${number} did not match the checksum Mojang lists for them.`);
+    }
+    if (stale) {
+      // The same contents in a different layout -- earlier versions of the
+      // launcher re-formatted the file when saving it -- is not an update:
+      // it is saved again as Mojang sent it and nothing more is said.
+      let same = false;
+      try { same = JSON.stringify(JSON.parse(had.toString("utf8"))) === JSON.stringify(version); } catch { /* different, then */ }
+      if (!same) {
+        post({ type: "log", line: `[redstone] Mojang has updated Minecraft ${number} since it was downloaded; fetching the new details and checking every file.` });
+        forceVerify = true;
+      }
+    }
     // What mclc will reach into without checking. Saying which part is
     // missing here beats a TypeError three functions later.
     for (const key of ["id", "libraries", "downloads", "assetIndex"]) {
@@ -358,7 +406,10 @@ function fetchVersionJsonProperly() {
     }
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      writeAtomic(file, JSON.stringify(version, null, 2));
+      // As Mojang sent it, byte for byte, so its SHA-1 can be compared with
+      // the list's next time. (Re-formatting it, as this used to, made every
+      // copy look changed.)
+      writeAtomic(file, got.raw);
     } catch (e) {
       // It could not be saved, which is survivable: hand mclc the parsed
       // version directly and let it carry on.
@@ -406,15 +457,25 @@ function verifyNatives() {
       const jar = this.options && this.options.mcPath;
       if (jar && want && want.size && fs.existsSync(jar)) {
         const size = fs.statSync(jar).size;
-        if (size !== want.size) {
+        // Its SHA-1 as well as its size, when files are being checked: a jar
+        // Mojang replaced with a patched one of the same size would pass on
+        // size alone.
+        let wrong = size !== want.size;
+        if (!wrong && want.sha1 && checking()) {
+          try {
+            const got = require_("crypto").createHash("sha1").update(fs.readFileSync(jar)).digest("hex");
+            wrong = got !== String(want.sha1).toLowerCase();
+          } catch { /* unreadable: leave it to the size */ }
+        }
+        if (wrong) {
           // Not while another copy of this instance is playing from it: the
           // game maps its own jar, and on Windows this fails outright while
           // elsewhere it quietly pulls the file out from under it.
           if (usedByAnother(path.dirname(jar))) {
             this.client.emit("debug",
-              `[redstone]: the client jar is the wrong size, but another copy of this instance is using it -- left alone`);
+              `[redstone]: the client jar is not the one Mojang lists, but another copy of this instance is using it -- left alone`);
           } else {
-            this.client.emit("debug", `[redstone]: the client jar is ${size} bytes and should be ${want.size}, fetching it again`);
+            this.client.emit("debug", `[redstone]: the client jar is not the one Mojang lists for this version, fetching it again`);
             fs.unlinkSync(jar);        // launch() downloads it again when it is gone
           }
         }
@@ -699,9 +760,9 @@ async function runLaunch(cfg) {
   // library being hashed against Mojang's published checksums. Faster; a
   // damaged file then goes to the game as it is. Files downloaded now are
   // still checked as they arrive, which costs nothing extra.
-  const verify = cfg.verifyFiles !== false;
-  if (verify) verifyLibraries();
-  else trustFilesOnDisk();
+  verifyOn = cfg.verifyFiles !== false;
+  verifyLibraries();
+  if (!verifyOn) trustFilesOnDisk();
   verifyNatives();
   fetchVersionJsonProperly();
 

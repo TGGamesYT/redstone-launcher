@@ -9,6 +9,31 @@ started.
 
 ---
 
+## 0. Round 83
+
+- [x] **Java, libraries and Mojang's in-place fixes must update themselves.**
+      - *Java:* a runtime the launcher downloaded was kept at whatever patch
+        it was fetched at, for ever. Each now records its Adoptium release; a
+        minute after start and daily the launcher checks for a newer build of
+        the same major version and swaps it in (unpacked beside, renamed into
+        place; a runtime a running game holds is left for the next check).
+        The launcher's own, kept-updated Java is now preferred over one found
+        on the computer, which it cannot update; that is the fallback (and a
+        Java path set in Settings still comes first).
+      - *Version details and libraries:* a version's JSON was downloaded once
+        and trusted for ever, so a version Mojang republished with patched
+        libraries (as for Log4Shell) was never picked up. Every launch now
+        compares the saved copy with the SHA-1 in Mojang's version list; if
+        Mojang changed it, the new one is fetched and every file is checked
+        that launch even with "Verify game files" off. Saved byte for byte
+        now, so a copy the old code re-formatted is not mistaken for an update.
+        The game jar is checked by SHA-1, not only size, when files are being
+        checked. Offline, the saved copy is used.
+      - Not done: Linux/macOS Java downloads are .tar.gz and the unpacker only
+        handles .zip (pre-existing).
+
+---
+
 ## 0. Round 82
 
 - [x] **e4mc shares: DNS only, never re-relayed, and a choice of record to test.**
